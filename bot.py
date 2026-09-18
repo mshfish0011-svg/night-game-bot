@@ -21,6 +21,7 @@ from telegram import (
     BotCommandScopeDefault,
     BotCommandScopeChat,
     BotCommandScopeChatAdministrators,
+    BotCommandScopeChatMember,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -15456,3 +15457,1127 @@ main = main_apexrival_13
 
 if __name__ == "__main__":
     main_apexrival_13()
+
+# ============================================================================
+# ApexRival 14.0 — verified-once onboarding + command-scope authority
+# ----------------------------------------------------------------------------
+# This layer fixes two user-facing problems without disturbing the game engine:
+#   1) A user who already completed private /start + channel verification is
+#      treated as permanently verified. Telegram's own per-private-chat command
+#      scope is used as a remote marker, so Render filesystem resets do not
+#      force the user through /start again.
+#   2) Every relevant Telegram command scope is actively normalized to EXACTLY
+#      five visible commands. Current group + current member scopes are repaired
+#      on interaction, which also corrects stale scopes created by old versions.
+# ============================================================================
+AR14_VERSION = "14.0"
+BOT_VERSION = AR14_VERSION
+ADVANCED_VERSION = AR14_VERSION
+
+# Compatibility alias for the older AR13 lobby wrapper. The final AR14
+# create-lobby path bypasses that wrapper, but this alias also prevents a
+# latent NameError if an old callback reaches it.
+ar13_group_chat = ar12_group_chat
+
+AR14_COMMANDS = [
+    BotCommand("start", "شروع و فعال‌سازی حساب"),
+    BotCommand("game", "ساخت یا ورود به Lobby"),
+    BotCommand("profile", "نمایش پروفایل"),
+    BotCommand("rank", "نمایش رتبه‌بندی"),
+    BotCommand("help", "راهنما و قوانین بازی"),
+]
+AR14_COMMAND_NAMES = [c.command for c in AR14_COMMANDS]
+AR14_COMMAND_SIGNATURE = tuple((c.command, c.description) for c in AR14_COMMANDS)
+AR14_SCOPE_CACHE: dict[tuple[int, int], float] = {}
+AR14_PRIVATE_MARKER_CACHE: dict[int, tuple[float, bool]] = {}
+AR14_GATE_NOTICE_CACHE: dict[tuple[int, int], float] = {}
+AR14_SCOPE_TTL = 3600.0
+AR14_MARKER_TTL = 1800.0
+AR14_GATE_NOTICE_TTL = 2.0
+
+
+def ar14_commands_match(commands) -> bool:
+    try:
+        sig = tuple((str(c.command), str(c.description)) for c in (commands or []))
+        return sig == AR14_COMMAND_SIGNATURE
+    except Exception:
+        return False
+
+
+async def ar14_set_scope5(bot, scope) -> bool:
+    """Set the authoritative five-command menu for a Telegram scope."""
+    ok = True
+    try:
+        await bot.set_my_commands(AR14_COMMANDS, scope=scope)
+    except Exception as exc:
+        ok = False
+        print(f"ApexRival AR14 command scope write failed ({getattr(scope, 'type', '?')}): {exc!r}")
+    try:
+        await bot.set_my_commands(AR14_COMMANDS, scope=scope, language_code="fa")
+    except Exception as exc:
+        # Some clients/language combinations can reject a dedicated language
+        # scope. The blank-language scope above remains authoritative fallback.
+        print(f"ApexRival AR14 Persian scope warning ({getattr(scope, 'type', '?')}): {exc!r}")
+    return ok
+
+
+async def ar14_sync_group_scopes(bot, chat_id: int, user_id: int | None = None, *, force: bool = False) -> None:
+    """Repair stale group/chat/member command menus for the current context."""
+    chat_id = int(chat_id)
+    uid = int(user_id) if user_id is not None else 0
+    cache_key = (chat_id, uid)
+    now = time.time()
+    if not force and now - AR14_SCOPE_CACHE.get(cache_key, 0.0) < AR14_SCOPE_TTL:
+        return
+    scopes = [
+        BotCommandScopeChat(chat_id=chat_id),
+        BotCommandScopeChatAdministrators(chat_id=chat_id),
+    ]
+    if uid:
+        scopes.append(BotCommandScopeChatMember(chat_id=chat_id, user_id=uid))
+    for scope in scopes:
+        await ar14_set_scope5(bot, scope)
+    AR14_SCOPE_CACHE[cache_key] = now
+
+
+async def ar14_configure_all_command_scopes(application) -> None:
+    """Set exactly five commands as the global fallback in every major scope."""
+    bot = application.bot
+    scopes = [
+        BotCommandScopeDefault(),
+        BotCommandScopeAllPrivateChats(),
+        BotCommandScopeAllGroupChats(),
+        BotCommandScopeAllChatAdministrators(),
+    ]
+    for scope in scopes:
+        await ar14_set_scope5(bot, scope)
+
+    # Repair every group the current data file remembers.
+    for raw_cid in list(DATA.get("groups", {}).keys()):
+        try:
+            await ar14_sync_group_scopes(bot, int(raw_cid), None, force=True)
+        except Exception as exc:
+            print(f"ApexRival AR14 tracked-group command repair warning: {exc!r}")
+
+    try:
+        priv = await bot.get_my_commands(scope=BotCommandScopeAllPrivateChats())
+        groups = await bot.get_my_commands(scope=BotCommandScopeAllGroupChats())
+        admins = await bot.get_my_commands(scope=BotCommandScopeAllChatAdministrators())
+        print(
+            "ApexRival AR14 command audit | "
+            f"private={len(priv)} | groups={len(groups)} | group_admins={len(admins)} | exact=5"
+        )
+    except Exception as exc:
+        print(f"ApexRival AR14 command audit warning: {exc!r}")
+
+
+async def ar14_mark_remote_verified(uid: int, bot=None) -> None:
+    """Store a durable verification marker on Telegram, not Render disk."""
+    bot = bot or APEX_RUNTIME_BOT
+    if bot is None:
+        return
+    try:
+        # A per-private-chat command scope is remote state held by Telegram.
+        # It still shows the exact same five commands, so the user sees no
+        # extra menu item while the bot can read the marker after a restart.
+        await ar14_set_scope5(bot, BotCommandScopeChat(chat_id=int(uid)))
+        AR14_PRIVATE_MARKER_CACHE[int(uid)] = (time.time(), True)
+    except Exception as exc:
+        print(f"ApexRival AR14 remote verification marker warning for {uid}: {exc!r}")
+
+
+async def ar14_remote_verified(uid: int, bot=None, *, force: bool = False) -> tuple[bool | None, str]:
+    uid = int(uid)
+    cached = AR14_PRIVATE_MARKER_CACHE.get(uid)
+    now = time.time()
+    if not force and cached and now - cached[0] < AR14_MARKER_TTL:
+        return cached[1], "remote_command_scope_cache"
+    bot = bot or APEX_RUNTIME_BOT
+    if bot is None:
+        return None, "runtime bot is not initialized"
+    try:
+        commands = await bot.get_my_commands(scope=BotCommandScopeChat(chat_id=uid))
+        ok = ar14_commands_match(commands)
+        AR14_PRIVATE_MARKER_CACHE[uid] = (now, ok)
+        return ok, "telegram_private_command_scope" if ok else "no_private_marker"
+    except Exception as exc:
+        print(f"ApexRival AR14 remote verification read warning for {uid}: {exc!r}")
+        AR14_PRIVATE_MARKER_CACHE[uid] = (now, False)
+        return False, "remote_marker_unavailable"
+
+
+async def ar14_record_verified(uid: int, *, bot=None, source: str = "verified_once") -> None:
+    """Write the local fast path plus the durable Telegram marker."""
+    uid = int(uid)
+    u = get_user(uid)
+    st = u.setdefault("activation", {})
+    st["version"] = 2
+    st["ever_verified"] = True
+    st["private_started_at"] = int(st.get("private_started_at", 0) or now_ts())
+    st["last_verified_at"] = now_ts()
+    st["verified_source"] = str(source)[:80]
+    st["private_chat_id"] = uid
+    st["lifetime_access"] = True
+    DATA.setdefault("started_users", {})[str(uid)] = int(st["private_started_at"])
+    save_data(force=True)
+    await ar14_mark_remote_verified(uid, bot=bot)
+
+
+async def ar14_is_verified_once(uid: int, *, bot=None, force: bool = False) -> tuple[bool | None, str]:
+    """Authoritative lifetime verification check."""
+    uid = int(uid)
+    u = get_user(uid)
+    st = u.setdefault("activation", {})
+
+    # Fast local path: once the user has completed verification, never ask for
+    # private /start again merely because the process restarted.
+    if bool(st.get("ever_verified")) or bool(st.get("lifetime_access")) or v7_has_started(uid):
+        st["ever_verified"] = True
+        st["lifetime_access"] = True
+        st["last_verified_at"] = now_ts()
+        # Migrate legacy/local activation into Telegram's durable marker once
+        # after an upgrade or Render restart. The cache prevents repeated API
+        # writes while the process remains alive.
+        marker = AR14_PRIVATE_MARKER_CACHE.get(uid)
+        if marker is None or time.time() - marker[0] >= AR14_MARKER_TTL:
+            await ar14_mark_remote_verified(uid, bot=bot)
+        return True, "local_lifetime_marker"
+
+    # Durable Telegram-side marker survives Render file resets.
+    remote, reason = await ar14_remote_verified(uid, bot=bot, force=force)
+    if remote is True:
+        st["ever_verified"] = True
+        st["lifetime_access"] = True
+        st["private_chat_id"] = uid
+        st["last_verified_at"] = now_ts()
+        DATA.setdefault("started_users", {})[str(uid)] = now_ts()
+        save_data(force=True)
+        return True, "telegram_remote_marker"
+
+    # Final fallback: if Telegram already knows a private chat for this user,
+    # recover verification exactly as the earlier reliability layer intended.
+    try:
+        probe_bot = bot or APEX_RUNTIME_BOT
+        if probe_bot is not None:
+            chat = await probe_bot.get_chat(uid)
+            if str(getattr(chat, "type", "")).lower() == "private":
+                await ar14_record_verified(uid, bot=probe_bot, source="telegram_private_chat_probe")
+                return True, "telegram_private_chat_probe"
+    except Exception as exc:
+        print(f"ApexRival AR14 private chat recovery warning for {uid}: {exc!r}")
+
+    return False, reason
+
+
+async def ar14_group_gate(update: Update, *, allow_admin: bool = True) -> bool:
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return False
+    uid = int(user.id)
+    if allow_admin and is_admin(uid):
+        return True
+    if not v7_chat_is_group(update):
+        return True
+
+    bot = getattr(update, "bot", None) or APEX_RUNTIME_BOT
+    started, reason = await ar14_is_verified_once(uid, bot=bot, force=False)
+    if started is not True:
+        # A non-verified user gets the onboarding prompt. A user who has been
+        # verified once will never reach this branch after a successful marker.
+        now = time.time()
+        chat_id = int(getattr(getattr(update, "effective_chat", None), "id", 0) or 0)
+        key = (chat_id, uid)
+        if now - AR14_GATE_NOTICE_CACHE.get(key, 0.0) < AR14_GATE_NOTICE_TTL:
+            return False
+        AR14_GATE_NOTICE_CACHE[key] = now
+        username = await ar11_bot_username(bot)
+        private_url = ar11_private_activate_url(username)
+        rows = []
+        if private_url:
+            rows.append([ApexInlineButton("🚀 یک‌بار فعال‌سازی حساب", url=private_url, style=APEX_STYLE_SUCCESS)])
+        rows.append([ApexInlineButton("🔄 بررسی وضعیت", callback_data="REQ|CHECK", style=APEX_STYLE_PRIMARY)])
+        msg = getattr(update, "message", None)
+        query = getattr(update, "callback_query", None)
+        text = (
+            "🔐 <b>فعال‌سازی لازم است</b>\n\n"
+            "برای هر حساب فقط <b>یک‌بار</b> فعال‌سازی خصوصی انجام می‌شود.\n"
+            "بعد از تأیید موفق، این مرحله دیگر در گروه تکرار نمی‌شود.\n\n"
+            "روی «یک‌بار فعال‌سازی حساب» بزن و <code>/start</code> را در چت خصوصی اجرا کن؛ سپس برگرد همین‌جا."
+        )
+        try:
+            if query:
+                await safe_answer_query(query, "🔐 فعال‌سازی هنوز ثبت نشده است.", True)
+                await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=v5_markup(rows))
+            elif msg:
+                await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=v5_markup(rows))
+        except Exception:
+            pass
+        return False
+
+    # Lifetime verification is intentionally final. The required channel was
+    # part of the successful private activation, so do not gate every group
+    # tap/message on a repeated Telegram membership call.
+    get_group(int(getattr(update.effective_chat, "id", 0) or 0))
+    return True
+
+
+# Make every legacy caller use the lifetime verification gate.
+v7_require_started = ar14_group_gate
+
+
+async def v7_ensure_allowed(update: Update) -> bool:
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return False
+    uid = int(user.id)
+    get_user(uid, getattr(user, "first_name", None) or getattr(user, "username", None) or "کاربر")
+    if is_banned(uid) and not is_admin(uid):
+        query = getattr(update, "callback_query", None)
+        message = getattr(update, "message", None)
+        if query:
+            await safe_answer_query(query, "🚫 دسترسی شما مسدود است.", True)
+        elif message:
+            await message.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+        return False
+    return await ar14_group_gate(update)
+
+
+ensure_allowed = v7_ensure_allowed
+
+
+# Keep the AR13 deep-link /start behavior, while automatically publishing the
+# remote lifetime marker as soon as the private start has really succeeded.
+_AR14_OLD_START = v7_start
+
+
+async def v7_start(update, context):
+    await _AR14_OLD_START(update, context)
+    try:
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        if not user or not chat or str(getattr(chat, "type", "")) != "private":
+            return
+        uid = int(user.id)
+        if v7_has_started(uid):
+            bot = getattr(context, "bot", None) or APEX_RUNTIME_BOT
+            await ar14_record_verified(uid, bot=bot, source="private_start")
+    except Exception as exc:
+        print(f"ApexRival AR14 post-start marker warning: {exc!r}")
+
+
+start = v7_start
+v5_start = v7_start
+
+
+async def ar14_group_scope_background(update, context):
+    """Cheap background repair for stale command menus in the current group."""
+    try:
+        if not v7_chat_is_group(update):
+            return
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        if not chat or not user:
+            return
+        bot = getattr(context, "bot", None) or getattr(update, "bot", None) or APEX_RUNTIME_BOT
+        if bot is None:
+            return
+        await ar14_sync_group_scopes(bot, int(chat.id), int(user.id), force=False)
+    except Exception as exc:
+        # Command-menu repair is deliberately best-effort and must never break
+        # the actual game update.
+        print(f"ApexRival AR14 background command repair warning: {exc!r}")
+
+
+# Every new group interaction uses the exact five-command policy before the
+# legacy handler executes. This is what fixes old chat/member-specific scopes.
+_AR14_BASE_CREATE_LOBBY = _AR12_OLD_CREATE_LOBBY
+
+
+async def v5_create_lobby(update, context):
+    try:
+        if ar12_group_chat(update):
+            bot = getattr(context, "bot", None) or APEX_RUNTIME_BOT
+            await ar14_sync_group_scopes(bot, int(update.effective_chat.id), int(update.effective_user.id), force=True)
+    except Exception as exc:
+        print(f"ApexRival AR14 pre-lobby command repair warning: {exc!r}")
+    return await _AR14_BASE_CREATE_LOBBY(update, context)
+
+
+# Rebind the command-scope setup used by the final post_init.
+async def ar14_post_init(application):
+    await ar12_post_init(application)
+    await ar14_configure_all_command_scopes(application)
+    await ar11_bot_username(application.bot)
+
+
+def ar14_register_handlers(app):
+    ar13_register_handlers(app)
+    # Run before ordinary message handlers so a single group interaction also
+    # fixes stale command menus even when the actual command is rejected.
+    all_filter = getattr(filters, "ALL", None)
+    if all_filter is not None:
+        try:
+            app.add_handler(MessageHandler(all_filter, ar14_group_scope_background, block=False), group=-100)
+        except TypeError:
+            app.add_handler(MessageHandler(all_filter, ar14_group_scope_background), -100)
+    else:
+        # Fallback for the local smoke-test stub; PTB 22.8 exposes filters.ALL.
+        try:
+            app.add_handler(MessageHandler(filters.TEXT, ar14_group_scope_background, block=False), group=-100)
+        except TypeError:
+            app.add_handler(MessageHandler(filters.TEXT, ar14_group_scope_background), -100)
+
+
+# Final diagnostics. Keep them deterministic and cheap so Render startup fails
+# immediately if the command contract or imported scope classes drift.
+def ar14_static_self_check():
+    assert AR14_VERSION == "14.0"
+    assert len(AR14_COMMANDS) == 5
+    assert AR14_COMMAND_NAMES == ["start", "game", "profile", "rank", "help"]
+    assert ar14_commands_match(AR14_COMMANDS)
+    assert callable(ar14_is_verified_once)
+    assert callable(ar14_group_gate)
+    assert callable(ar14_sync_group_scopes)
+    assert callable(ar14_configure_all_command_scopes)
+    assert callable(ar13_group_chat)
+    for cmd in AR14_COMMANDS:
+        assert 1 <= len(str(cmd.command)) <= 32
+        assert str(cmd.command) == str(cmd.command).lower()
+        assert str(cmd.description).strip()
+    # Check lifetime activation metadata shape.
+    uid = 987654321
+    user = get_user(uid, "Smoke")
+    st = user.setdefault("activation", {})
+    st["ever_verified"] = True
+    st["lifetime_access"] = True
+    assert user["activation"]["ever_verified"] is True
+    # Every new callback remains inside Telegram's 64-byte limit.
+    for markup in (ar12_private_home_markup(0),):
+        for row in getattr(markup, "inline_keyboard", ()):
+            for button in row:
+                data = getattr(button, "callback_data", None)
+                if data is not None:
+                    assert 1 <= len(str(data).encode("utf-8")) <= 64
+    # Keep the new layer independent from the old fragile editor parser.
+    src = Path(__file__).read_text(encoding="utf-8")
+    assert "ar14_group_gate" in src
+    print(
+        "ApexRival AR14 static self-check OK | "
+        "lifetime-activation=on | telegram-marker=on | commands=5 | "
+        "group-scope-repair=on | member-scope-repair=on"
+    )
+
+
+ar14_static_self_check()
+
+
+def main_apexrival_14():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is missing")
+    _ar8_final_markup_self_check()
+    _ar11_static_self_check()
+    ar12_static_self_check()
+    ar13_static_self_check()
+    ar14_static_self_check()
+    start_health_server()
+    application = Application.builder().token(BOT_TOKEN).post_init(ar14_post_init).build()
+    ar14_register_handlers(application)
+    application.add_error_handler(ar9_error_handler)
+    print(
+        f"{BOT_NAME} {AR14_VERSION} starting | "
+        "commands=5 | lifetime-activation=on | group-scope-repair=on | lobby=stable"
+    )
+    application.run_polling(drop_pending_updates=True)
+
+
+main_apexrival_8 = main_apexrival_14
+main_apexrival_9 = main_apexrival_14
+main_apexrival_10 = main_apexrival_14
+main_apexrival_11 = main_apexrival_14
+main_apexrival_12 = main_apexrival_14
+main_apexrival_13 = main_apexrival_14
+main_apexrival_14 = main_apexrival_14
+main_v5 = main_apexrival_14
+main = main_apexrival_14
+
+if __name__ == "__main__":
+    main_apexrival_14()
+
+# ============================================================================
+# APEX RIVAL 15.0 - RELIABLE GROUP ACCESS + COMMAND MENU REPAIR
+# ---------------------------------------------------------------------------
+# Goals of this layer:
+#   1) A private /start is a one-time account activation. Group use never
+#      forces the user through the same activation loop again.
+#   2) Verification survives Render restarts as long as Telegram still knows
+#      the bot's private chat with that user. We use get_chat() as the primary
+#      durable signal and the private command scope as a secondary marker.
+#   3) /game creates the lobby through a fresh, simple path instead of the long
+#      chain of legacy wrappers that accumulated over earlier versions.
+#   4) Exactly five visible commands are published everywhere. Legacy handler
+#      aliases remain callable manually, but are not advertised by Telegram.
+#   5) Stale chat/admin/member command scopes are repaired aggressively for the
+#      current group/user, including the user's current Telegram language.
+# ============================================================================
+AR15_VERSION = "15.0"
+BOT_VERSION = ADVANCED_VERSION = AR15_VERSION
+
+AR15_COMMANDS = [
+    BotCommand("start", "شروع و فعال‌سازی حساب"),
+    BotCommand("game", "ساخت یا ورود به Lobby"),
+    BotCommand("profile", "نمایش پروفایل"),
+    BotCommand("rank", "نمایش رتبه‌بندی"),
+    BotCommand("help", "راهنما و قوانین بازی"),
+]
+AR15_COMMAND_NAMES = [c.command for c in AR15_COMMANDS]
+AR15_COMMAND_SIGNATURE = tuple((str(c.command), str(c.description)) for c in AR15_COMMANDS)
+AR15_SCOPE_CACHE: dict[tuple[int, int, str], float] = {}
+AR15_VERIFIED_CACHE: dict[int, tuple[float, str]] = {}
+AR15_NEGATIVE_CACHE: dict[int, float] = {}
+AR15_PRIVATE_MARKER_CACHE: dict[int, tuple[float, bool]] = {}
+AR15_SCOPE_TTL = 1800.0
+AR15_VERIFY_TTL = 21600.0
+AR15_NEGATIVE_TTL = 20.0
+AR15_LANGUAGE_FALLBACKS = ("fa", "en", "nl", "ar", "tr", "ru")
+
+
+def ar15_commands_match(commands) -> bool:
+    try:
+        return tuple((str(c.command), str(c.description)) for c in (commands or [])) == AR15_COMMAND_SIGNATURE
+    except Exception:
+        return False
+
+
+def ar15_user_language(update=None) -> str | None:
+    try:
+        user = getattr(update, "effective_user", None)
+        lang = str(getattr(user, "language_code", "") or "").lower().split("-")[0].strip()
+        return lang if re.fullmatch(r"[a-z]{2}", lang) else None
+    except Exception:
+        return None
+
+
+async def ar15_force_scope5(bot, scope, language_code: str | None = None, *, verify: bool = True) -> bool:
+    """Write five commands, verify, and repair once more if a stale scope remains."""
+    try:
+        await bot.set_my_commands(AR15_COMMANDS, scope=scope)
+        if language_code:
+            try:
+                await bot.set_my_commands(AR15_COMMANDS, scope=scope, language_code=language_code)
+            except Exception as lang_exc:
+                print(f"ApexRival AR15 language scope warning ({language_code}): {lang_exc!r}")
+        if not verify:
+            return True
+        got = await bot.get_my_commands(scope=scope)
+        if not ar15_commands_match(got):
+            # Retry the base scope below. A narrow language scope is audited
+            # separately so a stale language-specific list cannot survive.
+            pass
+        elif not language_code:
+            return True
+        if language_code:
+            try:
+                lang_got = await bot.get_my_commands(scope=scope, language_code=language_code)
+                if ar15_commands_match(lang_got):
+                    return True
+            except Exception as lang_read_exc:
+                print(f"ApexRival AR15 language audit warning ({language_code}): {lang_read_exc!r}")
+        elif ar15_commands_match(got):
+            return True
+        # A narrow stale scope can sometimes survive an earlier set. Remove the
+        # scope then recreate it. Telegram documents deleteMyCommands as the
+        # way to drop an override and fall back to a higher-level command list.
+        try:
+            await bot.delete_my_commands(scope=scope)
+        except Exception:
+            pass
+        await bot.set_my_commands(AR15_COMMANDS, scope=scope)
+        if language_code:
+            try:
+                await bot.set_my_commands(AR15_COMMANDS, scope=scope, language_code=language_code)
+            except Exception:
+                pass
+        got2 = await bot.get_my_commands(scope=scope)
+        base_ok = ar15_commands_match(got2)
+        if language_code:
+            try:
+                lang_got2 = await bot.get_my_commands(scope=scope, language_code=language_code)
+                return base_ok and ar15_commands_match(lang_got2)
+            except Exception:
+                return base_ok
+        return base_ok
+    except Exception as exc:
+        print(f"ApexRival AR15 command-scope repair failed ({getattr(scope, 'type', '?')}): {exc!r}")
+        return False
+
+
+async def ar15_repair_group_scopes(bot, chat_id: int, user_id: int | None = None, language_code: str | None = None, *, force: bool = False) -> None:
+    chat_id = int(chat_id)
+    uid = int(user_id or 0)
+    lang = language_code if language_code in AR15_LANGUAGE_FALLBACKS else None
+    cache_key = (chat_id, uid, lang or "")
+    now = time.time()
+    if not force and now - AR15_SCOPE_CACHE.get(cache_key, 0.0) < AR15_SCOPE_TTL:
+        return
+
+    scopes = [
+        BotCommandScopeChat(chat_id=chat_id),
+        BotCommandScopeChatAdministrators(chat_id=chat_id),
+    ]
+    if uid:
+        scopes.append(BotCommandScopeChatMember(chat_id=chat_id, user_id=uid))
+    for scope in scopes:
+        await ar15_force_scope5(bot, scope, lang, verify=True)
+    AR15_SCOPE_CACHE[cache_key] = now
+
+
+async def ar15_configure_command_scopes(application) -> None:
+    """Normalize all broad scopes to exactly five commands at startup."""
+    bot = application.bot
+    broad = [
+        BotCommandScopeDefault(),
+        BotCommandScopeAllPrivateChats(),
+        BotCommandScopeAllGroupChats(),
+        BotCommandScopeAllChatAdministrators(),
+    ]
+    for scope in broad:
+        await ar15_force_scope5(bot, scope, None, verify=True)
+        # Persian is the bot's primary UI language; also normalize a few common
+        # language scopes so a stale language-specific list cannot resurrect old
+        # commands for those clients.
+        for lang in AR15_LANGUAGE_FALLBACKS:
+            try:
+                await ar15_force_scope5(bot, scope, lang, verify=True)
+            except Exception:
+                pass
+
+    # Existing groups get their explicit chat/admin scopes repaired immediately.
+    # Member scopes are additionally repaired for users we already know took part
+    # in a game/lobby; current members are fixed on their next group interaction.
+    for raw_gid, group in list(DATA.get("groups", {}).items()):
+        try:
+            gid = int(raw_gid)
+            await ar15_repair_group_scopes(bot, gid, None, None, force=True)
+        except Exception as exc:
+            print(f"ApexRival AR15 tracked-group scope warning: {exc!r}")
+
+    for game in list(DATA.get("games", {}).values()):
+        try:
+            gid = int(game.get("chat_id", 0) or 0)
+            if not gid or gid >= 0:
+                continue
+            players = [int(x) for x in game.get("players", [])]
+            for uid in players[:50]:
+                await ar15_repair_group_scopes(bot, gid, uid, None, force=True)
+        except Exception as exc:
+            print(f"ApexRival AR15 known-player scope warning: {exc!r}")
+
+    try:
+        audit_scopes = [
+            ("default", BotCommandScopeDefault()),
+            ("private", BotCommandScopeAllPrivateChats()),
+            ("groups", BotCommandScopeAllGroupChats()),
+            ("admins", BotCommandScopeAllChatAdministrators()),
+        ]
+        counts = []
+        for name, scope in audit_scopes:
+            got = await bot.get_my_commands(scope=scope)
+            counts.append(f"{name}={len(got)}")
+        print("ApexRival AR15 command audit | " + " | ".join(counts) + " | target=5")
+    except Exception as exc:
+        print(f"ApexRival AR15 command audit warning: {exc!r}")
+
+
+async def ar15_mark_private_scope(uid: int, bot=None, language_code: str | None = None) -> None:
+    bot = bot or APEX_RUNTIME_BOT
+    if bot is None:
+        return
+    uid = int(uid)
+    ok = await ar15_force_scope5(bot, BotCommandScopeChat(chat_id=uid), language_code, verify=True)
+    AR15_PRIVATE_MARKER_CACHE[uid] = (time.time(), bool(ok))
+
+
+async def ar15_get_private_marker(uid: int, bot=None, *, force: bool = False) -> tuple[bool | None, str]:
+    uid = int(uid)
+    now = time.time()
+    cached = AR15_PRIVATE_MARKER_CACHE.get(uid)
+    if not force and cached and now - cached[0] < AR15_VERIFY_TTL:
+        return cached[1], "cached_private_scope"
+    bot = bot or APEX_RUNTIME_BOT
+    if bot is None:
+        return None, "no_runtime_bot"
+    try:
+        got = await bot.get_my_commands(scope=BotCommandScopeChat(chat_id=uid))
+        ok = ar15_commands_match(got)
+        AR15_PRIVATE_MARKER_CACHE[uid] = (now, ok)
+        return ok, "private_scope_marker" if ok else "no_private_scope_marker"
+    except Exception as exc:
+        print(f"ApexRival AR15 private marker read warning for {uid}: {exc!r}")
+        return None, "private_scope_read_error"
+
+
+async def ar15_record_lifetime_verified(uid: int, *, bot=None, source="private_start", language_code=None) -> None:
+    uid = int(uid)
+    u = get_user(uid)
+    activation = u.setdefault("activation", {})
+    first = int(activation.get("private_started_at", 0) or now_ts())
+    activation.update({
+        "version": 3,
+        "ever_verified": True,
+        "lifetime_access": True,
+        "private_chat_id": uid,
+        "private_started_at": first,
+        "last_verified_at": now_ts(),
+        "verified_source": str(source)[:80],
+    })
+    DATA.setdefault("started_users", {})[str(uid)] = first
+    save_data(force=True)
+    AR15_VERIFIED_CACHE[uid] = (time.time(), str(source))
+    AR15_NEGATIVE_CACHE.pop(uid, None)
+    await ar15_mark_private_scope(uid, bot=bot, language_code=language_code)
+
+
+async def ar15_lifetime_check(uid: int, *, bot=None, force=False) -> tuple[bool | None, str]:
+    """Return True only when a one-time activation signal exists.
+
+    Primary durable signal after a Render restart: Telegram still has the bot's
+    private chat with the user, which can be queried with getChat. This means a
+    user who really ran /start does not have to do it again after local files are
+    reset. The per-chat command scope remains a secondary remote marker.
+    """
+    uid = int(uid)
+    u = get_user(uid)
+    activation = u.setdefault("activation", {})
+    now = time.time()
+
+    if bool(activation.get("ever_verified")) or bool(activation.get("lifetime_access")) or v7_has_started(uid):
+        activation["ever_verified"] = True
+        activation["lifetime_access"] = True
+        activation["private_chat_id"] = uid
+        AR15_VERIFIED_CACHE[uid] = (now, "local_lifetime")
+        return True, "local_lifetime"
+
+    cached = AR15_VERIFIED_CACHE.get(uid)
+    if not force and cached and now - cached[0] < AR15_VERIFY_TTL:
+        return True, cached[1]
+    if not force and uid in AR15_NEGATIVE_CACHE and now - AR15_NEGATIVE_CACHE[uid] < AR15_NEGATIVE_TTL:
+        return False, "negative_cache"
+
+    bot = bot or APEX_RUNTIME_BOT
+    if bot is None:
+        return None, "no_runtime_bot"
+
+    # FIRST: ask Telegram whether the private chat exists. This is the simplest
+    # durable fact: the bot cannot get a normal private chat object for someone
+    # it has never interacted with.
+    try:
+        chat = await bot.get_chat(uid)
+        if str(getattr(chat, "type", "")).lower() == "private":
+            await ar15_record_lifetime_verified(uid, bot=bot, source="telegram_private_chat", language_code=None)
+            return True, "telegram_private_chat"
+    except Exception as exc:
+        print(f"ApexRival AR15 private-chat recovery warning for {uid}: {exc!r}")
+
+    # SECOND: read the Telegram-side activation marker if the chat-specific scope
+    # was created by an earlier successful /start.
+    marker, reason = await ar15_get_private_marker(uid, bot=bot, force=force)
+    if marker is True:
+        await ar15_record_lifetime_verified(uid, bot=bot, source="telegram_private_scope", language_code=None)
+        return True, "telegram_private_scope"
+
+    AR15_NEGATIVE_CACHE[uid] = now
+    return False, reason
+
+
+async def ar15_group_gate(update: Update, *, allow_admin: bool = True) -> bool:
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return False
+    uid = int(user.id)
+    if allow_admin and is_admin(uid):
+        return True
+    if not v7_chat_is_group(update):
+        return True
+
+    # Always repair the current user's effective command scope while we already
+    # have the update. This fixes stale 11/12-command menus after the first
+    # interaction even when the group has a narrower member-specific scope.
+    bot = getattr(update, "bot", None) or APEX_RUNTIME_BOT
+    chat = getattr(update, "effective_chat", None)
+    if bot is not None and chat is not None:
+        try:
+            await ar15_repair_group_scopes(bot, int(chat.id), uid, ar15_user_language(update), force=False)
+        except Exception as exc:
+            print(f"ApexRival AR15 live scope repair warning: {exc!r}")
+
+    verified, reason = await ar15_lifetime_check(uid, bot=bot, force=False)
+    if verified is True:
+        get_group(int(getattr(chat, "id", 0) or 0))
+        return True
+
+    msg = getattr(update, "message", None)
+    query = getattr(update, "callback_query", None)
+    username = await ar11_bot_username(bot)
+    private_url = ar11_private_activate_url(username)
+    rows = []
+    if private_url:
+        rows.append([ApexInlineButton("🚀 فعال‌سازی یک‌باره", url=private_url, style=APEX_STYLE_SUCCESS)])
+    rows.append([ApexInlineButton("🔄 بررسی دوباره", callback_data="REQ|CHECK", style=APEX_STYLE_PRIMARY)])
+    text = (
+        "🔐 <b>یک‌بار فعال‌سازی حساب</b>\n\n"
+        "برای این حساب هنوز فعال‌سازی خصوصی ثبت نشده است.\n"
+        "<b>این مرحله فقط یک‌بار انجام می‌شود.</b> بعد از اینکه /start را در چت خصوصی ApexRival اجرا کردی، لازم نیست دوباره انجامش بدهی؛ حتی بعد از ری‌استارت سرویس.\n\n"
+        "بعد از فعال‌سازی، همین‌جا برگرد و <b>/game</b> را بزن."
+    )
+    try:
+        if query:
+            await safe_answer_query(query, "🔐 این حساب هنوز فعال نشده است.", True)
+            await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=v5_markup(rows))
+        elif msg:
+            await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=v5_markup(rows))
+    except Exception:
+        pass
+    return False
+
+
+# Every legacy gate now delegates to the one-time lifetime gate.
+v7_require_started = ar15_group_gate
+
+
+async def ar15_ensure_allowed(update: Update) -> bool:
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return False
+    uid = int(user.id)
+    get_user(uid, getattr(user, "first_name", None) or getattr(user, "username", None) or "کاربر")
+    if is_banned(uid) and not is_admin(uid):
+        query = getattr(update, "callback_query", None)
+        message = getattr(update, "message", None)
+        if query:
+            await safe_answer_query(query, "🚫 دسترسی شما مسدود است.", True)
+        elif message:
+            await message.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+        return False
+    return await ar15_group_gate(update)
+
+
+ensure_allowed = ar15_ensure_allowed
+
+
+async def ar15_start(update, context):
+    """Stable /start wrapper: group /start never re-prompts activated users."""
+    user = getattr(update, "effective_user", None)
+    msg = getattr(update, "message", None)
+    if not user or not msg:
+        return
+    uid = int(user.id)
+    bot = getattr(context, "bot", None) or APEX_RUNTIME_BOT
+
+    if not ar12_private_only(update):
+        # If the user really activated previously, do NOT show the old
+        # "activation from group is impossible" loop. Recover remotely.
+        verified, _ = await ar15_lifetime_check(uid, bot=bot, force=False)
+        if verified is True:
+            await ar15_repair_group_scopes(bot, int(update.effective_chat.id), uid, ar15_user_language(update), force=True)
+            await ar12_remove_legacy_group_keyboard(update)
+            await msg.reply_text(
+                "✅ <b>حساب تو قبلاً فعال شده است.</b>\n\n"
+                "دیگر نیازی به /start خصوصی نداری. برای ساخت یا ورود به Lobby، <b>/game</b> را همین‌جا بزن.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        await ar12_remove_legacy_group_keyboard(update)
+        username = await ar11_bot_username(bot)
+        private_url = ar11_private_activate_url(username)
+        rows = []
+        if private_url:
+            rows.append([ApexInlineButton("🚀 فعال‌سازی یک‌باره", url=private_url, style=APEX_STYLE_SUCCESS)])
+        rows.append([ApexInlineButton("🔄 بررسی دوباره", callback_data="REQ|CHECK", style=APEX_STYLE_PRIMARY)])
+        await msg.reply_text(
+            "🔐 <b>این حساب هنوز فعال نشده است.</b>\n\n"
+            "فقط یک‌بار چت خصوصی ApexRival را باز کن و /start را اجرا کن. بعد از آن، این مرحله برای همیشه برای حسابت تمام می‌شود.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup(rows),
+        )
+        return
+
+    # Private /start uses the mature channel check. Once it succeeds, AR15
+    # records the lifetime marker and the exact-five command scope remotely.
+    if is_banned(uid) and not is_admin(uid):
+        await msg.reply_text("🚫 دسترسی این حساب به ApexRival مسدود است.", reply_markup=ReplyKeyboardRemove())
+        return
+
+    args = getattr(context, "args", None) or []
+    source = "private_start"
+    if args:
+        source = f"start:{str(args[0])[:40]}"
+
+    if not is_admin(uid):
+        membership, _ = await ar8_channel_membership(uid, force=True, bot=bot)
+        if membership is not True:
+            text = ar8_prereq_text("need_channel") if membership is False else ar8_prereq_text("check_error")
+            await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=await ar11_gate_markup(bot))
+            return
+
+    v7_mark_started(uid, source=source)
+    AR11_PRIVATE_CACHE[uid] = (time.time(), True, "direct_start")
+    st = ar11_activation_state(uid)
+    st["source"] = source
+    st["last_verified_at"] = now_ts()
+    await ar15_record_lifetime_verified(uid, bot=bot, source=source, language_code=ar15_user_language(update))
+    u = get_user(uid, user.first_name or user.username or "بازیکن")
+    await msg.reply_text(
+        ar12_private_home_text(uid) + "\n\n✅ <b>حساب خصوصی با موفقیت فعال شد.</b>\n🔐 <b>تأیید بعدی لازم نیست.</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ar12_private_home_markup(uid),
+    )
+
+
+start = v5_start = v7_start = ar15_start
+
+
+async def ar15_create_lobby(update, context):
+    """Fresh, deterministic group /game implementation."""
+    user = getattr(update, "effective_user", None)
+    chat = getattr(update, "effective_chat", None)
+    msg = getattr(update, "message", None)
+    if not user or not chat or not msg:
+        return
+    uid = int(user.id)
+    bot = getattr(context, "bot", None) or APEX_RUNTIME_BOT
+
+    if not v7_chat_is_group(update):
+        await msg.reply_text("🎮 <b>/game مخصوص گروه است.</b> برای منوی شخصی، /start را در چت خصوصی بزن.", parse_mode=ParseMode.HTML)
+        return
+
+    if not await ar15_ensure_allowed(update):
+        return
+    if is_banned(uid) and not is_admin(uid):
+        await msg.reply_text("🚫 دسترسی این حساب به بازی محدود شده است.")
+        return
+
+    try:
+        await ar12_remove_legacy_group_keyboard(update)
+    except Exception:
+        pass
+
+    group = get_group(int(chat.id))
+    if not group.get("enabled", True) and not is_admin(uid):
+        await msg.reply_text("🚫 ApexRival در این گروه خاموش است.")
+        return
+
+    current = active_game(int(chat.id))
+    if current:
+        current["_viewer_id"] = uid
+        if current.get("status") == "lobby":
+            await msg.reply_text(ar13_lobby_text(current), parse_mode=ParseMode.HTML, reply_markup=ar13_lobby_markup(current))
+        else:
+            await msg.reply_text(v7_turn_card(current), parse_mode=ParseMode.HTML, reply_markup=v7_turn_markup(current, int(current.get("current_questioner") or current.get("leader_id") or uid)))
+        return
+
+    name = getattr(user, "first_name", None) or getattr(user, "username", None) or "سرگروه"
+    game = make_game(int(chat.id), uid, name)
+    game["ready"] = {str(uid): True}
+    game["phase"] = "lobby"
+    game["status"] = "lobby"
+    game["_viewer_id"] = uid
+    game["created_at"] = now_ts()
+    game["invite_token"] = ar13_lobby_invite_token(game)
+    v5_touch(game)
+    save_data(force=True)
+    await msg.reply_text(ar13_lobby_text(game), parse_mode=ParseMode.HTML, reply_markup=ar13_lobby_markup(game))
+
+
+v5_create_lobby = ar15_create_lobby
+
+
+async def ar15_group_scope_background(update, context):
+    try:
+        if not v7_chat_is_group(update):
+            return
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        bot = getattr(context, "bot", None) or getattr(update, "bot", None) or APEX_RUNTIME_BOT
+        if not chat or not user or bot is None:
+            return
+        await ar15_repair_group_scopes(bot, int(chat.id), int(user.id), ar15_user_language(update), force=True)
+    except Exception as exc:
+        print(f"ApexRival AR15 background command repair warning: {exc!r}")
+
+
+# A final callback bridge keeps both old V5 cancel buttons and new A13 cancel
+# buttons working, while applying the one-time group gate first.
+async def ar15_callback_dispatch(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if not v7_chat_is_group(update):
+        return
+    if not await ar15_group_gate(update):
+        return
+
+    if data.startswith("A13|L|"):
+        # Let the mature A13 lobby controller handle cancel/ready/lock/kick/host.
+        await ar13_handle_callback(update, context)
+        return
+
+    if data.startswith("V5|L|"):
+        # Existing V5 buttons route through the hardened v5_lobby_action bridge.
+        try:
+            parts = data.split("|")
+            await v5_lobby_action(query, context, parts)
+        except Exception as exc:
+            audit("ar15_v5_lobby_callback_error", int(query.from_user.id), getattr(query.message, "chat_id", None), repr(exc)[:500])
+            await safe_answer_query(query, "⚠️ عملیات Lobby انجام نشد. دوباره امتحان کن.", True)
+        return
+
+
+async def ar15_callback_check(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query:
+        return
+    data = str(getattr(query, "data", "") or "")
+    if not data.startswith("REQ|"):
+        return
+    uid = int(getattr(getattr(query, "from_user", None), "id", 0) or 0)
+    bot = getattr(context, "bot", None) or APEX_RUNTIME_BOT
+    verified, reason = await ar15_lifetime_check(uid, bot=bot, force=True)
+    if verified is True:
+        await safe_answer_query(query, "✅ حساب قبلاً فعال شده؛ تکرار /start لازم نیست.")
+        try:
+            if v7_chat_is_group(update):
+                await ar15_repair_group_scopes(bot, int(query.message.chat_id), uid, None, force=True)
+                await safe_edit_query(query, "✅ <b>حسابت فعال است.</b>\n\nحالا /game را در همین گروه بزن.", v5_markup([[v5_button("🎮 ساخت Lobby", "V5|GAME")]]))
+            else:
+                await safe_edit_query(query, ar12_private_home_text(uid), ar12_private_home_markup(uid))
+        except Exception:
+            pass
+        return
+    await safe_answer_query(query, "🔐 هنوز فعال‌سازی خصوصی برای این حساب ثبت نشده است.", True)
+
+
+async def ar15_post_init(application):
+    try:
+        await ar12_post_init(application)
+    except Exception as exc:
+        print(f"ApexRival AR15 legacy post-init warning: {exc!r}")
+    await ar15_configure_command_scopes(application)
+    await ar11_bot_username(application.bot)
+
+
+def ar15_register_handlers(app):
+    # Re-register command handlers against the FINAL function objects.
+    app.add_handler(CommandHandler("start", ar15_start))
+    app.add_handler(CommandHandler("game", ar15_create_lobby))
+    app.add_handler(CommandHandler("profile", v5_profile_message))
+    app.add_handler(CommandHandler("rank", v5_rank_message))
+    app.add_handler(CommandHandler("help", v5_help_message))
+
+    # Hidden compatibility commands remain callable manually without appearing
+    # in Telegram's five-command suggestion menu.
+    app.add_handler(CommandHandler("verify", ar8_verify_cmd))
+    app.add_handler(CommandHandler("menu", v5_menu))
+    app.add_handler(CommandHandler("shop", shop_cmd))
+    app.add_handler(CommandHandler("achievements", achievements_cmd))
+    app.add_handler(CommandHandler("id", id_cmd))
+    app.add_handler(CommandHandler("admin", ar12_admin_entry))
+    app.add_handler(CommandHandler("adult", adult_cmd))
+    app.add_handler(CommandHandler("bazi", ar15_create_lobby))
+    app.add_handler(CommandHandler("man", v5_menu))
+    app.add_handler(CommandHandler("rahnama", v5_help_message))
+
+    # Check activation buttons before old callback routers.
+    app.add_handler(CallbackQueryHandler(ar15_callback_check, pattern=r"^REQ\|"), group=-60)
+    app.add_handler(CallbackQueryHandler(ar15_callback_dispatch, pattern=r"^(A13\|L\||V5\|L\|)"), group=-50)
+
+    # Generic handlers from the mature bot remain available for the rest of the UI.
+    app.add_handler(CallbackQueryHandler(ar12_callback_dispatch, pattern=r"^(ADM\||V5\||V7\|)"))
+    app.add_handler(CallbackQueryHandler(ar13_handle_callback, pattern=r"^A13\|"))
+    app.add_handler(CallbackQueryHandler(v7_callback, pattern=r"^V7\|"))
+
+    # Live scope repair for the current group/member. It never blocks gameplay.
+    try:
+        app.add_handler(MessageHandler(filters.ALL, ar15_group_scope_background, block=False), group=-100)
+    except Exception:
+        try:
+            app.add_handler(MessageHandler(filters.TEXT, ar15_group_scope_background, block=False), group=-100)
+        except Exception:
+            pass
+
+    # Preserve the mature text router for non-command messages.
+    try:
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ar12_text_router))
+    except Exception:
+        pass
+
+
+def ar15_static_self_check():
+    assert AR15_VERSION == "15.0"
+    assert len(AR15_COMMANDS) == 5
+    assert AR15_COMMAND_NAMES == ["start", "game", "profile", "rank", "help"]
+    assert ar15_commands_match(AR15_COMMANDS)
+    assert callable(ar15_start)
+    assert callable(ar15_create_lobby)
+    assert callable(ar15_group_gate)
+    assert callable(ar15_configure_command_scopes)
+    assert callable(ar15_lifetime_check)
+    for c in AR15_COMMANDS:
+        assert 1 <= len(str(c.command)) <= 32
+        assert str(c.command) == str(c.command).lower()
+        assert all(ch.isascii() and (ch.islower() or ch.isdigit() or ch == "_") for ch in str(c.command))
+    for sample in (
+        "A13|L|C|123456",
+        "A13|L|CY|123456",
+        "V5|L|J|123456",
+        "REQ|CHECK",
+    ):
+        assert 1 <= len(sample.encode("utf-8")) <= 64
+    src = Path(__file__).read_text(encoding="utf-8")
+    assert "ar15_lifetime_check" in src
+    assert "ar15_create_lobby" in src
+    assert "ar15_force_scope5" in src
+    print(
+        "ApexRival AR15 static self-check OK | "
+        "lifetime-verification=on | direct-chat-recovery=on | commands=5 | "
+        "fresh-lobby=on | scoped-repair=on"
+    )
+
+
+ar15_static_self_check()
+
+
+def main_apexrival_15():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is missing")
+    _ar8_final_markup_self_check()
+    _ar11_static_self_check()
+    ar12_static_self_check()
+    ar13_static_self_check()
+    ar14_static_self_check()
+    ar15_static_self_check()
+    start_health_server()
+    application = Application.builder().token(BOT_TOKEN).post_init(ar15_post_init).build()
+    ar15_register_handlers(application)
+    application.add_error_handler(ar9_error_handler)
+    print(
+        f"{BOT_NAME} {AR15_VERSION} starting | commands=5 | "
+        "lifetime-verification=on | fresh-lobby=on | scope-repair=on"
+    )
+    application.run_polling(drop_pending_updates=True)
+
+
+main_apexrival_8 = main_apexrival_15
+main_apexrival_9 = main_apexrival_15
+main_apexrival_10 = main_apexrival_15
+main_apexrival_11 = main_apexrival_15
+main_apexrival_12 = main_apexrival_15
+main_apexrival_13 = main_apexrival_15
+main_apexrival_14 = main_apexrival_15
+main_apexrival_15 = main_apexrival_15
+main_v5 = main_apexrival_15
+main = main_apexrival_15
+
+if __name__ == "__main__":
+    main_apexrival_15()
