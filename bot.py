@@ -13245,10 +13245,666 @@ def main_apexrival_9():
     application.run_polling(drop_pending_updates=True)
 
 
-main_apexrival_8 = main_apexrival_9
-main_apexrival_9 = main_apexrival_9
-main_v5 = main_apexrival_9
-main = main_apexrival_9
 
-if __name__ == '__main__':
-    main_apexrival_9()
+# ============================================================================
+# ApexRival 10.0 — Expanded Super Admin Suite
+# ----------------------------------------------------------------------------
+# AR9 remains the compatibility layer. AR10 adds:
+#   • hard user deletion with confirmation and reference cleanup
+#   • richer user cards, activity, games, export, access and inventory tools
+#   • sorting/filtering/search in the user directory
+#   • safer pending-input handling so reply-keyboard buttons cannot be parsed
+#     as values from a previous unfinished edit (fixes the observed unpacking
+#     error: "not enough values to unpack (expected 2, got 1)")
+#   • expanded dashboard, system tools and operator UX
+#   • Back + Home navigation only in the admin suite; no Close button
+# ============================================================================
+
+AR10_VERSION = "10.0"
+AR10_PREFIX = "A10"
+AR10_PAGE_SIZE = 6
+
+
+def ar10_data(*parts: object) -> str:
+    data = AR10_PREFIX + "|" + "|".join(str(x) for x in parts)
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"AR10 callback too long: {data}")
+    return data
+
+
+def ar10_button(label: str, *parts: object) -> InlineKeyboardButton:
+    return v5_button(label, ar10_data(*parts))
+
+
+def ar10_nav(back_parts=("HOME",), refresh_parts=None):
+    row = [ar10_button("🔙 بازگشت", *back_parts), ar10_button("⌂ خانه", "HOME")]
+    if refresh_parts:
+        row.insert(1, ar10_button("↻", *refresh_parts))
+    return [row]
+
+
+def ar10_user_obj(uid: int):
+    return DATA.get("users", {}).get(str(int(uid)))
+
+
+def ar10_user_exists(uid: int) -> bool:
+    return ar10_user_obj(uid) is not None
+
+
+def ar10_user_label(uid: int) -> str:
+    u = ar10_user_obj(uid) or {}
+    name = str(u.get("name") or "کاربر").strip() or "کاربر"
+    return name[:24]
+
+
+def ar10_user_created(uid: int) -> int:
+    try:
+        return int((ar10_user_obj(uid) or {}).get("created_at", 0) or 0)
+    except Exception:
+        return 0
+
+
+def ar10_user_last_seen(uid: int) -> int:
+    # Different generations of the game used different activity keys.
+    u = ar10_user_obj(uid) or {}
+    for key in ("last_seen", "updated_at", "last_active", "created_at"):
+        try:
+            value = int(u.get(key, 0) or 0)
+        except Exception:
+            value = 0
+        if value:
+            return value
+    return 0
+
+
+def ar10_user_sort_items(sort_key="xp"):
+    users = [(int(k), v) for k, v in DATA.get("users", {}).items() if str(k).lstrip("-").isdigit()]
+    if sort_key == "coins":
+        return sorted(users, key=lambda kv: (int(kv[1].get("coins", 0)), int(kv[1].get("xp", 0))), reverse=True)
+    if sort_key == "wins":
+        return sorted(users, key=lambda kv: (int(kv[1].get("wins", 0)), int(kv[1].get("xp", 0))), reverse=True)
+    if sort_key == "new":
+        return sorted(users, key=lambda kv: ar10_user_created(kv[0]), reverse=True)
+    if sort_key == "active":
+        return sorted(users, key=lambda kv: ar10_user_last_seen(kv[0]), reverse=True)
+    return sorted(users, key=lambda kv: (int(kv[1].get("xp", 0)), int(kv[1].get("level", 1))), reverse=True)
+
+
+async def ar10_admin_home(query):
+    users = DATA.get("users", {})
+    groups = DATA.get("groups", {})
+    games = DATA.get("games", {})
+    active = sum(1 for g in games.values() if g.get("status") == "active")
+    lobbies = sum(1 for g in games.values() if g.get("status") == "lobby")
+    banned = sum(1 for u in users.values() if u.get("banned"))
+    pending = len([x for x in AR9_FLOW.keys() if is_admin(int(x))])
+    data_path = Path(DATA_FILE)
+    data_size = data_path.stat().st_size if data_path.exists() else 0
+    body = ar9_card(
+        "⚡ ApexRival Super Admin 10.0",
+        f"👥 کاربران: <b>{ar9_num(len(users))}</b>  ·  🚫 محدودشده: <b>{ar9_num(banned)}</b>",
+        f"🌐 گروه‌ها: <b>{ar9_num(len(groups))}</b>  ·  🎮 فعال: <b>{ar9_num(active)}</b>  ·  🟡 Lobby: <b>{ar9_num(lobbies)}</b>",
+        f"⭐ XP کل: <b>{ar9_num(sum(int(u.get('xp', 0)) for u in users.values()))}</b>  ·  💰 سکه: <b>{ar9_num(sum(int(u.get('coins', 0)) for u in users.values()))}</b>",
+        f"🧠 ورودی در انتظار: <b>{pending}</b>  ·  💾 داده: <b>{ar9_num(data_size)}</b> bytes",
+        f"📢 کانال: <code>{escape(REQUIRED_CHANNEL)}</code>",
+    )
+    rows = [
+        [ar10_button("📊 داشبورد زنده", "D"), ar10_button("🔎 جست‌وجوی سریع", "SEARCH")],
+        [ar10_button("👥 مرکز کاربران", "U"), ar10_button("🌐 مرکز گروه‌ها", "G")],
+        [ar10_button("🎮 مرکز بازی‌ها", "P"), ar10_button("📝 مرکز محتوا", "C")],
+        [ar10_button("🛒 اقتصاد", "E"), ar10_button("⚙️ تنظیمات", "T")],
+        [ar10_button("🛡 امنیت", "S"), ar10_button("💾 بکاپ", "B")],
+        [ar10_button("📜 لاگ‌ها", "L"), ar10_button("🧰 ابزارها", "X")],
+        [ar10_button("🩺 Health", "HEALTH"), ar10_button("ℹ️ راهنما", "H")],
+        [ar10_button("ℹ️ راهنما", "H")],
+    ]
+    await safe_edit_query(query, body, v5_markup(rows))
+
+
+async def ar10_home_message(update, context):
+    uid = int(update.effective_user.id) if update.effective_user else 0
+    if not is_admin(uid):
+        if update.message:
+            await update.message.reply_text("🚫 فقط Super Admin.")
+        return
+    text = ar9_card(
+        "⚡ ApexRival Super Admin 10.0",
+        "یک کنترل‌پنل کاملاً بصری برای مدیریت مستقیم داده، کاربران، گروه‌ها، بازی‌ها، محتوا و اقتصاد.",
+        "✅ ویرایش‌ها از داخل همان بخش انجام می‌شوند.",
+        "🔙 بازگشت به صفحه قبل · ⌂ خانه به داشبورد اصلی.",
+        "🗑 حذف کاربر و عملیات مخرب قبل از اجرا تأیید می‌شوند.",
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=v5_markup([
+        [ar10_button("🚀 باز کردن مرکز مدیریت", "HOME")],
+        [ar10_button("👥 مرکز کاربران", "U"), ar10_button("🧰 ابزارها", "X")],
+    ]))
+
+
+AR10_USER_FIELDS = [
+    ("name", "👤 نام", "text"),
+    ("custom_title", "🏷 عنوان سفارشی", "text"),
+    ("xp", "⭐ XP", "int"),
+    ("coins", "💰 سکه", "int"),
+    ("level", "🏅 Level", "int"),
+    ("wins", "🏆 برد", "int"),
+    ("losses", "☠️ باخت", "int"),
+    ("games", "🎮 بازی", "int"),
+    ("streak", "🔥 استریک", "int"),
+    ("best_streak", "📈 بهترین استریک", "int"),
+    ("duels", "⚔️ دوئل", "int"),
+    ("votes", "🗳 رأی", "int"),
+    ("missions", "🤫 مأموریت", "int"),
+    ("boss", "👑 Boss", "int"),
+    ("adult_ok", "🔞 تأیید بالغ", "bool"),
+    ("banned", "🚫 محدودیت", "bool"),
+]
+
+
+def ar10_user_summary(uid: int):
+    u = ar10_user_obj(uid) or {}
+    created = ar10_user_created(uid)
+    created_text = datetime.fromtimestamp(created, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if created else "—"
+    last = ar10_user_last_seen(uid)
+    last_text = datetime.fromtimestamp(last, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if last else "—"
+    inv = u.get("inventory", {}) if isinstance(u.get("inventory", {}), dict) else {}
+    return ar9_card(
+        "👤 کارت کاربر",
+        f"<b>{escape(str(u.get('name') or 'کاربر'))}</b>  ·  ID: <code>{uid}</code>",
+        f"🏅 Level <b>{ar9_num(u.get('level', 1))}</b>  ·  ⭐ XP <b>{ar9_num(u.get('xp', 0))}</b>  ·  💰 <b>{ar9_num(u.get('coins', 0))}</b>",
+        f"🏆 برد <b>{ar9_num(u.get('wins', 0))}</b>  ·  ☠️ باخت <b>{ar9_num(u.get('losses', 0))}</b>  ·  🎮 <b>{ar9_num(u.get('games', 0))}</b>",
+        f"🔥 استریک <b>{ar9_num(u.get('streak', 0))}</b>  ·  📈 رکورد <b>{ar9_num(u.get('best_streak', 0))}</b>",
+        f"🔐 وضعیت: {'🚫 محدود' if u.get('banned') else '🟢 فعال'}  ·  🔞 {'✅' if u.get('adult_ok') else '❌'}",
+        f"📅 ساخت: <code>{created_text}</code>",
+        f"🕒 فعالیت: <code>{last_text}</code>",
+        f"🎒 آیتم‌ها: <b>{ar9_num(sum(int(v) for v in inv.values() if str(v).lstrip('-').isdigit()))}</b>",
+    )
+
+
+async def ar10_user_center(query, sort_key="xp", page=0, filter_key="all"):
+    users = ar10_user_sort_items(sort_key)
+    if filter_key == "banned":
+        users = [(uid, u) for uid, u in users if u.get("banned")]
+    elif filter_key == "adult":
+        users = [(uid, u) for uid, u in users if u.get("adult_ok")]
+    elif filter_key == "new":
+        users = users[:50]
+    page = max(0, int(page)); start = page * AR10_PAGE_SIZE; chunk = users[start:start + AR10_PAGE_SIZE]
+    lines = [
+        f"{start+i+1:02d}. <b>{escape(str(u.get('name') or 'کاربر'))}</b> · ID <code>{uid}</code> · ⭐ {ar9_num(u.get('xp', 0))} · 💰 {ar9_num(u.get('coins', 0))} {'🚫' if u.get('banned') else '🟢'}"
+        for i, (uid, u) in enumerate(chunk)
+    ]
+    rows = [[ar10_button(f"👤 {str(u.get('name') or 'کاربر')[:18]}", "UV", uid)] for uid, u in chunk]
+    nav = []
+    if start > 0:
+        nav.append(ar10_button("◀️", "U", sort_key, page - 1, filter_key))
+    if start + AR10_PAGE_SIZE < len(users):
+        nav.append(ar10_button("▶️", "U", sort_key, page + 1, filter_key))
+    if nav:
+        rows.append(nav)
+    rows += [
+        [ar10_button("⭐ XP", "U", "xp", 0, filter_key), ar10_button("💰 سکه", "U", "coins", 0, filter_key), ar10_button("🏆 برد", "U", "wins", 0, filter_key)],
+        [ar10_button("🆕 جدید", "U", "new", 0, filter_key), ar10_button("🕒 فعال", "U", "active", 0, filter_key)],
+        [ar10_button("🟢 همه", "U", sort_key, 0, "all"), ar10_button("🚫 محدود", "U", sort_key, 0, "banned"), ar10_button("🔞 +18", "U", sort_key, 0, "adult")],
+        [ar10_button("🔎 جست‌وجو", "USEARCH"), ar10_button("➕ افزودن", "UADD")],
+    ]
+    await ar10_render(
+        query,
+        "👥 مرکز کاربران",
+        ar9_card("User Directory", *(lines or ["لیست خالی است."]), f"مرتب‌سازی: <b>{sort_key}</b> · فیلتر: <b>{filter_key}</b> · کل: <b>{len(users)}</b>"),
+        rows,
+        back=("HOME",),
+        refresh=("U", sort_key, page, filter_key),
+    )
+
+
+async def ar10_render_user(query, uid: int, tab="HOME"):
+    if not ar10_user_exists(uid):
+        await safe_answer_query(query, "❌ کاربر پیدا نشد یا حذف شده است.", True)
+        return
+    u = ar10_user_obj(uid)
+    body = ar10_user_summary(uid)
+    rows = []
+    if tab == "HOME":
+        rows = [
+            [ar10_button("✏️ ویرایش کامل", "UV", uid, "EDIT"), ar10_button("➕ XP", "UADJ", uid, "xp")],
+            [ar10_button("💰 +سکه", "UADJ", uid, "coin"), ar10_button("🎒 موجودی", "UV", uid, "INV")],
+            [ar10_button("📊 آمار جزئی", "UV", uid, "STAT"), ar10_button("🏆 دستاوردها", "UV", uid, "ACH")],
+            [ar10_button("🛡 دسترسی", "UV", uid, "ACCESS"), ar10_button("📜 فعالیت", "UV", uid, "ACT")],
+            [ar10_button("🎮 بازی‌های کاربر", "UV", uid, "GAMES"), ar10_button("🧹 حذف از بازی‌ها", "UREMOVE", uid)],
+            [ar10_button("📤 مشاهده JSON", "UEXPORT", uid), ar10_button("♻️ ریست کامل", "URESET", uid)],
+            [ar10_button("🚫/🟢 محدودیت", "UBAN", uid), ar10_button("🗑 حذف دائمی", "UDEL", uid)],
+        ]
+    elif tab == "EDIT":
+        rows = []
+        for key, label, kind in AR10_USER_FIELDS:
+            value = u.get(key)
+            if kind == "bool":
+                rows.append([ar10_button(f"{label}: {'🟢' if value else '🔴'}", "UFTOGGLE", uid, key)])
+            else:
+                shown = str(value if value is not None else "—")[:22]
+                rows.append([ar10_button(f"{label} = {shown}", "UFIELD", uid, key)])
+    elif tab == "INV":
+        inv = u.setdefault("inventory", {})
+        for key, item in SHOP.items():
+            count = int(inv.get(key, 0) or 0)
+            rows.append([ar10_button(f"{str(item.get('name', key))[:22]} ×{count}", "UITEM", uid, key)])
+        rows.append([ar10_button("🧾 تغییر دقیق key=value", "UMITEM", uid)])
+        rows.append([ar10_button("🧹 صفرکردن همه آیتم‌ها", "UCLEARINV", uid)])
+    elif tab == "STAT":
+        stats = u.setdefault("stats", {})
+        for key, value in stats.items():
+            rows.append([ar10_button(f"📊 {key}: {value}", "USTAT", uid, key)])
+        rows.append([ar10_button("➕ آمار جدید", "UADDSTAT", uid)])
+    elif tab == "ACH":
+        owned = set(u.get("achievements", []))
+        for key, (title, desc) in ACHIEVEMENTS.items():
+            rows.append([ar10_button(f"{'✅' if key in owned else '⬜'} {str(title)[:30]}", "UACH", uid, key)])
+    elif tab == "ACCESS":
+        membership = await ar8_channel_membership(uid, force=True)
+        member_text = "🟢 عضو" if membership[0] is True else "🔴 غیرعضو" if membership[0] is False else "🟡 نامشخص"
+        body += "\n\n" + ar9_card("🛡 Access Control", f"📢 کانال: {member_text}", f"🔒 Start Gate: {'🟢' if v7_has_started(uid) else '🔴'}", f"🔞 adult_ok: {'🟢' if u.get('adult_ok') else '🔴'}", f"🚫 banned: {'🟢' if u.get('banned') else '🔴'}")
+        rows = [
+            [ar10_button("🔞 تغییر تأیید ۱۸+", "UFTOGGLE", uid, "adult_ok")],
+            [ar10_button("🚫/🟢 محدودیت", "UBAN", uid), ar10_button("♻️ پاک‌کردن کش", "UCACHE", uid)],
+            [ar10_button("✅ ثبت Start Gate", "UMARK", uid), ar10_button("❌ حذف Start Gate", "UUNMARK", uid)],
+        ]
+    elif tab == "ACT":
+        entries = []
+        target = str(uid)
+        for e in reversed(DATA.get("audit", [])):
+            actor = str(e.get("actor", "")); detail = str(e.get("detail", ""))
+            if actor == target or target in detail:
+                entries.append(e)
+            if len(entries) >= 12:
+                break
+        lines = []
+        for e in entries:
+            ts = int(e.get("ts", 0) or 0)
+            stamp = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%m-%d %H:%M") if ts else "--"
+            lines.append(f"<code>{stamp}</code> · {escape(str(e.get('action', '-')))} · {escape(str(e.get('detail', '-'))[:100])}")
+        body += "\n\n" + ar9_card("📜 فعالیت", *(lines or ["فعالیتی در لاگ پیدا نشد."]))
+    elif tab == "GAMES":
+        items = []
+        for gid, g in DATA.get("games", {}).items():
+            if uid in {int(x) for x in g.get("players", []) if str(x).lstrip('-').isdigit()}: items.append((str(gid), g))
+        lines = [f"• <code>{escape(gid[:18])}</code> · {escape(str(g.get('status', '-')))} · chat <code>{g.get('chat_id', '-')}</code>" for gid, g in items[-15:]]
+        body += "\n\n" + ar9_card("🎮 بازی‌های کاربر", *(lines or ["کاربر در بازی ذخیره‌شده‌ای نیست."]))
+        for gid, g in items[-10:][::-1]:
+            rows.append([ar10_button(f"🎮 {gid[:10]}", "PVGAME", gid[:20])])
+    await ar10_render(query, "👤 مدیریت کاربر", body, rows, back=("U", "HOME"))
+
+
+async def ar10_render(query, title, body, rows, back=("HOME",), refresh=None):
+    nav = ar10_nav(back, refresh)
+    all_rows = list(rows) + nav
+    await safe_edit_query(query, f"<b>{escape(title)}</b>\n\n{body}", v5_markup(all_rows))
+
+
+def ar10_delete_user(uid: int, actor: int):
+    key = str(int(uid))
+    users = DATA.setdefault("users", {})
+    u = users.get(key)
+    if not u:
+        return False, "کاربر پیدا نشد."
+    name = str(u.get("name") or "کاربر")
+    # Remove from games without trusting any one generation's game schema.
+    for g in DATA.get("games", {}).values():
+        try:
+            g["players"] = [x for x in g.get("players", []) if int(x) != int(uid)]
+        except Exception:
+            pass
+        for container_key in ("names", "ready", "round_scores", "votes", "pending_penalties"):
+            container = g.get(container_key)
+            if isinstance(container, dict):
+                container.pop(key, None)
+        if isinstance(g.get("achievements"), dict):
+            g["achievements"].pop(key, None)
+        if int(g.get("leader_id", 0) or 0) == int(uid):
+            players = g.get("players", [])
+            if players:
+                new_leader = int(players[0])
+                g["leader_id"] = new_leader
+                g.setdefault("names", {})[str(new_leader)] = get_user(new_leader).get("name", "بازیکن")
+            else:
+                g["status"] = "finished"
+                g["phase"] = "ended"
+                g["reply_prompt"] = None
+        # Defensive cleanup: even if an older game record lacks leader_id, a
+        # now-empty active/lobby game must never remain a ghost session.
+        if not g.get("players") and g.get("status") in ("active", "lobby"):
+            g["status"] = "finished"
+            g["phase"] = "ended"
+            g["reply_prompt"] = None
+        prompt = g.get("reply_prompt")
+        if isinstance(prompt, dict) and (int(prompt.get("target_uid", -1) or -1) == int(uid) or int(prompt.get("questioner_uid", -1) or -1) == int(uid)):
+            g["reply_prompt"] = None
+    for g in DATA.get("groups", {}).values():
+        for field in ("players", "members"):
+            if isinstance(g.get(field), list):
+                g[field] = [x for x in g[field] if int(x) != int(uid)]
+    users.pop(key, None)
+    APEX_MEMBERSHIP_CACHE.pop(int(uid), None)
+    V5_FLOW.pop(int(actor), None)
+    AR9_FLOW.pop(int(actor), None)
+    deleted = DATA.setdefault("deleted_users", [])
+    deleted.append({"uid": int(uid), "name": name, "ts": now_ts(), "actor": int(actor)})
+    DATA["deleted_users"] = deleted[-100:]
+    audit("ar10_user_delete", int(actor), None, f"uid={uid};name={name}")
+    save_data(force=True)
+    return True, name
+
+
+async def ar10_quick_search_page(query, text=None):
+    if text is None:
+        await safe_edit_query(query, ar9_card("🔎 جست‌وجوی سریع", "نام، User ID، Chat ID یا بخشی از عنوان بازی را در پیام بعدی بفرست."), v5_markup(ar10_nav(("HOME",))))
+        return
+    q = str(text).strip().lower()
+    user_hits = [(uid, u) for uid, u in DATA.get("users", {}).items() if q in str(uid).lower() or q in str(u.get("name", "")).lower()]
+    group_hits = [(cid, g) for cid, g in DATA.get("groups", {}).items() if q in str(cid).lower() or q in str(g.get("title", "")).lower()]
+    game_hits = [(gid, g) for gid, g in DATA.get("games", {}).items() if q in str(gid).lower() or q in str(g.get("chat_id", "")).lower()]
+    rows = []
+    if user_hits:
+        rows += [[ar10_button(f"👤 {str(u.get('name','کاربر'))[:20]}", "UV", int(uid))] for uid, u in user_hits[:10]]
+    if group_hits:
+        rows += [[ar10_button(f"🌐 {str(g.get('title') or cid)[:20]}", "GV", int(cid))] for cid, g in group_hits[:10] if str(cid).lstrip('-').isdigit()]
+    if game_hits:
+        rows += [[ar10_button(f"🎮 {str(gid)[:18]}", "PVGAME", str(gid)[:20])] for gid, g in game_hits[:8]]
+    if not rows:
+        body = ar9_card("🔎 نتیجه", "چیزی پیدا نشد.")
+    else:
+        body = ar9_card("🔎 نتیجه جست‌وجو", f"👤 کاربران: {len(user_hits)}", f"🌐 گروه‌ها: {len(group_hits)}", f"🎮 بازی‌ها: {len(game_hits)}")
+    await ar10_render(query, "🔎 جست‌وجوی سریع", body, rows, back=("HOME",))
+
+
+async def ar10_callback_dispatch(update, context):
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if not data.startswith(AR10_PREFIX + "|"):
+        return
+    uid = int(query.from_user.id)
+    if not is_admin(uid):
+        await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+        return
+    await safe_answer_query(query)
+    parts = data.split("|")
+    action = parts[1] if len(parts) > 1 else "HOME"
+    try:
+        if action == "HOME":
+            AR9_FLOW.pop(uid, None); await ar10_admin_home(query); return
+        if action == "D":
+            users = DATA.get("users", {}); groups = DATA.get("groups", {}); games = DATA.get("games", {})
+            active = sum(1 for g in games.values() if g.get("status") == "active"); lobbies = sum(1 for g in games.values() if g.get("status") == "lobby")
+            banned = sum(1 for u in users.values() if u.get("banned"))
+            top = sorted(((int(k), u) for k, u in users.items() if str(k).lstrip('-').isdigit()), key=lambda x: int(x[1].get("xp", 0)), reverse=True)[:5]
+            top_lines = [f"{i+1}. {escape(str(u.get('name') or 'کاربر'))} · ⭐ {ar9_num(u.get('xp', 0))}" for i, (k, u) in enumerate(top)]
+            await ar10_render(query, "📊 داشبورد زنده", ar9_card("Live Dashboard", f"👥 کاربران: <b>{ar9_num(len(users))}</b>", f"🚫 محدودشده: <b>{ar9_num(banned)}</b>", f"🌐 گروه‌ها: <b>{ar9_num(len(groups))}</b>", f"🎮 فعال: <b>{active}</b> · 🟡 Lobby: <b>{lobbies}</b>", f"🧠 Pending Flow: <b>{len(AR9_FLOW)}</b>", *(top_lines or ["🏆 هنوز کاربری برای رتبه‌بندی نیست"])), [[ar10_button("↻ تازه‌سازی", "D"), ar10_button("👥 کاربران", "U")], [ar10_button("🌐 گروه‌ها", "G"), ar10_button("🎮 بازی‌ها", "P")]], back=("HOME",)); return
+        if action == "H":
+            await ar10_render(query, "ℹ️ راهنمای AR10", ar9_card("Admin Guide", "👥 کاربران: جست‌وجو، ویرایش همه فیلدها، موجودی، آمار، دسترسی، بازی‌ها، فعالیت، ریست و حذف دائمی.", "🗑 حذف دائمی قبل از اجرا تأیید دومرحله‌ای دارد.", "🧠 ورودی‌های متنی فقط هنگام ویرایش مقدار استفاده می‌شوند؛ زدن دکمه‌های منوی اصلی دیگر آن ورودی را اشتباهی مصرف نمی‌کند.", "🔙 بازگشت فقط یک مرحله عقب می‌رود و ⌂ خانه همیشه به داشبورد برمی‌گردد."), [[ar10_button("👥 راهنمای کاربران", "U")]], back=("HOME",)); return
+        if action == "SEARCH":
+            ar9_start_flow(uid, {"type": "ar10_global_search"}); await ar10_quick_search_page(query); return
+        if action == "HEALTH":
+            path = Path(DATA_FILE); size = path.stat().st_size if path.exists() else 0
+            await ar10_render(query, "🩺 Health", ar9_card("Runtime Health", f"🐍 Python: <b>{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}</b>", f"💾 Data: <b>{ar9_num(size)}</b> bytes", f"👥 Users: <b>{len(DATA.get('users', {}))}</b>", f"🌐 Groups: <b>{len(DATA.get('groups', {}))}</b>", f"🎮 Games: <b>{len(DATA.get('games', {}))}</b>", f"🧠 Pending admin flows: <b>{len(AR9_FLOW)}</b>"), [], back=("HOME",)); return
+
+        if action == "U":
+            sort_key = parts[2] if len(parts) > 2 and parts[2] not in ("HOME", "") else "xp"; page = int(parts[3]) if len(parts) > 3 and str(parts[3]).lstrip('-').isdigit() else 0; filt = parts[4] if len(parts) > 4 else "all"
+            await ar10_user_center(query, sort_key, page, filt); return
+        if action == "USEARCH":
+            ar9_start_flow(uid, {"type": "ar10_user_search"}); await safe_edit_query(query, ar9_card("🔎 جست‌وجوی کاربر", "User ID یا بخشی از نام/username را بفرست."), v5_markup(ar10_nav(("U", "xp", 0, "all")))); return
+        if action == "UADD":
+            ar9_start_flow(uid, {"type": "ar10_user_add"}); await safe_edit_query(query, ar9_card("➕ افزودن کاربر", "User ID عددی را بفرست."), v5_markup(ar10_nav(("U", "xp", 0, "all")))); return
+        if action == "UV":
+            target = int(parts[2]); await ar10_render_user(query, target, parts[3] if len(parts) > 3 else "HOME"); return
+        if action == "UFIELD":
+            target, field = int(parts[2]), parts[3]; u = ar10_user_obj(target)
+            meta = next((x for x in AR10_USER_FIELDS if x[0] == field), None)
+            if not u or not meta: await safe_answer_query(query, "❌ فیلد پیدا نشد.", True); return
+            await ar9_value_prompt(query, meta[1], u.get(field), {"type": "ar10_user_field", "uid": target, "field": field, "kind": meta[2], "back": ("UV", target, "EDIT")}); return
+        if action == "UFTOGGLE":
+            target, field = int(parts[2]), parts[3]; u = ar10_user_obj(target)
+            if not u: await safe_answer_query(query, "❌ کاربر پیدا نشد.", True); return
+            u[field] = not bool(u.get(field)); save_data(force=True); audit("ar10_user_toggle", uid, None, f"{target}:{field}"); await ar10_render_user(query, target, "EDIT"); return
+        if action == "UADJ":
+            target, what = int(parts[2]), parts[3]; ar9_start_flow(uid, {"type": "ar10_user_adjust", "uid": target, "what": what}); await safe_edit_query(query, ar9_card("➕ افزایش مقدار", f"مقدار {'XP' if what == 'xp' else 'سکه'} را به عدد بفرست."), v5_markup(ar10_nav(("UV", target, "HOME")))); return
+        if action == "UITEM":
+            target, key = int(parts[2]), parts[3]; u = ar10_user_obj(target)
+            if not u: await safe_answer_query(query, "❌ کاربر پیدا نشد.", True); return
+            ar9_start_flow(uid, {"type": "ar10_user_item", "uid": target, "item": key, "kind": "int"}); await safe_edit_query(query, ar9_card("🎒 موجودی آیتم", f"آیتم: <code>{escape(key)}</code>", f"مقدار فعلی: <b>{int(u.setdefault('inventory', {}).get(key, 0))}</b>", "عدد جدید را بفرست."), v5_markup(ar10_nav(("UV", target, "INV")))); return
+        if action == "UMITEM":
+            target = int(parts[2]); ar9_start_flow(uid, {"type": "ar10_user_multi_item", "uid": target}); await safe_edit_query(query, ar9_card("🧾 موجودی دقیق", "فرمت: <code>key=value</code> مثال: <code>shield=5</code>"), v5_markup(ar10_nav(("UV", target, "INV")))); return
+        if action == "UCLEARINV":
+            target = int(parts[2]); token = v5_confirmation(uid, "ar10_clear_inv", str(target)); await safe_edit_query(query, ar9_card("⚠️ صفرکردن موجودی", f"کاربر <code>{target}</code>", "همه آیتم‌ها صفر می‌شوند."), v5_markup([[ar10_button("✅ تأیید", "UCLEARINV_OK", token)], [ar10_button("🔙 لغو", "UV", target, "INV"), ar10_button("⌂ خانه", "HOME")]])); return
+        if action == "UCLEARINV_OK":
+            info = v5_get_confirmation(uid, parts[2], "ar10_clear_inv")
+            if not info: await safe_answer_query(query, "تأیید منقضی شده.", True); return
+            target = int(info["payload"]); u = ar10_user_obj(target)
+            if u: u["inventory"] = {k: 0 for k in SHOP.keys()}
+            save_data(force=True); await ar10_render_user(query, target, "INV"); return
+        if action == "USTAT":
+            target, key = int(parts[2]), parts[3]; u = ar10_user_obj(target)
+            if not u: await safe_answer_query(query, "❌ کاربر پیدا نشد.", True); return
+            cur = int(u.setdefault("stats", {}).get(key, 0)); await ar9_value_prompt(query, "📊 آمار کاربر", cur, {"type": "ar10_user_stat", "uid": target, "key": key, "kind": "int", "back": ("UV", target, "STAT")}); return
+        if action == "UADDSTAT":
+            target = int(parts[2]); ar9_start_flow(uid, {"type": "ar10_add_stat", "uid": target}); await safe_edit_query(query, ar9_card("➕ آمار جدید", "فرمت: <code>key=value</code>"), v5_markup(ar10_nav(("UV", target, "STAT")))); return
+        if action == "UACH":
+            target, key = int(parts[2]), parts[3]; u = ar10_user_obj(target)
+            if not u: await safe_answer_query(query, "❌ کاربر پیدا نشد.", True); return
+            ach = set(u.get("achievements", [])); ach.remove(key) if key in ach else ach.add(key); u["achievements"] = list(ach); save_data(force=True); audit("ar10_user_achievement", uid, None, f"{target}:{key}"); await ar10_render_user(query, target, "ACH"); return
+        if action == "UBAN":
+            target = int(parts[2]); u = ar10_user_obj(target)
+            if not u: await safe_answer_query(query, "❌ کاربر پیدا نشد.", True); return
+            u["banned"] = not bool(u.get("banned")); save_data(force=True); audit("ar10_user_ban", uid, None, f"{target}:{u['banned']}"); await ar10_render_user(query, target, "ACCESS"); return
+        if action == "UCACHE":
+            target = int(parts[2]); APEX_MEMBERSHIP_CACHE.pop(target, None); await ar10_render_user(query, target, "ACCESS"); return
+        if action == "UMARK":
+            target = int(parts[2]); v7_mark_started(target); await ar10_render_user(query, target, "ACCESS"); return
+        if action == "UUNMARK":
+            target = int(parts[2]); DATA.setdefault("started_users", {}).pop(str(target), None); save_data(force=True); await ar10_render_user(query, target, "ACCESS"); return
+        if action == "UEXPORT":
+            target = int(parts[2]); u = ar10_user_obj(target)
+            if not u: await safe_answer_query(query, "❌ کاربر پیدا نشد.", True); return
+            payload = json.dumps(u, ensure_ascii=False, indent=2, default=str)
+            if len(payload) > 3500: payload = payload[:3500] + "\n…"
+            await query.message.reply_text(f"<b>JSON کاربر {target}</b>\n<pre>{escape(payload)}</pre>", parse_mode=ParseMode.HTML); return
+        if action == "URESET":
+            target = int(parts[2]); token = v5_confirmation(uid, "ar10_user_reset", str(target)); await safe_edit_query(query, ar9_card("⚠️ ریست کامل کاربر", f"<code>{target}</code>", "XP، سکه، آمار، موجودی و دستاوردها بازنشانی می‌شوند."), v5_markup([[ar10_button("✅ ریست", "URESET_OK", token)], [ar10_button("🔙 لغو", "UV", target, "HOME")]])); return
+        if action == "URESET_OK":
+            info = v5_get_confirmation(uid, parts[2], "ar10_user_reset")
+            if not info: await safe_answer_query(query, "تأیید منقضی شده.", True); return
+            target = int(info["payload"]); DATA["users"][str(target)] = deepcopy(DEFAULT_USER); DATA["users"][str(target)]["created_at"] = now_ts(); save_data(force=True); audit("ar10_user_reset", uid, None, str(target)); await ar10_render_user(query, target, "HOME"); return
+        if action == "UREMOVE":
+            target = int(parts[2]); removed = 0
+            for g in DATA.get("games", {}).values():
+                before = len(g.get("players", []))
+                g["players"] = [x for x in g.get("players", []) if int(x) != target]
+                removed += max(0, before - len(g["players"]))
+                g.get("names", {}).pop(str(target), None); g.get("ready", {}).pop(str(target), None)
+                g.get("round_scores", {}).pop(str(target), None)
+            save_data(force=True); await ar10_render_user(query, target, "GAMES"); return
+        if action == "UDEL":
+            target = int(parts[2]);
+            if not ar10_user_exists(target): await safe_answer_query(query, "کاربر پیدا نشد.", True); return
+            token = v5_confirmation(uid, "ar10_user_delete", str(target)); await safe_edit_query(query, ar9_card("🗑 حذف دائمی کاربر", f"نام: <b>{escape(ar10_user_label(target))}</b>", f"ID: <code>{target}</code>", "⚠️ حساب از DATA حذف و ارجاع‌های بازی نیز پاک می‌شوند.", "این عملیات برگشت‌پذیر نیست؛ قبل از حذف بکاپ بگیر."), v5_markup([[ar10_button("🗑 تأیید حذف", "UDEL_OK", token)], [ar10_button("🔙 لغو", "UV", target, "HOME"), ar10_button("⌂ خانه", "HOME")]])); return
+        if action == "UDEL_OK":
+            info = v5_get_confirmation(uid, parts[2], "ar10_user_delete")
+            if not info: await safe_answer_query(query, "تأیید منقضی شده.", True); return
+            target = int(info["payload"]); ok, msg = ar10_delete_user(target, uid); await ar10_render(query, "🗑 حذف کاربر", ar9_card("نتیجه", f"✅ {escape(str(msg))}" if ok else f"❌ {escape(str(msg))}"), [], back=("U", "xp", 0, "all")); return
+        if action == "PVGAME":
+            gid = parts[2]; g = next((x for k, x in DATA.get("games", {}).items() if str(k).startswith(gid) or str(x.get("id", "")).startswith(gid)), None)
+            if not g: await safe_answer_query(query, "❌ بازی پیدا نشد.", True); return
+            await ar10_render(query, "🎮 بازی", ar9_card("Game", f"ID: <code>{escape(str(g.get('id', gid)))}</code>", f"Chat: <code>{g.get('chat_id', '-')}</code>", f"Status: <b>{escape(str(g.get('status', '-')))}</b>", f"Phase: <b>{escape(str(g.get('phase', '-')))}</b>", f"Players: <b>{len(g.get('players', []))}</b>"), [], back=("HOME",)); return
+        if action == "G":
+            cid = int(parts[2]) if len(parts) > 2 and str(parts[2]).lstrip('-').isdigit() else 0
+            if cid:
+                await ar9_group_view(query, cid, "HOME"); return
+            await ar9_admin_action(query, context, ["ADM", "G", "HOME"]); return
+        if action == "P":
+            sub = parts[2] if len(parts) > 2 else "HOME"
+            await ar9_admin_action(query, context, ["ADM", "P", sub] + parts[3:]); return
+        # Fall-through to the legacy AR9 pages for every other section. This
+        # preserves the large existing admin system and makes AR10 additive.
+        if action in {"C", "E", "T", "S", "B", "L", "X", "P"}:
+            await ar9_admin_action(query, context, ["ADM", action] + parts[2:])
+            return
+        if action == "GV":
+            cid = int(parts[2]); await ar9_group_view(query, cid, "HOME"); return
+        await safe_answer_query(query, "این گزینه هنوز متصل نشده است.", True)
+    except Exception as exc:
+        audit("ar10_admin_router_error", uid, None, repr(exc)[:700]); print(f"ApexRival AR10 admin error: {exc!r}")
+        await safe_answer_query(query, f"⚠️ عملیات انجام نشد: {escape(str(exc))}", True)
+
+
+async def ar10_text_router(update, context):
+    uid = int(update.effective_user.id) if update.effective_user else 0
+    text = (update.message.text or "").strip() if update.message else ""
+    if is_admin(uid):
+        # CRITICAL FIX: reply-keyboard navigation has priority over pending
+        # edit flows. Previously an unfinished `key=value` editor consumed a
+        # normal button label such as «👤 پروفایل» and raised:
+        #   not enough values to unpack (expected 2, got 1)
+        # A navigation tap now cancels the stale input flow and is routed as a
+        # menu action, exactly like a fresh session.
+        quick = {
+            "👑 مرکز مدیریت", "👑 پنل Super Admin", "👑 Super Admin",
+            "🎮 بازی", "👤 پروفایل", "🏆 رتبه", "🛒 فروشگاه", "🏅 دستاوردها", "❓ راهنما",
+            "🎮 بازی‌ها", "🎯 حالت‌ها", "👤 پروفایل من", "🏆 رتبه‌بندی", "📜 قوانین",
+        }
+        if text in quick:
+            AR9_FLOW.pop(uid, None)
+            V5_FLOW.pop(uid, None)
+            if text in {"👑 مرکز مدیریت", "👑 پنل Super Admin", "👑 Super Admin"}:
+                await ar10_home_message(update, context); return
+            # Delegate the public buttons to the mature game/menu router with
+            # no stale editor state attached.
+            await _AR9_OLD_TEXT_ROUTER(update, context)
+            return
+
+        flow = ar9_get_flow(uid)
+        if flow:
+            try:
+                if text in ("لغو", "❌ لغو"):
+                    ar9_clear_flow(uid); await update.message.reply_text("✅ عملیات لغو شد."); return
+                ftype = flow.get("type")
+                if ftype == "ar10_global_search":
+                    q = text.lower()
+                    user_hits = [(int(k), u) for k, u in DATA.get("users", {}).items() if q in str(k).lower() or q in str(u.get("name", "")).lower() or q in str(u.get("username", "")).lower()]
+                    group_hits = [(int(k), g) for k, g in DATA.get("groups", {}).items() if str(k).lstrip('-').isdigit() and (q in str(k).lower() or q in str(g.get("title", "")).lower())]
+                    game_hits = [(str(k), g) for k, g in DATA.get("games", {}).items() if q in str(k).lower() or q in str(g.get("chat_id", "")).lower()]
+                    ar9_clear_flow(uid)
+                    rows = []
+                    rows += [[ar10_button(f"👤 {str(u.get('name','کاربر'))[:20]}", "UV", x)] for x, u in user_hits[:10]]
+                    rows += [[ar10_button(f"🌐 {str(g.get('title') or cid)[:20]}", "GV", cid)] for cid, g in group_hits[:10]]
+                    rows += [[ar10_button(f"🎮 {gid[:18]}", "PVGAME", gid[:20])] for gid, g in game_hits[:8]]
+                    if not rows:
+                        await update.message.reply_text("🔎 چیزی پیدا نشد.", reply_markup=v5_markup(ar10_nav(("HOME",))))
+                    else:
+                        await update.message.reply_text(f"🔎 <b>{len(user_hits)+len(group_hits)+len(game_hits)}</b> نتیجه پیدا شد.", parse_mode=ParseMode.HTML, reply_markup=v5_markup(rows + ar10_nav(("HOME",))))
+                    return
+                if ftype == "ar10_user_search":
+                    q = text.lower(); hits = []
+                    for k, u in DATA.get("users", {}).items():
+                        if q in str(k).lower() or q in str(u.get("name", "")).lower() or q in str(u.get("username", "")).lower(): hits.append(int(k))
+                    ar9_clear_flow(uid)
+                    rows = [[ar10_button(f"👤 {ar10_user_label(x)[:20]}", "UV", x)] for x in hits[:15]] or [[ar10_button("🔎 فهرست کاربران", "U", "xp", 0, "all")]]
+                    await update.message.reply_text(f"🔎 <b>{len(hits)}</b> نتیجه", parse_mode=ParseMode.HTML, reply_markup=v5_markup(rows + ar10_nav(("U", "xp", 0, "all")))); return
+                if ftype == "ar10_user_add":
+                    target = int(text); get_user(target); ar9_clear_flow(uid); save_data(force=True); await update.message.reply_text("✅ کاربر ثبت شد.", reply_markup=v5_markup([[ar10_button("👤 باز کردن", "UV", target)], [ar10_button("⌂ خانه", "HOME")]])); return
+                if ftype == "ar10_user_field":
+                    target = int(flow["uid"]); field = flow["field"]; kind = flow["kind"]; value = ar9_parse_text_value(text, kind)
+                    u = ar10_user_obj(target)
+                    if not u: raise ValueError("کاربر وجود ندارد")
+                    if field == "level": value = max(1, min(100, int(value)))
+                    if field in {"xp", "coins", "wins", "losses", "games", "streak", "best_streak", "duels", "votes", "missions", "boss"}: value = max(0, int(value))
+                    if field == "name": value = str(value)[:80]
+                    if field == "custom_title": value = str(value)[:80]
+                    u[field] = value
+                    if field == "xp": u["level"] = level_for_xp(int(value))
+                    save_data(force=True); audit("ar10_user_field", uid, None, f"{target}:{field}"); ar9_clear_flow(uid); await update.message.reply_text("✅ فیلد کاربر ذخیره شد."); return
+                if ftype == "ar10_user_adjust":
+                    n = max(0, int(text.replace(",", ""))); target = int(flow["uid"]); u = ar10_user_obj(target)
+                    if not u: raise ValueError("کاربر وجود ندارد")
+                    key = "xp" if flow["what"] == "xp" else "coins"; u[key] = int(u.get(key, 0)) + n
+                    if key == "xp": u["level"] = level_for_xp(int(u["xp"]))
+                    save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text("✅ مقدار اضافه شد."); return
+                if ftype == "ar10_user_item":
+                    target = int(flow["uid"]); item = flow["item"]; n = max(0, int(text)); u = ar10_user_obj(target)
+                    if not u: raise ValueError("کاربر وجود ندارد")
+                    u.setdefault("inventory", {})[item] = n; save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text("✅ موجودی ذخیره شد."); return
+                if ftype == "ar10_user_multi_item":
+                    if "=" not in text: raise ValueError("فرمت درست: key=value")
+                    key, val = text.split("=", 1); key = key.strip(); n = max(0, int(val.strip()));
+                    if key not in SHOP: raise ValueError("کلید آیتم ناشناخته است")
+                    ar10_user_obj(int(flow["uid"])).setdefault("inventory", {})[key] = n; save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text("✅ موجودی دقیق ذخیره شد."); return
+                if ftype == "ar10_user_stat":
+                    target = int(flow["uid"]); key = flow["key"]; ar10_user_obj(target).setdefault("stats", {})[key] = max(0, int(text)); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text("✅ آمار ذخیره شد."); return
+                if ftype == "ar10_add_stat":
+                    if "=" not in text: raise ValueError("فرمت درست: key=value")
+                    key, val = text.split("=", 1); key = key.strip(); ar10_user_obj(int(flow["uid"])).setdefault("stats", {})[key] = max(0, int(val.strip())); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text("✅ آمار جدید اضافه شد."); return
+            except Exception as exc:
+                await update.message.reply_text(f"❌ {escape(str(exc))}")
+                return
+    # All non-admin text and unconsumed admin text follow the mature V7/V5
+    # router chain unchanged.
+    await _AR9_OLD_TEXT_ROUTER(update, context)
+
+
+async def ar10_admin_entry(update, context):
+    await ar10_home_message(update, context)
+
+
+def ar10_register_handlers(app):
+    app.add_handler(CommandHandler("start", v7_start))
+    app.add_handler(CommandHandler("verify", ar8_verify_cmd))
+    app.add_handler(CommandHandler("game", v5_create_lobby))
+    app.add_handler(CommandHandler("menu", v5_menu))
+    app.add_handler(CommandHandler("profile", v5_profile_message))
+    app.add_handler(CommandHandler("rank", v5_rank_message))
+    app.add_handler(CommandHandler("shop", shop_cmd))
+    app.add_handler(CommandHandler("achievements", achievements_cmd))
+    app.add_handler(CommandHandler("help", v5_help_message))
+    app.add_handler(CommandHandler("id", id_cmd))
+    app.add_handler(CommandHandler("admin", ar10_admin_entry))
+    app.add_handler(CommandHandler("adult", adult_cmd))
+    app.add_handler(CallbackQueryHandler(ar8_prereq_callback, pattern=r"^REQ\|"))
+    app.add_handler(CallbackQueryHandler(ar10_callback_dispatch, pattern=r"^A10\|"))
+    app.add_handler(CallbackQueryHandler(ar9_callback_dispatch, pattern=r"^(ADM\||V5\||V7\|)"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ar10_text_router))
+
+
+async def ar10_post_init(application):
+    await _ar8_post_init(application)
+
+
+def main_apexrival_10():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is missing")
+    _ar8_final_markup_self_check()
+    # AR10 wiring checks before polling. These must pass without a Telegram
+    # network connection so obvious button/handler regressions fail locally.
+    assert callable(ar10_admin_home)
+    assert callable(ar10_callback_dispatch)
+    assert callable(ar10_text_router)
+    for sample in [
+        ar10_data("HOME"), ar10_data("U", "xp", 0, "all"), ar10_data("UV", 123456, "EDIT"),
+        ar10_data("UDEL", 123456), ar10_data("UDEL_OK", "abc123"), ar10_data("UCLEARINV", 123456),
+        ar10_data("UFIELD", 123456, "custom_title"), ar10_data("PVGAME", "abcdef1234567890"),
+    ]:
+        assert 1 <= len(sample.encode("utf-8")) <= 64
+    start_health_server()
+    application = Application.builder().token(BOT_TOKEN).post_init(ar10_post_init).build()
+    ar10_register_handlers(application)
+    application.add_error_handler(ar9_error_handler)
+    print(f"{BOT_NAME} {AR10_VERSION} starting | admin-control=expanded | user-delete=on | stale-flow-fix=on")
+    application.run_polling(drop_pending_updates=True)
+
+
+main_apexrival_8 = main_apexrival_10
+main_apexrival_9 = main_apexrival_10
+main_apexrival_10 = main_apexrival_10
+main_v5 = main_apexrival_10
+main = main_apexrival_10
+
+if __name__ == "__main__":
+    main_apexrival_10()
