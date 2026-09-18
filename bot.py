@@ -9429,7 +9429,699 @@ def main_v5():
 
 
 
-main=main_v5
+# Legacy entrypoint disabled; the final ApexRival runtime is defined below.
+# ============================================================
+# ApexRival 6.0 — polish + reliability + reply-driven group play
+# Appended as the final runtime layer so old mechanics remain
+# available but the user-facing runtime is routed through this layer.
+# ============================================================
 
-if __name__=='__main__':
+AR7_VERSION = "6.0"
+APEX_V5 = AR7_VERSION
+ADVANCED_VERSION = AR7_VERSION
+BOT_VERSION = AR7_VERSION
+
+# The user's requested 18+ mode is always available as a group feature.
+# It remains individually gated by adult_ok and the content is mature,
+# romantic/relationship-oriented and NON-EXPLICIT.
+DEFAULT_GROUP["adult_mode"] = True
+DATA.setdefault("settings", {})["adult_default"] = True
+DATA.setdefault("global_features", {})["adult"] = True
+
+# Always-on group feature gate.
+_ar7_original_get_group = get_group
+
+def get_group(chat_id: int) -> dict[str, Any]:
+    group = _ar7_original_get_group(chat_id)
+    group["adult_mode"] = True
+    group.setdefault("settings", {})["allow_flirty"] = True
+    return group
+
+
+# -------------------- compact visual language --------------------
+def ar7_card(title: str, *lines: str) -> str:
+    body = "\n".join(str(x) for x in lines if str(x).strip())
+    # Avoid wide Unicode box borders: Telegram's proportional font can make
+    # the old frame look broken or overflow. This deliberately stays narrow.
+    if body:
+        return f"✨ <b>{escape(str(title))}</b>\n──────────────\n{body}"
+    return f"✨ <b>{escape(str(title))}</b>"
+
+v5_card = ar7_card
+
+
+def ar7_admin_nav(back: str = "V5|A|HOME", refresh: str | None = None):
+    row = [v5_button("⌂ پنل", "V5|A|HOME")]
+    if back != "V5|A|HOME":
+        row.append(v5_button("🔙 بازگشت", back))
+    if refresh:
+        row.append(v5_button("↻", refresh))
+    return [row]
+
+
+def ar7_game_nav(back: str = "V5|GAME", refresh: str | None = None):
+    row = [v5_button("🎮 بازی", "V5|GAME")]
+    if back != "V5|GAME":
+        row.append(v5_button("🔙 بازگشت", back))
+    if refresh:
+        row.append(v5_button("↻", refresh))
+    row.append(v5_button("✕ بستن", "V5|CLOSE"))
+    return [row]
+
+
+# -------------------- always-on 18+ content, mature but non-explicit --------------------
+AR7_ADULT_SEEDS = [
+    "۱۸+: درباره مرزهایی که در یک رابطه باید از ابتدا روشن باشند صحبت کن.",
+    "۱۸+: یک ویژگی شخصیتی بگو که در یک رابطه برایت جذاب است.",
+    "۱۸+: یک قانون برای یک قرار سالم و راحت پیشنهاد بده.",
+    "۱۸+: بگو چه چیزی باعث می‌شود بین دو نفر احساس شیمی و صمیمیت شکل بگیرد.",
+    "۱۸+: یک سؤال صمیمی اما غیرصریح برای جمع مطرح کن؛ رد کردن آزاد است.",
+    "۱۸+: درباره تفاوت بین کشش، علاقه و اعتماد یک نظر کوتاه بده.",
+    "۱۸+: یک جمله برای شروع یک گفت‌وگوی رمانتیک محترمانه بنویس.",
+    "۱۸+: درباره یک ویژگی ظاهری یا شخصیتی که جذابت می‌کند صحبت کن؛ جزئیات شخصی لازم نیست.",
+    "۱۸+: یک موقعیت قرار فرضی بساز که در آن هر دو نفر انتخاب آزاد داشته باشند.",
+    "۱۸+: یک نشانه سالم برای فهمیدن رضایت واقعی در یک رابطه بگو.",
+    "۱۸+: یک نشانه بگو که نشان می‌دهد وقت آن است از یک موقعیت ناراحت‌کننده فاصله بگیری.",
+    "۱۸+: یک تعریف رمانتیک کوتاه و غیرجنسی برای یک شخصیت خیالی بنویس.",
+    "۱۸+: بگو چه چیزی یک پیام عاشقانه را جذاب و در عین حال محترمانه می‌کند.",
+    "۱۸+: یک قرار شبانه خیالی با سه عنصر ساده و بی‌خطر طراحی کن.",
+    "۱۸+: یک ویژگی غیرظاهری را انتخاب کن که جذابیتش برایت از ظاهر بیشتر است.",
+    "۱۸+: یک سؤال درباره انتظارات عاطفی در رابطه مطرح کن.",
+    "۱۸+: بگو چطور می‌شود یک گفت‌وگوی صمیمی را بدون فشار ادامه داد.",
+    "۱۸+: یک سناریوی آشنایی کوتاه بنویس که در آن هر دو نفر می‌توانند راحت نه بگویند.",
+    "۱۸+: درباره اهمیت حریم خصوصی در رابطه یک جمله بگو.",
+    "۱۸+: یک پرچم قرمز در رابطه نام ببر و دلیلش را توضیح بده.",
+    "۱۸+: یک پرچم سبز در رابطه نام ببر و دلیلش را توضیح بده.",
+    "۱۸+: بگو از نظر تو تفاوت «هیجان» و «امنیت» در رابطه چیست.",
+    "۱۸+: یک قرار عجیب اما کاملاً بی‌خطر طراحی کن.",
+    "۱۸+: یک سؤال بامزه برای شناخت بهتر طرف مقابل بساز.",
+    "۱۸+: بگو چه چیزی باعث می‌شود یک شوخی رمانتیک از مرز احترام عبور نکند.",
+]
+AR7_ADULT_TOPICS = [
+    "اعتماد", "کشش", "مرز شخصی", "قرار اول", "گفت‌وگوی صمیمی", "احترام متقابل",
+    "جذابیت شخصیتی", "حریم خصوصی", "رضایت", "ارتباط عاطفی", "حس شوخ‌طبعی", "آشنایی",
+]
+AR7_ADULT_ACTIONS = [
+    "یک نظر کوتاه و محترمانه بده.",
+    "یک قانون طلایی برایش بنویس.",
+    "یک مثال بی‌خطر بساز.",
+    "یک سؤال پیگیری طراحی کن.",
+    "آن را با یک خاطره ساختگی توضیح بده.",
+]
+AR7_ADULT_EXTRA = []
+for _topic in AR7_ADULT_TOPICS:
+    for _action in AR7_ADULT_ACTIONS:
+        AR7_ADULT_EXTRA.append(f"۱۸+: موضوع «{_topic}» را در قالب {_action}")
+ADULT_SAFE[:] = v5_unique(ADULT_SAFE + AR7_ADULT_SEEDS + AR7_ADULT_EXTRA)
+V5_BANKS["adult"] = v5_unique(V5_BANKS.get("adult", []) + ADULT_SAFE)
+
+
+# -------------------- random-only content selectors --------------------
+def ar7_random_content(game: dict[str, Any], key: str, fallback_bank: list[str] | None = None) -> str:
+    chat_id = int(game.get("chat_id", 0))
+    group = get_group(chat_id)
+    pool = []
+    pool.extend(V5_BANKS.get(key, []))
+    pool.extend(group.get("content", {}).get(key, []))
+    pool.extend(DATA.get("global_content", {}).get(key, []))
+    disabled = set(DATA.get("global_content_disabled", {}).get(key, []))
+    overrides = DATA.get("global_content_overrides", {}).get(key, {})
+    if fallback_bank:
+        pool.extend(fallback_bank)
+    cleaned = []
+    for item in pool:
+        item = str(item).strip()
+        if not item or item in disabled:
+            continue
+        item = str(overrides.get(item, item)).strip()
+        if item:
+            cleaned.append(item)
+    cleaned = v5_unique(cleaned)
+    if not cleaned:
+        return str((fallback_bank or ["این مرحله فعلاً محتوایی ندارد."])[0])
+    used = set(game.setdefault("used_content", {}).setdefault(key, []))
+    candidates = [x for x in cleaned if x not in used]
+    if not candidates:
+        used.clear()
+        candidates = cleaned
+    choice = random.choice(candidates)
+    used.add(choice)
+    game["used_content"][key] = list(used)[-600:]
+    return choice
+
+
+# Questions and penalties are ALWAYS picked internally at random. There is no
+# UI that asks the player to choose an item from these banks.
+def assign_penalty(game: dict[str, Any], uid: int, text: str | None = None, source: str = "بازی") -> dict[str, Any]:
+    uid = int(uid)
+    penalty_text = ar7_random_content(game, "penalty", PENALTIES)
+    deadline = now_ts() + int(get_group(int(game["chat_id"])).get("settings", {}).get("penalty_deadline", 300))
+    item = {
+        "text": penalty_text,
+        "source": source,
+        "created_at": now_ts(),
+        "deadline": deadline,
+        "done": False,
+        "skipped": False,
+        "shielded": False,
+    }
+    game.setdefault("pending_penalties", {})[str(uid)] = item
+    return item
+
+
+# -------------------- reply-driven group challenge engine --------------------
+def ar7_prompt_store(game: dict[str, Any], sent_message, kind: str, target_uid: int | None = None, any_player: bool = False, ttl: int = 120, max_replies: int = 1):
+    game["reply_prompt"] = {
+        "message_id": int(getattr(sent_message, "message_id", 0)),
+        "chat_id": int(game.get("chat_id", 0)),
+        "kind": kind,
+        "target_uid": int(target_uid) if target_uid is not None else None,
+        "any_player": bool(any_player),
+        "expires": time.time() + int(ttl),
+        "responders": [],
+        "max_replies": int(max_replies),
+        "created_at": now_ts(),
+    }
+    touch_game(game)
+    save_data()
+
+
+def ar7_prompt_clear(game):
+    game.pop("reply_prompt", None)
+    touch_game(game)
+    save_data(force=True)
+
+
+async def ar7_send_social(message, game: dict[str, Any], key: str, title: str, icon: str, target_required: bool = True):
+    players = [int(x) for x in game.get("players", [])]
+    target = random.choice(players) if players and target_required else None
+    text = ar7_random_content(game, key, {
+        "truth": TRUTHS,
+        "dare": DARES,
+        "flirty": FLIRTY,
+        "adult": ADULT_SAFE,
+    }.get(key, []))
+    game["round"] = int(game.get("round", 0)) + 1
+    game["phase"] = key
+    target_line = f"\n🎯 نوبت: {mention_user(target, name_of(target, game))}" if target else "\n👥 همه بازیکنان می‌توانند پاسخ دهند."
+    reply_line = "\n↩️ برای ادامه، همین پیام را Reply کن."
+    if key == "adult":
+        reply_line = "\n🔞 محتوای بالغ و غیرصریح است؛ هر مرحله قابل رد کردن است.\n↩️ برای ادامه، همین پیام را Reply کن."
+    sent = await message.reply_text(
+        f"{icon} <b>{escape(title)}</b>\n\n{escape(text)}{target_line}{reply_line}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=v5_game_home_markup(game),
+    )
+    ar7_prompt_store(game, sent, key, target_uid=target, any_player=(target is None), ttl=180, max_replies=1)
+
+
+async def send_truth_or_dare(message, game, kind: str) -> None:
+    await ar7_send_social(message, game, kind, "اعتراف" if kind == "truth" else "جرئت", "🕵️" if kind == "truth" else "🔥")
+
+
+async def send_flirty(message, game) -> None:
+    await ar7_send_social(message, game, "flirty", "فلرت محترمانه", "💘")
+
+
+async def send_question(message, game) -> None:
+    text = ar7_random_content(game, "question", QUESTIONS)
+    game["round"] = int(game.get("round", 0)) + 1
+    game["phase"] = "question"
+    sent = await message.reply_text(
+        f"🧠 <b>سؤال گروهی</b>\n\n{escape(text)}\n\n👥 همه می‌توانند جواب بدهند.\n↩️ پاسخ را دقیقاً با Reply به همین پیام بفرست.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=v5_game_home_markup(game),
+    )
+    ar7_prompt_store(game, sent, "question", any_player=True, ttl=150, max_replies=3)
+
+
+async def send_adult(message, game) -> None:
+    # Always available. First use is individually gated.
+    uid = int(game.get("_viewer_id", 0) or 0)
+    if uid and not get_user(uid).get("adult_ok", False):
+        sent = await message.reply_text(
+            "🔞 <b>بخش ۱۸+ ApexRival</b>\n\n"
+            "این بخش همیشه در بازی فعال است و فقط محتوای بالغِ غیرصریح و داوطلبانه دارد.\n"
+            "برای ورود، تأیید کن که ۱۸+ هستی.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup([[v5_button("✅ تأیید ۱۸+", "V5|18|OK"), v5_button("❌ بازگشت", "V5|GAME")]]),
+        )
+        return
+    await ar7_send_social(message, game, "adult", "۱۸+ — صمیمی و بالغ", "🔞")
+
+
+async def ar7_handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    msg = update.message
+    if not msg or not msg.reply_to_message or not msg.text:
+        return False
+    chat_id = int(update.effective_chat.id) if update.effective_chat else int(msg.chat_id)
+    game = active_game(chat_id)
+    if not game:
+        return False
+    prompt = game.get("reply_prompt")
+    if not isinstance(prompt, dict):
+        return False
+    if int(prompt.get("message_id", -1)) != int(msg.reply_to_message.message_id):
+        return False
+    if time.time() > float(prompt.get("expires", 0)):
+        ar7_prompt_clear(game)
+        await msg.reply_text("⌛ این چالش تمام شده؛ برای مرحله بعد از منوی بازی استفاده کن.")
+        return True
+
+    uid = int(update.effective_user.id)
+    players = {int(x) for x in game.get("players", [])}
+    if uid not in players and not is_admin(uid):
+        await msg.reply_text("🔒 فقط بازیکنان ثبت‌نام‌شده می‌توانند در این مرحله پاسخ بدهند.")
+        return True
+
+    target = prompt.get("target_uid")
+    if target is not None and int(target) != uid and not is_admin(uid):
+        await msg.reply_text(f"🎯 فعلاً نوبت {name_of(int(target), game)} است.")
+        return True
+
+    responders = {int(x) for x in prompt.get("responders", [])}
+    if uid in responders:
+        await msg.reply_text("✅ پاسخ تو برای این مرحله قبلاً ثبت شده.")
+        return True
+    responders.add(uid)
+    prompt["responders"] = list(responders)
+
+    kind = str(prompt.get("kind", "question"))
+    if kind == "question":
+        reward_player(game, uid, 3, 1, win=True, reason="Group Reply")
+        max_replies = int(prompt.get("max_replies", 3))
+        if len(responders) >= max_replies:
+            ar7_prompt_clear(game)
+            await msg.reply_text(f"🧠 پاسخ {len(responders)} نفر ثبت شد.\n🎁 هر پاسخ‌دهنده +۳ XP و +۱ سکه گرفت.")
+        else:
+            save_data()
+            await msg.reply_text(f"✅ پاسخ {name_of(uid, game)} ثبت شد. هنوز یک نفر دیگر می‌تواند جواب بدهد.")
+        return True
+
+    # Targeted challenges: the reply itself completes the round.
+    rewards = {
+        "truth": (5, 2, "اعتراف"),
+        "dare": (7, 3, "جرئت"),
+        "flirty": (6, 2, "فلرت"),
+        "adult": (8, 3, "۱۸+"),
+        "penalty": (2, 1, "حکم"),
+    }
+    xp, coins, label = rewards.get(kind, (4, 1, kind))
+    reward_player(game, uid, xp, coins, win=True, reason=f"Reply:{label}")
+    if kind == "truth":
+        get_user(uid)["stats"]["truth"] = int(get_user(uid)["stats"].get("truth", 0)) + 1
+    elif kind == "dare":
+        get_user(uid)["stats"]["dare"] = int(get_user(uid)["stats"].get("dare", 0)) + 1
+    elif kind == "flirty":
+        get_user(uid)["stats"]["flirty"] = int(get_user(uid)["stats"].get("flirty", 0)) + 1
+    elif kind == "adult":
+        get_user(uid)["stats"]["adult"] = int(get_user(uid)["stats"].get("adult", 0)) + 1
+    elif kind == "penalty":
+        pending = game.get("pending_penalties", {}).get(str(uid))
+        if pending:
+            pending["done"] = True
+            pending["completed_at"] = now_ts()
+    ar7_prompt_clear(game)
+    await msg.reply_text(f"🎉 {name_of(uid, game)} مرحله «{label}» را با Reply کامل کرد.\n🎁 +{xp} XP و +{coins} سکه")
+    return True
+
+
+# -------------------- penalty display gets reply support --------------------
+async def penalty_mine(query, game) -> None:
+    uid = int(query.from_user.id)
+    p = game.get("pending_penalties", {}).get(str(uid))
+    if not p or p.get("done") or p.get("skipped"):
+        await safe_answer_query(query, "☠️ حکم فعالی نداری.", True)
+        return
+    text = penalty_text(game, uid)
+    sent = await query.message.reply_text(
+        text + "\n\n↩️ انجامش دادی؟ همین پیام را Reply کن تا ثبت شود.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=v5_markup([
+            [v5_button("🛡 سپر", "penaltyshield|1"), v5_button("🎫 پاس", "penaltypass|1")],
+            *ar7_game_nav("V5|G|R"),
+        ]),
+    )
+    ar7_prompt_store(game, sent, "penalty", target_uid=uid, any_player=False, ttl=360, max_replies=1)
+    await safe_answer_query(query, "✅ حکم آماده شد.")
+
+
+# -------------------- admin visuals --------------------
+def v5_admin_home_markup():
+    return v5_markup([
+        [v5_button("📊 نمای کلی", "V5|A|O"), v5_button("👥 کاربران", "V5|A|U")],
+        [v5_button("🌐 گروه‌ها", "V5|A|G"), v5_button("🎮 بازی‌ها", "V5|A|P")],
+        [v5_button("📝 محتوا", "V5|A|C"), v5_button("🛒 اقتصاد", "V5|A|E")],
+        [v5_button("🎛 امکانات", "V5|A|F"), v5_button("⚙️ تنظیمات", "V5|A|T")],
+        [v5_button("💾 بکاپ", "V5|A|B"), v5_button("📜 گزارش‌ها", "V5|A|L")],
+        [v5_button("⚡ ویرایشگر همه‌چیز", "V5|A|Z"), v5_button("🧰 ابزارها", "V5|A|X")],
+        [v5_button("📣 Broadcast", "V5|A|XB")],
+        [v5_button("✕ بستن", "V5|CLOSE")],
+    ])
+
+
+def v5_admin_home_text() -> str:
+    active = sum(1 for g in DATA.get("groups", {}).values() if g.get("active_game"))
+    lobbies = sum(1 for g in DATA.get("games", {}).values() if g.get("status") == "lobby")
+    return (
+        f"{v5_breadcrumb('مدیریت','مرکز فرماندهی')}\n\n"
+        f"{v5_card('👑 SUPER ADMIN',
+            f"👥 کاربران: <b>{len(DATA.get('users', {}))}</b>",
+            f"🌐 گروه‌ها: <b>{len(DATA.get('groups', {}))}</b>",
+            f'🎮 بازی فعال: <b>{active}</b>',
+            f'🟡 Lobby: <b>{lobbies}</b>',
+            f"🧩 محتوا: <b>{sum(len(v) for v in DATA.get('global_content', {}).values())}</b>",
+            f"📜 Audit: <b>{len(DATA.get('audit', []))}</b>"
+        )}\n\n"
+        "هر ابزار فقط در صفحه‌ای نمایش داده می‌شود که واقعاً به آن نیاز دارد."
+    )
+
+
+async def v5_admin_home(query):
+    await safe_edit_query(query, v5_admin_home_text(), v5_admin_home_markup())
+
+
+async def v5_admin_users(query, page=0):
+    items = sort_users_by_xp()
+    page = max(0, int(page))
+    chunk = 6
+    start = page * chunk
+    current = items[start:start + chunk]
+    rows = [[v5_button("🔎 جست‌وجوی ID", "V5|A|US")]]
+    lines = []
+    for offset, (uid_s, user) in enumerate(current, start=start + 1):
+        uid = int(uid_s)
+        status = "🚫" if user.get("banned") else "🟢"
+        name = escape(str(user.get("name", "کاربر")))[:24]
+        lines.append(f"{status} <b>{offset:02d}</b> · {name}\n⭐ {int(user.get('xp',0))}  ·  💰 {int(user.get('coins',0))}")
+        rows.append([v5_button(f"👤 {name[:18]}", f"V5|A|UD|{uid}")])
+    nav = []
+    if page > 0: nav.append(v5_button("◀️", f"V5|A|U|{page-1}"))
+    if start + chunk < len(items): nav.append(v5_button("▶️", f"V5|A|U|{page+1}"))
+    if nav: rows.append(nav)
+    rows.append(v5_nav("V5|A|HOME", refresh=f"V5|A|U|{page}")[0])
+    text = f"{v5_breadcrumb('مدیریت','کاربران')}\n\n{v5_card('👥 User Directory', *(lines or ['هیچ کاربری ثبت نشده است.']))}"
+    await safe_edit_query(query, text, v5_markup(rows))
+
+
+# -------------------- group feature page: 18+ is informational and always on --------------------
+def ar7_feature_rows(cid: int):
+    g = get_group(cid)
+    s = g.setdefault("settings", {})
+    rows = []
+    for key, label in AR6_FEATURE_LABELS.items():
+        enabled = bool(s.get(key, True))
+        rows.append([v5_button(f"{label} {'🟢' if enabled else '⚫'}", f"V5|A|FT|{cid}|{key}")])
+    rows.append([v5_button("🔞 ۱۸+ همیشه فعال", "V5|A|GA")])
+    rows.append(v5_nav(f"V5|A|GDET|{cid}"))
+    return v5_markup(rows)
+
+ar6_feature_rows = ar7_feature_rows
+
+
+# -------------------- robust admin router --------------------
+_ar7_previous_admin_action = v5_admin_action
+
+async def v5_admin_action(query, context, parts):
+    uid = int(query.from_user.id)
+    if not is_admin(uid):
+        await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+        return
+    action = parts[2] if len(parts) > 2 else "HOME"
+
+    # Navigation / pages that the older router forgot to wire.
+    section_actions = {"U","G","P","C","E","F","T","B","L","X","Z"}
+    if action in section_actions and len(parts) == 3:
+        await ar6_section(query, action)
+        return
+    if action in {"GD", "GR"} and len(parts) == 3:
+        if action == "GD":
+            await ar6_section(query, "G")
+        else:
+            V5_FLOW[uid] = {"type": "raw_target", "scope": "group"}
+            await safe_edit_query(query, v5_card("⚡ ویرایش مستقیم گروه", "Chat ID را در پیام بعدی بفرست.", "بعد از آن، مسیر=مقدار را وارد کن."), v5_markup([[v5_button("❌ لغو", "V5|A|FC")], *ar7_admin_nav("V5|A|G")]))
+        return
+    if action == "PL":
+        await v5_admin_games(query)
+        return
+    if action == "TM":
+        V5_FLOW[uid] = {"type": "set_field", "scope": "settings", "ident": "0", "field": "max_players_default"}
+        await safe_edit_query(query, v5_card("👥 سقف پیش‌فرض", f"فعلی: <b>{DATA['settings'].get('max_players_default',20)}</b>", "عدد جدید را در پیام بعدی بفرست."), v5_markup([[v5_button("❌ لغو", "V5|A|FC")], *ar7_admin_nav("V5|A|T")]))
+        return
+    if action == "CA":
+        pairs = [("truth","🕵️ اعتراف"),("dare","🔥 جرئت"),("flirty","💘 فلرت"),("question","🧠 سؤال"),("penalty","☠️ حکم"),("boss","👑 Boss"),("mission","🤫 مأموریت"),("riddle","🧩 معما"),("adult","🔞 ۱۸+")]
+        rows = []
+        for i in range(0, len(pairs), 2):
+            row = [v5_button(pairs[i][1], f"V5|A|CADD|{pairs[i][0]}")]
+            if i + 1 < len(pairs): row.append(v5_button(pairs[i+1][1], f"V5|A|CADD|{pairs[i+1][0]}"))
+            rows.append(row)
+        rows += ar7_admin_nav("V5|A|C")
+        await safe_edit_query(query, v5_card("➕ افزودن محتوا", "اول دسته را انتخاب کن؛ متن بعدی مستقیم وارد همان بانک می‌شود."), v5_markup(rows))
+        return
+    content_direct = {
+        "CT":"truth", "CD":"dare", "CF":"flirty", "CQ":"question", "CP":"penalty",
+        "CB":"boss", "CM":"mission", "CR":"riddle",
+    }
+    if action in content_direct:
+        key = content_direct[action]
+        body, markup = ar6_content_page(key, 0)
+        await safe_edit_query(query, body, markup)
+        return
+    if action == "PE":
+        token = v5_confirmation(uid, "end_all_games", "all")
+        await safe_edit_query(query, v5_card("⚠️ پایان همه بازی‌ها", "این عملیات تمام Lobbyها و بازی‌های فعال را می‌بندد."), ar6_confirm_markup(f"V5|A|PEY|{token}", "V5|A|P"))
+        return
+    if action == "PEY":
+        info = v5_get_confirmation(uid, parts[3] if len(parts)>3 else "", "end_all_games")
+        if not info:
+            await safe_answer_query(query, "تأیید منقضی شده است.", True); return
+        count = 0
+        for game in DATA.get("games", {}).values():
+            if game.get("status") in ("active", "lobby"):
+                end_game(game, "پایان توسط Super Admin")
+                count += 1
+        save_data(force=True)
+        await safe_edit_query(query, v5_card("🛑 پایان بازی‌ها", f"<b>{count}</b> بازی بسته شد."), v5_markup(ar7_admin_nav("V5|A|P")))
+        return
+    if action == "GA":
+        DATA['settings']['adult_default'] = True
+        for g in DATA.get('groups', {}).values():
+            g['adult_mode'] = True
+        save_data(force=True)
+        await safe_edit_query(query, v5_card("🔞 ۱۸+", "وضعیت: 🟢 همیشه فعال", "درخواست ۱۸+ فقط برای هر کاربر به‌صورت جداگانه تأیید می‌شود.", "محتوا: بالغ، صمیمی و غیرصریح."), v5_markup(ar7_admin_nav("V5|A|F")))
+        return
+    if action == "GAD":
+        cid = int(parts[3])
+        g = get_group(cid)
+        g['adult_mode'] = True
+        save_data(force=True)
+        await ar6_group_detail(query, cid)
+        return
+    if action == "TA":
+        # Achievement editor is reached here; no adult toggle lives in this page.
+        await _ar7_previous_admin_action(query, context, parts)
+        return
+
+    # Fall through to the comprehensive editor/router already present in V5.
+    await _ar7_previous_admin_action(query, context, parts)
+
+
+# -------------------- 18+ callback --------------------
+_ar7_previous_v5_callback = v5_callback
+
+async def v5_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if data == "V5|18|OK":
+        uid = int(query.from_user.id)
+        get_user(uid)["adult_ok"] = True
+        audit("adult_confirm", uid, query.message.chat_id if query.message else None, "always_on")
+        save_data(force=True)
+        await safe_edit_query(query, v5_card("🔞 ۱۸+", "✅ دسترسی تو تأیید شد.", "حالا مرحله‌های بالغ و غیرصریح برایت قابل اجراست."), v5_markup(ar7_game_nav("V5|GAME")))
+        return
+    await _ar7_previous_v5_callback(update, context)
+
+
+# -------------------- improved home / active game screens --------------------
+def v5_game_home_markup(game):
+    uid = int(game.get("_viewer_id", 0))
+    rows = [
+        [v5_button("⚡ سریع", "V5|G|Q"), v5_button("🎭 اجتماعی", "V5|G|S")],
+        [v5_button("⚔️ رقابتی", "V5|G|B"), v5_button("🤫 مخفی", "V5|G|X")],
+        [v5_button("☠️ حکم", "V5|G|R"), v5_button("📊 وضعیت", "V5|G|I")],
+        [v5_button("🔞 ۱۸+", "V5|G|A")],
+    ]
+    if leader_of(game, uid):
+        rows.append([v5_button("👑 کنترل سرگروه", "V5|G|H")])
+    rows.append([v5_button("✕ بستن", "V5|CLOSE")])
+    return v5_markup(rows)
+
+
+def v5_game_home_text(game):
+    scores = []
+    for uid in game.get("players", []):
+        score = int(game.get("round_scores", {}).get(str(uid), 0))
+        scores.append((score, int(uid)))
+    scores.sort(reverse=True)
+    lines = [f"{i+1}. {escape(name_of(uid, game))} · <b>{score}</b>" for i, (score, uid) in enumerate(scores[:6])]
+    card_lines = [
+        f"👥 بازیکنان: <b>{len(game.get('players', []))}</b>",
+        f"🔢 دور: <b>{int(game.get('round', 0))}</b>",
+        f"🎯 مرحله: <b>{escape(str(game.get('phase', 'آزاد')))}</b>",
+        "🔞 بخش ۱۸+: همیشه فعال — محتوای غیرصریح",
+    ]
+    card_lines.extend(lines or ["هنوز امتیازی ثبت نشده."])
+    card = v5_card("🎮 دور بازی", *card_lines)
+    return f"{v5_breadcrumb('بازی', 'ApexRival')}\n\n{card}\n\nیک حالت را انتخاب کن؛ پاسخ مرحله را با Reply ادامه بده."
+
+
+# -------------------- final text router: reply engine runs first --------------------
+_ar7_previous_text_router = v5_text_router
+
+async def v5_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Reply-to-prompt is the primary in-group interaction layer.
+    try:
+        if await ar7_handle_game_reply(update, context):
+            return
+    except Exception as exc:
+        audit("reply_engine_error", getattr(update.effective_user, "id", 0), getattr(update.effective_chat, "id", None), repr(exc))
+        save_data()
+        if update.message:
+            await update.message.reply_text("⚠️ پاسخ دریافت شد اما این مرحله یک خطای داخلی داشت؛ بازی از کار نمی‌افتد.")
+            return
+    await _ar7_previous_text_router(update, context)
+
+
+# -------------------- dedicated status/help polish --------------------
+def ar7_admin_user_editor_markup(uid: int):
+    return v5_markup([
+        [v5_button("⭐ XP", f"V5|A|SET|user|{uid}|xp"), v5_button("💰 سکه", f"V5|A|SET|user|{uid}|coins")],
+        [v5_button("🏆 برد", f"V5|A|SET|user|{uid}|wins"), v5_button("☠️ باخت", f"V5|A|SET|user|{uid}|losses")],
+        [v5_button("🎮 بازی", f"V5|A|SET|user|{uid}|games"), v5_button("🔥 استریک", f"V5|A|SET|user|{uid}|streak")],
+        [v5_button("📈 رکورد استریک", f"V5|A|SET|user|{uid}|best_streak"), v5_button("🏅 Level", f"V5|A|SET|user|{uid}|level")],
+        [v5_button("✏️ نام", f"V5|A|SET|user|{uid}|name"), v5_button("👑 عنوان", f"V5|A|SET|user|{uid}|custom_title")],
+        [v5_button("🔞 ۱۸+", f"V5|A|SET|user|{uid}|adult_ok"), v5_button("🚫 محدودیت", f"V5|A|SET|user|{uid}|banned")],
+        [v5_button("🎒 موجودی", f"V5|A|SETJ|user|{uid}|inventory"), v5_button("📊 آمار", f"V5|A|SETJ|user|{uid}|stats")],
+        [v5_button("🏆 دستاورد", f"V5|A|SETJ|user|{uid}|achievements"), v5_button("⚡ Raw", f"V5|A|RAW|user|{uid}")],
+        [v5_button("🧹 ریست کامل", f"V5|A|UR|{uid}")],
+        *ar7_admin_nav("V5|A|U"),
+    ])
+
+ar6_user_editor_markup = ar7_admin_user_editor_markup
+
+
+# -------------------- final health/self-check --------------------
+def ar7_static_callback_audit() -> None:
+    """Static callback audit over every literal V5 admin button in this file."""
+    import ast as _ast
+    src_path = Path(__file__)
+    source = src_path.read_text(encoding="utf-8")
+    tree = _ast.parse(source)
+    literal_admin = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name) and node.func.id == "v5_button" and len(node.args) >= 2:
+            data = node.args[1]
+            if isinstance(data, _ast.Constant) and isinstance(data.value, str) and data.value.startswith("V5|A|"):
+                literal_admin.add(data.value.split("|")[2])
+    # Prefixes handled by this final layer or by the previous full editor.
+    handled_prefixes = {
+        "HOME","O","U","US","UT","UB","UD","SET","SETJ","UR","URY",
+        "G","GL","GD","GDV","GDET","GEN","GAD","GMAX","GMIN","GFV","FT","GE","GEY",
+        "P","PL","PG","GP","GN","GPEN","GPE","PE","PEY",
+        "C","CA","CT","CD","CF","CQ","CP","CB","CM","CR","CL","CE","CADD","CLEAN","CC","FC",
+        "E","EI","ED","ESH","EON","EX","EC","ES",
+        "F","GF","GX","GXT","GA",
+        "T","TS","TM","TT","TR","TA","ACH","AHE",
+        "B","BM","BL","BD","BDY","BDYY","BR","BRY",
+        "L","LL","LB","LC","LCY",
+        "X","XS","XC","XN","XD","XB","SH",
+        "Z","ZU","ZG","ZP","ZS","ZR","ZH","RAW",
+        "GR","S","SC","ST"
+    }
+    missing = sorted(x for x in literal_admin if x not in handled_prefixes)
+    assert not missing, f"unwired admin callback prefixes: {missing}"
+
+
+def v5_runtime_self_check() -> None:
+    ar6_ensure_config()
+    ar6_apply_runtime_overrides()
+    assert BOT_NAME == "ApexRival"
+    assert APEX_V5 == AR7_VERSION
+    assert callable(start_health_server)
+    assert callable(v5_callback)
+    assert callable(v5_text_router)
+    assert callable(v5_admin_action)
+    assert callable(callback)
+    # Data/content integrity.
+    for name, bank in V5_BANKS.items():
+        cleaned = [str(x).strip() for x in bank if str(x).strip()]
+        assert len(cleaned) == len(set(cleaned)), f"duplicate content in {name}"
+    # Button integrity + 64-byte callback limit.
+    for markup in (v5_home_inline(int(ADMIN_ID or 0)), v5_admin_home_markup(), ar6_section_markup("U")):
+        for row in getattr(markup, "inline_keyboard", []):
+            for button in row:
+                data = getattr(button, "callback_data", None)
+                if data is not None:
+                    assert len(str(data).encode("utf-8")) <= 64, f"callback too long: {data}"
+                assert getattr(button, "style", None) in {None, "primary", "success", "danger"}
+    kb = v5_main_keyboard(int(ADMIN_ID or 0))
+    for row in kb.keyboard:
+        for button in row:
+            assert isinstance(button, KeyboardButton)
+    # Visual sanity: no old wide frame markers remain in generated cards.
+    sample = v5_card("Test", "👥 کاربران: 1", "⭐ XP: 10", "💰 سکه: 5")
+    assert "╭━━" not in sample and "╰━━━━" not in sample
+    ar7_static_callback_audit()
+    print(f"ApexRival self-check OK | version={AR7_VERSION} | adult=always-on | reply-engine=on")
+
+
+# Make the final runtime self-check and main version use the new layer.
+_old_main_v5_ar7 = main_v5
+
+def main_v5():
+    ar6_apply_runtime_overrides()
+    return _old_main_v5_ar7()
+
+main = main_v5
+
+# Final tiny reliability layer: after 18+ confirmation, continue directly
+# into the requested random adult round instead of making the user click twice.
+_ar7_callback_v6 = v5_callback
+async def v5_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query and str(getattr(query, 'data', '')) == 'V5|18|OK':
+        uid = int(query.from_user.id)
+        get_user(uid)["adult_ok"] = True
+        game = active_game(query.message.chat_id) if getattr(query, 'message', None) else None
+        if game:
+            game["_viewer_id"] = uid
+            audit("adult_confirm", uid, game.get("chat_id"), "always_on")
+            save_data(force=True)
+            await safe_answer_query(query, "✅ دسترسی ۱۸+ فعال شد.")
+            await send_adult(query.message, game)
+        else:
+            audit("adult_confirm", uid, None, "always_on")
+            save_data(force=True)
+            await safe_edit_query(query, v5_card("🔞 ۱۸+", "✅ دسترسی تو تأیید شد.", "وضعیت: 🟢 همیشه فعال"), v5_markup(ar7_game_nav("V5|HOME")))
+        return
+    await _ar7_callback_v6(update, context)
+
+# Expired reply prompts are cleared by background cleanup so old replies never
+# accidentally complete a later round.
+_ar7_old_v5_housekeeping = v5_housekeeping
+def v5_housekeeping():
+    _ar7_old_v5_housekeeping()
+    now = time.time()
+    for game in DATA.get("games", {}).values():
+        prompt = game.get("reply_prompt")
+        if isinstance(prompt, dict) and now > float(prompt.get("expires", 0)):
+            game.pop("reply_prompt", None)
+
+# Final runtime pointer.
+main = main_v5
+
+
+if __name__ == '__main__':
     main()
