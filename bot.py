@@ -8453,6 +8453,982 @@ def _register_v5_handlers(app):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,v5_text_router))
 
 
+# ============================================================================
+# ApexRival 6.0 — SUPER ADMIN / GOD MODE OVERLAY
+# ============================================================================
+# This layer intentionally sits above the earlier admin implementation.
+# It keeps the existing game engine intact while replacing the admin UX with
+# a complete, action-oriented editor. Runtime configuration is persisted in
+# JSON, so changes survive a Render restart.
+# ============================================================================
+
+AR6_VERSION = "6.0"
+AR6_SCHEMA_KEYS = {
+    "global_content_overrides",
+    "global_content_disabled",
+    "shop_overrides",
+    "achievement_overrides",
+    "title_rules",
+    "global_features",
+}
+
+
+def ar6_ensure_config() -> None:
+    s = DATA.setdefault("settings", {})
+    s.setdefault("max_players_default", 20)
+    s.setdefault("adult_default", False)
+    s.setdefault("xp_multiplier", 1)
+    s.setdefault("coins_multiplier", 1)
+    s.setdefault("title_rules", [
+        {"min_xp": 2500, "title": "👑 Apex Legend"},
+        {"min_xp": 1500, "title": "🔥 سلطان میدان"},
+        {"min_xp": 900, "title": "⚔️ رقیب نخبه"},
+        {"min_xp": 500, "title": "💀 کابوس گروه"},
+        {"min_xp": 250, "title": "🎯 بازیکن حرفه‌ای"},
+        {"min_xp": 100, "title": "🧨 دردسرساز"},
+        {"min_xp": 50, "title": "⭐ رقیب جوان"},
+        {"min_xp": 0, "title": "🌱 تازه‌وارد"},
+    ])
+    DATA.setdefault("global_content_overrides", {})
+    DATA.setdefault("global_content_disabled", {})
+    DATA.setdefault("shop_overrides", {})
+    DATA.setdefault("achievement_overrides", {})
+    DATA.setdefault("global_features", {
+        "truth": True, "dare": True, "flirty": True, "question": True,
+        "adult": True, "duel": True, "roulette": True, "speed": True,
+        "vote": True, "secret": True, "boss": True, "random_event": True,
+        "mini_games": True, "teams": True, "spy": True, "missions": True,
+    })
+    for gid, g in DATA.setdefault("groups", {}).items():
+        g.setdefault("settings", {})
+        g["settings"].setdefault("allow_flirty", True)
+        g["settings"].setdefault("allow_random_events", True)
+        g["settings"].setdefault("allow_vote", True)
+        g["settings"].setdefault("allow_duel", True)
+        g["settings"].setdefault("allow_secret", True)
+        g["settings"].setdefault("allow_boss", True)
+        g["settings"].setdefault("allow_mini_games", True)
+        g["settings"].setdefault("allow_teams", True)
+        g["settings"].setdefault("allow_spy", True)
+        g["settings"].setdefault("penalty_deadline", 300)
+        g["settings"].setdefault("auto_end_minutes", 90)
+        g.setdefault("content", {})
+
+
+def ar6_apply_runtime_overrides() -> None:
+    """Apply persisted UI edits to runtime constants used by the old engine."""
+    ar6_ensure_config()
+
+    # Shop: preserve the original schema and apply editable fields.
+    for key, override in DATA.get("shop_overrides", {}).items():
+        if key in SHOP and isinstance(override, dict):
+            for fld in ("name", "price", "desc"):
+                if fld in override:
+                    SHOP[key][fld] = override[fld]
+
+    # Achievements: editable display strings while retaining the original IDs.
+    for key, override in DATA.get("achievement_overrides", {}).items():
+        if key in ACHIEVEMENTS and isinstance(override, dict):
+            current = ACHIEVEMENTS[key]
+            ACHIEVEMENTS[key] = (
+                str(override.get("name", current[0])),
+                str(override.get("desc", current[1])),
+            )
+
+
+# Run once now; also run again in main_v5 after a restore/config change.
+ar6_apply_runtime_overrides()
+
+
+def ar6_title_for(xp: int) -> str:
+    rules = DATA.get("settings", {}).get("title_rules", [])
+    if isinstance(rules, list) and rules:
+        cleaned = []
+        for rule in rules:
+            if isinstance(rule, dict):
+                try:
+                    cleaned.append((int(rule.get("min_xp", 0)), str(rule.get("title", "🌱 تازه‌وارد"))))
+                except Exception:
+                    pass
+        if cleaned:
+            cleaned.sort(key=lambda x: x[0], reverse=True)
+            for threshold, title in cleaned:
+                if int(xp) >= threshold:
+                    return title
+    # Fallback to the original system if config is damaged.
+    if xp >= 2500: return "👑 Apex Legend"
+    if xp >= 1500: return "🔥 سلطان میدان"
+    if xp >= 900: return "⚔️ رقیب نخبه"
+    if xp >= 500: return "💀 کابوس گروه"
+    if xp >= 250: return "🎯 بازیکن حرفه‌ای"
+    if xp >= 100: return "🧨 دردسرساز"
+    if xp >= 50: return "⭐ رقیب جوان"
+    return "🌱 تازه‌وارد"
+
+
+# All existing callers resolve title_for dynamically.
+title_for = ar6_title_for
+
+
+def ar6_shop_item(key: str) -> dict[str, Any]:
+    base = SHOP.get(key, {"name": key, "price": 0, "desc": ""})
+    override = DATA.get("shop_overrides", {}).get(key, {})
+    item = dict(base)
+    if isinstance(override, dict):
+        item.update({k: override[k] for k in ("name", "price", "desc", "enabled") if k in override})
+    item.setdefault("enabled", True)
+    return item
+
+
+def ar6_shop_enabled(key: str) -> bool:
+    return bool(ar6_shop_item(key).get("enabled", True))
+
+
+async def ar6_send_shop(message, uid: int) -> None:
+    user = get_user(uid)
+    inv = inventory(uid)
+    lines = [f"💰 موجودی: <b>{int(user.get('coins', 0))} سکه</b>\n"]
+    rows = []
+    for key in SHOP:
+        item = ar6_shop_item(key)
+        if not item.get("enabled", True):
+            continue
+        lines.append(
+            f"{escape(str(item['name']))} — <b>{int(item['price'])}</b> 🪙\n"
+            f"{escape(str(item['desc']))} | موجودی: {int(inv.get(key, 0))}"
+        )
+        rows.append([ApexInlineButton(f"🛒 {item['name']} · {item['price']}", callback_data=f"buy|{key}")])
+    rows.append([ApexInlineButton("✕ بستن", callback_data="V5|CLOSE", style=APEX_STYLE_DANGER)])
+    await message.reply_text(
+        "🛒 <b>فروشگاه ApexRival</b>\n\n" + "\n\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
+# Dynamic global function used by V5 game menus.
+send_shop = ar6_send_shop
+
+# Wrap the legacy purchase callback so disabled items really become unavailable.
+_ar6_legacy_callback = globals().get("callback")
+
+
+async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    data = str(q.data) if q and q.data else ""
+    if data.startswith("buy|"):
+        key = data.split("|", 1)[1]
+        if not ar6_shop_enabled(key):
+            await safe_answer_query(q, "⛔ این آیتم فعلاً غیرفعال است.", True)
+            return
+    if _ar6_legacy_callback:
+        await _ar6_legacy_callback(update, context)
+
+
+# ---------------------------------------------------------------------------
+# Runtime content editor / chooser
+# ---------------------------------------------------------------------------
+
+def ar6_base_content(key: str) -> list[str]:
+    pool = list(V5_BANKS.get(key, []))
+    pool += list(DATA.get("global_content", {}).get(key, []))
+    return v5_unique([str(x).strip() for x in pool if str(x).strip()])
+
+
+def ar6_display_content(key: str) -> list[str]:
+    overrides = DATA.get("global_content_overrides", {}).get(key, {})
+    disabled = set(DATA.get("global_content_disabled", {}).get(key, []))
+    result = []
+    for item in ar6_base_content(key):
+        if item in disabled:
+            continue
+        result.append(str(overrides.get(item, item)))
+    return v5_unique(result)
+
+
+def ar6_resolve_content_for_game(game: dict[str, Any], key: str, fallback: str | None = None) -> str:
+    group_id = int(game.get("chat_id", 0))
+    group = get_group(group_id)
+    pool = list(V5_BANKS.get(key, []))
+    pool += list(group.get("content", {}).get(key, []))
+    pool += list(DATA.get("global_content", {}).get(key, []))
+    disabled = set(DATA.get("global_content_disabled", {}).get(key, []))
+    overrides = DATA.get("global_content_overrides", {}).get(key, {})
+    pool = [str(x).strip() for x in pool if str(x).strip() and str(x) not in disabled]
+    pool = [str(overrides.get(x, x)) for x in pool]
+    pool = v5_unique(pool)
+    if not pool:
+        return fallback or "این بخش هنوز محتوایی ندارد."
+    used = set(game.setdefault("used_content", {}).setdefault(key, []))
+    choices = [x for x in pool if x not in used]
+    if not choices:
+        used.clear(); choices = pool
+    pick = random.choice(choices)
+    used.add(pick)
+    game["used_content"][key] = list(used)[-500:]
+    return pick
+
+
+v5_choose = ar6_resolve_content_for_game
+choose_content = ar6_resolve_content_for_game
+
+
+def ar6_parse_value(raw: str):
+    raw = raw.strip()
+    low = raw.lower()
+    if low == "true": return True
+    if low == "false": return False
+    if low in ("null", "none"): return None
+    try:
+        if raw and raw[0] in "[{\"":
+            return json.loads(raw)
+    except Exception:
+        pass
+    try:
+        return int(raw)
+    except ValueError:
+        try:
+            return float(raw)
+        except ValueError:
+            return raw
+
+
+def ar6_set_path(root: Any, path: str, value: Any, delete: bool = False) -> None:
+    path = path.strip().strip(".")
+    if not path:
+        raise ValueError("مسیر خالی است")
+    parts = [p for p in path.split(".") if p]
+    cur = root
+    for part in parts[:-1]:
+        if isinstance(cur, dict):
+            if part not in cur:
+                cur[part] = {}
+            cur = cur[part]
+        elif isinstance(cur, list) and part.isdigit():
+            cur = cur[int(part)]
+        else:
+            raise ValueError("مسیر نامعتبر است")
+    last = parts[-1]
+    if isinstance(cur, dict):
+        if delete:
+            cur.pop(last, None)
+        else:
+            cur[last] = value
+    elif isinstance(cur, list) and last.isdigit():
+        idx = int(last)
+        if delete:
+            if 0 <= idx < len(cur): cur.pop(idx)
+        else:
+            if idx >= len(cur):
+                cur.extend([None] * (idx - len(cur) + 1))
+            cur[idx] = value
+    else:
+        raise ValueError("مقصد قابل ویرایش نیست")
+
+
+def ar6_edit_target(scope: str, ident: str | None):
+    if scope == "settings":
+        return DATA.setdefault("settings", {})
+    if scope == "user":
+        return get_user(int(ident or 0))
+    if scope == "group":
+        return get_group(int(ident or 0))
+    if scope == "game":
+        key = str(ident or "")
+        if key in DATA.get("games", {}):
+            return DATA["games"][key]
+        match = next((g for gid, g in DATA.get("games", {}).items() if str(gid).startswith(key) or str(g.get("id", "")).startswith(key)), None)
+        if match is None:
+            raise ValueError("بازی پیدا نشد")
+        return match
+    raise ValueError("scope نامعتبر است")
+
+
+def ar6_admin_nav(*buttons):
+    return v5_markup(list(buttons) + v5_nav("V5|A|HOME"))
+
+
+def ar6_confirm_markup(ok_data: str, cancel_data: str = "V5|A|HOME"):
+    return v5_markup([
+        [v5_button("✅ انجام بده", ok_data), v5_button("❌ لغو", cancel_data)],
+    ])
+
+
+def ar6_admin_home_markup():
+    return v5_markup([
+        [v5_button("📊 نمای کلی", "V5|A|O"), v5_button("👥 کاربران", "V5|A|U")],
+        [v5_button("🌐 گروه‌ها", "V5|A|G"), v5_button("🎮 بازی‌ها", "V5|A|P")],
+        [v5_button("📝 محتوا", "V5|A|C"), v5_button("🛒 اقتصاد", "V5|A|E")],
+        [v5_button("🎛 امکانات", "V5|A|F"), v5_button("⚙️ تنظیمات", "V5|A|T")],
+        [v5_button("💾 بکاپ", "V5|A|B"), v5_button("📜 گزارش‌ها", "V5|A|L")],
+        [v5_button("⚡ ویرایشگر همه‌چیز", "V5|A|Z"), v5_button("🧰 ابزارها", "V5|A|X")],
+        [v5_button("📣 Broadcast", "V5|A|XB")],
+        [v5_button("✕ بستن", "V5|CLOSE")],
+    ])
+
+
+v5_admin_home_markup = ar6_admin_home_markup
+
+
+def ar6_admin_home_text() -> str:
+    active = sum(1 for g in DATA.get("groups", {}).values() if g.get("active_game"))
+    lobbies = sum(1 for g in DATA.get("games", {}).values() if g.get("status") == "lobby")
+    users = len(DATA.get("users", {}))
+    groups = len(DATA.get("groups", {}))
+    content_count = sum(len(ar6_display_content(k)) for k in CONTENT_LABELS)
+    return (
+        f"{v5_breadcrumb('مدیریت','مرکز فرماندهی')}\n\n"
+        f"{v5_card('👑 SUPER ADMIN',
+            f'👥 کاربران  <b>{users}</b>   ·   🌐 گروه‌ها  <b>{groups}</b>',
+            f'🎮 فعال  <b>{active}</b>   ·   🟡 Lobby  <b>{lobbies}</b>',
+            f'🧩 محتوای فعال  <b>{content_count}</b>',
+            f'📜 Audit  <b>{len(DATA.get("audit", []))}</b>',
+            f'💾 داده  <b>{"OK" if Path(DATA_FILE).exists() else "MISSING"}</b>'
+        )}\n\n"
+        "⚡ این پنل برای کنترل کامل داده‌های قابل‌تنظیم ApexRival طراحی شده است."
+    )
+
+v5_admin_home_text = ar6_admin_home_text
+
+
+async def v5_admin_home(query):
+    await safe_edit_query(query, v5_admin_home_text(), v5_admin_home_markup())
+
+
+# -------------------- section menus --------------------
+def ar6_section_markup(sec: str):
+    if sec == "U":
+        return ar6_admin_nav(
+            [v5_button("🔎 جست‌وجو", "V5|A|US")],
+            [v5_button("🏆 فهرست کاربران", "V5|A|U|0"), v5_button("🚫 محدودشده‌ها", "V5|A|UB")],
+        )
+    if sec == "G":
+        return ar6_admin_nav(
+            [v5_button("📋 فهرست گروه‌ها", "V5|A|GL|0"), v5_button("🎮 بازی‌های گروه‌ها", "V5|A|P")],
+            [v5_button("⚙️ ویرایش مستقیم گروه", "V5|A|GR")],
+        )
+    if sec == "P":
+        return ar6_admin_nav(
+            [v5_button("🟢 بازی‌های زنده", "V5|A|P")],
+            [v5_button("🛑 پایان همه", "V5|A|PE")],
+            [v5_button("⚡ ویرایش بازی با ID", "V5|A|PG")],
+        )
+    if sec == "C":
+        rows = []
+        pairs = [("truth", "🕵️ اعتراف"), ("dare", "🔥 جرئت"), ("flirty", "💘 فلرت"),
+                 ("question", "🧠 سؤال"), ("penalty", "☠️ حکم"), ("boss", "👑 Boss"),
+                 ("mission", "🤫 مأموریت"), ("riddle", "🧩 معما")]
+        for i in range(0, len(pairs), 2):
+            rows.append([v5_button(pairs[i][1], f"V5|A|CL|{pairs[i][0]}|0"), v5_button(pairs[i+1][1], f"V5|A|CL|{pairs[i+1][0]}|0")])
+        rows.append([v5_button("➕ افزودن", "V5|A|CA"), v5_button("♻️ پاک‌سازی غیرفعال‌ها", "V5|A|CC")])
+        rows.append(v5_nav("V5|A|HOME"))
+        return v5_markup(rows)
+    if sec == "E":
+        return ar6_admin_nav(
+            [v5_button("🛒 آیتم‌های فروشگاه", "V5|A|EI")],
+            [v5_button("📈 ضرایب XP", "V5|A|EX"), v5_button("💰 ضرایب سکه", "V5|A|EC")],
+            [v5_button("🏆 اقتصاد کلی", "V5|A|ES")],
+        )
+    if sec == "F":
+        return ar6_admin_nav(
+            [v5_button("🌐 امکانات گروه", "V5|A|GF")],
+            [v5_button("🌍 امکانات سراسری", "V5|A|GX")],
+            [v5_button("🔞 کنترل +18", "V5|A|GA")],
+        )
+    if sec == "T":
+        return ar6_admin_nav(
+            [v5_button("🌍 تنظیمات سراسری", "V5|A|TS")],
+            [v5_button("🏅 عنوان‌ها", "V5|A|TT"), v5_button("🏆 دستاوردها", "V5|A|TA")],
+            [v5_button("🧠 ویرایش JSON تنظیمات", "V5|A|ZR")],
+        )
+    if sec == "B":
+        return ar6_admin_nav(
+            [v5_button("📦 ساخت بکاپ", "V5|A|BM"), v5_button("📋 بکاپ‌ها", "V5|A|BL")],
+            [v5_button("🗑 مدیریت بکاپ‌ها", "V5|A|BD")],
+        )
+    if sec == "L":
+        return ar6_admin_nav(
+            [v5_button("🧾 Audit Log", "V5|A|LL")],
+            [v5_button("📣 گزارش Broadcast", "V5|A|LB")],
+            [v5_button("🧹 پاک کردن لاگ", "V5|A|LC")],
+        )
+    if sec == "X":
+        return ar6_admin_nav(
+            [v5_button("💾 ذخیره فوری", "V5|A|XS"), v5_button("🩺 سلامت", "V5|A|SH")],
+            [v5_button("🧹 پاکسازی", "V5|A|XC"), v5_button("🔢 شمارنده‌ها", "V5|A|XN")],
+            [v5_button("📤 خروجی داده", "V5|A|XD")],
+        )
+    if sec == "Z":
+        return ar6_admin_nav(
+            [v5_button("👤 ویرایش User", "V5|A|ZU")],
+            [v5_button("🌐 ویرایش Group", "V5|A|ZG")],
+            [v5_button("🎮 ویرایش Game", "V5|A|ZP")],
+            [v5_button("⚙️ ویرایش Settings", "V5|A|ZS")],
+            [v5_button("📘 راهنمای فرمت", "V5|A|ZH")],
+        )
+    return v5_nav("V5|A|HOME")
+
+
+async def ar6_section(query, sec: str):
+    titles = {
+        "U":"👥 کاربران", "G":"🌐 گروه‌ها", "P":"🎮 بازی‌ها", "C":"📝 محتوا", "E":"🛒 اقتصاد",
+        "F":"🎛 امکانات", "T":"⚙️ تنظیمات", "B":"💾 بکاپ", "L":"📜 گزارش‌ها", "X":"🧰 ابزارها", "Z":"⚡ ویرایشگر همه‌چیز"
+    }
+    await safe_edit_query(query, f"{v5_breadcrumb('مدیریت', titles.get(sec, sec))}\n\n{v5_card(titles.get(sec, sec), 'هر صفحه فقط ابزارهای همان بخش را نشان می‌دهد.')}", ar6_section_markup(sec))
+
+
+# -------------------- user editor --------------------
+def ar6_user_editor_markup(uid: int):
+    return v5_markup([
+        [v5_button("⭐ XP", f"V5|A|SET|user|{uid}|xp"), v5_button("💰 سکه", f"V5|A|SET|user|{uid}|coins")],
+        [v5_button("🏆 برد", f"V5|A|SET|user|{uid}|wins"), v5_button("☠️ باخت", f"V5|A|SET|user|{uid}|losses")],
+        [v5_button("🎮 بازی", f"V5|A|SET|user|{uid}|games"), v5_button("🔥 استریک", f"V5|A|SET|user|{uid}|streak")],
+        [v5_button("📈 رکورد استریک", f"V5|A|SET|user|{uid}|best_streak"), v5_button("🏅 Level", f"V5|A|SET|user|{uid}|level")],
+        [v5_button("✏️ نام نمایشی", f"V5|A|SET|user|{uid}|name"), v5_button("👑 عنوان دستی", f"V5|A|SET|user|{uid}|custom_title")],
+        [v5_button("🔞 adult_ok", f"V5|A|SET|user|{uid}|adult_ok"), v5_button("🚫 محدودیت", f"V5|A|SET|user|{uid}|banned")],
+        [v5_button("🎒 موجودی JSON", f"V5|A|SETJ|user|{uid}|inventory"), v5_button("📊 آمار JSON", f"V5|A|SETJ|user|{uid}|stats")],
+        [v5_button("🏆 دستاورد JSON", f"V5|A|SETJ|user|{uid}|achievements"), v5_button("⚡ ویرایشگر کامل", f"V5|A|RAW|user|{uid}")],
+        [v5_button("🧹 ریست کامل", f"V5|A|UR|{uid}")],
+        v5_nav("V5|A|U"),
+    ])
+
+
+def ar6_user_card(uid: int) -> str:
+    u = get_user(uid)
+    return v5_card(
+        "👤 USER",
+        f"نام: <b>{escape(str(u.get('name','کاربر')))}</b>",
+        f"ID: <code>{uid}</code>",
+        f"⭐ XP: <b>{int(u.get('xp',0))}</b>   ·   🏅 Level: <b>{int(u.get('level',1))}</b>",
+        f"💰 سکه: <b>{int(u.get('coins',0))}</b>   ·   🏆 برد: <b>{int(u.get('wins',0))}</b>   ·   ☠️ باخت: <b>{int(u.get('losses',0))}</b>",
+        f"🔥 استریک: <b>{int(u.get('streak',0))}</b> / <b>{int(u.get('best_streak',0))}</b>",
+        f"🚫: {'فعال نیست' if not u.get('banned') else 'محدود'}   ·   🔞: {'ON' if u.get('adult_ok') else 'OFF'}",
+        f"🎒 {escape(json.dumps(u.get('inventory',{}),ensure_ascii=False))}",
+    )
+
+
+async def ar6_user_detail(query, uid: int):
+    await safe_edit_query(query, f"{v5_breadcrumb('مدیریت','کاربر')}\n\n{ar6_user_card(uid)}", ar6_user_editor_markup(uid))
+
+
+# -------------------- generic text edit flows --------------------
+def ar6_flow_prompt(uid: int, flow: dict, text: str, markup=None):
+    V5_FLOW[uid] = flow
+    return text, markup or v5_markup([[v5_button("❌ لغو", "V5|A|FC")]])
+
+
+# -------------------- content editor --------------------
+def ar6_content_page(key: str, page: int = 0):
+    items = ar6_display_content(key)
+    page = max(0, int(page)); chunk = 5; start = page * chunk
+    current = items[start:start+chunk]
+    rows = []
+    for i, item in enumerate(current):
+        absolute = start + i
+        rows.append([v5_button(f"✏️ {absolute+1}. {item[:20]}", f"V5|A|CE|{key}|{absolute}")])
+    nav=[]
+    if page>0: nav.append(v5_button("◀️",f"V5|A|CL|{key}|{page-1}"))
+    if start+chunk<len(items): nav.append(v5_button("▶️",f"V5|A|CL|{key}|{page+1}"))
+    if nav: rows.append(nav)
+    rows.append([v5_button("➕ افزودن", f"V5|A|CADD|{key}"), v5_button("🧹 پاک‌سازی", f"V5|A|CLEAN|{key}")])
+    rows.append(v5_nav("V5|A|C"))
+    body = v5_card(CONTENT_LABELS.get(key,key), *(f"{start+i+1}. {escape(item)}" for i,item in enumerate(current)) or ["خالی"])
+    return f"{v5_breadcrumb('مدیریت','محتوا')}\n\n{body}", v5_markup(rows)
+
+
+# -------------------- feature editor --------------------
+AR6_FEATURE_LABELS = {
+    "allow_flirty":"💘 فلرت", "allow_random_events":"🎲 رویداد", "allow_vote":"🗳 رأی", "allow_duel":"⚔️ دوئل",
+    "allow_secret":"🤫 مخفی", "allow_boss":"👑 Boss", "allow_mini_games":"⚡ مینی‌گیم", "allow_teams":"👥 تیم‌ها",
+    "allow_spy":"🕵️ جاسوس",
+}
+
+
+def ar6_feature_rows(cid: int):
+    g = get_group(cid); s = g.setdefault("settings", {})
+    rows=[]
+    for key,label in AR6_FEATURE_LABELS.items():
+        on=bool(s.get(key,True)); rows.append([v5_button(f"{label} {'🟢' if on else '⚫'}", f"V5|A|FT|{cid}|{key}")])
+    rows += [[v5_button("🔞 +18", f"V5|A|GAD|{cid}")], *v5_nav("V5|A|GDET|"+str(cid))]
+    return v5_markup(rows)
+
+
+async def ar6_group_detail(query, cid: int):
+    g=get_group(cid); game=active_game(cid)
+    body=v5_card(
+        "🌐 GROUP",
+        f"ID: <code>{cid}</code>",
+        f"وضعیت: {'🟢 فعال' if g.get('enabled',True) else '⚫ خاموش'}",
+        f"+18: {'🔞 ON' if g.get('adult_mode') else '🔒 OFF'}",
+        f"👥 ظرفیت: {g.get('min_players',2)}–{g.get('max_players',20)}",
+        f"⏱ مهلت حکم: {g.get('settings',{}).get('penalty_deadline',300)} ثانیه",
+        f"🎮 بازی: {'🟢 فعال' if game else '💤 ندارد'}",
+    )
+    rows=[
+        [v5_button("🟢/⚫ فعال",f"V5|A|GEN|{cid}"),v5_button("🔞 +18",f"V5|A|GAD|{cid}")],
+        [v5_button("➕ Max",f"V5|A|GMAX|{cid}|1"),v5_button("➖ Max",f"V5|A|GMAX|{cid}|-1")],
+        [v5_button("➕ Min",f"V5|A|GMIN|{cid}|1"),v5_button("➖ Min",f"V5|A|GMIN|{cid}|-1")],
+        [v5_button("🎛 امکانات گروه",f"V5|A|GFV|{cid}")],
+        [v5_button("⚡ ویرایش کامل",f"V5|A|RAW|group|{cid}")],
+        [v5_button("🛑 پایان بازی",f"V5|A|GE|{cid}")],
+        *v5_nav("V5|A|G")
+    ]
+    await safe_edit_query(query,f"{v5_breadcrumb('مدیریت','گروه')}\n\n{body}",v5_markup(rows))
+
+
+# -------------------- full admin action replacement --------------------
+async def v5_admin_action(query, context, parts):
+    uid = query.from_user.id
+    if not is_admin(uid):
+        await safe_answer_query(query, "🚫 فقط Super Admin.", True); return
+    action = parts[2] if len(parts) > 2 else "HOME"
+
+    # navigation
+    if action == "HOME": await v5_admin_home(query); return
+    if action in {"U","G","P","C","E","F","T","B","L","X","Z"} and (len(parts)==3):
+        await ar6_section(query, action); return
+    if action == "O": await v5_admin_overview(query); return
+
+    # users
+    if action == "U": await v5_admin_users(query, int(parts[3]) if len(parts)>3 else 0); return
+    if action == "US":
+        V5_FLOW[uid] = {"type":"admin_user_search"}
+        await safe_edit_query(query, v5_card("🔎 جست‌وجوی کاربر","User ID عددی را در پیام بعدی بفرست.") , v5_markup([[v5_button("❌ لغو","V5|A|FC")]])); return
+    if action == "UT": await v5_admin_users(query,0); return
+    if action == "UB":
+        banned=[(k,u) for k,u in DATA.get('users',{}).items() if u.get('banned')]
+        body=v5_card("🚫 محدودشده‌ها",*(f"<code>{k}</code> · {escape(str(u.get('name','کاربر')))}" for k,u in banned[:25]) or ["خالی"])
+        await safe_edit_query(query,f"{v5_breadcrumb('مدیریت','محدودشده‌ها')}\n\n{body}",v5_markup(v5_nav('V5|A|U'))); return
+    if action == "UD": await ar6_user_detail(query,int(parts[3])); return
+    if action == "SET" and len(parts)>=6:
+        scope, ident, field = parts[3], parts[4], parts[5]
+        V5_FLOW[uid] = {"type":"set_field","scope":scope,"ident":ident,"field":field}
+        obj=ar6_edit_target(scope,ident)
+        current=obj.get(field) if isinstance(obj,dict) else None
+        await safe_edit_query(query,v5_card("✏️ ویرایش مقدار",f"مسیر: <code>{escape(field)}</code>",f"مقدار فعلی: <b>{escape(str(current))}</b>","مقدار جدید را در پیام بعدی بفرست."),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "SETJ" and len(parts)>=6:
+        scope, ident, field=parts[3],parts[4],parts[5]
+        V5_FLOW[uid]={"type":"set_json","scope":scope,"ident":ident,"field":field}
+        await safe_edit_query(query,v5_card("🧩 ویرایش JSON",f"مسیر: <code>{escape(field)}</code>","یک JSON معتبر بفرست؛ مثل <code>{\"x\":1}</code>"),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "UR":
+        target=int(parts[3]); token=v5_confirmation(uid,'reset_user',str(target))
+        await safe_edit_query(query,v5_card('⚠️ ریست کاربر','این عمل اطلاعات حساب را به حالت اولیه برمی‌گرداند.'),ar6_confirm_markup(f'V5|A|URY|{token}','V5|A|UD|'+str(target))); return
+    if action == "URY":
+        info=v5_get_confirmation(uid,parts[3] if len(parts)>3 else '','reset_user')
+        if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+        DATA['users'][str(info['payload'])]=deepcopy(DEFAULT_USER); save_data(force=True); audit('admin_user_reset',uid,None,str(info['payload']))
+        await ar6_user_detail(query,int(info['payload'])); return
+
+    # groups
+    if action == "GL": await v5_admin_group_list(query,int(parts[3]) if len(parts)>3 else 0); return
+    if action == "GDET": await ar6_group_detail(query,int(parts[3])); return
+    if action == "GEN":
+        cid=int(parts[3]); g=get_group(cid); g['enabled']=not bool(g.get('enabled',True)); save_data(force=True); audit('admin_group_toggle',uid,cid,str(g['enabled'])); await ar6_group_detail(query,cid); return
+    if action == "GAD":
+        cid=int(parts[3]); g=get_group(cid); g['adult_mode']=not bool(g.get('adult_mode')); save_data(force=True); await ar6_group_detail(query,cid); return
+    if action == "GMAX":
+        cid,delta=int(parts[3]),int(parts[4]); g=get_group(cid); g['max_players']=max(int(g.get('min_players',2)),min(100,int(g.get('max_players',20))+delta)); save_data(force=True); await ar6_group_detail(query,cid); return
+    if action == "GMIN":
+        cid,delta=int(parts[3]),int(parts[4]); g=get_group(cid); g['min_players']=max(2,min(int(g.get('max_players',20)),int(g.get('min_players',2))+delta)); save_data(force=True); await ar6_group_detail(query,cid); return
+    if action == "GFV":
+        cid=int(parts[3]); await safe_edit_query(query,v5_card('🎛 امکانات گروه',f'گروه <code>{cid}</code>','برای تغییر هر گزینه، روی همان گزینه بزن.'),ar6_feature_rows(cid)); return
+    if action == "FT":
+        cid=int(parts[3]); key=parts[4]; g=get_group(cid); g.setdefault('settings',{})[key]=not bool(g.get('settings',{}).get(key,True)); save_data(force=True); await safe_edit_query(query,v5_card('🎛 امکانات گروه',f'تغییر ذخیره شد: <b>{key}</b>'),ar6_feature_rows(cid)); return
+    if action == "GE":
+        cid=int(parts[3]); game=active_game(cid)
+        if game:
+            token=v5_confirmation(uid,'end_admin_game',str(cid))
+            await safe_edit_query(query,v5_card('⚠️ پایان بازی',f'گروه: <code>{cid}</code>','بازی فعال فوراً بسته می‌شود.'),ar6_confirm_markup(f'V5|A|GEY|{token}',f'V5|A|GDET|{cid}')); return
+        await safe_answer_query(query,'در این گروه بازی فعالی نیست.',True); return
+    if action == "GEY":
+        info=v5_get_confirmation(uid,parts[3] if len(parts)>3 else '','end_admin_game')
+        if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+        game=active_game(int(info['payload']))
+        if game: end_game(game,'پایان توسط Super Admin')
+        save_data(force=True); await ar6_group_detail(query,int(info['payload'])); return
+
+    # games
+    if action == "PG":
+        V5_FLOW[uid]={'type':'admin_game_search'}
+        await safe_edit_query(query,v5_card('🎮 ویرایش بازی','شناسه بازی را در پیام بعدی بفرست.','می‌توانی از بخش بازی‌های زنده هم انتخابش کنی.'),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "GP":
+        token=parts[3] if len(parts)>3 else ''
+        game=next((g for g in DATA.get('games',{}).values() if str(g.get('id','')).startswith(token)),None)
+        if not game: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+        gid=str(game.get('id'))
+        body=v5_card('🎮 GAME',f"ID: <code>{escape(gid)}</code>",f"Chat: <code>{game.get('chat_id')}</code>",f"Phase: <b>{escape(str(game.get('phase','-')))}</b>",f"Players: <b>{len(game.get('players',[]))}</b>")
+        rows=[[v5_button('⏭ دور بعد',f'V5|A|GN|{gid[:18]}'),v5_button('🎲 حکم تصادفی',f'V5|A|GPEN|{gid[:18]}')],[v5_button('🧩 ویرایش کامل',f'V5|A|RAW|game|{gid[:18]}')],[v5_button('🛑 پایان',f'V5|A|GPE|{gid[:18]}')],*v5_nav('V5|A|P')]
+        await safe_edit_query(query,f"{v5_breadcrumb('مدیریت','بازی')}\n\n{body}",v5_markup(rows)); return
+    if action == "GN":
+        token=parts[3]; game=next((g for g in DATA.get('games',{}).values() if str(g.get('id','')).startswith(token)),None)
+        if not game: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+        game['round']=int(game.get('round',0))+1; game['phase']='free'; save_data(force=True); await safe_answer_query(query,'⏭ دور بعد فعال شد.'); return
+    if action == "GPEN":
+        token=parts[3]; game=next((g for g in DATA.get('games',{}).values() if str(g.get('id','')).startswith(token)),None)
+        if not game or not game.get('players'): await safe_answer_query(query,'بازیکنی وجود ندارد.',True); return
+        target=random.choice(game['players']); p=assign_penalty(game,int(target),source='Super Admin'); save_data(force=True)
+        await safe_answer_query(query,f'☠️ حکم برای {v5_name(target,game)} ثبت شد.'); return
+    if action == "GPE":
+        token=parts[3]; game=next((g for g in DATA.get('games',{}).values() if str(g.get('id','')).startswith(token)),None)
+        if not game: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+        if game.get('status') in ('active','lobby'):
+            real=str(game.get('chat_id')); c=v5_confirmation(uid,'end_admin_game',real)
+            await safe_edit_query(query,v5_card('⚠️ پایان بازی','این عملیات قابل برگشت نیست.'),ar6_confirm_markup(f'V5|A|GEY|{c}', 'V5|A|P')); return
+
+    # content
+    if action == "CL" and len(parts)>=4:
+        key=parts[3]; page=int(parts[4]) if len(parts)>4 else 0
+        body,markup=ar6_content_page(key,page); await safe_edit_query(query,body,markup); return
+    if action == "CE" and len(parts)>=5:
+        key,index=parts[3],int(parts[4]); items=ar6_display_content(key)
+        if not (0<=index<len(items)): await safe_answer_query(query,'آیتم پیدا نشد.',True); return
+        V5_FLOW[uid]={'type':'content_edit','key':key,'index':index,'old':items[index]}
+        await safe_edit_query(query,v5_card('✏️ ویرایش محتوا',f"دسته: {CONTENT_LABELS.get(key,key)}",f"متن فعلی:\n<code>{escape(items[index])}</code>","متن جدید را در پیام بعدی بفرست."),v5_markup([[v5_button('🗑 غیرفعال/حذف','V5|A|CD|'+key+'|'+str(index)),v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "CD":
+        key,index=parts[3],int(parts[4]); items=ar6_display_content(key)
+        if not (0<=index<len(items)): await safe_answer_query(query,'آیتم پیدا نشد.',True); return
+        target=items[index]
+        gc=DATA.setdefault('global_content',{}).setdefault(key,[])
+        if target in gc:
+            gc.remove(target)
+        else:
+            DATA.setdefault('global_content_disabled',{}).setdefault(key,[])
+            if target not in DATA['global_content_disabled'][key]: DATA['global_content_disabled'][key].append(target)
+        DATA.setdefault('global_content_overrides',{}).setdefault(key,{}).pop(target,None)
+        save_data(force=True); audit('admin_content_disable',uid,None,f'{key}:{index}')
+        body,markup=ar6_content_page(key, max(0,index//5))
+        await safe_edit_query(query,body,markup); return
+
+    if action == "CADD":
+        key=parts[3] if len(parts)>3 else 'truth'; V5_FLOW[uid]={'type':'content_add','key':key}
+        await safe_edit_query(query,v5_card('➕ افزودن محتوا',f"دسته: {CONTENT_LABELS.get(key,key)}","متن جدید را در پیام بعدی بفرست."),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "CLEAN":
+        key=parts[3] if len(parts)>3 else ''
+        DATA.setdefault('global_content_disabled',{}).setdefault(key,[])[:] = []
+        save_data(force=True); await safe_edit_query(query,v5_card('♻️ پاکسازی',f"غیرفعال‌های «{key}» پاک شدند و همه آیتم‌های این دسته دوباره فعال‌اند."),v5_markup(v5_nav('V5|A|C'))); return
+    if action == "CC":
+        DATA['global_content_disabled']={}; DATA['global_content_overrides']={}; save_data(force=True); await ar6_section(query,'C'); return
+
+    # economy/shop
+    if action == "EI":
+        rows=[]; lines=[]
+        for key,item in SHOP.items():
+            it=ar6_shop_item(key); flag='🟢' if it.get('enabled',True) else '⚫'
+            lines.append(f"{flag} <b>{escape(str(it['name']))}</b> · {int(it['price'])} 🪙")
+            rows.append([v5_button(f"✏️ {it['name'][:18]}",f"V5|A|ED|{key}")])
+        rows.append(v5_nav('V5|A|E'))
+        await safe_edit_query(query,v5_card('🛒 SHOP',*lines),v5_markup(rows)); return
+    if action == "ED":
+        key=parts[3]; it=ar6_shop_item(key)
+        await safe_edit_query(query,v5_card('🛒 آیتم فروشگاه',f"کلید: <code>{key}</code>",f"نام: {escape(str(it['name']))}",f"قیمت: <b>{it['price']}</b>",f"فعال: {'🟢' if it.get('enabled',True) else '⚫'}",f"توضیح: {escape(str(it['desc']))}"),v5_markup([
+            [v5_button('✏️ نام',f'V5|A|ESH|{key}|name'),v5_button('💰 قیمت',f'V5|A|ESH|{key}|price')],
+            [v5_button('📝 توضیح',f'V5|A|ESH|{key}|desc'),v5_button('🟢/⚫ فعال',f'V5|A|EON|{key}')],
+            v5_nav('V5|A|EI')
+        ])); return
+    if action == "ESH":
+        key,field=parts[3],parts[4]; V5_FLOW[uid]={'type':'shop_edit','key':key,'field':field}
+        current=ar6_shop_item(key).get(field,'')
+        await safe_edit_query(query,v5_card('✏️ فروشگاه',f"{field}: <b>{escape(str(current))}</b>","مقدار جدید را بفرست."),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "EON":
+        key=parts[3]; cur=ar6_shop_item(key); DATA['shop_overrides'].setdefault(key,{})['enabled']=not bool(cur.get('enabled',True)); ar6_apply_runtime_overrides(); save_data(force=True); audit('admin_shop_toggle',uid,None,key); await v5_admin_action(query,context,['V5','A','ED',key]); return
+    if action in ('EX','EC'):
+        k='xp_multiplier' if action=='EX' else 'coins_multiplier'; s=DATA['settings']; s[k]=1 if int(s.get(k,1))>=3 else int(s.get(k,1))+1; save_data(force=True); await ar6_section(query,'E'); return
+    if action == "ES": await v5_admin_economy(query); return
+
+    # features
+    if action == "GF":
+        await ar6_section(query,'F'); return
+    if action == "GX":
+        rows=[]
+        for key,val in DATA.get('global_features',{}).items():
+            rows.append([v5_button(f"{key} {'🟢' if val else '⚫'}",f"V5|A|GXT|{key}")])
+        rows.append(v5_nav('V5|A|F'))
+        await safe_edit_query(query,v5_card('🌍 امکانات سراسری','هر گزینه را برای روشن/خاموش کردن بزن.'),v5_markup(rows)); return
+    if action == "GXT":
+        key=parts[3]; DATA.setdefault('global_features',{})[key]=not bool(DATA.get('global_features',{}).get(key)); save_data(force=True); await v5_admin_action(query,context,['V5','A','GX']); return
+    if action == "GA":
+        DATA['settings']['adult_default']=not bool(DATA['settings'].get('adult_default')); save_data(force=True); await ar6_section(query,'F'); return
+
+    # settings / titles / achievements
+    if action == "TS":
+        s=DATA['settings']; body=v5_card('⚙️ SETTINGS',*[f"{k}: <b>{escape(str(v))}</b>" for k,v in s.items() if k not in ('title_rules',)])
+        await safe_edit_query(query,body,v5_markup([
+            [v5_button('👥 سقف پیش‌فرض', 'V5|A|ST|max_players_default'), v5_button('🔞 adult default','V5|A|ST|adult_default')],
+            [v5_button('⭐ XP multiplier','V5|A|ST|xp_multiplier'), v5_button('💰 Coin multiplier','V5|A|ST|coins_multiplier')],
+            v5_nav('V5|A|T')
+        ])); return
+    if action == "ST":
+        field=parts[3]; V5_FLOW[uid]={'type':'set_field','scope':'settings','ident':'0','field':field}
+        await safe_edit_query(query,v5_card('✏️ تنظیم سراسری',f"فیلد: <code>{field}</code>",f"فعلی: <b>{DATA['settings'].get(field)}</b>","مقدار جدید را بفرست."),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "TT":
+        rules=DATA['settings'].get('title_rules',[])
+        lines=[f"{i+1}. {int(r.get('min_xp',0))} XP → {escape(str(r.get('title','')))}" for i,r in enumerate(rules) if isinstance(r,dict)]
+        await safe_edit_query(query,v5_card('🏅 عنوان‌ها',*(lines or ['خالی'])),v5_markup([[v5_button('✏️ ویرایش JSON','V5|A|TR')],*v5_nav('V5|A|T')])); return
+    if action == "TR":
+        V5_FLOW[uid]={'type':'set_json','scope':'settings','ident':'0','field':'title_rules'}
+        await safe_edit_query(query,v5_card('🏅 قوانین عنوان','یک JSON آرایه‌ای بفرست؛ مثلاً <code>[{"min_xp":100,"title":"⭐ رقیب"}]</code>'),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "TA":
+        rows=[]
+        for key,val in ACHIEVEMENTS.items():
+            rows.append([v5_button(f"🏆 {key}",f"V5|A|ACH|{key}")])
+        rows.append(v5_nav('V5|A|T'))
+        await safe_edit_query(query,v5_card('🏆 دستاوردها','برای هر دستاورد می‌توانی نام و توضیح را تغییر دهی.'),v5_markup(rows)); return
+    if action == "ACH":
+        key=parts[3]; cur=ACHIEVEMENTS.get(key)
+        if not cur: await safe_answer_query(query,'دستاورد پیدا نشد.',True); return
+        await safe_edit_query(query,v5_card('🏆 Achievement',f"کلید: <code>{key}</code>",f"نام: {escape(cur[0])}",f"توضیح: {escape(cur[1])}"),v5_markup([
+            [v5_button('✏️ نام',f'V5|A|AHE|{key}|name'),v5_button('📝 توضیح',f'V5|A|AHE|{key}|desc')],
+            *v5_nav('V5|A|TA')
+        ])); return
+    if action == "AHE":
+        key,field=parts[3],parts[4]; V5_FLOW[uid]={'type':'achievement_edit','key':key,'field':field}
+        await safe_edit_query(query,v5_card('✏️ Achievement',f"{field}: {escape(str(ACHIEVEMENTS[key][0 if field=='name' else 1]))}","مقدار جدید را بفرست."),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+
+    # backups
+    if action == "BM":
+        path=make_backup_file('admin'); await v5_admin_backup(query); return
+    if action == "BL": await v5_admin_backup(query); return
+    if action == "BD":
+        files=backup_files(); rows=[]
+        for i,p in enumerate(files[:10]): rows.append([v5_button(f"🗑 {Path(p).name[:28]}",f"V5|A|BDY|{i}")])
+        rows.append(v5_nav('V5|A|B')); await safe_edit_query(query,v5_card('🗑 مدیریت بکاپ',*(f'{i+1}. {Path(x).name}' for i,x in enumerate(files[:10])) or ['خالی']),v5_markup(rows)); return
+    if action == "BDY":
+        idx=int(parts[3]); files=backup_files()
+        if not (0<=idx<len(files)): await safe_answer_query(query,'فایل پیدا نشد.',True); return
+        token=v5_confirmation(uid,'delete_backup',str(idx)); await safe_edit_query(query,v5_card('⚠️ حذف بکاپ',f"{files[idx].name}"),ar6_confirm_markup(f'V5|A|BDYY|{token}','V5|A|BD')); return
+    if action == "BDYY":
+        info=v5_get_confirmation(uid,parts[3] if len(parts)>3 else '','delete_backup')
+        if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+        files=backup_files(); idx=int(info['payload'])
+        if 0<=idx<len(files): files[idx].unlink(missing_ok=True)
+        await v5_admin_backup(query); return
+    if action == "B": await v5_admin_backup(query); return
+    if action == "BR":
+        idx=int(parts[3]); files=backup_files()
+        if not 0<=idx<len(files): await safe_answer_query(query,'بکاپ پیدا نشد.',True); return
+        token=v5_confirmation(uid,'restore',str(idx)); await safe_edit_query(query,v5_card('⚠️ بازیابی',f"{files[idx].name}","اطلاعات فعلی با نسخه بکاپ جایگزین می‌شود."),ar6_confirm_markup(f'V5|A|BRY|{token}','V5|A|B')); return
+    if action == "BRY":
+        info=v5_get_confirmation(uid,parts[3] if len(parts)>3 else '','restore')
+        if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+        files=backup_files(); idx=int(info['payload'])
+        if 0<=idx<len(files):
+            ok,msg=restore_backup(files[idx]); ar6_apply_runtime_overrides()
+            await safe_edit_query(query,v5_card('♻️ Restore',('✅ '+msg) if ok else ('❌ '+msg)),v5_markup(v5_nav('V5|A|B')))
+        return
+
+    # logs/tools/broadcast
+    if action == "LL": await v5_admin_logs(query); return
+    if action == "LB":
+        logs=DATA.get('broadcast_log',[])[-10:][::-1]
+        await safe_edit_query(query,v5_card('📣 Broadcast',*(f"✅ {x.get('ok',0)} · ❌ {x.get('fail',0)}" for x in logs) or ['خالی']),v5_markup(v5_nav('V5|A|L'))); return
+    if action == "LC":
+        token=v5_confirmation(uid,'clear_logs','audit')
+        await safe_edit_query(query,v5_card('⚠️ پاک کردن لاگ','آخرین ۵۰۰ رویداد حذف می‌شوند.'),ar6_confirm_markup(f'V5|A|LCY|{token}','V5|A|L')); return
+    if action == "LCY":
+        info=v5_get_confirmation(uid,parts[3] if len(parts)>3 else '','clear_logs')
+        if info: DATA['audit']=[]; save_data(force=True)
+        await v5_admin_logs(query); return
+    if action == "XB":
+        V5_FLOW[uid]={'type':'broadcast'}
+        await safe_edit_query(query,v5_card('📣 Broadcast','متن پیام عمومی را در پیام بعدی بفرست.','لغو: «لغو»'),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "X": await ar6_section(query,'X'); return
+    if action == "XS": save_data(force=True); audit('admin_force_save',uid,None,''); await ar6_section(query,'X'); return
+    if action == "XC": await advanced_cleanup_job(context); await ar6_section(query,'X'); return
+    if action == "XN": await v5_admin_action(query,context,['V5','A','O']); return
+    if action == "SH":
+        path=Path(DATA_FILE); size=path.stat().st_size if path.exists() else 0
+        await safe_edit_query(query,v5_card('🩺 Health',f"JSON: <b>{size}</b> bytes",f"Users: <b>{len(DATA.get('users',{}))}</b>",f"Groups: <b>{len(DATA.get('groups',{}))}</b>",f"Games: <b>{len(DATA.get('games',{}))}"),v5_markup(v5_nav('V5|A|X'))); return
+    if action == "XD":
+        path=make_backup_file('export')
+        try:
+            await query.message.reply_document(document=open(path,'rb'),filename=Path(path).name,caption='📤 خروجی داده ApexRival')
+        except Exception: pass
+        await safe_answer_query(query,'📤 خروجی ساخته شد.'); return
+
+    # Power editor
+    if action in {"ZU","ZG","ZP","ZS","ZR"}:
+        mapping={'ZU':'user','ZG':'group','ZP':'game','ZS':'settings','ZR':'settings'}
+        scope=mapping[action];
+        if scope=='settings':
+            V5_FLOW[uid]={'type':'raw_edit','scope':'settings','ident':'0'}
+            await safe_edit_query(query,v5_card('⚡ ویرایشگر Settings','یک خط مثل <code>max_players_default=50</code> بفرست.','برای حذف کلید: <code>DELETE key.path</code>'),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+        V5_FLOW[uid]={'type':'raw_target','scope':scope}
+        label={'user':'User ID','group':'Chat ID','game':'Game ID'}[scope]
+        await safe_edit_query(query,v5_card('⚡ ویرایشگر پیشرفته',f'{label} را در پیام بعدی بفرست.'),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "RAW":
+        scope,ident=parts[3],parts[4]; V5_FLOW[uid]={'type':'raw_edit','scope':scope,'ident':ident}
+        await safe_edit_query(query,v5_card('⚡ ویرایشگر کامل',f"هدف: {scope} / <code>{escape(str(ident))}</code>","یک خط مثل <code>stats.truth=25</code> یا <code>inventory.shield=10</code> بفرست.","برای حذف: <code>DELETE path</code>"),v5_markup([[v5_button('❌ لغو','V5|A|FC')]])); return
+    if action == "ZH":
+        body=v5_card('📘 فرمت ویرایشگر',
+            '<code>xp=500</code>', '<code>inventory.shield=10</code>', '<code>adult_ok=true</code>',
+            '<code>DELETE stats.truth</code>', '<code>settings.penalty_deadline=600</code>'
+        )
+        await safe_edit_query(query,body,v5_markup(v5_nav('V5|A|Z'))); return
+
+    # generic cancel
+    if action == "FC":
+        V5_FLOW.pop(uid,None); await v5_admin_home(query); return
+
+    await safe_answer_query(query,'این ابزار هنوز برای این گزینه تعریف نشده است.',True)
+
+
+# ---------------------------------------------------------------------------
+# Text flow overlay: every admin edit is handled here before legacy routing.
+# ---------------------------------------------------------------------------
+_ar6_old_v5_text_router = v5_text_router
+
+
+async def v5_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await ensure_allowed(update): return
+    if not update.message or not update.message.text: return
+    text=update.message.text.strip(); uid=update.effective_user.id
+    flow=V5_FLOW.get(uid)
+    if flow and is_admin(uid):
+        if text in ('لغو','❌ لغو'):
+            V5_FLOW.pop(uid,None); await update.message.reply_text('✅ عملیات لغو شد.'); return
+
+        ftype=flow.get('type')
+        if ftype=='admin_user_search':
+            V5_FLOW.pop(uid,None)
+            if text.isdigit():
+                await v5_admin_user_detail_for_message(update,context,int(text)); return
+            await update.message.reply_text('🆔 User ID باید عدد باشد.'); return
+
+        if ftype=='admin_game_search':
+            V5_FLOW.pop(uid,None)
+            target=next((g for g in DATA.get('games',{}).values() if str(g.get('id','')).startswith(text)),None)
+            if not target:
+                await update.message.reply_text('❌ بازی پیدا نشد.'); return
+            await update.message.reply_text('🎮 بازی پیدا شد. از بخش «بازی‌ها» ادامه بده.',reply_markup=v5_main_keyboard(uid)); return
+
+        if ftype=='set_field':
+            try:
+                obj=ar6_edit_target(flow['scope'],flow['ident']); key=flow['field']; value=ar6_parse_value(text)
+                if key=='level': value=max(1,min(100,int(value)))
+                obj[key]=value
+                if flow['scope']=='user' and key=='xp': obj['level']=level_for_xp(int(obj['xp']))
+                if flow['scope']=='user' and key=='custom_title': obj['custom_title']=str(value)
+                audit('admin_set_field',uid,None,f"{flow['scope']}:{flow['ident']}:{key}")
+                save_data(force=True); V5_FLOW.pop(uid,None)
+                await update.message.reply_text('✅ مقدار با موفقیت تغییر کرد.')
+                if flow['scope']=='user':
+                    await update.message.reply_text(ar6_user_card(int(flow['ident'])),parse_mode=ParseMode.HTML,reply_markup=v5_markup(v5_nav('V5|A|U')))
+                return
+            except Exception as exc:
+                await update.message.reply_text(f'❌ مقدار نامعتبر است: {escape(str(exc))}')
+                return
+
+        if ftype=='set_json':
+            try:
+                obj=ar6_edit_target(flow['scope'],flow['ident']); value=json.loads(text); obj[flow['field']]=value
+                audit('admin_set_json',uid,None,f"{flow['scope']}:{flow['ident']}:{flow['field']}"); save_data(force=True); V5_FLOW.pop(uid,None)
+                await update.message.reply_text('✅ JSON ذخیره شد.')
+                return
+            except Exception:
+                await update.message.reply_text('❌ JSON معتبر نیست. نمونه: <code>{"x":1}</code>',parse_mode=ParseMode.HTML); return
+
+        if ftype=='raw_target':
+            scope=flow['scope']; ident=text; V5_FLOW[uid]={'type':'raw_edit','scope':scope,'ident':ident}
+            await update.message.reply_text(f'✅ هدف انتخاب شد. حالا مسیر=مقدار بفرست.\nمثال: <code>xp=500</code>',parse_mode=ParseMode.HTML); return
+
+        if ftype=='raw_edit':
+            try:
+                obj=ar6_edit_target(flow['scope'],flow['ident'])
+                raw=text
+                delete=False
+                if raw.upper().startswith('DELETE '):
+                    delete=True
+                    raw=raw[7:].strip()
+                    if '=' in raw:
+                        raw=raw.split('=',1)[0].strip()
+                    path=raw
+                    ar6_set_path(obj,path,None,delete=True)
+                else:
+                    if '=' not in raw:
+                        await update.message.reply_text('❌ قالب درست نیست. مثال: <code>xp=500</code>',parse_mode=ParseMode.HTML); return
+                    path,val=raw.split('=',1)
+                    ar6_set_path(obj,path.strip(),ar6_parse_value(val),delete=False)
+                audit('admin_raw_edit',uid,None,f"{flow['scope']}:{flow['ident']}:{path.strip()}"); save_data(force=True); V5_FLOW.pop(uid,None)
+                await update.message.reply_text('✅ تغییر ذخیره شد.')
+                return
+            except Exception as exc:
+                await update.message.reply_text(f'❌ ویرایش انجام نشد: {escape(str(exc))}')
+                return
+
+        if ftype=='content_add':
+            key=flow.get('key','truth'); bucket=DATA.setdefault('global_content',{}).setdefault(key,[])
+            if text not in bucket: bucket.append(text[:1000])
+            V5_FLOW.pop(uid,None); save_data(force=True); audit('admin_content_add',uid,None,key)
+            await update.message.reply_text(f'✅ به {CONTENT_LABELS.get(key,key)} اضافه شد.'); return
+
+        if ftype=='content_edit':
+            key=flow['key']; old=flow['old']; bucket=DATA.setdefault('global_content_overrides',{}).setdefault(key,{})
+            bucket[old]=text[:1000]
+            # If old content was custom global content, replace the actual entry too.
+            gc=DATA.setdefault('global_content',{}).setdefault(key,[])
+            if old in gc:
+                gc[gc.index(old)]=text[:1000]
+            V5_FLOW.pop(uid,None); save_data(force=True); audit('admin_content_edit',uid,None,key)
+            await update.message.reply_text('✅ محتوای جدید ذخیره شد.'); return
+
+        if ftype=='shop_edit':
+            key,field=flow['key'],flow['field']; value=ar6_parse_value(text)
+            if field=='price': value=max(0,int(value))
+            DATA.setdefault('shop_overrides',{}).setdefault(key,{})[field]=value
+            ar6_apply_runtime_overrides(); save_data(force=True); audit('admin_shop_edit',uid,None,f'{key}:{field}')
+            V5_FLOW.pop(uid,None); await update.message.reply_text('✅ آیتم فروشگاه تغییر کرد.'); return
+
+        if ftype=='achievement_edit':
+            key,field=flow['key'],flow['field']; current=ACHIEVEMENTS[key]; name=current[0] if field=='name' else current[1]
+            override=DATA.setdefault('achievement_overrides',{}).setdefault(key,{})
+            override[field]=text[:300]
+            ar6_apply_runtime_overrides(); save_data(force=True); audit('admin_achievement_edit',uid,None,f'{key}:{field}')
+            V5_FLOW.pop(uid,None); await update.message.reply_text('✅ دستاورد تغییر کرد.'); return
+
+    await _ar6_old_v5_text_router(update,context)
+
+
+# Use the overlay text router in the final handler registration.
+
+# ---------------------------------------------------------------------------
+# Improved V5 self-check — use Telegram 22.8's explicit .inline_keyboard.
+# ---------------------------------------------------------------------------
+def v5_runtime_self_check() -> None:
+    ar6_ensure_config(); ar6_apply_runtime_overrides()
+    assert BOT_NAME == 'ApexRival'
+    assert callable(start_health_server)
+    assert callable(v5_callback)
+    assert callable(v5_text_router)
+    assert callable(v5_admin_action)
+    assert callable(callback)
+    for name, bank in V5_BANKS.items():
+        cleaned=[str(x).strip() for x in bank if str(x).strip()]
+        assert len(cleaned)==len(set(cleaned)), f'duplicate content in {name}'
+    # Inline keyboards expose .inline_keyboard; they are not directly iterable.
+    for markup in (v5_home_inline(int(ADMIN_ID or 0)), v5_admin_home_markup(), ar6_section_markup('U')):
+        rows = getattr(markup, 'inline_keyboard', [])
+        for row in rows:
+            for button in row:
+                data=getattr(button,'callback_data',None)
+                if data is not None:
+                    assert len(str(data).encode('utf-8')) <= 64, f'callback too long: {data}'
+                assert getattr(button,'style',None) in {None,'primary','success','danger'}
+    kb=v5_main_keyboard(int(ADMIN_ID or 0))
+    for row in kb.keyboard:
+        for button in row:
+            assert getattr(button,'style',None) in {'primary','success','danger',None}
+    print(f'ApexRival self-check OK | {AR6_VERSION} | users={len(DATA.get("users",{}))} | groups={len(DATA.get("groups",{}))} | games={len(DATA.get("games",{}))}')
+
+
+# Ensure the final runtime uses the overlay configuration and new text router.
+_old_main_v5 = main_v5
+
+def main_v5():
+    ar6_apply_runtime_overrides()
+    return _old_main_v5()
+
+
+
 main=main_v5
 
 if __name__=='__main__':
