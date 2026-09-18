@@ -442,7 +442,10 @@ def group_key(cid: int) -> str:
     return str(cid)
 
 
-def get_user(uid: int, name: str = "کاربر") -> dict[str, Any]:
+def get_user(uid: int, name: str | None = None) -> dict[str, Any]:
+    # [FIX] the old default ("کاربر") overwrote every user's stored name on
+    # every no-argument call (gender icons, rank, stats...), turning all names
+    # into «کاربر» and persisting that corruption to JSON.
     with LOCK:
         user = DATA["users"].setdefault(user_key(uid), deepcopy(DEFAULT_USER))
         if user.get("created_at", 0) == 0:
@@ -800,7 +803,7 @@ def game_info_text(game: dict[str, Any]) -> str:
     for uid in game.get("players", []):
         scores.append((int(game.get("round_scores", {}).get(str(uid), 0)), int(uid)))
     scores.sort(reverse=True)
-    lines = [f"{i+1}. {name_of(uid, game)} — {score} امتیاز" for i, (score, uid) in enumerate(scores)]
+    lines = [f"{i+1}. {escape(name_of(uid, game))} — {score} امتیاز" for i, (score, uid) in enumerate(scores)]
     return (
         f"📊 <b>وضعیت ApexRival</b>\n\n"
         f"🎮 وضعیت: {'فعال' if game['status'] == 'active' else game['status']}\n"
@@ -1233,6 +1236,9 @@ async def create_spy(message, game, bot) -> None:
 async def duel_start(message, game) -> None:
     if game.get("duel") and game["duel"].get("status") in ("pending", "active"):
         await message.reply_text("⚔️ یک دوئل در حال انجام است."); return
+    # [FIX] with a single player left, targets is empty and random.choice crashed
+    if len(game.get("players", [])) < 2:
+        await message.reply_text("⚔️ برای دوئل حداقل دو بازیکن لازم است."); return
     players = [int(x) for x in game["players"]]
     challenger = random.choice(players)
     targets = [x for x in players if x != challenger]
@@ -1504,14 +1510,14 @@ async def user_mod(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     elif action == "unban": user["banned"] = False
     elif action == "reset": DATA["users"][str(target)] = deepcopy(DEFAULT_USER)
     elif action == "addxp":
-        amount = int(context.args[1]); user["xp"] = max(0, user["xp"] + amount); user["level"] = level_for_xp(user["xp"])
-    elif action == "addcoins": user["coins"] = max(0, user["coins"] + int(context.args[1]))
+        amount = int(context.args[1]) if len(context.args) > 1 else 0; user["xp"] = max(0, user["xp"] + amount); user["level"] = level_for_xp(user["xp"])  # [FIX] missing-arg guard
+    elif action == "addcoins": user["coins"] = max(0, user["coins"] + (int(context.args[1]) if len(context.args) > 1 else 0))
     elif action == "giveitem":
         if len(context.args) < 3 or context.args[1] not in SHOP:
             await update.message.reply_text("فرمت: /giveitem USER_ID ITEM COUNT"); return
         grant_item(target, context.args[1], int(context.args[2]))
     elif action == "setlevel":
-        user["level"] = max(1, min(100, int(context.args[1])))
+        user["level"] = max(1, min(100, int(context.args[1]) if len(context.args) > 1 else 1))  # [FIX] missing-arg guard
     audit(action, update.effective_user.id, None, str(target))
     save_data(force=True)
     await update.message.reply_text(f"✅ انجام شد: {action} → {target}")
@@ -1912,6 +1918,49 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = (update.message.text or "").strip()
     uid = update.effective_user.id
     chat = update.effective_chat
+    # [FIX] mini-game answers were never validated anywhere: the speed race,
+    # number hunt, riddle, emoji and word-chain games announced rewards that
+    # nobody could ever win. This terminal router only sees messages that no
+    # reply engine or admin flow consumed, so checking here is safe.
+    if chat.type in ("group", "supergroup") and text:
+        game = active_game(chat.id)
+        if game and game.get("status") == "active" and (valid_player(game, uid) or is_admin(uid)):
+            _nowf = time.time()
+            _st = game.get("speed")
+            if _st and not _st.get("winner") and str(text) == str(_st.get("answer")) and _nowf <= float(_st.get("expires", 0)):
+                _st["winner"] = uid
+                reward_player(game, uid, 8, 4, win=True, reason="Speed Win")
+                game["speed"] = None; game["phase"] = "free"; touch_game(game); save_data(force=True)
+                await update.message.reply_text(f"⚡ {mention_user(uid, name_of(uid, game))} عدد را درست فرستاد! 🎁 +۸ XP و +۴ سکه", parse_mode=ParseMode.HTML)
+                return
+            _st = game.get("number_hunt")
+            if _st and not _st.get("winner") and text.isdigit() and int(text) == int(_st.get("target", -1)) and _nowf <= float(_st.get("expires", 0)):
+                _st["winner"] = uid
+                reward_player(game, uid, 8, 4, win=True, reason="Number Hunt Win")
+                game["number_hunt"] = None; game["phase"] = "free"; touch_game(game); save_data(force=True)
+                await update.message.reply_text(f"🎯 {mention_user(uid, name_of(uid, game))} عدد مخفی را پیدا کرد! 🎁 +۸ XP و +۴ سکه", parse_mode=ParseMode.HTML)
+                return
+            _st = game.get("riddle")
+            if _st and not _st.get("solved") and text.casefold().strip() == str(_st.get("answer", "\u0000")).casefold().strip() and _nowf <= float(_st.get("expires", 0)):
+                _st["solved"] = True
+                reward_player(game, uid, 6, 3, win=True, reason="Riddle Win")
+                game["riddle"] = None; game["phase"] = "free"; touch_game(game); save_data(force=True)
+                await update.message.reply_text(f"🧩 {mention_user(uid, name_of(uid, game))} معما را حل کرد! 🎁 +۶ XP و +۳ سکه", parse_mode=ParseMode.HTML)
+                return
+            _st = game.get("emoji")
+            if _st and not _st.get("solved") and text.casefold().strip() == str(_st.get("answer", "\u0000")).casefold().strip() and _nowf <= float(_st.get("expires", 0)):
+                _st["solved"] = True
+                reward_player(game, uid, 6, 3, win=True, reason="Emoji Win")
+                game["emoji"] = None; game["phase"] = "free"; touch_game(game); save_data(force=True)
+                await update.message.reply_text(f"😀 {mention_user(uid, name_of(uid, game))} درست حدس زد! 🎁 +۶ XP و +۳ سکه", parse_mode=ParseMode.HTML)
+                return
+            _st = game.get("word")
+            if _st and not _st.get("winner") and len(text) >= 2 and text[0] == str(_st.get("letter", "")) and _nowf <= float(_st.get("expires", 0)):
+                _st["winner"] = uid
+                reward_player(game, uid, 6, 3, win=True, reason="Word Chain Win")
+                game["word"] = None; game["phase"] = "free"; touch_game(game); save_data(force=True)
+                await update.message.reply_text(f"🔤 {mention_user(uid, name_of(uid, game))} اولین کلمه‌ی قابل قبول را گفت: «{escape(text[:40])}» 🎁 +۶ XP", parse_mode=ParseMode.HTML)
+                return
     if text == "👑 پنل Super Admin": await admin_panel(update, context); return
     if text == "🎮 بازی‌ها":
         game = active_game(chat.id) if chat.type in ("group", "supergroup") else None
@@ -3150,7 +3199,7 @@ async def advanced_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if len(state['votes']) >= len(game['players']):
                         secret = state['secret']; winners = [int(k) for k,v in state['votes'].items() if (v=='heads') == (secret=='شیر')]
                         for winner in winners: reward_player(game,winner,5,2,win=True,reason='Prediction')
-                        await query.message.reply_text(f"🔮 نتیجه: <b>{secret}</b>\nبرنده‌ها: {', '.join(name_of(x,game) for x in winners) or 'هیچ‌کس'}", parse_mode=ParseMode.HTML)
+                        await query.message.reply_text(f"🔮 نتیجه: <b>{secret}</b>\nبرنده‌ها: {', '.join(escape(name_of(x,game)) for x in winners) or 'هیچ‌کس'}", parse_mode=ParseMode.HTML)
                         game['predict']=None; game['phase']='free'; save_data(force=True)
                 else: await mini_predict(query.message, game)
             return
@@ -3269,11 +3318,13 @@ async def advanced_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
             if now - int(game.get('last_activity',now)) > timeout:
                 end_game(game,'پایان خودکار به علت بی‌فعالیتی')
                 changed=True
-            for key in ('speed','vote','secret','riddle','emoji','reaction','word','number_hunt','predict'):
+            for key in ('speed','vote','secret','riddle','emoji','reaction','word','number_hunt','predict','survival','teams','role_card'):
                 state = game.get(key)
                 if state and float(state.get('expires',0)) and time.time()>float(state.get('expires',0)):
                     game[key]=None
-                    if game.get('phase') == key:
+                    # [FIX] survival/teams/role_card expired but never cleared —
+                    # the phase stayed stuck forever; role_card stores phase as 'role'
+                    if game.get('phase') == key or (key == 'role_card' and game.get('phase') == 'role'):
                         game['phase']='free'
                     changed=True
         elif game.get('status') == 'lobby' and now - int(game.get('last_activity',now)) > 4*3600:
@@ -6428,7 +6479,7 @@ async def v5_show_active_game(query, game):
 
 
 async def v5_require_active(query):
-    game = active_game(query.message.chat_id if query.message else query.chat_id)
+    game = active_game(query.message.chat_id if query.message else 0)  # [FIX] CallbackQuery has no .chat_id in PTB v22
     if not game or game.get("status") != "active":
         await safe_answer_query(query, "⛔ هنوز بازی فعالی وجود ندارد.", True)
         return None
@@ -6946,7 +6997,10 @@ async def v5_mode_action(query, context, family, mode):
             body=v5_card('Inventory',*(f'{SHOP[k]["name"]}: <b>{int(v)}</b>' for k,v in inv.items()))
             await safe_edit_query(query,f'{v5_breadcrumb("بازی","آیتم‌ها")}\n\n{body}',v5_section_markup('R',game))
         elif mode=='S': await send_shop(query.message,query.from_user.id)
-        elif mode=='A': await achievements_cmd(query.message,context)
+        elif mode=='A':
+            # [FIX] Message has no effective_user — render the card directly
+            _ach_u=get_user(int(query.from_user.id)); _ach_owned=set(_ach_u.get('achievements',[]))
+            await query.message.reply_text('🏅 <b>دستاوردها</b>\n\n'+"\n".join(f"{'✅' if k in _ach_owned else '🔒'} {t} — {d}" for k,(t,d) in ACHIEVEMENTS.items()), parse_mode=ParseMode.HTML)
     save_data()
 
 
@@ -7060,7 +7114,7 @@ async def v5_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if parts[1]=='HELP': await v5_help_message(update,context,parts[2] if len(parts)>2 else 'HOME'); return
         if parts[1]=='PROFILE': await v5_profile_message(update,context); return
         if parts[1]=='RANK': await v5_rank_message(update,context); return
-        if parts[1]=='ACH': await achievements_cmd(query.message,context); return
+        if parts[1]=='ACH': await achievements_cmd(update,context); return  # [FIX] achievements_cmd needs the Update (it reads effective_user)
         if parts[1]=='SHOP': await send_shop(query.message,uid); return
         if parts[1]=='GAME':
             game=active_game(query.message.chat_id)
@@ -8343,11 +8397,18 @@ async def v5_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text('✅ محتوای جدید ذخیره شد.'); return
 
         if ftype=='shop_edit':
-            key,field=flow['key'],flow['field']; value=ar6_parse_value(text)
-            if field=='price': value=max(0,int(value))
-            DATA.setdefault('shop_overrides',{}).setdefault(key,{})[field]=value
-            ar6_apply_runtime_overrides(); save_data(force=True); audit('admin_shop_edit',uid,None,f'{key}:{field}')
-            V5_FLOW.pop(uid,None); await update.message.reply_text('✅ آیتم فروشگاه تغییر کرد.'); return
+            # [FIX] a non-numeric price raised ValueError, escaped to the error
+            # handler and left the admin stuck in the pending flow forever.
+            try:
+                key,field=flow['key'],flow['field']; value=ar6_parse_value(text)
+                if field=='price': value=max(0,int(value))
+                DATA.setdefault('shop_overrides',{}).setdefault(key,{})[field]=value
+                ar6_apply_runtime_overrides(); save_data(force=True); audit('admin_shop_edit',uid,None,f'{key}:{field}')
+                V5_FLOW.pop(uid,None); await update.message.reply_text('✅ آیتم فروشگاه تغییر کرد.'); return
+            except Exception as exc:
+                V5_FLOW.pop(uid,None)
+                await update.message.reply_text(f'❌ مقدار نامعتبر است: {escape(str(exc))}')
+                return
 
         if ftype=='achievement_edit':
             key,field=flow['key'],flow['field']; current=ACHIEVEMENTS[key]; name=current[0] if field=='name' else current[1]
@@ -9928,9 +9989,14 @@ async def v7_handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await msg.reply_text("⌛ این نوبت تمام شده است؛ نوبت بعدی را از منوی بازی دنبال کنید.")
         return True
     uid = int(update.effective_user.id)
-    target = int(prompt.get("target_uid", -1))
+    # [FIX] any-player prompts (target_uid=None, e.g. «سؤال گروهی») crashed
+    # here with int(None); they must fall through to the AR7 reply engine.
+    target = prompt.get("target_uid")
+    if target is None:
+        return False
+    target = int(target)
     if uid != target and not is_admin(uid):
-        await msg.reply_text(f"🎯 فعلاً نوبت {mention_user(target, name_of(target, game))} است.")
+        await msg.reply_text(f"🎯 فعلاً نوبت {mention_user(target, name_of(target, game))} است.", parse_mode=ParseMode.HTML)
         return True
     # One reply per prompt.
     if uid in {int(x) for x in prompt.get("responders", [])}:
@@ -10489,7 +10555,9 @@ async def v7_admin_action(update_or_query, context, parts):
             await v7_admin_user_list(query, int(parts[3]) if len(parts)>3 else 0); return
         if action == "UB":
             banned = [(k,u) for k,u in DATA.get("users",{}).items() if u.get("banned")]
-            body = v5_card("🚫 محدودشده‌ها", *(f"<code>{k}</code> · {escape(str(u.get('name','کاربر')))}" for k,u in banned[:30]) or ["لیست خالی است."])
+            # [FIX] a generator is always truthy — the «لیست خالی است» fallback was dead
+            banned_lines = [f"<code>{k}</code> · {escape(str(u.get('name','کاربر')))}" for k,u in banned[:30]] or ["لیست خالی است."]
+            body = v5_card("🚫 محدودشده‌ها", *banned_lines)
             await safe_edit_query(query, body, v5_markup(v7_admin_user_nav())); return
         if action == "UE":
             V5_FLOW[uid] = {"type":"v7_admin_user_edit_target"}
@@ -10527,9 +10595,17 @@ async def v7_admin_action(update_or_query, context, parts):
         await safe_edit_query(query,v5_card("➕ افزودن محتوا",f"دسته: <b>{escape(CONTENT_LABELS.get(key,key))}</b>","متن جدید را در پیام بعدی بفرست."),v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
     if action in {"GL","GP","GR","GF","GEN","GAD","GMAX","GMIN","FT","GDET","GE","GEY"}:
         if action == "GL":
-            await v7_admin_group_list(query, int(parts[3]) if len(parts)>3 else 0); return
+            await v5_admin_group_list(query, int(parts[3]) if len(parts)>3 else 0); return
         if action == "GP":
-            await v5_admin_games(query); return
+            # [FIX] «باز کردن» dumped the generic list even when a game id was
+            # embedded; open that game's group card instead.
+            _gp_tok = parts[3] if len(parts)>3 and parts[3] else ""
+            _gp_game = ar9_find_game(_gp_tok) if _gp_tok else None
+            if _gp_game is not None:
+                await _ar7_previous_admin_action(query, context, ["V5","A","GDET", str(_gp_game.get("chat_id"))])
+            else:
+                await v5_admin_games(query)
+            return
         if action == "GR":
             V5_FLOW[uid] = {"type":"raw_target","scope":"group"}
             await safe_edit_query(query, v5_card("⚡ ویرایش مستقیم گروه", "Chat ID را بفرست؛ سپس path=value."), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
@@ -11911,7 +11987,13 @@ async def ar9_admin_action(query,context,parts):
             active=sum(1 for g in games.values() if g.get('status')=='active'); lobby=sum(1 for g in games.values() if g.get('status')=='lobby')
             await ar9_render(query,'📊 داشبورد',ar9_card('Live Snapshot',f'👥 کاربران: <b>{ar9_num(users)}</b>',f'🌐 گروه‌ها: <b>{ar9_num(groups)}</b>',f'🎮 فعال: <b>{active}</b> · 🟡 Lobby: <b>{lobby}</b>',f'⭐ XP: <b>{ar9_num(sum(int(u.get("xp",0)) for u in DATA["users"].values()))}</b>',f'💰 سکه: <b>{ar9_num(sum(int(u.get("coins",0)) for u in DATA["users"].values()))}</b>'),[[ar9_button('↻ تازه‌سازی','D')],[ar9_button('ℹ️ راهنما','H','D')]],back=('HOME',),refresh=('D',)); return
         if action=='H':
-            await ar9_help(query); return
+            # [FIX] section help buttons (H|U/G/P/C/T/S) were never routed
+            _hsub = parts[2] if len(parts)>2 else ''
+            if _hsub in ('U','G','P','C','T','S'):
+                await ar9_sub_help(query,_hsub)
+            else:
+                await ar9_help(query)
+            return
         if action=='U':
             sub=parts[2] if len(parts)>2 else 'HOME'
             if sub in ('HOME',):
@@ -12052,6 +12134,9 @@ async def ar9_admin_action(query,context,parts):
                 g['last_event']=msg; save_data(force=True); await ar9_game_view(query,str(g.get('id'))[:24]); return
             if sub=='REMOVE':
                 g=ar9_find_game(parts[3]); target=int(parts[4])
+                # [FIX] g could be None here and g.get('id') crashed with AttributeError
+                if not g:
+                    await safe_answer_query(query,'❌ بازی پیدا نشد.',True); return
                 if g and target in g.get('players',[]):
                     g['players']=[x for x in g['players'] if int(x)!=target]; g.get('names',{}).pop(str(target),None); save_data(force=True)
                 await ar9_game_players(query,str(g.get('id'))[:24]); return
@@ -12231,6 +12316,10 @@ async def ar9_admin_action(query,context,parts):
             if sub=='COUNTS': await ar9_render(query,'🔢 شمارنده‌ها',ar9_card('Counters',f'👥 {len(DATA["users"])}',f'🌐 {len(DATA["groups"])}',f'🎮 {len(DATA["games"])}',f'📜 {len(DATA["audit"])}',f'🧩 {sum(len(v) for v in V7_BANKS_FINAL.values())}'),[],back=('X','HOME')); return
             if sub=='BROADCAST': AR9_FLOW[uid]={'type':'broadcast','back':('X','HOME')}; await safe_edit_query(query,ar9_card('📣 Broadcast','متن پیام همگانی را بفرست.'),v5_markup([ar9_nav(('X','HOME'))])); return
 
+        # [FIX] AR10 user-view back buttons (ADM|UV|uid|tab) used to dead-end here
+        if action=='UV':
+            await ar10_render_user(query,int(parts[2]),parts[3] if len(parts)>3 else 'HOME')
+            return
         await safe_answer_query(query,"این گزینه هنوز متصل نشده است.",True)
     except Exception as exc:
         audit('ar9_admin_router_error',uid,None,repr(exc)[:500]); print(f'Ar9 admin error: {exc!r}')
@@ -12302,6 +12391,18 @@ async def ar9_text_router(update,context):
                     target=int(text); get_user(target); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ کاربر اضافه شد. حالا از مرکز مدیریت بازش کن.'); return
                 if ftype=='search_group':
                     cid=int(text); ar9_clear_flow(uid); await update.message.reply_text('🌐 گروه انتخاب شد.',reply_markup=v5_markup([[ar9_button('🌐 بازکردن','G','VIEW',cid)],[ar9_button('⌂ خانه','HOME')]])); return
+                # [FIX] the 'search_game' flow (Games → Search) was started but never handled
+                if ftype=='search_game':
+                    tok=text.strip()
+                    g=ar9_find_game(tok)
+                    if g is None:
+                        g=next((x for x in DATA.get('games',{}).values() if str(x.get('chat_id',''))==tok or str(x.get('id','')).startswith(tok)),None)
+                    ar9_clear_flow(uid)
+                    if g is None:
+                        await update.message.reply_text('❌ بازی پیدا نشد.'); return
+                    gid=str(g.get('id'))
+                    await update.message.reply_text(v5_card('🎮 بازی',f'ID: <code>{escape(gid)}</code>',f'گروه: <code>{escape(str(g.get("chat_id")))}</code>',f'وضعیت: <b>{escape(str(g.get("status","-")))}</b>',f'بازیکنان: <b>{len(g.get("players",[]))}</b>'),parse_mode=ParseMode.HTML,reply_markup=v5_markup([[ar9_button('🎮 بازکردن','P','VIEW',gid[:24])],[ar9_button('🎮 فهرست','P','HOME')],[ar9_button('⌂ خانه','HOME')]]))
+                    return
                 if ftype=='add_group':
                     cid=int(text); get_group(cid); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ گروه اضافه شد.'); return
                 if ftype=='group_field':
@@ -13058,7 +13159,7 @@ async def ar10_text_router(update, context):
                 return
     # All non-admin text and unconsumed admin text follow the mature V7/V5
     # router chain unchanged.
-    await _AR9_OLD_TEXT_ROUTER(update, context)
+    await ar9_text_router(update, context)  # [FIX] was _AR9_OLD_TEXT_ROUTER — every AR9 admin input flow dead-ended
 
 
 async def ar10_admin_entry(update, context):
@@ -13505,7 +13606,8 @@ async def ar8_prereq_callback(update, context):
                     "برای ساخت Lobby از <code>/game</code> استفاده کن.",
                     f"منبع تأیید فعال‌سازی: <code>{escape(start_reason)}</code>",
                 ),
-                v5_markup([[ApexInlineButton("🎮 ساخت Lobby", callback_data="V5|GAME", style=APEX_STYLE_SUCCESS)]]) if v7_chat_is_group(update) else v5_main_keyboard(uid),
+                # [FIX] a ReplyKeyboardMarkup can never be used with edit_message_text
+                v5_markup([[ApexInlineButton("🎮 ساخت Lobby", callback_data="V5|GAME", style=APEX_STYLE_SUCCESS)]]),
             )
             return
         text, markup = await ar11_gate_text(uid, bot=bot, force=True)
@@ -14008,7 +14110,7 @@ def main_apexrival_12():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is missing")
     _ar8_final_markup_self_check()
-    ar11_static_self_check()
+    _ar11_static_self_check()  # [FIX] the real name has always been _ar11_static_self_check
     ar12_static_self_check()
     start_health_server()
     application = Application.builder().token(BOT_TOKEN).post_init(ar12_post_init).build()
@@ -15789,7 +15891,9 @@ def ar15_register_handlers(app):
     app.add_handler(CallbackQueryHandler(ar15_gender_callback, pattern=r"^GEN\|"), group=-70)
 
     # Generic handlers from the mature bot remain available for the rest of the UI.
-    app.add_handler(CallbackQueryHandler(ar12_callback_dispatch, pattern=r"^(ADM\||V5\||V7\|)"))
+    # [FIX] A10| was dropped from this pattern when AR15 took over the wiring —
+    # every legacy AR10 admin button still floating in old messages went dead.
+    app.add_handler(CallbackQueryHandler(ar12_callback_dispatch, pattern=r"^(ADM\||V5\||V7\||A10\|)"))
     app.add_handler(CallbackQueryHandler(ar13_handle_callback, pattern=r"^A13\|"))
     # [FIX 2b] REQ|INFO opens the guided channel/activation info screen
     # (previously it fell into ar15_callback_check and behaved like CHECK).
@@ -15798,7 +15902,13 @@ def ar15_register_handlers(app):
     # callback payloads (buy|..., penaltyshield|..., penaltypass|...). They had
     # NO handler at all in the AR15 wiring, so purchases silently did nothing.
     # The mature v3 callback router (ar6-wrapped for shop gating) handles them.
-    app.add_handler(CallbackQueryHandler(callback, pattern=r"^(buy\||penaltydone\||penaltyshield\||penaltypass\|)"))
+    # [FIX] the same dead-end also hit EVERY legacy mini-game button still
+    # sitting in group chats: duel accept/decline/pick/again, votes, spy
+    # rounds, secret missions, the old game menu (play|/mode|), shop, status
+    # and end-game buttons. They are all routed to the mature v1 router now;
+    # the V1 lobby family (join/leave/start/...) stays unrouted on purpose
+    # (see FIX 2 above — the modern A13/V5 lobby flow owns those paths).
+    app.add_handler(CallbackQueryHandler(callback, pattern=r"^(buy\||penaltydone\||penaltyshield\||penaltypass\||duelaccept\||dueldecline\||duelpick\||vote\||spyguess\||play\||mode\||penalty\||leader\||host\||duelagain$|voteinfo$|secret_done$|spyvote$|endmode$|adultok$|gameinfo$|shop$|achievements$|rules$|end$)"))
 
     # Live scope repair for the current group/member. It never blocks gameplay.
     try:
@@ -15899,7 +16009,7 @@ async def ar15_group_gate(update, *, allow_admin: bool = True):
 
 
 v7_require_started = ar15_group_gate
-ensure_allowed = v7_ensure_allowed
+ensure_allowed = ar15_ensure_allowed  # [FIX] V16's open-lobby mode; v7_ensure_allowed re-tightened the strict AR14 gate and blocked all A13 lobby controls for fresh users
 
 
 # ----------------------------------------------------------------
@@ -16696,7 +16806,7 @@ def v16_users_page(offset: int):
         u = DATA["users"][uid]
         g_icon = user_gender(int(uid))
         ban_mark = " 🚫" if u.get("banned") else ""
-        rows.append([v5_button(f"{user_gender_icon(int(uid))} {escape(u.get('name', 'کاربر'))[:18]}{ban_mark}", f"A16|U|VIEW|{uid}")])
+        rows.append([v5_button(f"{user_gender_icon(int(uid))} {str(u.get('name', 'کاربر'))[:18]}{ban_mark}", f"A16|U|VIEW|{uid}")])  # [FIX] button labels are plain text — escape+slice corrupted them
     nav = []
     if offset > 0:
         nav.append(v5_button("◀️ قبلی", f"A16|U|PG|{max(0, offset - A16_PAGE)}"))
@@ -17073,7 +17183,7 @@ async def v16_admin_router(update, context):
                 rows = []
                 for g in games[:8]:
                     status_icon = "🟢" if g.get("status") == "active" else "🎟"
-                    rows.append([v5_button(f"{status_icon} {escape(str(g.get('id', '')))[:20]} · {len(g.get('players', []))} 👤", f"A16|G|VIEW|{str(g.get('id'))[:24]}")])
+                    rows.append([v5_button(f"{status_icon} {escape(str(g.get('id', '')))[:20]} · {len(g.get('players', []))} 👤", f"A16|G|VIEW|{str(g.get('id'))}")])  # [FIX] [:24] truncated the gid so the exact-match lookup never found the game
                 rows.append([v5_button("🔄 بروزرسانی", "A16|G|HOME"), v5_button("⌂ خانه", "A16|HOME")])
                 await safe_edit_query(
                     query,
@@ -17101,7 +17211,7 @@ async def v16_admin_router(update, context):
                     f"👥 بازیکنان (<b>{len(players)}</b>):\n" + ("\n".join(lines) if lines else "-") +
                     (f"\n\n🎤 پرسشگر فعلی: {escape(name_of(int(game.get('current_questioner') or 0), game))}" if game.get('current_questioner') else ""),
                     v5_markup([
-                        [v5_button("🛑 پایان اجباری بازی", f"A16|G|END|{str(game.get('id'))[:24]}")],
+                        [v5_button("🛑 پایان اجباری بازی", f"A16|G|END|{str(game.get('id'))}")],  # [FIX] same [:24] truncation bug
                         [v5_button("🎮 فهرست", "A16|G|HOME"), v5_button("⌂ خانه", "A16|HOME")],
                     ]),
                 )
@@ -18612,7 +18722,7 @@ def ar12_private_home_text(uid: int) -> str:
         f"⭐ سطح <b>{level}</b> · ✨ XP <b>{xp:,}</b>\n"
         f"💰 <b>{coins:,}</b> سکه · 🔥 استریک <b>{streak}</b>\n"
         f"🏅 {escape(str(title))}\n"
-        f"{v5_progress(xp, max(xp, 1), 14)}\n"
+        f"{v5_progress(int(xp) % 100, 100, 14)}\n"  # [FIX] xp/max(xp,1) always rendered 100%
         "━━━━━━━━━━━━━━━━━━\n"
         "🎮 بازی جدید در گروه: <code>/apex</code>\n"
         "از دکمه‌های زیر وارد امکانات شو 👇"
@@ -18655,7 +18765,7 @@ async def v5_profile_message(update, context):
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🏅 {escape(title_for(xp))}\n"
         f"⭐ سطح <b>{u.get('level', 1)}</b> · ✨ XP <b>{xp:,}</b>\n"
-        f"{v5_progress(xp, max(xp, 1), 14)}\n"
+        f"{v5_progress(int(xp) % 100, 100, 14)}\n"  # [FIX] xp/max(xp,1) always rendered 100%
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🎮 بازی‌ها: <b>{u.get('games', 0)}</b> · 🏆 برد: <b>{u.get('wins', 0)}</b> · ☠️ باخت: <b>{u.get('losses', 0)}</b>\n"
         f"🤫 مأموریت: <b>{u.get('missions', 0)}</b> · 💰 سکه: <b>{u.get('coins', 0):,}</b> · 🔥 استریک: <b>{u.get('streak', 0)}</b>\n"
@@ -18744,7 +18854,7 @@ def v16_user_card(uid: int) -> str:
     joined = ""
     try:
         if int(u.get("created_at", 0) or 0):
-            joined = time.strftime("%Y/%m/%d", time.gmtime(int(u.get("created_at"))))
+            joined = time.strftime("%Y/%m/%d", time.localtime(int(u.get("created_at"))))  # [FIX] was gmtime — off by a day for +03:30 users
     except Exception:
         joined = "—"
     return (
@@ -18788,7 +18898,7 @@ def v16_users_page(offset: int):
         nav.append(v5_button("بعدی ▶️", f"A16|U|PG|{offset + A16_PAGE}"))
     rows.append(nav)
     rows.append([v5_button("🔍 جست‌وجو", "A16|U|SEARCH"), v5_button("⌂ خانه", "A16|HOME")])
-    verified_n = sum(1 for u in DATA["users"].values() if u.get("gender") and u.get("adult_ok") is not None)
+    verified_n = sum(1 for u in DATA["users"].values() if u.get("gender") and v17_age_declared(u))  # [FIX] adult_ok is never None — the count degenerated to "has gender"
     body = (
         "👥 <b>مدیریت کاربران</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -18899,6 +19009,7 @@ async def v16_admin_router(update, context):
         return
     try:
         if data == "A16|L|HOME":
+            await safe_answer_query(query)  # [FIX] the refresh spinner never cleared
             entries = list(DATA.get("audit", []))[-15:]
             import re as _v17_re
 
@@ -18918,6 +19029,7 @@ async def v16_admin_router(update, context):
             )
             return
         if data == "A16|H|HOME":
+            await safe_answer_query(query)  # [FIX] the refresh spinner never cleared
             try:
                 size = Path(DATA_FILE).stat().st_size if Path(DATA_FILE).exists() else 0
             except Exception:
@@ -19061,8 +19173,8 @@ def v17_ads_settings_body() -> str:
 
 def v17_ads_settings_markup():
     on_label = "⛔ تبلیغات: خاموش" if v17_ads_enabled() else "✅ تبلیغات: روشن"
-    end_label = "🏁 پایان بازی: روشن" if v17_ad_on_end() else "🏁 پایان بازی: خاموش"
-    home_label = "🎉 خوش‌آمد: روشن" if v17_ad_on_home() else "🎉 خوش‌آمد: خاموش"
+    end_label = "🏁 پایان بازی: خاموش" if v17_ad_on_end() else "🏁 پایان بازی: روشن"  # [FIX] mixed label semantics
+    home_label = "🎉 خوش‌آمد: خاموش" if v17_ad_on_home() else "🎉 خوش‌آمد: روشن"
     every = v17_ad_every()
     every_label = f"🔢 هر {every} نوبت" if every > 0 else "🔢 هرچند نوبت؟ (خاموش)"
     return v5_markup([
@@ -26505,7 +26617,7 @@ def v18_game_heat(game: dict) -> int:
         conf = v18_heat_conf()
         t2 = max(1, int(conf.get("t2", 4)))
         t3 = max(t2 + 1, int(conf.get("t3", 8)))
-        asked = int(game.get("round", 0) or 0)
+        asked = int(game.get("round", 0) or 0) + 1  # [FIX] question #N is picked while round=N-1; +1 makes the real thresholds match the admin UI
         if asked >= t3:
             return 3
         if asked >= t2:
@@ -26684,16 +26796,78 @@ _AR18_OLD_REPLY = v7_handle_reply
 
 async def v7_handle_reply(update, context):
     pre_prompt: dict = {}
+    pre_seen: set = set()
+    pre_expired = False
     try:
         game = active_game(int(update.effective_chat.id))
         if game and game.get("status") == "active":
-            pre_prompt = dict(game.get("reply_prompt") or {})
+            _pp = dict(game.get("reply_prompt") or {})
+            _pp["responders"] = list(_pp.get("responders", []))
+            pre_prompt = _pp
+            pre_seen = {int(x) for x in _pp.get("responders", [])}
+            pre_expired = time.time() > float(_pp.get("expires", 0) or 0)
     except Exception:
         pre_prompt = {}
     handled = await _AR18_OLD_REPLY(update, context)
     try:
-        if handled and pre_prompt:
-            v18_on_answer(update, pre_prompt)
+        # [FIX] quests/awards must only credit ACCEPTED answers. The old hook
+        # also credited rejections ("not your turn", "already answered", expired).
+        if handled and pre_prompt and not pre_expired:
+            uid = int(getattr(getattr(update, "effective_user", None), "id", 0) or 0)
+            if uid and uid not in pre_seen:
+                credited = False
+                try:
+                    game = active_game(int(update.effective_chat.id))
+                    cur = game.get("reply_prompt") if game else None
+                except Exception:
+                    cur = None
+                if isinstance(cur, dict) and int(cur.get("message_id", -1)) == int(pre_prompt.get("message_id", -2)):
+                    credited = uid in {int(x) for x in cur.get("responders", [])}
+                else:
+                    credited = True  # the prompt was consumed by a successful answer
+                if credited:
+                    v18_on_answer(update, pre_prompt)
+    except Exception:
+        pass
+    return handled
+
+
+# [FIX] answers handled by the AR7 any-player engine (group questions) never
+# reached the V18 quest hook at all — wrap that engine with the same logic.
+_AR18_OLD_AR7_REPLY = ar7_handle_game_reply
+
+
+async def ar7_handle_game_reply(update, context):
+    pre_prompt: dict = {}
+    pre_seen: set = set()
+    pre_expired = False
+    try:
+        game = active_game(int(update.effective_chat.id))
+        if game:
+            _pp = dict(game.get("reply_prompt") or {})
+            _pp["responders"] = list(_pp.get("responders", []))
+            pre_prompt = _pp
+            pre_seen = {int(x) for x in _pp.get("responders", [])}
+            pre_expired = time.time() > float(_pp.get("expires", 0) or 0)
+    except Exception:
+        pre_prompt = {}
+    handled = await _AR18_OLD_AR7_REPLY(update, context)
+    try:
+        if handled and pre_prompt and not pre_expired:
+            uid = int(getattr(getattr(update, "effective_user", None), "id", 0) or 0)
+            if uid and uid not in pre_seen:
+                credited = False
+                try:
+                    game = active_game(int(update.effective_chat.id))
+                    cur = game.get("reply_prompt") if game else None
+                except Exception:
+                    cur = None
+                if isinstance(cur, dict) and int(cur.get("message_id", -1)) == int(pre_prompt.get("message_id", -2)):
+                    credited = uid in {int(x) for x in cur.get("responders", [])}
+                else:
+                    credited = True
+                if credited:
+                    v18_on_answer(update, pre_prompt)
     except Exception:
         pass
     return handled
@@ -26705,6 +26879,11 @@ def v18_on_answer(update, pre_prompt: dict) -> None:
         return
     mode = str(pre_prompt.get("mode") or pre_prompt.get("kind") or "")
     v18_quest_progress(uid, "answers", 1)
+    # [FIX] the play_3 («در ۳ نوبت شرکت کن») and penalty_1 («یک حکم را کامل کن»)
+    # quest metrics were never recorded anywhere — those quests were impossible.
+    v18_quest_progress(uid, "turns", 1)
+    if mode == "penalty":
+        v18_quest_progress(uid, "penalties_done", 1)
     if mode:
         v18_quest_progress(uid, "topics", mode, as_set=True)
         if mode == "adult":
@@ -26725,6 +26904,21 @@ def v18_on_answer(update, pre_prompt: dict) -> None:
         u["v18_answer_count"] = int(u.get("v18_answer_count", 0)) + 1
         counts = u.setdefault("v18_mode_counts", {})
         counts[mode] = int(counts.get(mode, 0)) + 1
+        # [FIX] two advertised achievements were unreachable — no code ever
+        # awarded v18_heat_survivor / v18_penalty_done. Count them here.
+        if mode == "penalty":
+            u["v18_penalty_done"] = int(u.get("v18_penalty_done", 0)) + 1
+            if u["v18_penalty_done"] >= 20:
+                v18_award(uid, "v18_penalty_done")
+        try:
+            _chat = getattr(update, "effective_chat", None)
+            _game = active_game(int(_chat.id)) if _chat is not None else None
+            if _game is not None and v18_game_heat(_game) >= 3:
+                u["v18_heat3"] = int(u.get("v18_heat3", 0)) + 1
+                if u["v18_heat3"] >= 10:
+                    v18_award(uid, "v18_heat_survivor")
+        except Exception:
+            pass
         v18_check_awards(uid, mode)
     except Exception:
         pass
@@ -26802,7 +26996,21 @@ def v18_quest_progress(uid: int, metric: str, value, as_set: bool = False) -> No
                 add_coins(int(uid), int(q.get("reward_coins", 0)), u.get("name", "کاربر"), 1)
                 stats = v18_stores()["stats"]
                 stats["quests_done"] = int(stats.get("quests_done", 0)) + 1
-                v18_award(int(uid), "v18_quest_daily" if stats.get("quests_done", 0) % 7 == 0 else "")
+                # [FIX] «۷ روز پشت سر هم» is a per-user streak; the old global
+                # modulo handed the badge to whoever completed the 7th quest overall.
+                try:
+                    _qu = get_user(int(uid))
+                    _qd = _qu.setdefault("v18_quest_days", {"last": "", "count": 0})
+                    _today = v18_today()
+                    if _qd.get("last") != _today:
+                        from datetime import timedelta as _td
+                        _yesterday = (datetime.now() - _td(days=1)).strftime("%Y-%m-%d")
+                        _qd["count"] = int(_qd.get("count", 0)) + 1 if _qd.get("last") == _yesterday else 1
+                        _qd["last"] = _today
+                    if int(_qd.get("count", 0)) >= 7:
+                        v18_award(int(uid), "v18_quest_daily")
+                except Exception:
+                    pass
                 if stats.get("quests_done", 0) >= 50:
                     v18_award(int(uid), "v18_quest_master")
         save_data(force=True)
@@ -27148,7 +27356,7 @@ def v18_bank_page(key: str, page: int = 0):
         v5_button("🔍 جست‌وجو", f"A18|SEARCH|{key}"),
         v5_button("📤 خروجی", f"A18|EXPORT|{key}"),
     ])
-    tool_row = [v5_button("🚫 روشن/خاموش موضوع" if not v18_topic_disabled(key) else "🟢 فعال‌سازی موضوع", f"A18|TOGGLE|{key}")]
+    tool_row = [v5_button("🚫 روشن/خاموش موضوع" if not v18_topic_disabled(key) else "🟢 فعال‌سازی موضوع", f"A18|TOGGLE|{key}")] if key in dict(V16_MODE_ORDER) else []  # [FIX] toggle is a silent no-op for non-mode banks (penalty/adult_male/adult_female)
     if disabled_n:
         tool_row.append(v5_button(f"♻️ حذف‌شده‌ها ({disabled_n})", f"A18|DIS|{key}|0"))
     rows.append(tool_row)
@@ -27325,6 +27533,10 @@ async def v18_admin_router(update, context):
     section = parts[1] if len(parts) > 1 else "HOME"
     arg = parts[2] if len(parts) > 2 else ""
     extra = parts[3] if len(parts) > 3 else ""
+    # [FIX] navigating away must cancel any pending edit/add/bulk/search flow;
+    # otherwise the next plain text message got swallowed as bank input.
+    if section in ("HOME", "BANK", "VIEW", "DIS", "GUIDE", "STATS", "HEAT"):
+        A18_FLOW.pop(uid, None)
     try:
         if section == "HOME":
             await safe_edit_query(query, v18_editor_home_body(), v18_editor_home_markup())
@@ -27459,6 +27671,11 @@ async def v18_admin_router(update, context):
         # ---------------- ابزارها ----------------
         if section == "TOGGLE":
             key = str(arg)
+            # [FIX] penalty/adult_male/adult_female are not grid topics; toggling
+            # them used to claim «موضوع خاموش شد» while changing nothing.
+            if key not in dict(V16_MODE_ORDER):
+                await safe_answer_query(query, "⚠️ این بانک موضوعِ گرید نوبت نیست؛ قابل خاموش‌کردن نیست.", True)
+                return
             turned_on = v18_toggle_topic(key)
             if key in ("truth", "dare") and not turned_on:
                 await safe_answer_query(query, "⚠️ اعتراف و جرئت پایه‌ی بازی‌اند و خاموش نمی‌شوند.", True)
@@ -27547,6 +27764,11 @@ async def v18_admin_flow_text(update, context) -> bool:
     if not flow:
         return False
     text = str(msg.text).strip()
+    # [FIX] only consume dashboard flows from the private admin chat; in groups
+    # these texts belong to the game engines.
+    _flow_chat_type = str(getattr(getattr(update, "effective_chat", None), "type", "") or "")
+    if _flow_chat_type not in ("private", "chat", ""):
+        return False
     if text.startswith("/"):
         A18_FLOW.pop(uid, None)
         return False
@@ -27557,12 +27779,14 @@ async def v18_admin_flow_text(update, context) -> bool:
             await msg.reply_text("✅ عملیات لغو شد.")
             return True
         if t == "edit":
-            A18_FLOW.pop(uid, None)
             key = str(flow.get("key"))
             idx = int(flow.get("idx") or 0)
             if len(text) < 3:
+                # [FIX] the flow used to be popped BEFORE this reply, so the
+                # requested resend had nothing left to consume.
                 await msg.reply_text("⚠️ متن خیلی کوتاه است؛ دوباره بفرست.")
                 return True
+            A18_FLOW.pop(uid, None)
             if v18_edit_prompt(key, idx, text[:600]):
                 audit("v18_prompt_edit", uid, None, f"{key}:{idx}")
                 await msg.reply_text(
@@ -27761,6 +27985,9 @@ def ar15_register_handlers(app):
     _AR18_OLD_REGISTER(app)
     # مرکز مدیریت سوالات (A18|)
     app.add_handler(CallbackQueryHandler(v18_admin_router, pattern=r"^A18\|"))
+    # [FIX] دکمه‌های GM|/AX| (واکنش سریع، پیش‌بینی، منوی بازی V4) هیچ
+    # هندلری نداشتند و کلیک‌شان تا ابد بی‌جواب می‌ماند.
+    app.add_handler(CallbackQueryHandler(advanced_callback, pattern=r"^(AX\||GM\|)"))
 
 
 # ----------------------------------------------------------------
@@ -27785,14 +28012,19 @@ def v18_self_check() -> None:
     required = ["truth", "dare", "secret", "drama", "flirty", "scenario", "mind", "wouldyou",
                 "memory", "relation", "cringe", "adult", "adult_male", "adult_female", "penalty",
                 "dream", "regret", "future"]
+    # [FIX] assert against the immutable factory snapshot: runtime deletions/
+    # edits persisted in the JSON used to crash the whole bot on the NEXT
+    # restart (bank < 20 or duplicated after an admin edit).
     for key in required:
-        bank = V7_BANKS_FINAL.get(key, [])
+        bank = V18_FACTORY.get(key, [])
         assert len(bank) >= 20, f"bank too small: {key} ({len(bank)})"
         assert len(bank) == len(set(bank)), f"duplicates in {key}"
     # ۲) لیبل برای هر ۱۵ موضوع
     for key, _label in V16_MODE_ORDER:
         assert key in V7_MODE_LABELS, f"missing label: {key}"
-    # ۳) گرید نوبت باید ۱۵ دکمه موضوع داشته باشد
+    # ۳) گرید نوبت باید دقیقاً موضوعاتِ فعالِ فعلی را نشان دهد
+    # [FIX] the hardcoded 15 broke the import (and therefore the restart) as
+    # soon as any topic was switched off from the admin panel.
     fake_game = {"players": [1, 2, 3], "turn_order": [1, 2, 3], "turn_index": 0,
                  "current_questioner": 1, "turn_number": 1, "round": 0, "round_scores": {}}
     markup = v7_turn_markup(fake_game, 1)
@@ -27804,10 +28036,13 @@ def v18_self_check() -> None:
                 assert len(str(data).encode("utf-8")) <= 64, data
                 if str(data).startswith("V7|MODE|"):
                     mode_buttons.append(str(data).split("|")[2])
-    assert len(mode_buttons) == 15, f"expected 15 mode buttons, got {len(mode_buttons)}"
+    expected_modes = [k for k, _lbl in v18_topic_buttons()]
+    assert set(mode_buttons) == set(expected_modes) and len(mode_buttons) == len(expected_modes), (
+        f"mode buttons mismatch: {mode_buttons} vs {expected_modes}")
     for key in ("truth", "dare", "secret", "drama", "flirty", "scenario", "mind", "wouldyou",
                 "memory", "relation", "cringe", "adult", "dream", "regret", "future"):
-        assert key in mode_buttons, f"mode button missing: {key}"
+        if key not in v18_topics_off():
+            assert key in mode_buttons, f"mode button missing: {key}"
     # ۴) موتور گرما
     assert v18_game_heat({"round": 0}) == 1
     assert v18_game_heat({"round": 99}) == 3
