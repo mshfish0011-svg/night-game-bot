@@ -11554,35 +11554,544 @@ def v7_runtime_self_check() -> None:
     print(f"ApexRival V7 self-check OK | banks={sum(len(v) for v in V7_BANKS_FINAL.values())} | started-gate=on | turn-engine=on")
 
 
-v7_runtime_self_check()
+# Deferred: final ApexRival self-check runs after the reliability overlay is installed.
 
-# Rebind final handlers so the runtime cannot accidentally register a stale callback layer.
-def _register_v5_handlers(app):
-    app.add_handler(CommandHandler('start', v7_start))
-    app.add_handler(CommandHandler('game', v5_create_lobby))
-    app.add_handler(CommandHandler('menu', v5_menu))
-    app.add_handler(CommandHandler('profile', v5_profile_message))
-    app.add_handler(CommandHandler('rank', v5_rank_message))
-    app.add_handler(CommandHandler('shop', shop_cmd))
-    app.add_handler(CommandHandler('achievements', achievements_cmd))
-    app.add_handler(CommandHandler('help', v5_help_message))
-    app.add_handler(CommandHandler('id', id_cmd))
-    app.add_handler(CommandHandler('admin', v5_admin_cmd))
-    app.add_handler(CommandHandler('adult', adult_cmd))
-    app.add_handler(CallbackQueryHandler(v5_callback, pattern=r'^(V5\||V7\|)'))
+
+# ============================================================
+# ApexRival 8.0 — reliability overlay
+# - Mandatory private /start + required channel membership
+# - Robust inline-keyboard normalization
+# - Membership-aware lobby/target gating
+# - Final runtime wiring with one authoritative handler registry
+# ============================================================
+
+AR8_VERSION = "8.0"
+BOT_VERSION = AR8_VERSION
+ADVANCED_VERSION = AR8_VERSION
+APEX_V5 = AR8_VERSION
+
+# Required public channel. It can be changed on Render without editing the code.
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@NovaLinkNETPN").strip() or "@NovaLinkNETPN"
+REQUIRED_CHANNEL_URL = os.getenv("REQUIRED_CHANNEL_URL", "https://t.me/NovaLinkNETPN").strip() or "https://t.me/NovaLinkNETPN"
+REQUIRED_CHANNEL_CACHE_TTL = max(10, int(os.getenv("REQUIRED_CHANNEL_CACHE_TTL", "45") or 45))
+
+# Runtime bot reference is filled in post_init before updates are processed.
+APEX_RUNTIME_BOT = None
+APEX_MEMBERSHIP_CACHE: dict[int, tuple[float, bool | None, str]] = {}
+
+
+def _ar8_channel_target(raw: str) -> str:
+    value = (raw or "").strip()
+    if value.startswith("https://t.me/"):
+        tail = value.split("https://t.me/", 1)[1].strip("/")
+        if tail and not tail.startswith("+"):
+            return "@" + tail.lstrip("@")
+    return value
+
+
+REQUIRED_CHANNEL = _ar8_channel_target(REQUIRED_CHANNEL)
+
+
+def _ar8_is_button(value) -> bool:
+    return isinstance(value, InlineKeyboardButton)
+
+
+def _ar8_normalize_rows(rows):
+    """Normalize accidentally nested navigation rows into Telegram's row-of-buttons shape."""
+    normalized = []
+
+    def consume(item):
+        if item is None:
+            return
+        if _ar8_is_button(item):
+            normalized.append([item])
+            return
+        if isinstance(item, (list, tuple)):
+            values = [x for x in item if x is not None]
+            if not values:
+                return
+            # A plain button row.
+            if all(_ar8_is_button(x) for x in values):
+                normalized.append(list(values))
+                return
+            # A nested group of rows (e.g. v5_nav()/ar7_game_nav() passed as one item).
+            for child in values:
+                consume(child)
+            return
+        raise TypeError(f"Invalid inline keyboard element: {type(item)!r}")
+
+    for row in rows or []:
+        consume(row)
+    return normalized
+
+
+# Override the shared builder so old/new UI layers cannot accidentally create
+# malformed nested InlineKeyboardMarkup objects.
+def v5_markup(rows) -> InlineKeyboardMarkup:
+    clean = _ar8_normalize_rows(rows)
+    return InlineKeyboardMarkup(clean)
+
+
+# -----------------------------
+# Required channel membership
+# -----------------------------
+def _ar8_status_is_member(member) -> bool:
+    status = str(getattr(member, "status", "")).lower()
+    if status in {"member", "administrator", "creator"}:
+        return True
+    if status == "restricted":
+        return bool(getattr(member, "is_member", False))
+    return False
+
+
+async def ar8_channel_membership(uid: int, *, force: bool = False, bot=None) -> tuple[bool | None, str]:
+    """Return (True/False) for membership, or (None, error) if Telegram cannot verify."""
+    bot = bot or APEX_RUNTIME_BOT
+    uid = int(uid)
+    now = time.time()
+    cached = APEX_MEMBERSHIP_CACHE.get(uid)
+    if not force and cached and now - cached[0] < REQUIRED_CHANNEL_CACHE_TTL:
+        return cached[1], cached[2]
+    if bot is None:
+        return None, "runtime bot is not initialized"
+    try:
+        member = await bot.get_chat_member(REQUIRED_CHANNEL, uid)
+        ok = _ar8_status_is_member(member)
+        reason = str(getattr(member, "status", "unknown"))
+        APEX_MEMBERSHIP_CACHE[uid] = (now, ok, reason)
+        return ok, reason
+    except Exception as exc:
+        err = repr(exc)
+        APEX_MEMBERSHIP_CACHE[uid] = (now, None, err)
+        print(f"ApexRival membership check error for {uid}: {err}")
+        return None, err
+
+
+async def ar8_channel_setup_check(bot) -> bool:
+    """Check that the configured channel is reachable and the bot is admin there."""
+    try:
+        me = await bot.get_me()
+        member = await bot.get_chat_member(REQUIRED_CHANNEL, me.id)
+        status = str(getattr(member, "status", "")).lower()
+        ok = status in {"administrator", "creator"}
+        if ok:
+            print(f"ApexRival channel gate OK | channel={REQUIRED_CHANNEL} | bot_status={status}")
+        else:
+            print(
+                f"ApexRival channel gate WARNING | channel={REQUIRED_CHANNEL} | "
+                f"bot_status={status}; bot should be an administrator for reliable getChatMember checks."
+            )
+        return ok
+    except Exception as exc:
+        print(f"ApexRival channel gate ERROR | channel={REQUIRED_CHANNEL} | {exc!r}")
+        return False
+
+
+def ar8_prereq_markup():
+    return v5_markup([
+        [InlineKeyboardButton("📢 عضویت در کانال", url=REQUIRED_CHANNEL_URL, style=APEX_STYLE_PRIMARY)],
+        [ApexInlineButton("✅ بررسی عضویت", callback_data="REQ|CHECK")],
+        [ApexInlineButton("ℹ️ چرا لازم است؟", callback_data="REQ|INFO")],
+    ])
+
+
+def ar8_prereq_text(kind="need_channel") -> str:
+    channel_label = escape(REQUIRED_CHANNEL)
+    if kind == "need_start":
+        return (
+            "🔒 <b>اول باید ربات را فعال کنی</b>\n\n"
+            "برای شرکت در بازی‌های گروهی، اول وارد چت خصوصی ApexRival شو و <code>/start</code> بزن."
+        )
+    if kind == "check_error":
+        return (
+            "⚠️ <b>بررسی عضویت انجام نشد</b>\n\n"
+            f"ربات فعلاً نتوانست عضویتت در <code>{channel_label}</code> را بررسی کند.\n"
+            "چند لحظه بعد دوباره «بررسی عضویت» را بزن."
+        )
+    if kind == "verified":
+        return "✅ <b>فعال شد!</b>\n\nهم عضو کانال هستی و هم حساب ApexRival تو فعال شده است. حالا می‌توانی داخل گروه وارد بازی شوی."
+    return (
+        "🚫 <b>شما داخل این کانال نیستین.</b>\n\n"
+        f"برای استفاده از ApexRival باید عضو <code>{channel_label}</code> باشی.\n"
+        "بعد از عضویت، روی «✅ بررسی عضویت» بزن."
+    )
+
+
+async def _ar8_send_prereq(update, kind="need_channel"):
+    text = ar8_prereq_text(kind)
+    msg = getattr(update, "message", None)
+    query = getattr(update, "callback_query", None)
+    if query:
+        await safe_answer_query(query, "🚫 عضویت کانال لازم است.", True) if kind == "need_channel" else await safe_answer_query(query)
+        try:
+            await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=ar8_prereq_markup())
+        except Exception:
+            pass
+    elif msg:
+        await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=ar8_prereq_markup())
+
+
+# Replace the old started-only gate with a started + channel gate.
+async def v7_require_started(update: Update, *, allow_admin: bool = True) -> bool:
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return False
+    uid = int(user.id)
+    if allow_admin and is_admin(uid):
+        return True
+    if not v7_chat_is_group(update):
+        return True
+    if not v7_has_started(uid):
+        await _ar8_send_prereq(update, "need_start")
+        return False
+    membership, reason = await ar8_channel_membership(uid)
+    if membership is True:
+        return True
+    if membership is False:
+        await _ar8_send_prereq(update, "need_channel")
+        return False
+    # Verification failed for technical/configuration reasons. Do not falsely
+    # claim the user is absent from the channel.
+    msg = getattr(update, "message", None)
+    query = getattr(update, "callback_query", None)
+    if query:
+        await safe_answer_query(query, "⚠️ بررسی عضویت موقتاً در دسترس نیست.", True)
+        if msg:
+            try:
+                await msg.reply_text(ar8_prereq_text("check_error"), parse_mode=ParseMode.HTML, reply_markup=ar8_prereq_markup())
+            except Exception:
+                pass
+    elif msg:
+        await msg.reply_text(ar8_prereq_text("check_error"), parse_mode=ParseMode.HTML, reply_markup=ar8_prereq_markup())
+    return False
+
+
+async def v7_ensure_allowed(update: Update) -> bool:
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return False
+    uid = int(user.id)
+    get_user(uid, getattr(user, "first_name", None) or getattr(user, "username", None) or "کاربر")
+    if is_banned(uid) and not is_admin(uid):
+        query = getattr(update, "callback_query", None)
+        msg = getattr(update, "message", None)
+        if query:
+            await safe_answer_query(query, "🚫 دسترسی شما مسدود است.", True)
+        elif msg:
+            await msg.reply_text("🚫 دسترسی شما به ApexRival مسدود است.")
+        return False
+    return await v7_require_started(update)
+
+
+ensure_allowed = v7_ensure_allowed
+
+
+async def v8_send_welcome(update, user):
+    u = get_user(user.id, user.first_name or user.username or "بازیکن")
+    card = v5_card(
+        "🎮 ApexRival",
+        f"سلام <b>{escape(user.first_name or 'بازیکن')}</b> 👋",
+        f"⭐ Level <b>{int(u.get('level', 1))}</b>  ·  XP <b>{int(u.get('xp', 0))}</b>",
+        f"💰 <b>{int(u.get('coins', 0))}</b> سکه  ·  🔥 استریک <b>{int(u.get('streak', 0))}</b>",
+        f"🏅 {escape(title_for(int(u.get('xp', 0))))}",
+        "✅ حساب تو برای بازی‌های گروهی فعال شد.",
+    )
+    await update.message.reply_text(
+        f"{card}\n\nاز اینجا به بعد هر وقت وارد گروه ApexRival شدی، می‌توانی در Lobby ثبت‌نام کنی.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=v5_main_keyboard(user.id),
+    )
+
+
+async def v7_start(update, context):
+    user = update.effective_user
+    if not user or not getattr(update, "message", None):
+        return
+    if is_banned(user.id) and not is_admin(user.id):
+        await update.message.reply_text("🚫 دسترسی این حساب به ApexRival مسدود است.")
+        return
+    if getattr(update.effective_chat, "type", None) != "private":
+        await update.message.reply_text(
+            "🔒 برای فعال‌سازی حساب، وارد چت خصوصی ApexRival شو و <code>/start</code> بزن.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    if not is_admin(user.id):
+        membership, _ = await ar8_channel_membership(user.id, force=True, bot=getattr(context, "bot", None))
+        if membership is not True:
+            if membership is False:
+                await update.message.reply_text(ar8_prereq_text("need_channel"), parse_mode=ParseMode.HTML, reply_markup=ar8_prereq_markup())
+            else:
+                await update.message.reply_text(ar8_prereq_text("check_error"), parse_mode=ParseMode.HTML, reply_markup=ar8_prereq_markup())
+            return
+    v7_mark_started(user.id)
+    await v8_send_welcome(update, user)
+
+
+v5_start = v7_start
+start = v7_start
+
+
+async def ar8_verify_cmd(update, context):
+    user = update.effective_user
+    if not user or not getattr(update, "message", None):
+        return
+    if getattr(update.effective_chat, "type", None) != "private":
+        await update.message.reply_text("🔒 این بررسی را در چت خصوصی ApexRival انجام بده.")
+        return
+    if is_admin(user.id):
+        v7_mark_started(user.id)
+        await v8_send_welcome(update, user)
+        return
+    membership, _ = await ar8_channel_membership(user.id, force=True, bot=getattr(context, "bot", None))
+    if membership is True:
+        v7_mark_started(user.id)
+        await v8_send_welcome(update, user)
+    elif membership is False:
+        await update.message.reply_text(ar8_prereq_text("need_channel"), parse_mode=ParseMode.HTML, reply_markup=ar8_prereq_markup())
+    else:
+        await update.message.reply_text(ar8_prereq_text("check_error"), parse_mode=ParseMode.HTML, reply_markup=ar8_prereq_markup())
+
+
+async def ar8_prereq_callback(update, context):
+    query = update.callback_query
+    if not query:
+        return
+    await safe_answer_query(query)
+    action = (query.data or "").split("|", 1)[-1]
+    if action == "INFO":
+        await safe_edit_query(
+            query,
+            v5_card("ℹ️ شرط ورود", "1️⃣ اول /start در چت خصوصی.", "2️⃣ عضویت در کانال اجباری.", "3️⃣ بعد داخل گروه ثبت‌نام کن.", f"📢 کانال: <code>{escape(REQUIRED_CHANNEL)}</code>"),
+            ar8_prereq_markup(),
+        )
+        return
+    if getattr(update.effective_chat, "type", None) != "private":
+        await safe_answer_query(query, "این بررسی باید در چت خصوصی انجام شود.", True)
+        return
+    uid = int(query.from_user.id)
+    membership, _ = await ar8_channel_membership(uid, force=True, bot=getattr(context, "bot", None))
+    if membership is True:
+        v7_mark_started(uid)
+        await safe_edit_query(query, ar8_prereq_text("verified"), v5_markup([[ApexInlineButton("🎮 منوی ApexRival", callback_data="V5|HOME")], [ApexInlineButton("✕ بستن", callback_data="V5|CLOSE")]]))
+    elif membership is False:
+        await safe_answer_query(query, "🚫 هنوز عضو کانال نیستی.", True)
+        await safe_edit_query(query, ar8_prereq_text("need_channel"), ar8_prereq_markup())
+    else:
+        await safe_answer_query(query, "⚠️ عضویت قابل بررسی نیست.", True)
+        await safe_edit_query(query, ar8_prereq_text("check_error"), ar8_prereq_markup())
+
+
+# -----------------------------
+# Membership-aware target list
+# -----------------------------
+async def v7_show_targets(query, game, mode: str):
+    questioner = v7_current_questioner(game)
+    if questioner is None:
+        await safe_answer_query(query, "⛔ نوبت هنوز آماده نیست.", True)
+        return
+    if int(query.from_user.id) != int(questioner):
+        await safe_answer_query(query, "👑 فقط پرسشگر فعلی می‌تواند انتخاب کند.", True)
+        return
+    eligible = []
+    check_error = False
+    for p in game.get("players", []):
+        uid = int(p)
+        if uid == int(questioner):
+            continue
+        membership, _ = await ar8_channel_membership(uid, force=False)
+        if membership is None:
+            check_error = True
+            continue
+        if membership is False:
+            continue
+        if mode == "adult" and not get_user(uid).get("adult_ok", False):
+            continue
+        eligible.append(uid)
+    mode_label = V7_MODE_LABELS.get(mode, mode)
+    if check_error and not eligible:
+        await safe_edit_query(query, v5_card("⚠️ بررسی بازیکنان", "عضویت بعضی بازیکنان قابل بررسی نیست.", "ربات باید در کانال دسترسی لازم برای getChatMember داشته باشد."), v5_markup([[v5_button("🔄 تلاش دوباره", f"V7|MODE|{mode}")], [v5_button("🔙 نوبت", "V7|TURN")]]))
+        return
+    if not eligible:
+        message = "برای این حالت هنوز هدف واجدشرایطی وجود ندارد."
+        if mode == "adult":
+            message = "برای حالت ۱۸+ باید یک بازیکنِ عضو کانال و تأییدشده ۱۸+ وجود داشته باشد."
+        await safe_edit_query(query, v5_card("🎯 انتخاب هدف", f"حالت: <b>{escape(mode_label)}</b>", message), v5_markup([[v5_button("🔙 نوبت", "V7|TURN")]]))
+        return
+    rows = []
+    for uid in eligible:
+        label = str(name_of(uid, game))[:22]
+        rows.append([v5_button(f"🎯 {label}", f"V7|TARGET|{mode}|{uid}")])
+    rows.append([v5_button("🔙 موضوعات", "V7|TURN")])
+    rows.append(ar7_game_nav("V5|GAME"))
+    await safe_edit_query(
+        query,
+        v5_card("🎯 انتخاب هدف", f"حالت انتخاب‌شده: <b>{escape(mode_label)}</b>", "یک نفر را انتخاب کن؛ سؤال برای همان شخص ساخته می‌شود."),
+        v5_markup(rows),
+    )
+
+
+# -----------------------------
+# Target membership verification immediately before prompt creation
+# -----------------------------
+_original_v7_begin_prompt_ar8 = v7_begin_prompt
+
+async def v7_begin_prompt(query, mode: str, target_uid: int):
+    target_uid = int(target_uid)
+    membership, _ = await ar8_channel_membership(target_uid, force=True)
+    if membership is not True:
+        if membership is False:
+            await safe_answer_query(query, "🚫 این بازیکن دیگر عضو کانال اجباری نیست.", True)
+        else:
+            await safe_answer_query(query, "⚠️ عضویت این بازیکن قابل بررسی نیست.", True)
+        return
+    return await _original_v7_begin_prompt_ar8(query, mode, target_uid)
+
+
+# -----------------------------
+# Lobby start: verify every registered player immediately before launch.
+# -----------------------------
+_original_v7_start_lobby_ar8 = v7_start_lobby
+
+async def v7_start_lobby(query, game):
+    current = []
+    removed = []
+    errors = []
+    for p in list(game.get("players", [])):
+        pid = int(p)
+        membership, reason = await ar8_channel_membership(pid, force=True)
+        if membership is True:
+            current.append(pid)
+        elif membership is False:
+            removed.append(pid)
+        else:
+            errors.append((pid, reason))
+    if errors:
+        await safe_answer_query(query, "⚠️ عضویت یکی از بازیکنان قابل بررسی نیست. فعلاً بازی شروع نشد.", True)
+        return
+    if removed:
+        game["players"] = current
+        for pid in removed:
+            game.get("names", {}).pop(str(pid), None)
+            game.get("ready", {}).pop(str(pid), None)
+        touch_game(game)
+        save_data(force=True)
+        removed_names = ", ".join(name_of(pid, game) for pid in removed[:8])
+        try:
+            await query.message.reply_text(f"🚫 این افراد به دلیل خارج بودن از کانال از Lobby حذف شدند: {escape(removed_names)}", parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+    return await _original_v7_start_lobby_ar8(query, game)
+
+
+# -----------------------------
+# Final admin home close handler and authoritative runtime wiring.
+# -----------------------------
+def _ar8_final_markup_self_check():
+    fake_game = {
+        "players": [1, 2, 3],
+        "turn_order": [1, 2, 3],
+        "turn_index": 0,
+        "current_questioner": 1,
+        "turn_number": 1,
+        "round_scores": {},
+    }
+    markups = [
+        v7_turn_markup(fake_game, 1),
+        v7_target_markup(fake_game, "truth", 1),
+        v7_admin_home_markup(),
+        v7_game_home_markup(fake_game),
+    ]
+    for markup in markups:
+        rows = getattr(markup, "inline_keyboard", None)
+        assert isinstance(rows, list) and rows
+        for row in rows:
+            assert isinstance(row, list) and row
+            for button in row:
+                assert isinstance(button, InlineKeyboardButton)
+                data = getattr(button, "callback_data", None)
+                if data is not None:
+                    assert 1 <= len(str(data).encode("utf-8")) <= 64
+    assert ar8_prereq_markup().inline_keyboard
+    assert REQUIRED_CHANNEL
+    assert REQUIRED_CHANNEL_URL.startswith(("https://", "tg://"))
+    # Critical user-facing gate checks without network I/O.
+    assert v7_has_started(9876543210) is False
+    return True
+
+
+_ar8_final_markup_self_check()
+
+
+async def _ar8_post_init(application):
+    global APEX_RUNTIME_BOT
+    APEX_RUNTIME_BOT = application.bot
+    await application.bot.set_my_commands([
+        ("start", "فعال‌سازی حساب"),
+        ("verify", "بررسی عضویت کانال"),
+        ("game", "ساخت Lobby"),
+        ("menu", "منوی اصلی"),
+        ("profile", "پروفایل"),
+        ("rank", "رتبه‌بندی"),
+        ("shop", "فروشگاه"),
+        ("achievements", "دستاوردها"),
+        ("help", "راهنما"),
+        ("id", "آیدی"),
+        ("admin", "پنل مدیریت"),
+    ])
+    if application.job_queue:
+        application.job_queue.run_repeating(v5_cleanup_job, interval=30, first=15, name="apexrival_cleanup")
+    await ar8_channel_setup_check(application.bot)
+
+
+async def _ar8_error_handler(update, context):
+    try:
+        err = repr(getattr(context, "error", None))
+        uid = int(getattr(getattr(update, "effective_user", None), "id", 0) or 0) if update else 0
+        cid = getattr(getattr(update, "effective_chat", None), "id", None) if update else None
+        audit("ar8_unhandled_error", uid, cid, err[:600])
+        save_data(force=True)
+        print(f"ApexRival unhandled error: {err}")
+    except Exception as exc:
+        print(f"ApexRival error-handler failure: {exc!r}")
+
+
+def _ar8_register_handlers(app):
+    app.add_handler(CommandHandler("start", v7_start))
+    app.add_handler(CommandHandler("verify", ar8_verify_cmd))
+    app.add_handler(CommandHandler("game", v5_create_lobby))
+    app.add_handler(CommandHandler("menu", v5_menu))
+    app.add_handler(CommandHandler("profile", v5_profile_message))
+    app.add_handler(CommandHandler("rank", v5_rank_message))
+    app.add_handler(CommandHandler("shop", shop_cmd))
+    app.add_handler(CommandHandler("achievements", achievements_cmd))
+    app.add_handler(CommandHandler("help", v5_help_message))
+    app.add_handler(CommandHandler("id", id_cmd))
+    app.add_handler(CommandHandler("admin", v5_admin_cmd))
+    app.add_handler(CommandHandler("adult", adult_cmd))
+    app.add_handler(CallbackQueryHandler(ar8_prereq_callback, pattern=r"^REQ\|"))
+    app.add_handler(CallbackQueryHandler(v5_callback, pattern=r"^(V5\||V7\|)"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, v5_text_router))
 
 
-# Final admin command uses the V7 shell.
-async def v5_admin_cmd(update, context):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("🚫 فقط Super Admin.")
-        return
-    await update.message.reply_text(v7_admin_home_text(), parse_mode=ParseMode.HTML, reply_markup=v7_admin_home_markup())
+def main_apexrival_8():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is missing")
+    _ar8_final_markup_self_check()
+    start_health_server()
+    application = Application.builder().token(BOT_TOKEN).post_init(_ar8_post_init).build()
+    _ar8_register_handlers(application)
+    application.add_error_handler(_ar8_error_handler)
+    print(
+        f"{BOT_NAME} {AR8_VERSION} starting | channel={REQUIRED_CHANNEL} | "
+        "started-gate=on | membership-gate=on | reply-engine=on"
+    )
+    application.run_polling(drop_pending_updates=True)
 
 
-# Final main stays the existing Render-safe main, but it now resolves the latest
-# handler registry and latest callbacks at runtime.
+main_v5 = main_apexrival_8
+main = main_apexrival_8
 
-if __name__ == '__main__':
-    main_v5()
+
+if __name__ == "__main__":
+    main_apexrival_8()
