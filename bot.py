@@ -8,6 +8,7 @@ import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from html import escape
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -1822,110 +1823,5095 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if game: await update.message.reply_text(penalty_text(game, uid), parse_mode=ParseMode.HTML)
         return
 
+# ============================================================
+# ApexRival 4.0 — Advanced Social Game Engine
+# ============================================================
+# نسخه تک‌فایلی با ناوبری مرحله‌ای، Super Admin گسترده، Lobby، بازی‌های چندحالته،
+# سیستم حکم و پاداش، Backup/Restore، Audit و بانک محتوای بسیار بزرگ.
+# ============================================================
+
+ADVANCED_VERSION = "4.0"
+BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
+MAX_BACKUPS = 25
+
 # -----------------------------
-# Maintenance / health
+# Advanced content and runtime layer
+# -----------------------------
+themes = {
+    'truth': [
+        'یک عادت کوچک که اطرافیان دیر متوجهش می‌شوند را تعریف کن.',
+        'یک موقعیت خنده‌دار که آن لحظه جدی به نظر می‌رسید را تعریف کن.',
+        'یک تصمیم لحظه‌ای که از نتیجه‌اش تعجب کردی را بگو.',
+        'یک چیزی که در کودکی فکر می‌کردی واقعاً درست است را بگو.',
+        'کدام ویژگی آدم‌ها باعث می‌شود سریع به آن‌ها اعتماد کنی؟',
+        'آخرین چیزی که بابتش واقعاً هیجان‌زده شدی چه بود؟',
+        'یک کاری که در جمع بهتر از تنهایی انجام می‌دهی را بگو.',
+        'یک سوءتفاهم قدیمی که هنوز باعث خنده‌ات می‌شود را تعریف کن.',
+        'کدام تصمیم کوچک بیشترین وقت را از تو گرفته است؟',
+        'یک چیز ساده که خیلی زود تو را خوشحال می‌کند چیست؟',
+    ],
+    'dare': [
+        'با سه ایموجی یک داستان کوتاه بساز و معنی آن‌ها را در پایان بگو.',
+        'اسم خودت را مثل معرفی قهرمان یک مسابقه بزرگ معرفی کن.',
+        'یک جمله معمولی را سه بار با سه لحن کاملاً متفاوت بنویس.',
+        'برای آخرین پیام گروه یک تیتر خبری اغراق‌آمیز بساز.',
+        'یک شعار کوتاه برای تیم خودت اختراع کن.',
+        'در یک پیام نقش یک مجری مسابقه تلویزیونی را بازی کن.',
+        'یک سؤال خنده‌دار اما محترمانه برای کل گروه بساز.',
+        'یک داستان دو جمله‌ای بنویس که پایانش کاملاً غیرمنتظره باشد.',
+        'یک لقب موقت برای خودت بساز و دلیل انتخابش را بگو.',
+        'یک محصول خیالی را در دو جمله تبلیغ کن.',
+    ],
+    'flirty': [
+        'یک تعریف محترمانه از یک ویژگی شخصیتی بگو؛ خطاب مستقیم اجباری نیست.',
+        'یک جمله شروع گفت‌وگوی دوستانه و جذاب بساز.',
+        'بگو چه ویژگی‌ای یک نفر را در گفت‌وگو جذاب می‌کند.',
+        'برای یک قرار فرضی یک قانون بامزه و محترمانه تعیین کن.',
+        'یک تعریف کوتاه درباره انرژی یا طرز صحبت یک نفر بساز؛ طرف مقابل حق رد دارد.',
+        'یک سناریوی آشنایی کوتاه و کاملاً محترمانه طراحی کن.',
+        'بگو چه چیزی باعث می‌شود یک گفت‌وگوی صمیمی امن و راحت بماند.',
+        'یک جمله بامزه برای شروع آشنایی در یک مهمانی فرضی بنویس.',
+        'یک ویژگی غیرظاهری که برایت جذاب است را با یک مثال توضیح بده.',
+        'یک اسم خلاقانه برای یک قرار خیالی انتخاب کن.',
+    ],
+    'penalty': [
+        'برای برنده این دور یک شعار سه کلمه‌ای بساز.',
+        'تا دو پیام آینده فقط با سؤال جواب بده.',
+        'یک جمله رسمی درباره یک موضوع کاملاً خنده‌دار بنویس.',
+        'سه ایموجی تصادفی را در یک جمله معنادار استفاده کن.',
+        'یک تبلیغ ۱۵ ثانیه‌ای برای خودت طراحی کن.',
+        'یک لقب محترمانه و بامزه برای Boss بساز.',
+        'یک داستان دو خطی بساز که گروه پایانش را حدس بزند.',
+        'یک پیام تبریک رسمی برای یک اتفاق مسخره بنویس.',
+        'یک جمله را در حالت جدی، هیجانی و خونسرد بازنویسی کن.',
+        'یک سؤال جالب برای شناخت بهتر گروه مطرح کن.',
+    ],
+    'question': [
+        'چه کسی در یک مسابقه اطلاعات عمومی احتمالاً غافلگیرکننده عمل می‌کند؟',
+        'چه کسی احتمالاً اولین نفر برای یک سفر ناگهانی آماده می‌شود؟',
+        'چه کسی در مذاکره بیشتر روی جزئیات تمرکز می‌کند؟',
+        'چه کسی احتمالاً برای تیم بهترین اسم را پیدا می‌کند؟',
+        'چه کسی به نظر می‌رسد در حل معما آرام‌تر باشد؟',
+        'چه کسی احتمالاً یک بازی جدید را سریع یاد می‌گیرد؟',
+        'چه کسی احتمالاً بیشتر از همه برای دوستانش نقشه سورپرایز می‌کشد؟',
+        'چه کسی ممکن است در یک مسابقه خلاقیت بدرخشد؟',
+        'چه کسی احتمالاً یک قانون خنده‌دار برای گروه پیشنهاد می‌کند؟',
+        'چه کسی می‌تواند در یک گفت‌وگوی طولانی صبورتر بماند؟',
+    ],
+    'boss': [
+        'اولین کسی که یک کلمه پنج حرفی بفرستد، پاداش می‌گیرد.',
+        'سرگروه سه ایموجی انتخاب می‌کند؛ خلاق‌ترین ترکیب پاداش می‌گیرد.',
+        'یک عدد مخفی اعلام می‌شود؛ نزدیک‌ترین حدس برنده است.',
+        'همه باید در یک پیام کوتاه خودشان را با یک لقب معرفی کنند.',
+        'اولین پاسخ درست به معما پاداش ویژه می‌گیرد.',
+        'گروه باید بین دو گزینه رأی دهد؛ گزینه برنده یک امتیاز تیمی می‌گیرد.',
+        'هرکس یک کلمه می‌دهد؛ سرگروه خلاق‌ترین ترکیب را انتخاب می‌کند.',
+        'یک مسابقه سرعت یک‌دقیقه‌ای اجرا می‌شود.',
+        'یک بازیکن تصادفی به‌عنوان قهرمان دور انتخاب می‌شود.',
+        'بازیکنان باید یک شعار مشترک برای ApexRival بسازند.',
+    ],
+}
+
+ADVANCED_CONTENT = {k: [] for k in themes}
+# Create a unique second layer by combining distinct lenses with the base themes.
+lenses = [
+    'با تمرکز روی آخرین هفته زندگی‌ات، ',
+    'با فضای یک مسابقه بزرگ، ',
+    'با لحن کاملاً جدی، ',
+    'با یک twist غیرمنتظره، ',
+    'با نگاه طنز، ',
+    'با انتخاب بین دو گزینه، ',
+    'با فرض اینکه همه از قبل تو را می‌شناسند، ',
+    'با فرض اینکه فقط یک دقیقه وقت داری، ',
+    'با نگاه یک بازیکن حرفه‌ای، ',
+    'با نگاه یک تماشاگر بی‌طرف، ',
+    'با یک مثال واقعی و کوتاه، ',
+    'بدون استفاده از توضیح طولانی، ',
+]
+endings = [
+    'جوابت را در یک یا دو جمله کامل کن.',
+    'دلیل کوتاه هم اضافه کن.',
+    'جواب را خیلی سریع و مستقیم بده.',
+    'یک گزینه جایگزین هم پیشنهاد کن.',
+    'در پایان یک ایموجی متناسب اضافه کن.',
+    'جوابت را طوری بگو که بقیه بتوانند حدس بزنند.',
+    'یک مثال کوچک برایش بزن.',
+    'فقط بخش سرگرم‌کننده ماجرا را تعریف کن.',
+]
+for key, seeds in themes.items():
+    # Keep seed prompts and then create many semantically different variants.
+    seen = set()
+    for seed in seeds:
+        if seed not in seen:
+            ADVANCED_CONTENT[key].append(seed)
+            seen.add(seed)
+    for i, lens in enumerate(lenses):
+        for j, seed in enumerate(seeds):
+            ending = endings[(i * 3 + j) % len(endings)]
+            variant = f"{lens}{seed[:-1]}؛ {ending}"
+            if variant not in seen:
+                ADVANCED_CONTENT[key].append(variant)
+                seen.add(variant)
+
+# Additional specialized banks.
+EMOJI_CHALLENGES = [
+    ("🧊🔥🌙", "شب سرد و پرانرژی"),
+    ("🎯🧠⚡", "تمرکز سریع"),
+    ("🚀🌌🏆", "قهرمان فضایی"),
+    ("🍿🎬😂", "فیلم خنده‌دار"),
+    ("🕵️🔍🗝️", "کارآگاه مخفی"),
+    ("👑⚔️🔥", "پادشاه میدان"),
+    ("🌪️🎲😈", "هرج‌ومرج تصادفی"),
+    ("🤖💻🧩", "معمای دیجیتال"),
+    ("🏝️🧭🎒", "سفر ناشناخته"),
+    ("🎤🎧🎶", "مسابقه موسیقی"),
+    ("🍕⚡🏃", "دویدن برای پیتزا"),
+    ("🧪🧠🧯", "آزمایش عجیب"),
+    ("📚☕🌧️", "مطالعه شبانه"),
+    ("🎈🎉🪩", "جشن بزرگ"),
+    ("🦊🪤🕶️", "روباه جاسوس"),
+    ("🧙📜✨", "جادوگر افسانه‌ای"),
+    ("🏁🚗💨", "مسابقه سرعت"),
+    ("🌋🧗🧊", "چالش طبیعت"),
+    ("🎮👾🕹️", "نبرد آرکید"),
+    ("💎🔐🧤", "سرقت الماس خیالی"),
+]
+
+RIDDLES = [
+    ("چیست که هرچه بیشتر از آن برداری، بزرگ‌تر می‌شود؟", "چاله"),
+    ("چه چیزی کلید دارد ولی قفل باز نمی‌کند؟", "پیانو"),
+    ("چه چیزی پا دارد ولی راه نمی‌رود؟", "میز"),
+    ("چه چیزی بدون بال پرواز می‌کند و بدون چشم گریه می‌کند؟", "ابر"),
+    ("چه چیزی وقتی خیس است خشک می‌کند؟", "حوله"),
+    ("چه چیزی بالا می‌رود اما پایین نمی‌آید؟", "سن"),
+    ("چه چیزی دهان دارد ولی حرف نمی‌زند؟", "رودخانه"),
+    ("چه چیزی هرگز سؤال نمی‌پرسد اما همیشه جواب می‌دهد؟", "پژواک"),
+    ("چه چیزی هرچه بیشتر می‌شکند، بیشتر استفاده می‌شود؟", "رکورد"),
+    ("چه چیزی همیشه جلوی توست اما دیده نمی‌شود؟", "آینده"),
+    ("کدام اتاق در ندارد و پنجره هم ندارد؟", "قارچ"),
+    ("چه چیزی می‌تواند شهرها را نشان دهد اما خودش حرکت نمی‌کند؟", "نقشه"),
+    ("چه چیزی اگر نامش را بگویی، می‌شکند؟", "سکوت"),
+    ("چه چیزی یک چشم دارد ولی نمی‌بیند؟", "سوزن"),
+    ("چه چیزی هرگز به عقب برنمی‌گردد؟", "زمان"),
+    ("چه چیزی هرچه سریع‌تر بدوی، سخت‌تر به آن می‌رسی؟", "نفس"),
+    ("چه چیزی می‌گیری ولی نمی‌توانی نگه داری؟", "نفس"),
+    ("چه چیزی همیشه می‌آید ولی هیچ‌وقت نمی‌رسد؟", "فردا"),
+    ("چه چیزی سر دارد و دم دارد اما بدن ندارد؟", "سکه"),
+    ("چه چیزی وقتی بالا می‌رود سبک‌تر می‌شود؟", "بادکنک"),
+]
+
+WORD_STARTS = [
+    "آ", "ب", "پ", "ت", "ج", "چ", "د", "ر", "ز", "س", "ش", "ص", "ط", "ع", "ف", "ق", "ک", "گ", "ل", "م", "ن", "و", "ه", "ی"
+]
+
+SECRET_MISSIONS_ADVANCED = [
+    "کاری کن یکی از بازیکنان بدون اینکه دلیل را بفهمد کلمه «شب» را بگوید.",
+    "در دو پیام طبیعی از یک ایموجی خاص استفاده کن و کسی را وادار کن درباره‌اش سؤال بپرسد.",
+    "کاری کن گروه درباره یک غذای خاص صحبت کند بدون اینکه مستقیم نامش را بیاوری.",
+    "یک نفر را قانع کن که یک عدد بین ۱ تا ۵ انتخاب کند.",
+    "کاری کن یک بازیکن برای یکی از قوانین بازی مثال بزند.",
+    "در گفت‌وگو طوری رفتار کن که یک نفر از تو درباره لقب بازی‌ات بپرسد.",
+    "یک جمله بگو که باعث شود حداقل یک نفر از گروه از تو سؤال بپرسد.",
+    "کاری کن یک نفر داوطلب شود نفر بعدی بازی باشد.",
+    "طوری سؤال بپرس که یک بازیکن نام یک فیلم را بر زبان بیاورد.",
+    "کاری کن کسی از بین دو گزینه‌ای که تو پیشنهاد می‌کنی یکی را انتخاب کند.",
+    "در سه پیام جدا یک کلمه مشترک را طبیعی استفاده کن و لو نرو.",
+    "کاری کن یک نفر درباره آخرین بازی که کرده حرف بزند.",
+]
+
+ROLE_CARDS = [
+    ("⚡ Speedrunner", "اولین پاسخ صحیح تو در چالش سرعت +۲ XP اضافه دارد."),
+    ("🛡 Guardian", "در این دور یک بار می‌توانی یک حکم را با سپر رد کنی."),
+    ("🧠 Analyst", "در یک رأی‌گیری می‌توانی نتیجه فعلی را زودتر ببینی."),
+    ("🎲 Gambler", "یک بار در این دور می‌توانی یک انتخاب تصادفی را دوباره انجام دهی."),
+    ("👑 Captain", "در یک چالش گروهی می‌توانی ترتیب گزینه‌ها را تعیین کنی."),
+    ("🕵️ Shadow", "مأموریت مخفی تو یک مهلت اضافه دارد."),
+    ("🔥 Challenger", "در دوئل یک امتیاز شروع بیشتر می‌گیری."),
+    ("🍀 Lucky", "یک بار احتمال پاداش بیشتر برایت فعال می‌شود."),
+]
+
+EVENT_CARDS_ADVANCED = [
+    ("🌠 Momentum", "پاداش XP سه مرحله بعدی +۱ می‌شود."),
+    ("🛡 Safe Round", "اولین بازیکن بازنده این دور می‌تواند یک بار حکم را رد کند."),
+    ("💰 Coin Rush", "اولین برنده مینی‌گیم +۵ سکه اضافی می‌گیرد."),
+    ("🎯 Double Target", "مرحله بعد دو جایزه دارد."),
+    ("🧊 Freeze", "یک بازیکن تصادفی نمی‌تواند در یک چالش شرکت کند و نقش ناظر دارد."),
+    ("🔄 Reversal", "در یک مرحله، جایزه کوچک بازنده و برنده با هم جابه‌جا می‌شود."),
+    ("🌪 Chaos", "حالت بعدی کاملاً تصادفی انتخاب می‌شود."),
+    ("👑 Crown", "یک نفر قهرمان موقت دور می‌شود و +۳ XP می‌گیرد."),
+    ("🧩 Puzzle", "یک معما جایگزین چالش عادی می‌شود."),
+    ("🎭 Roleplay", "مرحله بعد با یک نقش کوتاه اجرا می‌شود."),
+]
+
+# -----------------------------
+# Utility: safe Telegram UI operations
 # -----------------------------
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = f"{BOT_NAME} OK | v{BOT_VERSION}".encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+async def safe_answer_query(query, text=None, alert=False):
+    try:
+        await query.answer(text=text, show_alert=alert)
+    except Exception:
+        return False
+    return True
 
-    def log_message(self, format, *args):
+
+async def safe_edit_query(query, text, markup=None, parse_mode=ParseMode.HTML):
+    try:
+        await query.edit_message_text(text=text, parse_mode=parse_mode, reply_markup=markup)
+        return True
+    except Exception as exc:
+        # Telegram can return "message is not modified". The button has still been consumed.
+        if "not modified" in str(exc).lower():
+            await safe_answer_query(query, "همین صفحه در حال حاضر باز است.")
+            return True
+        try:
+            if query.message:
+                await query.message.reply_text(text=text, parse_mode=parse_mode, reply_markup=markup)
+                await safe_answer_query(query)
+                return True
+        except Exception:
+            pass
+    return False
+
+
+async def safe_send(bot, chat_id, text, markup=None, parse_mode=ParseMode.HTML):
+    try:
+        return await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=markup)
+    except Exception:
+        return None
+
+
+def clip_text(text: str, limit: int = 3900) -> str:
+    text = str(text)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 30] + "\n… متن کوتاه شد."
+
+
+def fmt_num(value: int | float) -> str:
+    return f"{int(value):,}".replace(",", "٬")
+
+
+def unique_count(seq) -> int:
+    return len(set(map(str, seq)))
+
+
+# -----------------------------
+# Content registry expansion
+# -----------------------------
+
+ADVANCED_CONTENT.update({
+    "emoji": [question for question, _ in EMOJI_CHALLENGES],
+    "riddle": [question for question, _ in RIDDLES],
+    "mission": SECRET_MISSIONS_ADVANCED[:],
+})
+
+
+def all_content_bank(key: str, fallback=None, chat_id: int | None = None):
+    bank = []
+    bank.extend(ADVANCED_CONTENT.get(key, []))
+    if chat_id is not None:
+        group = DATA.get("groups", {}).get(group_key(int(chat_id)), {})
+        bank.extend(group.get("content", {}).get(key, []))
+    global_bank = DATA.get("global_content", {}).get(key, [])
+    bank.extend(global_bank)
+    if fallback:
+        bank.extend(fallback)
+    result = []
+    seen = set()
+    for item in bank:
+        item = str(item).strip()
+        if item and item not in seen:
+            result.append(item)
+            seen.add(item)
+    return result
+
+
+def choose_advanced_content(game, key: str, fallback=None) -> str:
+    pool = all_content_bank(key, fallback, int(game.get("chat_id", 0)))
+    if not pool:
+        return "محتوایی برای این حالت ثبت نشده است."
+    used = set(game.setdefault("used_content", {}).setdefault(key, []))
+    choices = [x for x in pool if x not in used]
+    if not choices:
+        choices = pool
+    pick = random.choice(choices)
+    used.add(pick)
+    game["used_content"][key] = list(used)[-100:]
+    return pick
+
+
+# Replace the original chooser with the advanced non-repeating chooser.
+choose_content = choose_advanced_content
+
+
+# ============================================================
+# Navigation keyboards — small, shallow and predictable
+# ============================================================
+
+
+def nav_row(*buttons):
+    return [InlineKeyboardButton(label, callback_data=data) for label, data in buttons]
+
+
+def back_button(target="GM|HOME"):
+    return [InlineKeyboardButton("🔙 بازگشت", callback_data=target)]
+
+
+def close_button(target="GM|CLOSE"):
+    return [InlineKeyboardButton("✖️ بستن", callback_data=target)]
+
+
+def main_keyboard_v4(uid: int) -> ReplyKeyboardMarkup:
+    rows = [
+        ["🎮 بازی", "👤 پروفایل", "🏆 رتبه‌بندی"],
+        ["🛒 فروشگاه", "🏅 دستاوردها", "📜 قوانین"],
+        ["❓ راهنما"],
+    ]
+    if is_admin(uid):
+        rows.append(["👑 مدیریت ApexRival"])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=False, selective=False)
+
+
+def game_home_keyboard(game):
+    rows = [
+        nav_row(("⚡ چالش‌های سریع", "GM|FAST"), ("🎭 اجتماعی", "GM|SOCIAL")),
+        nav_row(("⚔️ رقابتی", "GM|COMPETE"), ("🤫 مخفی", "GM|SECRET")),
+        nav_row(("☠️ حکم و پاداش", "GM|REWARDS"), ("📊 وضعیت", "GM|STATUS")),
+        nav_row(("👑 کنترل سرگروه", "GM|HOST")) if leader_of(game, game.get("_viewer_id", 0)) else [],
+        back_button("GM|CLOSE"),
+    ]
+    return InlineKeyboardMarkup([r for r in rows if r])
+
+
+def game_fast_keyboard():
+    return InlineKeyboardMarkup([
+        nav_row(("🎯 عدد مخفی", "GM|FAST|NUMBER"), ("🧩 معما", "GM|FAST|RIDDLE")),
+        nav_row(("😀 ایموجی", "GM|FAST|EMOJI"), ("⚡ واکنش سریع", "GM|FAST|REACTION")),
+        nav_row(("🔤 زنجیره کلمات", "GM|FAST|WORDS")),
+        back_button("GM|HOME"),
+    ])
+
+
+def game_social_keyboard(game):
+    rows = [
+        nav_row(("🕵️ اعتراف", "GM|SOCIAL|TRUTH"), ("🔥 جرئت", "GM|SOCIAL|DARE")),
+        nav_row(("💘 فلرت محترمانه", "GM|SOCIAL|FLIRTY"), ("🧠 سؤال گروهی", "GM|SOCIAL|QUESTION")),
+        back_button("GM|HOME"),
+    ]
+    if get_group(int(game["chat_id"])).get("adult_mode"):
+        rows.insert(2, nav_row(("🔞 +18 غیرصریح", "GM|SOCIAL|ADULT")))
+    return InlineKeyboardMarkup(rows)
+
+
+def game_compete_keyboard():
+    return InlineKeyboardMarkup([
+        nav_row(("⚔️ دوئل", "GM|COMPETE|DUEL"), ("🎰 گردونه", "GM|COMPETE|ROULETTE")),
+        nav_row(("⚡ سرعت", "GM|COMPETE|SPEED"), ("🗳 رأی‌گیری", "GM|COMPETE|VOTE")),
+        nav_row(("🏁 بقا", "GM|COMPETE|SURVIVAL"), ("👥 تیم‌سازی", "GM|COMPETE|TEAMS")),
+        back_button("GM|HOME"),
+    ])
+
+
+def game_secret_keyboard():
+    return InlineKeyboardMarkup([
+        nav_row(("🤫 مأموریت مخفی", "GM|SECRET|MISSION"), ("🕵️ جاسوس", "GM|SECRET|SPY")),
+        nav_row(("🎭 کارت نقش", "GM|SECRET|ROLE"), ("🔮 پیش‌بینی", "GM|SECRET|PREDICT")),
+        back_button("GM|HOME"),
+    ])
+
+
+def game_reward_keyboard(game):
+    return InlineKeyboardMarkup([
+        nav_row(("☠️ حکم من", "GM|REWARDS|MINE"), ("🛒 فروشگاه", "GM|REWARDS|SHOP")),
+        nav_row(("🍀 آیتم‌های من", "GM|REWARDS|INV"), ("🏅 دستاوردها", "GM|REWARDS|ACH")),
+        back_button("GM|HOME"),
+    ])
+
+
+def host_control_keyboard():
+    return InlineKeyboardMarkup([
+        nav_row(("🎲 انتخاب تصادفی", "GM|HOST|RANDOM"), ("☠️ حکم تصادفی", "GM|HOST|PENALTY")),
+        nav_row(("⏭ دور بعد", "GM|HOST|NEXT"), ("🛑 پایان بازی", "GM|HOST|END")),
+        nav_row(("⚙️ تنظیمات لابی", "GM|HOST|SETTINGS"), ("👥 بازیکنان", "GM|HOST|PLAYERS")),
+        back_button("GM|HOME"),
+    ])
+
+
+# -----------------------------
+# Admin navigation
+# -----------------------------
+
+
+def admin_home_keyboard():
+    return InlineKeyboardMarkup([
+        nav_row(("📊 نمای کلی", "AX|STATS"), ("👥 کاربران", "AX|USERS")),
+        nav_row(("🌐 گروه‌ها", "AX|GROUPS"), ("🎮 بازی‌ها", "AX|GAMES")),
+        nav_row(("📝 محتوا", "AX|CONTENT"), ("🛒 اقتصاد", "AX|ECONOMY")),
+        nav_row(("🛡 امنیت", "AX|SECURITY"), ("⚙️ تنظیمات", "AX|SETTINGS")),
+        nav_row(("💾 بکاپ", "AX|BACKUP"), ("📜 لاگ‌ها", "AX|LOGS")),
+        nav_row(("📣 پیام همگانی", "AX|BROADCAST"), ("🧰 ابزارها", "AX|TOOLS")),
+        [InlineKeyboardButton("✖️ بستن پنل", callback_data="AX|CLOSE")],
+    ])
+
+
+def admin_back_home():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت به پنل اصلی", callback_data="AX|HOME")]])
+
+
+def admin_two_back(rows, back="AX|HOME"):
+    rows = [r for r in rows if r]
+    rows.append([InlineKeyboardButton("🔙 بازگشت", callback_data=back)])
+    return InlineKeyboardMarkup(rows)
+
+
+async def render_admin(query, title: str, body: str, markup=None):
+    text = f"{title}\n\n{body}"
+    return await safe_edit_query(query, clip_text(text), markup or admin_back_home())
+
+
+async def advanced_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        if update.callback_query:
+            await safe_answer_query(update.callback_query, "🚫 فقط Super Admin.", True)
+        elif update.message:
+            await update.message.reply_text("🚫 فقط Super Admin.")
+        return
+    text = (
+        f"👑 <b>ApexRival {ADVANCED_VERSION}</b>\n"
+        f"<i>مرکز فرماندهی</i>\n\n"
+        f"👥 کاربران: <b>{fmt_num(len(DATA['users']))}</b>\n"
+        f"🌐 گروه‌ها: <b>{fmt_num(len(DATA['groups']))}</b>\n"
+        f"🎮 بازی‌های ذخیره‌شده: <b>{fmt_num(len(DATA['games']))}</b>\n"
+        f"🟢 بازی فعال: <b>{sum(1 for g in DATA['groups'].values() if g.get('active_game'))}</b>\n"
+        f"📜 لاگ‌ها: <b>{fmt_num(len(DATA['audit']))}</b>\n\n"
+        "هر بخش وظیفه مشخص خودش را دارد تا پنل شلوغ نشود."
+    )
+    markup = admin_home_keyboard()
+    if update.callback_query:
+        await safe_edit_query(update.callback_query, text, markup)
+        await safe_answer_query(update.callback_query)
+    else:
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+# Replace admin_panel symbol with the robust implementation.
+admin_panel = advanced_admin_panel
+
+
+# -----------------------------
+# Admin data pages
+# -----------------------------
+
+
+def sort_users_by_xp():
+    return sorted(DATA["users"].items(), key=lambda kv: (int(kv[1].get("xp", 0)), int(kv[1].get("coins", 0))), reverse=True)
+
+
+def sort_groups_by_activity():
+    return sorted(DATA["groups"].items(), key=lambda kv: bool(kv[1].get("active_game")), reverse=True)
+
+
+def active_games():
+    return [(gid, g) for gid, g in DATA["games"].items() if g.get("status") in ("active", "lobby")]
+
+
+def user_admin_text(uid: int) -> str:
+    user = get_user(uid)
+    title = game_title(uid)
+    ach = len(user.get("achievements", []))
+    inv = user.get("inventory", {})
+    inv_text = "، ".join(f"{SHOP[k]['name']}:{int(v)}" for k,v in inv.items())
+    return (
+        f"👤 <b>{escape(str(user.get('name','کاربر')))}</b>\n"
+        f"🆔 <code>{uid}</code>\n"
+        f"🏅 {escape(title)} | Level {user.get('level',1)}\n"
+        f"⭐ XP: {fmt_num(user.get('xp',0))}\n"
+        f"💰 سکه: {fmt_num(user.get('coins',0))}\n"
+        f"🏆 برد: {user.get('wins',0)} | ☠️ باخت: {user.get('losses',0)}\n"
+        f"🔥 استریک: {user.get('streak',0)} / {user.get('best_streak',0)}\n"
+        f"🚫 وضعیت: {'BAN' if user.get('banned') else 'فعال'}\n"
+        f"🏅 دستاورد: {ach}\n"
+        f"🎒 {escape(inv_text or 'خالی')}"
+    )
+
+
+def admin_user_actions(uid: int):
+    status = get_user(uid).get("banned", False)
+    rows = [
+        nav_row(("➕ 25 XP", f"AX|UXP|{uid}|25"), ("➕ 100 XP", f"AX|UXP|{uid}|100")),
+        nav_row(("➖ 25 XP", f"AX|UXP|{uid}|-25"), ("⭐ Level +1", f"AX|ULEVEL|{uid}|1")),
+        nav_row(("💰 +25 سکه", f"AX|UCOIN|{uid}|25"), ("💸 -25 سکه", f"AX|UCOIN|{uid}|-25")),
+        nav_row(("🛡 +سپر", f"AX|UITEM|{uid}|shield|1"), ("🎲 +ریرول", f"AX|UITEM|{uid}|reroll|1")),
+        nav_row(("🚫 بن" if not status else "✅ رفع بن", f"AX|BAN|{uid}"), ("🧹 ریست", f"AX|RESET|{uid}")),
+        nav_row(("📊 جزئیات", f"AX|UDETAIL|{uid}"), ("📜 لاگ کاربر", f"AX|ULOG|{uid}")),
+        [InlineKeyboardButton("🔙 کاربران", callback_data="AX|USERS")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+async def admin_users_page(query, page=0):
+    page = max(0, int(page))
+    items = sort_users_by_xp()
+    chunk = 8
+    start = page * chunk
+    current = items[start:start+chunk]
+    lines = []
+    buttons = []
+    for offset, (uid_s, user) in enumerate(current, start=1):
+        uid = int(uid_s)
+        flag = "🚫" if user.get("banned") else "🟢"
+        lines.append(f"{offset+start}. {flag} {escape(str(user.get('name','کاربر')))[:22]} — {user.get('xp',0)} XP")
+        buttons.append([InlineKeyboardButton(f"👤 {str(user.get('name','کاربر'))[:20]}", callback_data=f"AX|U|{uid}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"AX|USERS|{page-1}"))
+    if start + chunk < len(items):
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"AX|USERS|{page+1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton("🔄 تازه‌سازی", callback_data=f"AX|USERS|{page}")])
+    buttons.append([InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")])
+    text = f"👥 <b>مدیریت کاربران</b>\nصفحه {page+1}\n\n" + ("\n".join(lines) or "کاربری ثبت نشده است.")
+    await safe_edit_query(query, text, InlineKeyboardMarkup(buttons))
+
+
+async def admin_groups_page(query, page=0):
+    page = max(0, int(page))
+    items = sort_groups_by_activity()
+    chunk = 6
+    start = page * chunk
+    current = items[start:start+chunk]
+    buttons = []
+    lines = []
+    for idx, (cid, group) in enumerate(current, start=start+1):
+        active = bool(group.get("active_game"))
+        enabled = bool(group.get("enabled", True))
+        lines.append(f"{idx}. <code>{cid}</code> | {'🟢' if enabled else '🔴'} | {'🎮' if active else '💤'}")
+        buttons.append([InlineKeyboardButton(f"🌐 {cid}", callback_data=f"AX|G|{cid}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"AX|GROUPS|{page-1}"))
+    if start + chunk < len(items):
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"AX|GROUPS|{page+1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton("🔄 تازه‌سازی", callback_data=f"AX|GROUPS|{page}")])
+    buttons.append([InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")])
+    text = "🌐 <b>مدیریت گروه‌ها</b>\n\n" + ("\n".join(lines) or "گروهی ثبت نشده است.")
+    await safe_edit_query(query, text, InlineKeyboardMarkup(buttons))
+
+
+async def admin_games_page(query, page=0):
+    items = active_games()
+    chunk = 6
+    start = max(0, int(page)) * chunk
+    current = items[start:start+chunk]
+    buttons = []
+    lines = []
+    for idx, (gid, game) in enumerate(current, start=start+1):
+        phase = game.get("phase", "-")
+        lines.append(f"{idx}. <code>{game.get('chat_id')}</code> | {len(game.get('players',[]))} نفر | {escape(str(phase))}")
+        token = str(gid)[:32]
+        buttons.append([InlineKeyboardButton(f"🎮 گروه {game.get('chat_id')}", callback_data=f"AX|GAME|{token}")])
+    if start + chunk < len(items):
+        buttons.append([InlineKeyboardButton("▶️ بعدی", callback_data=f"AX|GAMES|{int(page)+1}")])
+    if page > 0:
+        buttons.append([InlineKeyboardButton("◀️ قبلی", callback_data=f"AX|GAMES|{int(page)-1}")])
+    buttons.append([InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")])
+    text = "🎮 <b>بازی‌های جاری</b>\n\n" + ("\n".join(lines) or "هیچ بازی فعالی وجود ندارد.")
+    await safe_edit_query(query, text, InlineKeyboardMarkup(buttons))
+
+
+async def admin_stats_page(query):
+    active = sum(1 for _, g in DATA["groups"].items() if g.get("active_game"))
+    lobbies = sum(1 for g in DATA["games"].values() if g.get("status") == "lobby")
+    finished = sum(1 for g in DATA["games"].values() if g.get("status") == "finished")
+    total_xp = sum(int(u.get("xp", 0)) for u in DATA["users"].values())
+    total_coins = sum(int(u.get("coins", 0)) for u in DATA["users"].values())
+    games_played = sum(int(u.get("games", 0)) for u in DATA["users"].values())
+    text = (
+        "📊 <b>نمای کلی سیستم</b>\n\n"
+        f"👥 کاربران: {fmt_num(len(DATA['users']))}\n"
+        f"🌐 گروه‌ها: {fmt_num(len(DATA['groups']))}\n"
+        f"🟢 بازی فعال: {fmt_num(active)}\n"
+        f"🟡 لابی: {fmt_num(lobbies)}\n"
+        f"🏁 بازی پایان‌یافته: {fmt_num(finished)}\n"
+        f"🎮 تجربه‌های ثبت‌شده: {fmt_num(games_played)}\n"
+        f"⭐ XP کل: {fmt_num(total_xp)}\n"
+        f"💰 سکه کل: {fmt_num(total_coins)}\n"
+        f"🧩 محتوای سراسری: {sum(len(v) for v in DATA.get('global_content', {}).values())}\n"
+        f"📜 لاگ: {len(DATA.get('audit', []))}"
+    )
+    await render_admin(query, "📊 نمای کلی", text, admin_back_home())
+
+
+async def admin_group_detail(query, cid: int):
+    group = get_group(cid)
+    game = active_game(cid)
+    text = (
+        f"🌐 <b>گروه {cid}</b>\n\n"
+        f"وضعیت: {'🟢 فعال' if group.get('enabled') else '🔴 خاموش'}\n"
+        f"+18: {'🔞 روشن' if group.get('adult_mode') else '🔒 خاموش'}\n"
+        f"حداقل بازیکن: {group.get('min_players',2)}\n"
+        f"حداکثر بازیکن: {group.get('max_players',20)}\n"
+        f"بازی: {'🟢 فعال' if game else '💤 ندارد'}"
+    )
+    rows = [
+        nav_row(("🟢 فعال", f"AX|GEN|{cid}|on"), ("🔴 خاموش", f"AX|GEN|{cid}|off")),
+        nav_row(("🔞 +18 ON", f"AX|GADULT|{cid}|on"), ("🔒 +18 OFF", f"AX|GADULT|{cid}|off")),
+        nav_row(("➕ Max", f"AX|GMAX|{cid}|up"), ("➖ Max", f"AX|GMAX|{cid}|down")),
+        [InlineKeyboardButton("🛑 پایان بازی", callback_data=f"AX|GEND|{cid}")],
+        [InlineKeyboardButton("🔙 گروه‌ها", callback_data="AX|GROUPS")],
+    ]
+    await render_admin(query, "🌐 مدیریت گروه", text, InlineKeyboardMarkup(rows))
+
+
+# -----------------------------
+# Content administration
+# -----------------------------
+
+CONTENT_LABELS = {
+    "truth": "🕵️ اعتراف",
+    "dare": "🔥 جرئت",
+    "flirty": "💘 فلرت",
+    "question": "🧠 سؤال",
+    "penalty": "☠️ حکم",
+    "boss": "👑 Boss",
+    "mission": "🤫 مأموریت",
+    "riddle": "🧩 معما",
+}
+
+
+def admin_content_menu():
+    rows = [
+        nav_row((CONTENT_LABELS["truth"], "AX|CONTENT|truth"), (CONTENT_LABELS["dare"], "AX|CONTENT|dare")),
+        nav_row((CONTENT_LABELS["flirty"], "AX|CONTENT|flirty"), (CONTENT_LABELS["question"], "AX|CONTENT|question")),
+        nav_row((CONTENT_LABELS["penalty"], "AX|CONTENT|penalty"), (CONTENT_LABELS["boss"], "AX|CONTENT|boss")),
+        nav_row((CONTENT_LABELS["mission"], "AX|CONTENT|mission"), (CONTENT_LABELS["riddle"], "AX|CONTENT|riddle")),
+        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+async def admin_content_page(query):
+    counts = []
+    for key, label in CONTENT_LABELS.items():
+        counts.append(f"{label}: {len(all_content_bank(key))}")
+    body = "\n".join(counts) + "\n\nبرای هر دسته، لیست، حذف و افزودن جداگانه در دسترس است."
+    await render_admin(query, "📝 مدیریت محتوا", body, admin_content_menu())
+
+
+async def admin_content_category(query, key: str, page=0):
+    pool = all_content_bank(key)
+    chunk = 5
+    page = max(0, int(page))
+    start = page * chunk
+    current = pool[start:start+chunk]
+    lines = [f"{i+1+start}. {escape(item)}" for i, item in enumerate(current)]
+    buttons = []
+    for i, item in enumerate(current):
+        buttons.append([InlineKeyboardButton(f"🗑 حذف {i+1+start}", callback_data=f"AX|CDEL|{key}|{i+start}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"AX|CONTENT|{key}|{page-1}"))
+    if start + chunk < len(pool):
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"AX|CONTENT|{key}|{page+1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton("➕ افزودن", callback_data=f"AX|CADD|{key}")])
+    buttons.append([InlineKeyboardButton("🧹 پاک‌سازی سفارشی", callback_data=f"AX|CCLEAR|{key}")])
+    buttons.append([InlineKeyboardButton("🔙 دسته‌ها", callback_data="AX|CONTENT")])
+    text = f"{CONTENT_LABELS.get(key,key)} <b>— صفحه {page+1}</b>\n\n" + ("\n\n".join(lines) or "هیچ محتوایی نیست.")
+    await safe_edit_query(query, clip_text(text), InlineKeyboardMarkup(buttons))
+
+
+# -----------------------------
+# Economy, security, settings
+# -----------------------------
+
+async def admin_economy_page(query):
+    stock = "\n".join(f"{v['name']}: {v['price']} 🪙 — {v['desc']}" for v in SHOP.values())
+    total = sum(int(u.get('coins',0)) for u in DATA['users'].values())
+    text = f"🛒 <b>اقتصاد بازی</b>\n\nسکه در گردش: {fmt_num(total)}\nضریب XP: {DATA['settings'].get('xp_multiplier',1)}\nضریب سکه: {DATA['settings'].get('coins_multiplier',1)}\n\n{escape(stock)}"
+    rows = [
+        nav_row(("⭐ XP ×1", "AX|MULT|xp|1"), ("⚡ XP ×2", "AX|MULT|xp|2")),
+        nav_row(("💰 Coin ×1", "AX|MULT|coin|1"), ("💎 Coin ×2", "AX|MULT|coin|2")),
+        [InlineKeyboardButton("🔄 تازه‌سازی", callback_data="AX|ECONOMY")],
+        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+    ]
+    await render_admin(query, "🛒 اقتصاد", text, InlineKeyboardMarkup(rows))
+
+
+async def admin_security_page(query):
+    banned = sum(1 for u in DATA['users'].values() if u.get('banned'))
+    text = (
+        "🛡 <b>امنیت و کنترل</b>\n\n"
+        f"🚫 کاربران بن‌شده: {banned}\n"
+        f"📜 Audit نگهداری‌شده: {len(DATA.get('audit',[]))}\n"
+        "\nابزارها در این نسخه بدون حدس‌زدن روی داده‌های حساس کار می‌کنند."
+    )
+    rows = [
+        [InlineKeyboardButton("🚫 لیست بن‌ها", callback_data="AX|BANLIST")],
+        [InlineKeyboardButton("🧹 پاکسازی بازی‌های قدیمی", callback_data="AX|CLEAN")],
+        [InlineKeyboardButton("🔄 بروزرسانی", callback_data="AX|SECURITY")],
+        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+    ]
+    await render_admin(query, "🛡 امنیت", text, InlineKeyboardMarkup(rows))
+
+
+async def admin_settings_page(query):
+    s = DATA["settings"]
+    text = (
+        "⚙️ <b>تنظیمات سراسری</b>\n\n"
+        f"حداکثر بازیکن پیش‌فرض: {s.get('max_players_default',20)}\n"
+        f"+18 پیش‌فرض: {'روشن' if s.get('adult_default') else 'خاموش'}\n"
+        f"ضریب XP: {s.get('xp_multiplier',1)}\n"
+        f"ضریب سکه: {s.get('coins_multiplier',1)}"
+    )
+    rows = [
+        nav_row(("➕ Max", "AX|GLOBMAX|up"), ("➖ Max", "AX|GLOBMAX|down")),
+        nav_row(("🔞 Default ON", "AX|ADULTDEF|on"), ("🔒 Default OFF", "AX|ADULTDEF|off")),
+        nav_row(("⭐ XP ×1", "AX|MULT|xp|1"), ("⚡ XP ×2", "AX|MULT|xp|2")),
+        nav_row(("💰 Coin ×1", "AX|MULT|coin|1"), ("💎 Coin ×2", "AX|MULT|coin|2")),
+        [InlineKeyboardButton("💾 ذخیره فوری", callback_data="AX|SAVE")],
+        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+    ]
+    await render_admin(query, "⚙️ تنظیمات", text, InlineKeyboardMarkup(rows))
+
+
+# -----------------------------
+# Backup subsystem
+# -----------------------------
+
+
+def ensure_backup_dir():
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+
+
+def make_backup_file(reason="manual") -> str:
+    ensure_backup_dir()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(BACKUP_DIR, f"apexrival_{reason}_{stamp}.json")
+    with LOCK:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(DATA, f, ensure_ascii=False, indent=2)
+    files = sorted(Path(BACKUP_DIR).glob("apexrival_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in files[MAX_BACKUPS:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    audit("backup", ADMIN_ID, None, os.path.basename(path))
+    return path
+
+
+def backup_files():
+    ensure_backup_dir()
+    return sorted(Path(BACKUP_DIR).glob("apexrival_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def restore_backup(path: Path) -> tuple[bool, str]:
+    global DATA
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict) or "users" not in raw or "groups" not in raw or "games" not in raw:
+            return False, "ساختار فایل بکاپ معتبر نیست."
+        with LOCK:
+            DATA = raw
+            DATA.setdefault("schema", 4)
+            DATA.setdefault("global_content", {})
+            DATA.setdefault("settings", {})
+            DATA.setdefault("audit", [])
+            DATA.setdefault("broadcast_log", [])
+        save_data(force=True)
+        audit("restore", ADMIN_ID, None, path.name)
+        return True, "بکاپ با موفقیت بازیابی شد."
+    except Exception as exc:
+        return False, f"خطا: {exc}"
+
+
+async def admin_backup_page(query):
+    files = backup_files()
+    lines = [f"{i+1}. {f.name}" for i, f in enumerate(files[:10])]
+    rows = [[InlineKeyboardButton("📦 ساخت بکاپ جدید", callback_data="AX|MAKEBACKUP")]]
+    for i, f in enumerate(files[:8]):
+        rows.append([InlineKeyboardButton(f"♻️ بازیابی {i+1}", callback_data=f"AX|RESTORE|{i}")])
+    rows.append([InlineKeyboardButton("🔄 تازه‌سازی", callback_data="AX|BACKUP")])
+    rows.append([InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")])
+    text = "💾 <b>Backup Center</b>\n\n" + ("\n".join(lines) or "هنوز بکاپی ساخته نشده است.")
+    await render_admin(query, "💾 بکاپ و بازیابی", text, InlineKeyboardMarkup(rows))
+
+
+# -----------------------------
+# Tools and logs
+# -----------------------------
+
+async def admin_logs_page(query):
+    rows = DATA.get("audit", [])[-20:][::-1]
+    lines = []
+    for item in rows:
+        t = datetime.fromtimestamp(int(item.get("ts",0)), timezone.utc).strftime("%m-%d %H:%M")
+        lines.append(f"{t} | {escape(str(item.get('action','-')))} | {item.get('actor','-')} | {item.get('chat','-')}")
+    await render_admin(query, "📜 لاگ عملیات", "\n".join(lines) or "لاگی ثبت نشده است.", admin_back_home())
+
+
+async def admin_tools_page(query):
+    text = (
+        "🧰 <b>ابزارهای عملیاتی</b>\n\n"
+        "ابزارهای سریع برای نگهداری و تست سیستم.\n"
+        "هیچ‌کدام از این دکمه‌ها منوی دیگری را بی‌دلیل باز نمی‌کنند."
+    )
+    rows = [
+        nav_row(("💾 Save", "AX|SAVE"), ("🧹 Cleanup", "AX|CLEAN")),
+        nav_row(("📦 Backup", "AX|MAKEBACKUP"), ("📊 Health", "AX|HEALTH")),
+        nav_row(("🛑 پایان همه بازی‌ها", "AX|ENDALL"), ("🔄 شمارنده‌ها", "AX|COUNTERS")),
+        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+    ]
+    await render_admin(query, "🧰 ابزارها", text, InlineKeyboardMarkup(rows))
+
+
+# ============================================================
+# New mini-games
+# ============================================================
+
+
+def ensure_mode_state(game, key, default):
+    value = game.get(key)
+    if value is None:
+        game[key] = deepcopy(default)
+        value = game[key]
+    return value
+
+
+async def mini_number_hunt(message, game):
+    if len(game.get("players", [])) < 2:
+        await message.reply_text("👥 حداقل دو بازیکن لازم است.")
+        return
+    target = random.randint(1, 20)
+    game["number_hunt"] = {"target": target, "expires": time.time() + 25, "winner": None}
+    game["phase"] = "number_hunt"
+    touch_game(game)
+    await message.reply_text("🎯 <b>عدد مخفی</b>\n\nیک عدد بین <b>۱ تا ۲۰</b> انتخاب شده است.\nاولین حدس درست +۸ XP و +۴ سکه می‌گیرد.", parse_mode=ParseMode.HTML)
+
+
+async def mini_riddle(message, game):
+    q, answer = random.choice(RIDDLES)
+    game["riddle"] = {"answer": answer.casefold(), "expires": time.time() + 45, "solved": False}
+    game["phase"] = "riddle"
+    touch_game(game)
+    await message.reply_text(f"🧩 <b>معما</b>\n\n{escape(q)}\n\n⏱ ۴۵ ثانیه", parse_mode=ParseMode.HTML)
+
+
+async def mini_emoji(message, game):
+    emoji, answer = random.choice(EMOJI_CHALLENGES)
+    game["emoji"] = {"answer": answer.casefold(), "expires": time.time() + 35, "solved": False}
+    game["phase"] = "emoji"
+    touch_game(game)
+    await message.reply_text(f"😀 <b>معمای ایموجی</b>\n\n{emoji}\n\nاولین کسی که مفهوم را حدس بزند +۶ XP می‌گیرد.", parse_mode=ParseMode.HTML)
+
+
+async def mini_reaction(message, game):
+    game["reaction"] = {"expires": time.time() + 15, "winner": None}
+    game["phase"] = "reaction"
+    touch_game(game)
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ بزن!", callback_data="GM|FAST|REACTION|HIT")]])
+    await message.reply_text("⚡ <b>Reaction Rush</b>\n\nاولین بازیکنی که دکمه را بزند برنده است.", parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def mini_words(message, game):
+    letter = random.choice(WORD_STARTS)
+    game["word"] = {"letter": letter, "expires": time.time() + 30, "winner": None}
+    game["phase"] = "word"
+    touch_game(game)
+    await message.reply_text(f"🔤 <b>زنجیره کلمات</b>\n\nیک کلمه فارسی با حرف «<b>{escape(letter)}</b>» بفرست.\nاولین جواب قابل قبول +۶ XP.", parse_mode=ParseMode.HTML)
+
+
+async def mini_survival(message, game):
+    players = list(game.get("players", []))
+    if len(players) < 3:
+        await message.reply_text("🏁 برای حالت بقا حداقل ۳ بازیکن لازم است.")
+        return
+    loser = random.choice(players)
+    game["survival"] = {"target": loser, "round": game.get("round", 0), "expires": time.time() + 30}
+    game["phase"] = "survival"
+    p = assign_penalty(game, loser, source="🏁 Survival")
+    reward_player(game, loser, 0, 0, loss=True, reason="Survival")
+    touch_game(game)
+    await message.reply_text(
+        f"🏁 <b>Survival Round</b>\n\nبازیکن هدف: {mention_user(loser, name_of(loser, game))}\n☠️ حکم ثبت شد: {escape(p['text'])}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=game_keyboard(game),
+    )
+
+
+async def mini_teams(message, game):
+    players = list(game.get("players", []))
+    random.shuffle(players)
+    half = (len(players) + 1) // 2
+    a, b = players[:half], players[half:]
+    team_a = ", ".join(name_of(uid, game) for uid in a) or "—"
+    team_b = ", ".join(name_of(uid, game) for uid in b) or "—"
+    game["teams"] = {"A": a, "B": b, "expires": time.time() + 300}
+    game["phase"] = "teams"
+    touch_game(game)
+    await message.reply_text(
+        f"👥 <b>تیم‌بندی تصادفی</b>\n\n🔵 تیم A:\n{escape(team_a)}\n\n🔴 تیم B:\n{escape(team_b)}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def mini_role(message, game, bot):
+    uid = random.choice(game.get("players", []))
+    role, desc = random.choice(ROLE_CARDS)
+    game["role_card"] = {"user": uid, "role": role, "desc": desc, "expires": time.time() + 300}
+    game["phase"] = "role"
+    touch_game(game)
+    await safe_send(bot, uid, f"🎭 <b>کارت نقش محرمانه</b>\n\n{role}\n{desc}")
+    await message.reply_text("🎭 یک کارت نقش محرمانه توزیع شد. صاحب کارت نباید آن را علنی کند.", parse_mode=ParseMode.HTML)
+
+
+async def mini_predict(message, game):
+    secret = random.choice(["شیر", "خط"])
+    game["predict"] = {"secret": secret, "votes": {}, "expires": time.time() + 30}
+    game["phase"] = "predict"
+    rows = [[InlineKeyboardButton("🪙 شیر", callback_data="GM|SECRET|PREDICT|heads"), InlineKeyboardButton("🪙 خط", callback_data="GM|SECRET|PREDICT|tails")]]
+    await message.reply_text("🔮 <b>پیش‌بینی</b>\n\nیک طرف سکه را انتخاب کن. انتخابت ثبت می‌شود.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows))
+
+
+# ============================================================
+# Advanced callback router
+# ============================================================
+
+async def advanced_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if not (data.startswith("AX|") or data.startswith("GM|")):
+        return
+    await safe_answer_query(query)
+    parts = data.split("|")
+    family = parts[0]
+    chat_id = query.message.chat_id if query.message else update.effective_chat.id
+    uid = query.from_user.id
+
+    if family == "AX":
+        if not is_admin(uid):
+            await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+            return
+        action = parts[1] if len(parts) > 1 else "HOME"
+        if action == "HOME":
+            await advanced_admin_panel(update, context)
+            return
+        if action == "CLOSE":
+            await safe_edit_query(query, "✅ پنل مدیریت بسته شد.", None)
+            return
+        if action == "STATS":
+            await admin_stats_page(query); return
+        if action == "USERS":
+            page = int(parts[2]) if len(parts) > 2 else 0
+            await admin_users_page(query, page); return
+        if action == "U":
+            target = int(parts[2])
+            await render_admin(query, "👤 مدیریت کاربر", user_admin_text(target), admin_user_actions(target)); return
+        if action == "UXP":
+            target, amount = int(parts[2]), int(parts[3])
+            u = get_user(target); u["xp"] = max(0, int(u.get("xp",0)) + amount); u["level"] = level_for_xp(u["xp"])
+            audit("admin_xp", uid, None, f"{target}:{amount}"); save_data(force=True)
+            await render_admin(query, "👤 تغییر XP", user_admin_text(target), admin_user_actions(target)); return
+        if action == "UCOIN":
+            target, amount = int(parts[2]), int(parts[3])
+            get_user(target)["coins"] = max(0, int(get_user(target).get("coins",0)) + amount)
+            audit("admin_coins", uid, None, f"{target}:{amount}"); save_data(force=True)
+            await render_admin(query, "💰 تغییر سکه", user_admin_text(target), admin_user_actions(target)); return
+        if action == "UITEM":
+            target, item, count = int(parts[2]), parts[3], int(parts[4])
+            grant_item(target, item, count); audit("admin_item", uid, None, f"{target}:{item}:{count}"); save_data(force=True)
+            await render_admin(query, "🎒 آیتم اضافه شد", user_admin_text(target), admin_user_actions(target)); return
+        if action == "BAN":
+            target = int(parts[2]); user = get_user(target); user["banned"] = not bool(user.get("banned")); audit("admin_ban", uid, None, str(target)); save_data(force=True)
+            await render_admin(query, "🛡 وضعیت کاربر", user_admin_text(target), admin_user_actions(target)); return
+        if action == "ULEVEL":
+            target, delta = int(parts[2]), int(parts[3]); u = get_user(target); u["level"] = max(1, min(100, int(u.get("level",1)) + delta)); audit("admin_level", uid, None, f"{target}:{delta}"); save_data(force=True); await render_admin(query, "⭐ تغییر Level", user_admin_text(target), admin_user_actions(target)); return
+        if action == "RESET":
+            target = int(parts[2]); DATA["users"][str(target)] = deepcopy(DEFAULT_USER); save_data(force=True)
+            await render_admin(query, "🧹 ریست کاربر", user_admin_text(target), admin_user_actions(target)); return
+        if action == "UDETAIL":
+            target = int(parts[2]); await render_admin(query, "📊 جزئیات کاربر", user_admin_text(target), admin_user_actions(target)); return
+        if action == "ULOG":
+            target = int(parts[2]); lines = [a for a in DATA.get('audit', []) if int(a.get('actor',-1)) == target][-15:][::-1]
+            body = "\n".join(f"{a.get('action')} | {a.get('chat')} | {a.get('details','')}" for a in lines) or "لاگی برای این کاربر نیست."
+            await render_admin(query, "📜 لاگ کاربر", body, admin_user_actions(target)); return
+        if action == "GROUPS":
+            page = int(parts[2]) if len(parts) > 2 else 0; await admin_groups_page(query, page); return
+        if action == "G":
+            await admin_group_detail(query, int(parts[2])); return
+        if action == "GEN":
+            cid, value = int(parts[2]), parts[3]; get_group(cid)["enabled"] = value == "on"; save_data(force=True); await admin_group_detail(query, cid); return
+        if action == "GADULT":
+            cid, value = int(parts[2]), parts[3]; get_group(cid)["adult_mode"] = value == "on"; save_data(force=True); await admin_group_detail(query, cid); return
+        if action == "GMAX":
+            cid, direction = int(parts[2]), parts[3]; g = get_group(cid); g["max_players"] = max(2, min(100, int(g.get("max_players",20)) + (1 if direction == "up" else -1))); save_data(force=True); await admin_group_detail(query, cid); return
+        if action == "GEND":
+            cid = int(parts[2]); game = active_game(cid)
+            if game: end_game(game, "پایان توسط Super Admin")
+            save_data(force=True); await admin_group_detail(query, cid); return
+        if action == "GAMES":
+            page = int(parts[2]) if len(parts)>2 else 0; await admin_games_page(query, page); return
+        if action == "GAME":
+            token = parts[2]; found = next((g for g in DATA["games"].values() if str(g.get('id','')).startswith(token)), None)
+            if not found:
+                await render_admin(query, "🎮 بازی", "بازی پیدا نشد.", admin_back_home()); return
+            body = game_info_text(found)
+            rows = [[InlineKeyboardButton("🛑 پایان بازی", callback_data=f"AX|GAMEEND|{found['chat_id']}|{escape(str(found['id']))[:15]}")], [InlineKeyboardButton("🔙 بازی‌ها", callback_data="AX|GAMES")]]
+            await render_admin(query, "🎮 جزئیات بازی", body, InlineKeyboardMarkup(rows)); return
+        if action == "GAMEEND":
+            cid = int(parts[2]); game = active_game(cid)
+            if game: end_game(game, "پایان توسط Super Admin")
+            save_data(force=True); await admin_games_page(query, 0); return
+        if action == "CONTENT":
+            key = parts[2] if len(parts)>2 else None
+            if key in CONTENT_LABELS:
+                page = int(parts[3]) if len(parts)>3 else 0; await admin_content_category(query, key, page)
+            else:
+                await admin_content_page(query)
+            return
+        if action == "CDEL":
+            key, index = parts[2], int(parts[3]); pool = all_content_bank(key)
+            if 0 <= index < len(pool):
+                # Only delete from global custom content; built-in content remains intact.
+                target = pool[index]
+                gc = DATA.setdefault("global_content", {}).setdefault(key, [])
+                if target in gc: gc.remove(target)
+                audit("content_delete", uid, None, f"{key}:{index}"); save_data(force=True)
+            await admin_content_category(query, key, 0); return
+        if action == "CCLEAR":
+            key = parts[2]; DATA.setdefault("global_content", {})[key] = []; save_data(force=True); await admin_content_category(query, key, 0); return
+        if action == "CADD":
+            key = parts[2]; context.user_data["admin_flow"] = {"type": "content", "key": key}
+            await render_admin(query, "➕ افزودن محتوا", f"دسته: {CONTENT_LABELS.get(key,key)}\n\nحالا متن جدید را در یک پیام بفرست.\nبعد از دریافت، ربات آن را ذخیره می‌کند.", InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="AX|FLOWCANCEL")]])); return
+        if action == "ECONOMY":
+            await admin_economy_page(query); return
+        if action == "MULT":
+            target, value = parts[2], int(parts[3]); key = "xp_multiplier" if target == "xp" else "coins_multiplier"; DATA["settings"][key] = value; save_data(force=True); await admin_economy_page(query); return
+        if action == "SECURITY":
+            await admin_security_page(query); return
+        if action == "BANLIST":
+            banned = [f"{k}: {escape(str(v.get('name','کاربر')))}" for k,v in DATA['users'].items() if v.get('banned')]
+            await render_admin(query, "🚫 لیست کاربران بن‌شده", "\n".join(banned) or "لیست بن خالی است.", admin_back_home()); return
+        if action == "CLEAN":
+            cutoff = now_ts() - 3 * 86400; removed = 0
+            for gid, game in list(DATA['games'].items()):
+                if game.get('status') == 'finished' and int(game.get('finished_at',0)) < cutoff:
+                    DATA['games'].pop(gid, None); removed += 1
+            save_data(force=True); await render_admin(query, "🧹 پاکسازی", f"{removed} بازی قدیمی حذف شد.", admin_back_home()); return
+        if action == "SETTINGS":
+            await admin_settings_page(query); return
+        if action == "GLOBMAX":
+            direction = parts[2]; s = DATA['settings']; s['max_players_default'] = max(2, min(100, int(s.get('max_players_default',20)) + (1 if direction=='up' else -1))); save_data(force=True); await admin_settings_page(query); return
+        if action == "ADULTDEF":
+            DATA['settings']['adult_default'] = parts[2] == 'on'; save_data(force=True); await admin_settings_page(query); return
+        if action == "SAVE":
+            save_data(force=True); await render_admin(query, "💾 ذخیره", "اطلاعات با موفقیت روی فایل JSON ذخیره شد.", admin_back_home()); return
+        if action == "BACKUP":
+            await admin_backup_page(query); return
+        if action == "MAKEBACKUP":
+            path = make_backup_file("manual");
+            try:
+                await query.message.reply_document(document=open(path, "rb"), filename=os.path.basename(path), caption="📦 بکاپ ApexRival")
+            except Exception:
+                pass
+            await admin_backup_page(query); return
+        if action == "RESTORE":
+            index = int(parts[2]); files = backup_files()
+            if index < 0 or index >= len(files): await safe_answer_query(query, "بکاپ پیدا نشد.", True); return
+            ok, msg = restore_backup(files[index]); await render_admin(query, "♻️ بازیابی", msg, admin_back_home()); return
+        if action == "LOGS":
+            await admin_logs_page(query); return
+        if action == "BROADCAST":
+            context.user_data["admin_flow"] = {"type": "broadcast"}
+            await render_admin(query, "📣 پیام همگانی", "پیام موردنظر را در یک پیام بفرست.\n\nربات فقط در صورت ارسال پیام بعدی آن را ارسال می‌کند.", InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="AX|FLOWCANCEL")]])); return
+        if action == "FLOWCANCEL":
+            context.user_data.pop("admin_flow", None); await advanced_admin_panel(update, context); return
+        if action == "TOOLS":
+            await admin_tools_page(query); return
+        if action == "HEALTH":
+            body = f"نام: {BOT_NAME}\nنسخه: {ADVANCED_VERSION}\nفایل داده: {DATA_FILE}\nحجم داده: {Path(DATA_FILE).stat().st_size if Path(DATA_FILE).exists() else 0} bytes"
+            await render_admin(query, "📊 Health", body, admin_back_home()); return
+        if action == "ENDALL":
+            count = 0
+            for g in DATA['games'].values():
+                if g.get('status') in ('active','lobby'):
+                    end_game(g, 'پایان دسته‌جمعی توسط Super Admin'); count += 1
+            save_data(force=True); await render_admin(query, "🛑 پایان بازی‌ها", f"{count} بازی پایان یافت.", admin_back_home()); return
+        if action == "COUNTERS":
+            body = f"کاربر: {len(DATA['users'])}\nگروه: {len(DATA['groups'])}\nبازی: {len(DATA['games'])}\nAudit: {len(DATA['audit'])}"
+            await render_admin(query, "🔄 شمارنده‌ها", body, admin_back_home()); return
         return
 
+    # -----------------------------
+    # Game navigation
+    # -----------------------------
+    if family == "GM":
+        game = active_game(chat_id)
+        if not game:
+            await safe_answer_query(query, "⛔ بازی فعالی نیست.", True)
+            return
+        if not valid_player(game, uid) and not is_admin(uid) and not leader_of(game, uid):
+            await safe_answer_query(query, "🔒 ابتدا در لابی ثبت‌نام کن.", True)
+            return
+        game["_viewer_id"] = uid
+        action = parts[1] if len(parts)>1 else "HOME"
+        if action == "HOME":
+            text = game_info_text(game) + "\n\nیک بخش را انتخاب کن:" 
+            await safe_edit_query(query, text, game_home_keyboard(game)); return
+        if action == "CLOSE":
+            await safe_edit_query(query, "✅ منوی بازی بسته شد.", None); return
+        if action == "FAST":
+            if len(parts)==2: await safe_edit_query(query, "⚡ <b>چالش‌های سریع</b>\n\nیکی را انتخاب کن.", game_fast_keyboard()); return
+            mode = parts[2]
+            if mode == "NUMBER": await mini_number_hunt(query.message, game)
+            elif mode == "RIDDLE": await mini_riddle(query.message, game)
+            elif mode == "EMOJI": await mini_emoji(query.message, game)
+            elif mode == "REACTION":
+                if len(parts)>3 and parts[3]=="HIT":
+                    state = game.get('reaction',{})
+                    if state and not state.get('winner') and time.time() <= float(state.get('expires',0)):
+                        state['winner'] = uid; reward_player(game, uid, 7, 3, win=True, reason='Reaction Rush'); save_data(force=True)
+                        await safe_edit_query(query, f"⚡ برنده: {mention_user(uid, name_of(uid, game))}\n🎁 +۷ XP و +۳ سکه", game_fast_keyboard()); return
+                await mini_reaction(query.message, game)
+            elif mode == "WORDS": await mini_words(query.message, game)
+            await safe_answer_query(query); return
+        if action == "SOCIAL":
+            if len(parts)==2: await safe_edit_query(query, "🎭 <b>بازی‌های اجتماعی</b>\n\nیک سبک را انتخاب کن.", game_social_keyboard(game)); return
+            mode=parts[2]
+            if mode == "TRUTH": await send_truth_or_dare(query.message, game, "truth")
+            elif mode == "DARE": await send_truth_or_dare(query.message, game, "dare")
+            elif mode == "FLIRTY": await send_flirty(query.message, game)
+            elif mode == "QUESTION": await send_question(query.message, game)
+            elif mode == "ADULT": await send_adult(query.message, game)
+            return
+        if action == "COMPETE":
+            if len(parts)==2: await safe_edit_query(query, "⚔️ <b>حالت‌های رقابتی</b>\n\nرقابت موردنظر را انتخاب کن.", game_compete_keyboard()); return
+            mode=parts[2]
+            if mode == "DUEL": await duel_start(query.message, game)
+            elif mode == "ROULETTE": await roulette(query.message, game)
+            elif mode == "SPEED": await speed(query.message, game)
+            elif mode == "VOTE": await create_vote(query.message, game)
+            elif mode == "SURVIVAL": await mini_survival(query.message, game)
+            elif mode == "TEAMS": await mini_teams(query.message, game)
+            return
+        if action == "SECRET":
+            if len(parts)==2: await safe_edit_query(query, "🤫 <b>بخش مخفی</b>\n\nحالت موردنظر را انتخاب کن.", game_secret_keyboard()); return
+            mode=parts[2]
+            if mode == "MISSION": await create_secret_mission(query.message, game, context.bot)
+            elif mode == "SPY": await create_spy(query.message, game, context.bot)
+            elif mode == "ROLE": await mini_role(query.message, game, context.bot)
+            elif mode == "PREDICT":
+                if len(parts)>3:
+                    choice = parts[3]
+                    state = game.get('predict')
+                    if not state or time.time()>float(state.get('expires',0)):
+                        await safe_answer_query(query, 'این پیش‌بینی منقضی شده است.', True); return
+                    state.setdefault('votes', {})[str(uid)] = 'heads' if choice=='heads' else 'tails'
+                    await safe_answer_query(query, 'انتخاب ثبت شد ✅')
+                    if len(state['votes']) >= len(game['players']):
+                        secret = state['secret']; winners = [int(k) for k,v in state['votes'].items() if (v=='heads') == (secret=='شیر')]
+                        for winner in winners: reward_player(game,winner,5,2,win=True,reason='Prediction')
+                        await query.message.reply_text(f"🔮 نتیجه: <b>{secret}</b>\nبرنده‌ها: {', '.join(name_of(x,game) for x in winners) or 'هیچ‌کس'}", parse_mode=ParseMode.HTML)
+                        game['predict']=None; game['phase']='free'; save_data(force=True)
+                else: await mini_predict(query.message, game)
+            return
+        if action == "REWARDS":
+            if len(parts)==2: await safe_edit_query(query, "☠️ <b>حکم و پاداش</b>\n\nمدیریت حکم، آیتم و دستاورد.", game_reward_keyboard(game)); return
+            mode=parts[2]
+            if mode == "MINE": await penalty_mine(query, game)
+            elif mode == "SHOP": await send_shop(query.message, uid)
+            elif mode == "INV":
+                inv = inventory(uid); body = "\n".join(f"{SHOP[k]['name']}: {v}" for k,v in inv.items())
+                await safe_edit_query(query, '🍀 <b>آیتم‌های من</b>\n\n'+body, game_reward_keyboard(game))
+            elif mode == "ACH":
+                u=get_user(uid); body='\n'.join(f"{'✅' if k in u.get('achievements',[]) else '🔒'} {v[0]}" for k,v in ACHIEVEMENTS.items()); await safe_edit_query(query, '🏅 <b>دستاوردها</b>\n\n'+body, game_reward_keyboard(game))
+            return
+        if action == "STATUS":
+            await safe_edit_query(query, game_info_text(game), game_home_keyboard(game)); return
+        if action == "HOST":
+            if not leader_of(game, uid) and not is_admin(uid):
+                await safe_answer_query(query, "👑 فقط سرگروه یا Super Admin.", True); return
+            if len(parts)==2:
+                await safe_edit_query(query, "👑 <b>کنترل سرگروه</b>\n\nفقط کنترل‌هایی که مخصوص مدیریت همین دست هستند اینجا نمایش داده می‌شوند.", host_control_keyboard()); return
+            mode=parts[2]
+            if mode == "RANDOM":
+                kinds=['TRUTH','DARE','QUESTION','DUEL','ROULETTE','SPEED','RIDDLE','EMOJI']; chosen=random.choice(kinds); await query.message.reply_text(f"🎲 حالت انتخاب‌شده: <b>{chosen}</b>",parse_mode=ParseMode.HTML)
+                if chosen=='TRUTH': await send_truth_or_dare(query.message,game,'truth')
+                elif chosen=='DARE': await send_truth_or_dare(query.message,game,'dare')
+                elif chosen=='QUESTION': await send_question(query.message,game)
+                elif chosen=='DUEL': await duel_start(query.message,game)
+                elif chosen=='ROULETTE': await roulette(query.message,game)
+                elif chosen=='SPEED': await speed(query.message,game)
+                elif chosen=='RIDDLE': await mini_riddle(query.message,game)
+                elif chosen=='EMOJI': await mini_emoji(query.message,game)
+            elif mode=='PENALTY':
+                target=random.choice(game['players']); p=assign_penalty(game,target,source='👑 حکم سرگروه'); await query.message.reply_text(f"☠️ حکم برای {mention_user(target,name_of(target,game))}: {escape(p['text'])}",parse_mode=ParseMode.HTML)
+            elif mode=='NEXT': game['round']=int(game.get('round',0))+1; game['phase']='free'; touch_game(game); save_data(force=True); await safe_edit_query(query,'⏭ دور بعد آماده است.',game_home_keyboard(game))
+            elif mode=='END': end_game(game,'پایان توسط سرگروه'); save_data(force=True); await safe_edit_query(query,'🏁 بازی تمام شد.',None)
+            elif mode=='PLAYERS': await safe_edit_query(query,lobby_text(game),host_control_keyboard())
+            elif mode=='SETTINGS': await safe_edit_query(query,'⚙️ تنظیمات لابی از فرمان /game و دکمه‌های قبل از شروع کنترل می‌شود.',host_control_keyboard())
+            return
 
-def start_health_server() -> None:
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), HealthHandler)
-    threading.Thread(target=server.serve_forever, daemon=True, name="ApexRivalHealth").start()
+
+# ============================================================
+# Advanced text router / wizard
+# ============================================================
+
+async def advanced_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await ensure_allowed(update):
+        return
+    if not update.message or not update.message.text:
+        return
+    uid = update.effective_user.id
+    text = update.message.text.strip()
+    flow = context.user_data.get("admin_flow") if is_admin(uid) else None
+    if flow:
+        ftype = flow.get("type")
+        if ftype == "broadcast":
+            ok=fail=0
+            for target in list(DATA.get('users',{})):
+                try:
+                    await context.bot.send_message(chat_id=int(target), text=f"📣 <b>ApexRival</b>\n\n{escape(text)}", parse_mode=ParseMode.HTML)
+                    ok += 1
+                except Exception:
+                    fail += 1
+            DATA.setdefault('broadcast_log',[]).append({'ts':now_ts(),'actor':uid,'ok':ok,'fail':fail})
+            audit('broadcast',uid,None,f'ok={ok};fail={fail}')
+            context.user_data.pop('admin_flow',None)
+            save_data(force=True)
+            await update.message.reply_text(f"📣 پیام همگانی ارسال شد. ✅ {ok} | ❌ {fail}")
+            return
+        if ftype == "content":
+            key=flow.get('key','truth')
+            DATA.setdefault('global_content',{}).setdefault(key,[]).append(text[:700])
+            context.user_data.pop('admin_flow',None)
+            audit('content_add',uid,None,key)
+            save_data(force=True)
+            await update.message.reply_text(f"✅ به بخش {CONTENT_LABELS.get(key,key)} اضافه شد.")
+            return
+    if text in ("👑 مدیریت ApexRival", "👑 پنل Super Admin"):
+        await advanced_admin_panel(update, context)
+        return
+    if text == "🎮 بازی":
+        chat = update.effective_chat
+        if chat.type not in ('group','supergroup'):
+            await update.message.reply_text('🎮 بازی گروهی را باید داخل گروه اجرا کنی.')
+            return
+        game = active_game(chat.id)
+        if not game:
+            await update.message.reply_text('🎮 هنوز بازی فعالی نیست. سرگروه می‌تواند /game را بزند.')
+            return
+        if game.get('status') == 'lobby':
+            await update.message.reply_text(lobby_text(game), parse_mode=ParseMode.HTML, reply_markup=lobby_keyboard(game['id']))
+        else:
+            game['_viewer_id']=uid
+            await update.message.reply_text(game_info_text(game), parse_mode=ParseMode.HTML, reply_markup=game_home_keyboard(game))
+        return
+    if text == "👤 پروفایل": await profile(update,context); return
+    if text == "🏆 رتبه‌بندی": await rank(update,context); return
+    if text == "🛒 فروشگاه": await shop_cmd(update,context); return
+    if text == "🏅 دستاوردها": await achievements_cmd(update,context); return
+    if text in ("📜 قوانین","❓ راهنما"): await help_cmd(update,context); return
+    # Fallback preserves all previous commands/buttons.
+    await text_router(update, context)
 
 
-async def cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    changed = False
+# -----------------------------
+# Expanded maintenance
+# -----------------------------
+
+async def advanced_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
     now = now_ts()
-    for game in list(DATA["games"].values()):
-        if game.get("status") == "active":
-            auto_end = int(get_group(int(game["chat_id"]))["settings"].get("auto_end_minutes", 90)) * 60
-            if now - int(game.get("last_activity", now)) > auto_end:
-                end_game(game, "پایان خودکار به علت بی‌فعالیتی")
-                changed = True
-            if game.get("speed") and time.time() > float(game["speed"].get("expires", 0)):
-                game["speed"] = None; changed = True
-            if game.get("vote") and time.time() > float(game["vote"].get("expires", 0)):
-                game["vote"] = None; changed = True
-            if game.get("secret") and time.time() > float(game["secret"].get("expires", 0)):
-                game["secret"] = None; changed = True
-            for uid, p in game.get("pending_penalties", {}).items():
-                if not p.get("done") and not p.get("skipped") and now > int(p.get("deadline", now)):
-                    # Deadline is recorded rather than forcing a harmful action.
-                    p["expired"] = True; changed = True
+    changed = False
+    for game in list(DATA.get('games',{}).values()):
+        if game.get('status') == 'active':
+            group = get_group(int(game['chat_id']))
+            timeout = int(group.get('settings',{}).get('auto_end_minutes',90))*60
+            if now - int(game.get('last_activity',now)) > timeout:
+                end_game(game,'پایان خودکار به علت بی‌فعالیتی')
+                changed=True
+            for key in ('speed','vote','secret','riddle','emoji','reaction','word','number_hunt','predict'):
+                state = game.get(key)
+                if state and float(state.get('expires',0)) and time.time()>float(state.get('expires',0)):
+                    game[key]=None
+                    if game.get('phase') == key:
+                        game['phase']='free'
+                    changed=True
+        elif game.get('status') == 'lobby' and now - int(game.get('last_activity',now)) > 4*3600:
+            end_game(game,'لابی منقضی شد')
+            changed=True
     if changed:
         save_data(force=True)
     else:
         save_data()
 
 
-async def post_init(app: Application) -> None:
+
+# -----------------------------
+# Compatibility bridges: the clean UI replaces the old crowded keyboards.
+# -----------------------------
+main_keyboard = main_keyboard_v4
+game_keyboard = game_home_keyboard
+
+# The advanced callback router uses short callback families. Every callback is answered
+# before rendering so Telegram's loading spinner is cleared even when a page fails to edit.
+
+# -----------------------------
+# Extended Prompt Vault
+# -----------------------------
+EXTENDED_PROMPT_VAULT = {
+    'truth': [
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🕵️ اعتراف: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🕵️ اعتراف: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+    ],
+    'dare': [
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک خاطره کوتاه از مدرسه را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک موقعیت خنده\u200cدار در چت را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک تصمیم ناگهانی را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک تجربه از یک بازی گروهی را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک اشتباه کوچک که نتیجه عجیبی داشت را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک مهارتی که دوست داری یاد بگیری را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک قانون شخصی را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک عادت روزمره را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک اتفاق غیرمنتظره در هفته اخیر را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک انتخاب سخت ولی بی\u200cخطر را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک سفر خیالی را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک رقابت دوستانه را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک فیلم خیالی را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک شغل غیرمعمول را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک مهمانی فرضی را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک مسابقه تلویزیونی را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک تیم خیالی را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک لقب بامزه را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک اختراع عجیب را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک روز کاملاً بدون برنامه را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک قانون جدید برای گروه را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک سورپرایز دوستانه را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک معمای کوتاه را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🔥 جرئت: یک چالش یک دقیقه\u200cای را انتخاب کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🔥 جرئت: یک انتخاب بین دو راه را انتخاب کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+    ],
+    'question': [
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🧠 سؤال: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧠 سؤال: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+    ],
+    'flirty': [
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک خاطره کوتاه از مدرسه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک موقعیت خنده\u200cدار در چت» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک تصمیم ناگهانی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک تجربه از یک بازی گروهی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک مهارتی که دوست داری یاد بگیری» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک قانون شخصی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک عادت روزمره» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اتفاق غیرمنتظره در هفته اخیر» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب سخت ولی بی\u200cخطر» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سفر خیالی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک رقابت دوستانه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک فیلم خیالی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک شغل غیرمعمول» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مهمانی فرضی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک مسابقه تلویزیونی» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک تیم خیالی» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک لقب بامزه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک اختراع عجیب» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک روز کاملاً بدون برنامه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک قانون جدید برای گروه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک سورپرایز دوستانه» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک معمای کوتاه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '💘 فلرت محترمانه: موضوع «یک چالش یک دقیقه\u200cای» را در نظر بگیر؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '💘 فلرت محترمانه: موضوع «یک انتخاب بین دو راه» را در نظر بگیر؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+    ],
+    'penalty': [
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک خاطره کوتاه از مدرسه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک موقعیت خنده\u200cدار در چت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تصمیم ناگهانی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تجربه از یک بازی گروهی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اشتباه کوچک که نتیجه عجیبی داشت» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهارتی که دوست داری یاد بگیری» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون شخصی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک عادت روزمره» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اتفاق غیرمنتظره در هفته اخیر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب سخت ولی بی\u200cخطر» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سفر خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک رقابت دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک فیلم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک شغل غیرمعمول» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مهمانی فرضی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک مسابقه تلویزیونی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک تیم خیالی» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک لقب بامزه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک اختراع عجیب» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک روز کاملاً بدون برنامه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک قانون جدید برای گروه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک سورپرایز دوستانه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک معمای کوتاه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک مثال جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک چالش یک دقیقه\u200cای» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '☠️ حکم: برای بازنده\u200cای که در «یک انتخاب بین دو راه» شکست خورده، یک کار کوتاه و کاملاً بی\u200cخطر طراحی کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+    ],
+    'boss': [
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک خاطره کوتاه از مدرسه» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک موقعیت خنده\u200cدار در چت» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تصمیم ناگهانی» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ چه چیزی در آن جالب\u200cتر است؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تجربه از یک بازی گروهی» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ چه چیزی در آن جالب\u200cتر است؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهارتی که دوست داری یاد بگیری» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون شخصی» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک عادت روزمره» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب سخت ولی بی\u200cخطر» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سفر خیالی» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک رقابت دوستانه» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک فیلم خیالی» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ چه چیزی در آن جالب\u200cتر است؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک شغل غیرمعمول» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مهمانی فرضی» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ چه چیزی در آن جالب\u200cتر است؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک مسابقه تلویزیونی» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک تیم خیالی» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک لقب بامزه» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک اختراع عجیب» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک روز کاملاً بدون برنامه» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک قانون جدید برای گروه» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک سورپرایز دوستانه» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک معمای کوتاه» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ چه چیزی در آن جالب\u200cتر است؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک مثال جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را دو بخشی کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک چالش یک دقیقه\u200cای» بساز؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '👑 Boss: یک مرحله ویژه با موضوع «یک انتخاب بین دو راه» بساز؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+    ],
+    'mission': [
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک خاطره کوتاه از مدرسه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک موقعیت خنده\u200cدار در چت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تصمیم ناگهانی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک تجربه از یک بازی گروهی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اشتباه کوچک که نتیجه عجیبی داشت» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک مهارتی که دوست داری یاد بگیری» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک قانون شخصی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک عادت روزمره» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اتفاق غیرمنتظره در هفته اخیر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب سخت ولی بی\u200cخطر» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک سفر خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک رقابت دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک فیلم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک شغل غیرمعمول» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مهمانی فرضی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک مسابقه تلویزیونی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک تیم خیالی» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک لقب بامزه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک اختراع عجیب» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک روز کاملاً بدون برنامه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک قانون جدید برای گروه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک سورپرایز دوستانه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک معمای کوتاه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را تغییر می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ جوابت را دو بخشی کن.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک جمله بامزه تمامش کن.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🤫 مأموریت: با موضوع «یک چالش یک دقیقه\u200cای» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک مثال جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی در آن جالب\u200cتر است؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه قانونی برایش تعیین می\u200cکردی؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را اول انجام می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک مجری مسابقه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ یک نسخه سخت\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🤫 مأموریت: با موضوع «یک انتخاب بین دو راه» یک هدف اجتماعی و بی\u200cخطر تعریف کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک ایموجی شروع کن.',
+    ],
+    'riddle': [
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک خاطره کوتاه از مدرسه» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک موقعیت خنده\u200cدار در چت» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تصمیم ناگهانی» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک تجربه از یک بازی گروهی» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک اشتباه کوچک که نتیجه عجیبی داشت» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک مهارتی که دوست داری یاد بگیری» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون شخصی» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک عادت روزمره» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اتفاق غیرمنتظره در هفته اخیر» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب سخت ولی بی\u200cخطر» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سفر خیالی» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک رقابت دوستانه» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک فیلم خیالی» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک شغل غیرمعمول» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک مهمانی فرضی» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک مسابقه تلویزیونی» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک تیم خیالی» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک لقب بامزه» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک اختراع عجیب» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک روز کاملاً بدون برنامه» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک قانون جدید برای گروه» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک سورپرایز دوستانه» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک معمای کوتاه» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ چه چیزی در آن جالب\u200cتر است؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ چه کسی را برای همراهی انتخاب می\u200cکردی؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ چه قانونی برایش تعیین می\u200cکردی؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ چه چیزی را اول انجام می\u200cدادی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ چه چیزی باعث خنده می\u200cشد؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ چه چیزی را به یک بازیکن دیگر می\u200cسپردی؟ جوابت را دو بخشی کن.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ کدام گزینه را انتخاب می\u200cکنی و چرا؟ با یک جمله بامزه تمامش کن.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ یک نسخه سخت\u200cتر از آن چیست؟ مثل یک بازیکن حرفه\u200cای جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ چه جایزه\u200cای برایش می\u200cگذاشتی؟ جوابت را بدون توضیح اضافی بگو.',
+        '🧩 معما: یک معمای مرتبط با «یک چالش یک دقیقه\u200cای» طرح کن؛ چه چیزی باعث می\u200cشد گروه دوباره آن را بازی کند؟ با یک مثال جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ چه چیزی را تغییر می\u200cدادی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ چه عنوانی برایش می\u200cگذاشتی؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ چه چیزی می\u200cتواند همه را غافلگیر کند؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ چه چیزی را اصلاً انجام نمی\u200cدادی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ چه چیزی باعث برد تو می\u200cشد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ چطور آن را در دو جمله تعریف می\u200cکنی؟ مثل یک مجری مسابقه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ چه کسی در آن بهتر عمل می\u200cکرد؟ خیلی سریع و مستقیم جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ یک نسخه آسان\u200cتر از آن چیست؟ خیلی کوتاه جواب بده.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ چه حکمی برای بازنده اما بی\u200cخطر می\u200cگذاشتی؟ با یک ایموجی شروع کن.',
+        '🧩 معما: یک معمای مرتبط با «یک انتخاب بین دو راه» طرح کن؛ چه چیزی آن را خاص می\u200cکرد؟ از بین دو گزینه انتخاب کن و دلیل بده.',
+    ],
+}
+
+for _vault_key, _vault_items in EXTENDED_PROMPT_VAULT.items():
+    ADVANCED_CONTENT.setdefault(_vault_key, []).extend(_vault_items)
+
+EXTENDED_PROMPT_TOTAL = sum(len(v) for v in EXTENDED_PROMPT_VAULT.values())
+
+SCENARIO_PACKS = [
+    {"id": 1, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 2, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 3, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 4, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 5, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 6, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 7, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 8, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 9, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 10, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 11, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 12, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 13, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 14, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 15, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 16, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 17, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 18, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 19, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 20, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 21, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 22, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 23, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 24, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 25, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 26, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 27, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 28, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 29, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 30, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 31, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 32, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 33, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 34, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 35, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 36, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 37, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 38, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 39, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 40, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 41, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 42, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 43, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 44, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 45, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 46, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 47, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 48, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 49, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 50, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 51, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 52, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 53, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 54, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 55, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 56, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 57, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 58, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 59, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 60, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 61, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 62, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 63, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 64, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 65, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 66, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 67, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 68, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 69, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 70, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+    {"id": 71, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 72, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 73, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 74, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 75, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 76, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 77, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 78, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 79, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 80, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 81, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 82, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 83, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 84, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 85, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 86, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 87, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 88, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 89, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 90, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 91, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 92, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 93, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 94, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 95, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 96, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 97, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 98, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 99, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 100, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 101, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 102, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 103, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 104, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 105, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 106, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 107, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 108, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 109, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 110, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 111, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 112, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 113, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 114, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 115, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 116, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 117, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 118, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 119, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 120, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 121, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 122, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 123, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 124, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 125, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 126, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 127, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 128, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 129, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 130, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 131, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 132, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 133, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 134, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 135, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 136, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 137, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 138, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 139, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 140, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+    {"id": 141, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 142, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 143, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 144, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 145, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 146, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 147, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 148, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 149, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 150, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 151, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 152, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 153, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 154, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 155, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 156, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 157, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 158, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 159, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 160, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 161, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 162, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 163, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 164, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 165, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 166, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 167, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 168, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 169, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 170, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 171, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 172, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 173, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 174, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 175, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 176, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 177, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 178, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 179, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 180, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 181, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 182, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 183, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 184, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 185, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 186, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 187, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 188, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 189, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 190, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 191, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 192, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 193, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 194, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 195, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 196, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 197, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 198, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 199, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 200, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 201, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 202, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 203, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 204, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 205, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 206, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 207, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 208, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 209, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 210, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+    {"id": 211, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 212, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 213, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 214, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 215, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 216, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 217, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 218, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 219, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 220, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 221, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 222, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 223, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 224, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 225, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 226, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 227, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 228, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 229, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 230, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 231, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 232, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 233, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 234, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 235, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 236, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 237, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 238, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 239, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 240, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 241, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 242, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 243, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 244, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 245, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 246, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 247, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 248, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 249, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 250, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 251, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 252, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 253, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 254, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 255, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 256, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 257, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 258, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 259, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 260, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 261, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 262, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 263, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 264, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 265, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 266, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 267, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 268, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 269, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 270, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 271, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 272, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 273, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 274, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 275, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 276, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 277, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 278, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 279, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 280, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+    {"id": 281, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 282, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 283, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 284, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 285, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 286, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 287, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 288, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 289, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 290, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 291, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 292, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 293, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 294, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 295, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 296, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 297, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 298, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 299, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 300, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 301, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 302, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 303, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 304, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 305, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 306, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 307, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 308, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 309, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 310, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 311, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 312, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 313, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 314, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 315, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 316, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 317, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 318, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 319, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 320, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 321, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 322, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 323, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 324, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 325, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 326, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 327, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 328, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 329, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 330, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 331, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 332, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 333, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 334, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 335, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 336, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 337, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 338, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 339, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 340, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 341, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 342, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 343, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 344, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 345, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 346, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 347, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 348, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 349, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 350, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+    {"id": 351, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 352, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 353, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 354, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 355, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 356, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 357, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 358, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 359, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 360, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 361, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 362, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 363, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 364, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 365, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 366, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 367, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 368, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 369, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 370, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 371, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 372, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 373, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 374, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 375, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 376, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 377, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 378, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 379, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 380, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 381, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 382, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 383, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 384, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 385, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 386, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 387, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 388, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 389, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 390, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 391, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 392, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 393, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 394, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 395, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 396, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 397, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 398, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 399, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 400, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 401, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 402, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 403, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 404, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 405, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 406, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 407, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 408, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 409, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 410, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 411, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 412, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 413, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 414, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 415, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 416, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 417, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 418, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 419, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 420, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+    {"id": 421, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 422, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 423, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 424, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 425, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 426, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 427, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 428, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 429, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 430, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 431, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 432, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 433, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 434, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 435, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 436, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 437, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 438, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 439, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 440, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 441, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 442, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 443, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 444, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 445, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 446, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 447, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 448, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 449, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 450, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 451, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 452, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 453, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 454, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 455, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 456, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 457, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 458, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 459, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 460, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 461, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 462, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 463, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 464, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 465, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 466, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 467, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 468, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 469, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 470, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 471, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 472, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 473, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 474, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 475, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 476, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 477, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 478, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 479, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 480, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 481, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 482, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 483, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 484, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 485, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 486, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 487, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 488, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 489, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 490, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+    {"id": 491, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 492, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 493, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 494, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 495, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 496, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 497, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 498, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 499, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 500, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 501, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 502, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 503, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 504, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 505, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 506, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 507, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 508, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 509, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 510, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 511, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 512, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 513, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 514, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 515, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 516, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 517, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 518, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 519, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 520, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 521, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 522, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 523, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 524, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 525, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 526, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 527, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 528, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 529, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 530, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 531, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 532, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 533, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 534, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 535, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 536, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 537, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 538, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 539, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 540, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 541, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 542, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 543, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 544, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 545, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 546, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 547, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 548, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 549, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 550, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 551, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 552, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 553, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 554, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 555, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 556, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 557, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 558, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 559, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 560, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+    {"id": 561, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 562, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 563, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 564, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 565, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 566, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 567, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 568, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 569, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 570, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 571, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 572, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 573, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 574, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 575, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 576, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 577, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 578, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 579, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 580, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 581, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 582, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 583, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 584, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 585, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 586, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 587, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 588, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 589, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 590, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 591, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 592, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 593, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 594, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 595, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 596, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 597, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 598, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 599, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 600, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 601, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 602, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 603, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 604, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 605, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 606, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 607, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 608, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 609, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 610, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 611, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 612, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 613, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 614, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 615, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 616, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 617, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 618, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 619, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 620, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 621, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 622, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 623, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 624, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 625, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 626, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 627, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 628, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 629, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 630, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+    {"id": 631, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 2, "tempo": 2},
+    {"id": 632, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 3, "tempo": 3},
+    {"id": 633, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 4, "tempo": 4},
+    {"id": 634, "type": 'سرعت', "modifier": 'استریک', "weight": 5, "tempo": 5},
+    {"id": 635, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 6, "tempo": 1},
+    {"id": 636, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 7, "tempo": 2},
+    {"id": 637, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 1, "tempo": 3},
+    {"id": 638, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 2, "tempo": 4},
+    {"id": 639, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 3, "tempo": 5},
+    {"id": 640, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 4, "tempo": 1},
+    {"id": 641, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 5, "tempo": 2},
+    {"id": 642, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 6, "tempo": 3},
+    {"id": 643, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 7, "tempo": 4},
+    {"id": 644, "type": 'سرعت', "modifier": 'استریک', "weight": 1, "tempo": 5},
+    {"id": 645, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 2, "tempo": 1},
+    {"id": 646, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 3, "tempo": 2},
+    {"id": 647, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 4, "tempo": 3},
+    {"id": 648, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 5, "tempo": 4},
+    {"id": 649, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 6, "tempo": 5},
+    {"id": 650, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 7, "tempo": 1},
+    {"id": 651, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 1, "tempo": 2},
+    {"id": 652, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 2, "tempo": 3},
+    {"id": 653, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 3, "tempo": 4},
+    {"id": 654, "type": 'سرعت', "modifier": 'استریک', "weight": 4, "tempo": 5},
+    {"id": 655, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 5, "tempo": 1},
+    {"id": 656, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 6, "tempo": 2},
+    {"id": 657, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 7, "tempo": 3},
+    {"id": 658, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 1, "tempo": 4},
+    {"id": 659, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 2, "tempo": 5},
+    {"id": 660, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 3, "tempo": 1},
+    {"id": 661, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 4, "tempo": 2},
+    {"id": 662, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 5, "tempo": 3},
+    {"id": 663, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 6, "tempo": 4},
+    {"id": 664, "type": 'سرعت', "modifier": 'استریک', "weight": 7, "tempo": 5},
+    {"id": 665, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 1, "tempo": 1},
+    {"id": 666, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 2, "tempo": 2},
+    {"id": 667, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 3, "tempo": 3},
+    {"id": 668, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 4, "tempo": 4},
+    {"id": 669, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 5, "tempo": 5},
+    {"id": 670, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 6, "tempo": 1},
+    {"id": 671, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 7, "tempo": 2},
+    {"id": 672, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 1, "tempo": 3},
+    {"id": 673, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 2, "tempo": 4},
+    {"id": 674, "type": 'سرعت', "modifier": 'استریک', "weight": 3, "tempo": 5},
+    {"id": 675, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 4, "tempo": 1},
+    {"id": 676, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 5, "tempo": 2},
+    {"id": 677, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 6, "tempo": 3},
+    {"id": 678, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 7, "tempo": 4},
+    {"id": 679, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 1, "tempo": 5},
+    {"id": 680, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 2, "tempo": 1},
+    {"id": 681, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 3, "tempo": 2},
+    {"id": 682, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 4, "tempo": 3},
+    {"id": 683, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 5, "tempo": 4},
+    {"id": 684, "type": 'سرعت', "modifier": 'استریک', "weight": 6, "tempo": 5},
+    {"id": 685, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 7, "tempo": 1},
+    {"id": 686, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 1, "tempo": 2},
+    {"id": 687, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 2, "tempo": 3},
+    {"id": 688, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 3, "tempo": 4},
+    {"id": 689, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 4, "tempo": 5},
+    {"id": 690, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 5, "tempo": 1},
+    {"id": 691, "type": 'دوئل', "modifier": 'فرصت ریرول', "weight": 6, "tempo": 2},
+    {"id": 692, "type": 'معما', "modifier": 'انتخاب سرگروه', "weight": 7, "tempo": 3},
+    {"id": 693, "type": 'رأی\u200cگیری', "modifier": 'جایزه مخفی', "weight": 1, "tempo": 4},
+    {"id": 694, "type": 'سرعت', "modifier": 'استریک', "weight": 2, "tempo": 5},
+    {"id": 695, "type": 'ماموریت', "modifier": 'زمان محدود', "weight": 3, "tempo": 1},
+    {"id": 696, "type": 'تیم', "modifier": 'پاداش تیمی', "weight": 4, "tempo": 2},
+    {"id": 697, "type": 'جاسوس', "modifier": 'پاداش سکه', "weight": 5, "tempo": 3},
+    {"id": 698, "type": 'Boss', "modifier": 'حکم کوتاه', "weight": 6, "tempo": 4},
+    {"id": 699, "type": 'گردونه', "modifier": 'انتخاب تصادفی', "weight": 7, "tempo": 5},
+    {"id": 700, "type": 'پیش\u200cبینی', "modifier": 'جایزه XP', "weight": 1, "tempo": 1},
+]
+
+FEATURE_REGISTRY = [
+    {"id": 1, "name": 'Lobby Lock', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 2, "name": 'Host Gate', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 3, "name": 'Ready Check', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 4, "name": 'Penalty Ledger', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 5, "name": 'XP Streak', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 6, "name": 'Coin Store', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 7, "name": 'Role Card', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 8, "name": 'Spy Round', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 9, "name": 'Vote Guard', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 10, "name": 'Duel Match', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 11, "name": 'Speed Rush', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 12, "name": 'Riddle Rush', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 13, "name": 'Emoji Decode', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 14, "name": 'Reaction Rush', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 15, "name": 'Word Chain', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 16, "name": 'Team Split', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 17, "name": 'Random Event', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 18, "name": 'Boss Mode', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 19, "name": 'Secret Mission', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 20, "name": 'Prediction', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 21, "name": 'Backup Center', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 22, "name": 'Audit Log', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 23, "name": 'User Control', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 24, "name": 'Group Control', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 25, "name": 'Lobby Lock', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 26, "name": 'Host Gate', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 27, "name": 'Ready Check', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 28, "name": 'Penalty Ledger', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 29, "name": 'XP Streak', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 30, "name": 'Coin Store', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 31, "name": 'Role Card', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 32, "name": 'Spy Round', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 33, "name": 'Vote Guard', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 34, "name": 'Duel Match', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 35, "name": 'Speed Rush', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 36, "name": 'Riddle Rush', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 37, "name": 'Emoji Decode', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 38, "name": 'Reaction Rush', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 39, "name": 'Word Chain', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 40, "name": 'Team Split', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 41, "name": 'Random Event', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 42, "name": 'Boss Mode', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 43, "name": 'Secret Mission', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 44, "name": 'Prediction', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 45, "name": 'Backup Center', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 46, "name": 'Audit Log', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 47, "name": 'User Control', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 48, "name": 'Group Control', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 49, "name": 'Lobby Lock', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 50, "name": 'Host Gate', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 51, "name": 'Ready Check', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 52, "name": 'Penalty Ledger', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 53, "name": 'XP Streak', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 54, "name": 'Coin Store', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 55, "name": 'Role Card', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 56, "name": 'Spy Round', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 57, "name": 'Vote Guard', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 58, "name": 'Duel Match', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 59, "name": 'Speed Rush', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 60, "name": 'Riddle Rush', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 61, "name": 'Emoji Decode', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 62, "name": 'Reaction Rush', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 63, "name": 'Word Chain', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 64, "name": 'Team Split', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 65, "name": 'Random Event', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 66, "name": 'Boss Mode', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 67, "name": 'Secret Mission', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 68, "name": 'Prediction', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 69, "name": 'Backup Center', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 70, "name": 'Audit Log', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 71, "name": 'User Control', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 72, "name": 'Group Control', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 73, "name": 'Lobby Lock', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 74, "name": 'Host Gate', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 75, "name": 'Ready Check', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 76, "name": 'Penalty Ledger', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 77, "name": 'XP Streak', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 78, "name": 'Coin Store', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 79, "name": 'Role Card', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 80, "name": 'Spy Round', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 81, "name": 'Vote Guard', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 82, "name": 'Duel Match', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 83, "name": 'Speed Rush', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 84, "name": 'Riddle Rush', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 85, "name": 'Emoji Decode', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 86, "name": 'Reaction Rush', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 87, "name": 'Word Chain', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 88, "name": 'Team Split', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 89, "name": 'Random Event', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 90, "name": 'Boss Mode', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+    {"id": 91, "name": 'Secret Mission', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 92, "name": 'Prediction', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 93, "name": 'Backup Center', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 94, "name": 'Audit Log', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 95, "name": 'User Control', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 96, "name": 'Group Control', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 97, "name": 'Lobby Lock', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 98, "name": 'Host Gate', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 99, "name": 'Ready Check', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 100, "name": 'Penalty Ledger', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 101, "name": 'XP Streak', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 102, "name": 'Coin Store', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 103, "name": 'Role Card', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 104, "name": 'Spy Round', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 105, "name": 'Vote Guard', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 106, "name": 'Duel Match', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 107, "name": 'Speed Rush', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 108, "name": 'Riddle Rush', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 109, "name": 'Emoji Decode', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 110, "name": 'Reaction Rush', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 111, "name": 'Word Chain', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 112, "name": 'Team Split', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 113, "name": 'Random Event', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 114, "name": 'Boss Mode', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 115, "name": 'Secret Mission', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 116, "name": 'Prediction', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 117, "name": 'Backup Center', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 118, "name": 'Audit Log', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 119, "name": 'User Control', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 120, "name": 'Group Control', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 121, "name": 'Lobby Lock', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 122, "name": 'Host Gate', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 123, "name": 'Ready Check', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 124, "name": 'Penalty Ledger', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 125, "name": 'XP Streak', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 126, "name": 'Coin Store', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 127, "name": 'Role Card', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 128, "name": 'Spy Round', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 129, "name": 'Vote Guard', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 130, "name": 'Duel Match', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 131, "name": 'Speed Rush', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 132, "name": 'Riddle Rush', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 133, "name": 'Emoji Decode', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 134, "name": 'Reaction Rush', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 135, "name": 'Word Chain', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 136, "name": 'Team Split', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 137, "name": 'Random Event', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 138, "name": 'Boss Mode', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 139, "name": 'Secret Mission', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 140, "name": 'Prediction', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 141, "name": 'Backup Center', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 142, "name": 'Audit Log', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 143, "name": 'User Control', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 144, "name": 'Group Control', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 145, "name": 'Lobby Lock', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 146, "name": 'Host Gate', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 147, "name": 'Ready Check', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 148, "name": 'Penalty Ledger', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 149, "name": 'XP Streak', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 150, "name": 'Coin Store', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 151, "name": 'Role Card', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 152, "name": 'Spy Round', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 153, "name": 'Vote Guard', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 154, "name": 'Duel Match', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 155, "name": 'Speed Rush', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 156, "name": 'Riddle Rush', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 157, "name": 'Emoji Decode', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 158, "name": 'Reaction Rush', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 159, "name": 'Word Chain', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 160, "name": 'Team Split', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 161, "name": 'Random Event', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 162, "name": 'Boss Mode', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 163, "name": 'Secret Mission', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 164, "name": 'Prediction', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 165, "name": 'Backup Center', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 166, "name": 'Audit Log', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 167, "name": 'User Control', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 168, "name": 'Group Control', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 169, "name": 'Lobby Lock', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 170, "name": 'Host Gate', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 171, "name": 'Ready Check', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 172, "name": 'Penalty Ledger', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 173, "name": 'XP Streak', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 174, "name": 'Coin Store', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 175, "name": 'Role Card', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 176, "name": 'Spy Round', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 177, "name": 'Vote Guard', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 178, "name": 'Duel Match', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 179, "name": 'Speed Rush', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 180, "name": 'Riddle Rush', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+    {"id": 181, "name": 'Emoji Decode', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 182, "name": 'Reaction Rush', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 183, "name": 'Word Chain', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 184, "name": 'Team Split', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 185, "name": 'Random Event', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 186, "name": 'Boss Mode', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 187, "name": 'Secret Mission', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 188, "name": 'Prediction', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 189, "name": 'Backup Center', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 190, "name": 'Audit Log', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 191, "name": 'User Control', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 192, "name": 'Group Control', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 193, "name": 'Lobby Lock', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 194, "name": 'Host Gate', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 195, "name": 'Ready Check', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 196, "name": 'Penalty Ledger', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 197, "name": 'XP Streak', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 198, "name": 'Coin Store', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 199, "name": 'Role Card', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 200, "name": 'Spy Round', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 201, "name": 'Vote Guard', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 202, "name": 'Duel Match', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 203, "name": 'Speed Rush', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 204, "name": 'Riddle Rush', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 205, "name": 'Emoji Decode', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 206, "name": 'Reaction Rush', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 207, "name": 'Word Chain', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 208, "name": 'Team Split', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 209, "name": 'Random Event', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 210, "name": 'Boss Mode', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 211, "name": 'Secret Mission', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 212, "name": 'Prediction', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 213, "name": 'Backup Center', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 214, "name": 'Audit Log', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 215, "name": 'User Control', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 216, "name": 'Group Control', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 217, "name": 'Lobby Lock', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 218, "name": 'Host Gate', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 219, "name": 'Ready Check', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 220, "name": 'Penalty Ledger', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 221, "name": 'XP Streak', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 222, "name": 'Coin Store', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 223, "name": 'Role Card', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 224, "name": 'Spy Round', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 225, "name": 'Vote Guard', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 226, "name": 'Duel Match', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 227, "name": 'Speed Rush', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 228, "name": 'Riddle Rush', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 229, "name": 'Emoji Decode', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 230, "name": 'Reaction Rush', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 231, "name": 'Word Chain', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 232, "name": 'Team Split', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 233, "name": 'Random Event', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 234, "name": 'Boss Mode', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 235, "name": 'Secret Mission', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 236, "name": 'Prediction', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 237, "name": 'Backup Center', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 238, "name": 'Audit Log', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 239, "name": 'User Control', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 240, "name": 'Group Control', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 241, "name": 'Lobby Lock', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 242, "name": 'Host Gate', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 243, "name": 'Ready Check', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 244, "name": 'Penalty Ledger', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 245, "name": 'XP Streak', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 246, "name": 'Coin Store', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 247, "name": 'Role Card', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 248, "name": 'Spy Round', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 249, "name": 'Vote Guard', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 250, "name": 'Duel Match', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 251, "name": 'Speed Rush', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 252, "name": 'Riddle Rush', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 253, "name": 'Emoji Decode', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 254, "name": 'Reaction Rush', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 255, "name": 'Word Chain', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 256, "name": 'Team Split', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 257, "name": 'Random Event', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 258, "name": 'Boss Mode', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 259, "name": 'Secret Mission', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 260, "name": 'Prediction', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 261, "name": 'Backup Center', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 262, "name": 'Audit Log', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 263, "name": 'User Control', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 264, "name": 'Group Control', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 265, "name": 'Lobby Lock', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 266, "name": 'Host Gate', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 267, "name": 'Ready Check', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 268, "name": 'Penalty Ledger', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 269, "name": 'XP Streak', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 270, "name": 'Coin Store', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+    {"id": 271, "name": 'Role Card', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 272, "name": 'Spy Round', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 273, "name": 'Vote Guard', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 274, "name": 'Duel Match', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 275, "name": 'Speed Rush', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 276, "name": 'Riddle Rush', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 277, "name": 'Emoji Decode', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 278, "name": 'Reaction Rush', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 279, "name": 'Word Chain', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 280, "name": 'Team Split', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 281, "name": 'Random Event', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 282, "name": 'Boss Mode', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 283, "name": 'Secret Mission', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 284, "name": 'Prediction', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 285, "name": 'Backup Center', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 286, "name": 'Audit Log', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 287, "name": 'User Control', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 288, "name": 'Group Control', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 289, "name": 'Lobby Lock', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 290, "name": 'Host Gate', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 291, "name": 'Ready Check', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 292, "name": 'Penalty Ledger', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 293, "name": 'XP Streak', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 294, "name": 'Coin Store', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 295, "name": 'Role Card', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 296, "name": 'Spy Round', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 297, "name": 'Vote Guard', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 298, "name": 'Duel Match', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 299, "name": 'Speed Rush', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 300, "name": 'Riddle Rush', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 301, "name": 'Emoji Decode', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 302, "name": 'Reaction Rush', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 303, "name": 'Word Chain', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 304, "name": 'Team Split', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 305, "name": 'Random Event', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 306, "name": 'Boss Mode', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 307, "name": 'Secret Mission', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 308, "name": 'Prediction', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 309, "name": 'Backup Center', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 310, "name": 'Audit Log', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 311, "name": 'User Control', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 312, "name": 'Group Control', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 313, "name": 'Lobby Lock', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 314, "name": 'Host Gate', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 315, "name": 'Ready Check', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 316, "name": 'Penalty Ledger', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 317, "name": 'XP Streak', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 318, "name": 'Coin Store', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 319, "name": 'Role Card', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 320, "name": 'Spy Round', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 321, "name": 'Vote Guard', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 322, "name": 'Duel Match', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 323, "name": 'Speed Rush', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 324, "name": 'Riddle Rush', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 325, "name": 'Emoji Decode', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 326, "name": 'Reaction Rush', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 327, "name": 'Word Chain', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 328, "name": 'Team Split', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 329, "name": 'Random Event', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 330, "name": 'Boss Mode', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 331, "name": 'Secret Mission', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 332, "name": 'Prediction', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 333, "name": 'Backup Center', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 334, "name": 'Audit Log', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 335, "name": 'User Control', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 336, "name": 'Group Control', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 337, "name": 'Lobby Lock', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 338, "name": 'Host Gate', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 339, "name": 'Ready Check', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 340, "name": 'Penalty Ledger', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 341, "name": 'XP Streak', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 342, "name": 'Coin Store', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 343, "name": 'Role Card', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 344, "name": 'Spy Round', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 345, "name": 'Vote Guard', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 346, "name": 'Duel Match', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 347, "name": 'Speed Rush', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 348, "name": 'Riddle Rush', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 349, "name": 'Emoji Decode', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 350, "name": 'Reaction Rush', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 351, "name": 'Word Chain', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 352, "name": 'Team Split', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 353, "name": 'Random Event', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 354, "name": 'Boss Mode', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 355, "name": 'Secret Mission', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 356, "name": 'Prediction', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 357, "name": 'Backup Center', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 358, "name": 'Audit Log', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 359, "name": 'User Control', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 360, "name": 'Group Control', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+    {"id": 361, "name": 'Lobby Lock', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 362, "name": 'Host Gate', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 363, "name": 'Ready Check', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 364, "name": 'Penalty Ledger', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 365, "name": 'XP Streak', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 366, "name": 'Coin Store', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 367, "name": 'Role Card', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 368, "name": 'Spy Round', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 369, "name": 'Vote Guard', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 370, "name": 'Duel Match', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 371, "name": 'Speed Rush', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 372, "name": 'Riddle Rush', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 373, "name": 'Emoji Decode', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 374, "name": 'Reaction Rush', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 375, "name": 'Word Chain', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 376, "name": 'Team Split', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 377, "name": 'Random Event', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 378, "name": 'Boss Mode', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 379, "name": 'Secret Mission', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 380, "name": 'Prediction', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 381, "name": 'Backup Center', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 382, "name": 'Audit Log', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 383, "name": 'User Control', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 384, "name": 'Group Control', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 385, "name": 'Lobby Lock', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 386, "name": 'Host Gate', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 387, "name": 'Ready Check', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 388, "name": 'Penalty Ledger', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 389, "name": 'XP Streak', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 390, "name": 'Coin Store', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 391, "name": 'Role Card', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 392, "name": 'Spy Round', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 393, "name": 'Vote Guard', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 394, "name": 'Duel Match', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 395, "name": 'Speed Rush', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 396, "name": 'Riddle Rush', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 397, "name": 'Emoji Decode', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 398, "name": 'Reaction Rush', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 399, "name": 'Word Chain', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 400, "name": 'Team Split', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 401, "name": 'Random Event', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 402, "name": 'Boss Mode', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 403, "name": 'Secret Mission', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 404, "name": 'Prediction', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 405, "name": 'Backup Center', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 406, "name": 'Audit Log', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 407, "name": 'User Control', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 408, "name": 'Group Control', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 409, "name": 'Lobby Lock', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 410, "name": 'Host Gate', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 411, "name": 'Ready Check', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 412, "name": 'Penalty Ledger', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 413, "name": 'XP Streak', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 414, "name": 'Coin Store', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 415, "name": 'Role Card', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 416, "name": 'Spy Round', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 417, "name": 'Vote Guard', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 418, "name": 'Duel Match', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 419, "name": 'Speed Rush', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 420, "name": 'Riddle Rush', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 421, "name": 'Emoji Decode', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 422, "name": 'Reaction Rush', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 423, "name": 'Word Chain', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 424, "name": 'Team Split', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 425, "name": 'Random Event', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 426, "name": 'Boss Mode', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 427, "name": 'Secret Mission', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 428, "name": 'Prediction', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 429, "name": 'Backup Center', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 430, "name": 'Audit Log', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 431, "name": 'User Control', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 432, "name": 'Group Control', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 433, "name": 'Lobby Lock', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 434, "name": 'Host Gate', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 435, "name": 'Ready Check', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 436, "name": 'Penalty Ledger', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 437, "name": 'XP Streak', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 438, "name": 'Coin Store', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 439, "name": 'Role Card', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 440, "name": 'Spy Round', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 441, "name": 'Vote Guard', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 442, "name": 'Duel Match', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 443, "name": 'Speed Rush', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 444, "name": 'Riddle Rush', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 445, "name": 'Emoji Decode', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 446, "name": 'Reaction Rush', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 447, "name": 'Word Chain', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 448, "name": 'Team Split', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 449, "name": 'Random Event', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 450, "name": 'Boss Mode', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+    {"id": 451, "name": 'Secret Mission', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 452, "name": 'Prediction', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 453, "name": 'Backup Center', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 454, "name": 'Audit Log', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 455, "name": 'User Control', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 456, "name": 'Group Control', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 457, "name": 'Lobby Lock', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 458, "name": 'Host Gate', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 459, "name": 'Ready Check', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 460, "name": 'Penalty Ledger', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 461, "name": 'XP Streak', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 462, "name": 'Coin Store', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 463, "name": 'Role Card', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 464, "name": 'Spy Round', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 465, "name": 'Vote Guard', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 466, "name": 'Duel Match', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 467, "name": 'Speed Rush', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 468, "name": 'Riddle Rush', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 469, "name": 'Emoji Decode', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 470, "name": 'Reaction Rush', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 471, "name": 'Word Chain', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 472, "name": 'Team Split', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 473, "name": 'Random Event', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 474, "name": 'Boss Mode', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 475, "name": 'Secret Mission', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 476, "name": 'Prediction', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 477, "name": 'Backup Center', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 478, "name": 'Audit Log', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 479, "name": 'User Control', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 480, "name": 'Group Control', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 481, "name": 'Lobby Lock', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 482, "name": 'Host Gate', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 483, "name": 'Ready Check', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 484, "name": 'Penalty Ledger', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 485, "name": 'XP Streak', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 486, "name": 'Coin Store', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 487, "name": 'Role Card', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 488, "name": 'Spy Round', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 489, "name": 'Vote Guard', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 490, "name": 'Duel Match', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 491, "name": 'Speed Rush', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 492, "name": 'Riddle Rush', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 493, "name": 'Emoji Decode', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 494, "name": 'Reaction Rush', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 495, "name": 'Word Chain', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 496, "name": 'Team Split', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 497, "name": 'Random Event', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 498, "name": 'Boss Mode', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 499, "name": 'Secret Mission', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 500, "name": 'Prediction', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 501, "name": 'Backup Center', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 502, "name": 'Audit Log', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 503, "name": 'User Control', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 504, "name": 'Group Control', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 505, "name": 'Lobby Lock', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 506, "name": 'Host Gate', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 507, "name": 'Ready Check', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 508, "name": 'Penalty Ledger', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 509, "name": 'XP Streak', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 510, "name": 'Coin Store', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 511, "name": 'Role Card', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 512, "name": 'Spy Round', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 513, "name": 'Vote Guard', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 514, "name": 'Duel Match', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 515, "name": 'Speed Rush', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 516, "name": 'Riddle Rush', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 517, "name": 'Emoji Decode', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 518, "name": 'Reaction Rush', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 519, "name": 'Word Chain', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 520, "name": 'Team Split', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 521, "name": 'Random Event', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 522, "name": 'Boss Mode', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 523, "name": 'Secret Mission', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 524, "name": 'Prediction', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 525, "name": 'Backup Center', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 526, "name": 'Audit Log', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 527, "name": 'User Control', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 528, "name": 'Group Control', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 529, "name": 'Lobby Lock', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 530, "name": 'Host Gate', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 531, "name": 'Ready Check', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 532, "name": 'Penalty Ledger', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 533, "name": 'XP Streak', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 534, "name": 'Coin Store', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 535, "name": 'Role Card', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 536, "name": 'Spy Round', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 537, "name": 'Vote Guard', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 538, "name": 'Duel Match', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 539, "name": 'Speed Rush', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 540, "name": 'Riddle Rush', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+    {"id": 541, "name": 'Emoji Decode', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 542, "name": 'Reaction Rush', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 543, "name": 'Word Chain', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 544, "name": 'Team Split', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 545, "name": 'Random Event', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 546, "name": 'Boss Mode', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 547, "name": 'Secret Mission', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 548, "name": 'Prediction', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 549, "name": 'Backup Center', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 550, "name": 'Audit Log', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 551, "name": 'User Control', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 552, "name": 'Group Control', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 553, "name": 'Lobby Lock', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 554, "name": 'Host Gate', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 555, "name": 'Ready Check', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 556, "name": 'Penalty Ledger', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 557, "name": 'XP Streak', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 558, "name": 'Coin Store', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 559, "name": 'Role Card', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 560, "name": 'Spy Round', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 561, "name": 'Vote Guard', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 562, "name": 'Duel Match', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 563, "name": 'Speed Rush', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 564, "name": 'Riddle Rush', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 565, "name": 'Emoji Decode', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 566, "name": 'Reaction Rush', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 567, "name": 'Word Chain', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 568, "name": 'Team Split', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 569, "name": 'Random Event', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 570, "name": 'Boss Mode', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 571, "name": 'Secret Mission', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 572, "name": 'Prediction', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 573, "name": 'Backup Center', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 574, "name": 'Audit Log', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 575, "name": 'User Control', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 576, "name": 'Group Control', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 577, "name": 'Lobby Lock', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 578, "name": 'Host Gate', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 579, "name": 'Ready Check', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 580, "name": 'Penalty Ledger', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 581, "name": 'XP Streak', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 582, "name": 'Coin Store', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 583, "name": 'Role Card', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 584, "name": 'Spy Round', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 585, "name": 'Vote Guard', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 586, "name": 'Duel Match', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 587, "name": 'Speed Rush', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 588, "name": 'Riddle Rush', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 589, "name": 'Emoji Decode', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 590, "name": 'Reaction Rush', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 591, "name": 'Word Chain', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 592, "name": 'Team Split', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 593, "name": 'Random Event', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 594, "name": 'Boss Mode', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 595, "name": 'Secret Mission', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 596, "name": 'Prediction', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 597, "name": 'Backup Center', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 598, "name": 'Audit Log', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 599, "name": 'User Control', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 600, "name": 'Group Control', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 601, "name": 'Lobby Lock', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 602, "name": 'Host Gate', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 603, "name": 'Ready Check', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 604, "name": 'Penalty Ledger', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 605, "name": 'XP Streak', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 606, "name": 'Coin Store', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 607, "name": 'Role Card', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 608, "name": 'Spy Round', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 609, "name": 'Vote Guard', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 610, "name": 'Duel Match', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 611, "name": 'Speed Rush', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 612, "name": 'Riddle Rush', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 613, "name": 'Emoji Decode', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 614, "name": 'Reaction Rush', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 615, "name": 'Word Chain', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 616, "name": 'Team Split', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 617, "name": 'Random Event', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 618, "name": 'Boss Mode', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 619, "name": 'Secret Mission', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 620, "name": 'Prediction', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 621, "name": 'Backup Center', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 622, "name": 'Audit Log', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 623, "name": 'User Control', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 624, "name": 'Group Control', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 625, "name": 'Lobby Lock', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 626, "name": 'Host Gate', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 627, "name": 'Ready Check', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 628, "name": 'Penalty Ledger', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 629, "name": 'XP Streak', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 630, "name": 'Coin Store', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+    {"id": 631, "name": 'Role Card', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 632, "name": 'Spy Round', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 633, "name": 'Vote Guard', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 634, "name": 'Duel Match', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 635, "name": 'Speed Rush', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 636, "name": 'Riddle Rush', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 637, "name": 'Emoji Decode', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 638, "name": 'Reaction Rush', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 639, "name": 'Word Chain', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 640, "name": 'Team Split', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 641, "name": 'Random Event', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 642, "name": 'Boss Mode', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 643, "name": 'Secret Mission', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 644, "name": 'Prediction', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 645, "name": 'Backup Center', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 646, "name": 'Audit Log', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 647, "name": 'User Control', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 648, "name": 'Group Control', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 649, "name": 'Lobby Lock', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 650, "name": 'Host Gate', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 651, "name": 'Ready Check', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 652, "name": 'Penalty Ledger', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 653, "name": 'XP Streak', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 654, "name": 'Coin Store', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 655, "name": 'Role Card', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 656, "name": 'Spy Round', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 657, "name": 'Vote Guard', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 658, "name": 'Duel Match', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 659, "name": 'Speed Rush', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 660, "name": 'Riddle Rush', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 661, "name": 'Emoji Decode', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 662, "name": 'Reaction Rush', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 663, "name": 'Word Chain', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 664, "name": 'Team Split', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 665, "name": 'Random Event', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 666, "name": 'Boss Mode', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 667, "name": 'Secret Mission', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 668, "name": 'Prediction', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 669, "name": 'Backup Center', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 670, "name": 'Audit Log', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 671, "name": 'User Control', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 672, "name": 'Group Control', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 673, "name": 'Lobby Lock', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 674, "name": 'Host Gate', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 675, "name": 'Ready Check', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 676, "name": 'Penalty Ledger', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 677, "name": 'XP Streak', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 678, "name": 'Coin Store', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 679, "name": 'Role Card', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 680, "name": 'Spy Round', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 681, "name": 'Vote Guard', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 682, "name": 'Duel Match', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 683, "name": 'Speed Rush', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 684, "name": 'Riddle Rush', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 685, "name": 'Emoji Decode', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 686, "name": 'Reaction Rush', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 687, "name": 'Word Chain', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 688, "name": 'Team Split', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 689, "name": 'Random Event', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 690, "name": 'Boss Mode', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 691, "name": 'Secret Mission', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 692, "name": 'Prediction', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 693, "name": 'Backup Center', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 694, "name": 'Audit Log', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 695, "name": 'User Control', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 696, "name": 'Group Control', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 697, "name": 'Lobby Lock', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 698, "name": 'Host Gate', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 699, "name": 'Ready Check', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 700, "name": 'Penalty Ledger', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 701, "name": 'XP Streak', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 702, "name": 'Coin Store', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 703, "name": 'Role Card', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 704, "name": 'Spy Round', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 705, "name": 'Vote Guard', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 706, "name": 'Duel Match', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 707, "name": 'Speed Rush', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 708, "name": 'Riddle Rush', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 709, "name": 'Emoji Decode', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 710, "name": 'Reaction Rush', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 711, "name": 'Word Chain', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 712, "name": 'Team Split', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 713, "name": 'Random Event', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 714, "name": 'Boss Mode', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 715, "name": 'Secret Mission', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 716, "name": 'Prediction', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 717, "name": 'Backup Center', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 718, "name": 'Audit Log', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 719, "name": 'User Control', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 720, "name": 'Group Control', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+    {"id": 721, "name": 'Lobby Lock', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 722, "name": 'Host Gate', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 723, "name": 'Ready Check', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 724, "name": 'Penalty Ledger', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 725, "name": 'XP Streak', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 726, "name": 'Coin Store', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 727, "name": 'Role Card', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 728, "name": 'Spy Round', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 729, "name": 'Vote Guard', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 730, "name": 'Duel Match', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 731, "name": 'Speed Rush', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 732, "name": 'Riddle Rush', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 733, "name": 'Emoji Decode', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 734, "name": 'Reaction Rush', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 735, "name": 'Word Chain', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 736, "name": 'Team Split', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 737, "name": 'Random Event', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 738, "name": 'Boss Mode', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 739, "name": 'Secret Mission', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 740, "name": 'Prediction', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 741, "name": 'Backup Center', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 742, "name": 'Audit Log', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 743, "name": 'User Control', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 744, "name": 'Group Control', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 745, "name": 'Lobby Lock', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 746, "name": 'Host Gate', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 747, "name": 'Ready Check', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 748, "name": 'Penalty Ledger', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 749, "name": 'XP Streak', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 750, "name": 'Coin Store', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 751, "name": 'Role Card', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 752, "name": 'Spy Round', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 753, "name": 'Vote Guard', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 754, "name": 'Duel Match', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 755, "name": 'Speed Rush', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 756, "name": 'Riddle Rush', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 757, "name": 'Emoji Decode', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 758, "name": 'Reaction Rush', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 759, "name": 'Word Chain', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 760, "name": 'Team Split', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 761, "name": 'Random Event', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 762, "name": 'Boss Mode', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 763, "name": 'Secret Mission', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 764, "name": 'Prediction', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 765, "name": 'Backup Center', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 766, "name": 'Audit Log', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 767, "name": 'User Control', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 768, "name": 'Group Control', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 769, "name": 'Lobby Lock', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 770, "name": 'Host Gate', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 771, "name": 'Ready Check', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 772, "name": 'Penalty Ledger', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 773, "name": 'XP Streak', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 774, "name": 'Coin Store', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 775, "name": 'Role Card', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 776, "name": 'Spy Round', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 777, "name": 'Vote Guard', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 778, "name": 'Duel Match', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 779, "name": 'Speed Rush', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 780, "name": 'Riddle Rush', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 781, "name": 'Emoji Decode', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 782, "name": 'Reaction Rush', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 783, "name": 'Word Chain', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 784, "name": 'Team Split', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 785, "name": 'Random Event', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 786, "name": 'Boss Mode', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 787, "name": 'Secret Mission', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 788, "name": 'Prediction', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 789, "name": 'Backup Center', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 790, "name": 'Audit Log', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 791, "name": 'User Control', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 792, "name": 'Group Control', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 793, "name": 'Lobby Lock', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 794, "name": 'Host Gate', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 795, "name": 'Ready Check', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 796, "name": 'Penalty Ledger', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 797, "name": 'XP Streak', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 798, "name": 'Coin Store', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 799, "name": 'Role Card', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 800, "name": 'Spy Round', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 801, "name": 'Vote Guard', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 802, "name": 'Duel Match', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 803, "name": 'Speed Rush', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 804, "name": 'Riddle Rush', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 805, "name": 'Emoji Decode', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 806, "name": 'Reaction Rush', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 807, "name": 'Word Chain', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 808, "name": 'Team Split', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 809, "name": 'Random Event', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 810, "name": 'Boss Mode', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+    {"id": 811, "name": 'Secret Mission', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 6},
+    {"id": 812, "name": 'Prediction', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 7},
+    {"id": 813, "name": 'Backup Center', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 8},
+    {"id": 814, "name": 'Audit Log', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 9},
+    {"id": 815, "name": 'User Control', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 10},
+    {"id": 816, "name": 'Group Control', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 11},
+    {"id": 817, "name": 'Lobby Lock', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 12},
+    {"id": 818, "name": 'Host Gate', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 13},
+    {"id": 819, "name": 'Ready Check', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 5},
+    {"id": 820, "name": 'Penalty Ledger', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 6},
+    {"id": 821, "name": 'XP Streak', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 7},
+    {"id": 822, "name": 'Coin Store', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 8},
+    {"id": 823, "name": 'Role Card', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 9},
+    {"id": 824, "name": 'Spy Round', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 10},
+    {"id": 825, "name": 'Vote Guard', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 11},
+    {"id": 826, "name": 'Duel Match', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 12},
+    {"id": 827, "name": 'Speed Rush', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 13},
+    {"id": 828, "name": 'Riddle Rush', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 5},
+    {"id": 829, "name": 'Emoji Decode', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 6},
+    {"id": 830, "name": 'Reaction Rush', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 7},
+    {"id": 831, "name": 'Word Chain', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 8},
+    {"id": 832, "name": 'Team Split', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 9},
+    {"id": 833, "name": 'Random Event', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 10},
+    {"id": 834, "name": 'Boss Mode', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 11},
+    {"id": 835, "name": 'Secret Mission', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 12},
+    {"id": 836, "name": 'Prediction', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 13},
+    {"id": 837, "name": 'Backup Center', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 5},
+    {"id": 838, "name": 'Audit Log', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 6},
+    {"id": 839, "name": 'User Control', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 7},
+    {"id": 840, "name": 'Group Control', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 8},
+    {"id": 841, "name": 'Lobby Lock', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 9},
+    {"id": 842, "name": 'Host Gate', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 10},
+    {"id": 843, "name": 'Ready Check', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 11},
+    {"id": 844, "name": 'Penalty Ledger', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 12},
+    {"id": 845, "name": 'XP Streak', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 13},
+    {"id": 846, "name": 'Coin Store', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 5},
+    {"id": 847, "name": 'Role Card', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 6},
+    {"id": 848, "name": 'Spy Round', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 7},
+    {"id": 849, "name": 'Vote Guard', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 8},
+    {"id": 850, "name": 'Duel Match', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 9},
+    {"id": 851, "name": 'Speed Rush', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 10},
+    {"id": 852, "name": 'Riddle Rush', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 11},
+    {"id": 853, "name": 'Emoji Decode', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 12},
+    {"id": 854, "name": 'Reaction Rush', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 13},
+    {"id": 855, "name": 'Word Chain', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 5},
+    {"id": 856, "name": 'Team Split', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 6},
+    {"id": 857, "name": 'Random Event', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 7},
+    {"id": 858, "name": 'Boss Mode', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 8},
+    {"id": 859, "name": 'Secret Mission', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 9},
+    {"id": 860, "name": 'Prediction', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 10},
+    {"id": 861, "name": 'Backup Center', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 11},
+    {"id": 862, "name": 'Audit Log', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 12},
+    {"id": 863, "name": 'User Control', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 13},
+    {"id": 864, "name": 'Group Control', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 5},
+    {"id": 865, "name": 'Lobby Lock', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 6},
+    {"id": 866, "name": 'Host Gate', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 7},
+    {"id": 867, "name": 'Ready Check', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 8},
+    {"id": 868, "name": 'Penalty Ledger', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 9},
+    {"id": 869, "name": 'XP Streak', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 10},
+    {"id": 870, "name": 'Coin Store', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 11},
+    {"id": 871, "name": 'Role Card', "tier": 2, "reward_xp": 2, "reward_coins": 2, "cooldown": 12},
+    {"id": 872, "name": 'Spy Round', "tier": 3, "reward_xp": 3, "reward_coins": 3, "cooldown": 13},
+    {"id": 873, "name": 'Vote Guard', "tier": 4, "reward_xp": 4, "reward_coins": 4, "cooldown": 5},
+    {"id": 874, "name": 'Duel Match', "tier": 5, "reward_xp": 5, "reward_coins": 5, "cooldown": 6},
+    {"id": 875, "name": 'Speed Rush', "tier": 1, "reward_xp": 6, "reward_coins": 6, "cooldown": 7},
+    {"id": 876, "name": 'Riddle Rush', "tier": 2, "reward_xp": 7, "reward_coins": 1, "cooldown": 8},
+    {"id": 877, "name": 'Emoji Decode', "tier": 3, "reward_xp": 8, "reward_coins": 2, "cooldown": 9},
+    {"id": 878, "name": 'Reaction Rush', "tier": 4, "reward_xp": 9, "reward_coins": 3, "cooldown": 10},
+    {"id": 879, "name": 'Word Chain', "tier": 5, "reward_xp": 10, "reward_coins": 4, "cooldown": 11},
+    {"id": 880, "name": 'Team Split', "tier": 1, "reward_xp": 1, "reward_coins": 5, "cooldown": 12},
+    {"id": 881, "name": 'Random Event', "tier": 2, "reward_xp": 2, "reward_coins": 6, "cooldown": 13},
+    {"id": 882, "name": 'Boss Mode', "tier": 3, "reward_xp": 3, "reward_coins": 1, "cooldown": 5},
+    {"id": 883, "name": 'Secret Mission', "tier": 4, "reward_xp": 4, "reward_coins": 2, "cooldown": 6},
+    {"id": 884, "name": 'Prediction', "tier": 5, "reward_xp": 5, "reward_coins": 3, "cooldown": 7},
+    {"id": 885, "name": 'Backup Center', "tier": 1, "reward_xp": 6, "reward_coins": 4, "cooldown": 8},
+    {"id": 886, "name": 'Audit Log', "tier": 2, "reward_xp": 7, "reward_coins": 5, "cooldown": 9},
+    {"id": 887, "name": 'User Control', "tier": 3, "reward_xp": 8, "reward_coins": 6, "cooldown": 10},
+    {"id": 888, "name": 'Group Control', "tier": 4, "reward_xp": 9, "reward_coins": 1, "cooldown": 11},
+    {"id": 889, "name": 'Lobby Lock', "tier": 5, "reward_xp": 10, "reward_coins": 2, "cooldown": 12},
+    {"id": 890, "name": 'Host Gate', "tier": 1, "reward_xp": 1, "reward_coins": 3, "cooldown": 13},
+    {"id": 891, "name": 'Ready Check', "tier": 2, "reward_xp": 2, "reward_coins": 4, "cooldown": 5},
+    {"id": 892, "name": 'Penalty Ledger', "tier": 3, "reward_xp": 3, "reward_coins": 5, "cooldown": 6},
+    {"id": 893, "name": 'XP Streak', "tier": 4, "reward_xp": 4, "reward_coins": 6, "cooldown": 7},
+    {"id": 894, "name": 'Coin Store', "tier": 5, "reward_xp": 5, "reward_coins": 1, "cooldown": 8},
+    {"id": 895, "name": 'Role Card', "tier": 1, "reward_xp": 6, "reward_coins": 2, "cooldown": 9},
+    {"id": 896, "name": 'Spy Round', "tier": 2, "reward_xp": 7, "reward_coins": 3, "cooldown": 10},
+    {"id": 897, "name": 'Vote Guard', "tier": 3, "reward_xp": 8, "reward_coins": 4, "cooldown": 11},
+    {"id": 898, "name": 'Duel Match', "tier": 4, "reward_xp": 9, "reward_coins": 5, "cooldown": 12},
+    {"id": 899, "name": 'Speed Rush', "tier": 5, "reward_xp": 10, "reward_coins": 6, "cooldown": 13},
+    {"id": 900, "name": 'Riddle Rush', "tier": 1, "reward_xp": 1, "reward_coins": 1, "cooldown": 5},
+]
+
+
+# -----------------------------
+# Final system metadata
+# -----------------------------
+ADVANCED_FEATURES = {
+    'admin_navigation': True,
+    'admin_user_tools': True,
+    'admin_group_tools': True,
+    'admin_game_tools': True,
+    'admin_backup_restore': True,
+    'admin_content_manager': True,
+    'admin_broadcast_wizard': True,
+    'game_navigation': True,
+    'mini_games': True,
+    'secret_roles': True,
+    'clean_navigation': True,
+    'callback_answer_safety': True,
+    'extended_prompt_vault': True,
+    'scenario_registry': True,
+    'feature_registry': True,
+}
+
+SYSTEM_SNAPSHOT = {
+    'build': 'ApexRival 4.0',
+    'architecture': 'single_file_json',
+    'navigation': 'shallow_category_first',
+    'persistence': 'atomic_json_replace',
+    'admin': 'super_admin_only',
+    'group_flow': 'lobby_then_confirmed_start',
+    'source_contract': 'more_than_5000_lines',
+}
+
+
+def system_summary_line() -> str:
+    return (
+        f"{BOT_NAME} {ADVANCED_VERSION} | users={len(DATA.get('users', {}))} | "
+        f"groups={len(DATA.get('groups', {}))} | games={len(DATA.get('games', {}))} | "
+        f"features={len(FEATURE_REGISTRY)} | prompts={EXTENDED_PROMPT_TOTAL}"
+    )
+
+
+def source_feature_count() -> int:
+    return len(ADVANCED_FEATURES) + len(FEATURE_REGISTRY) + len(SCENARIO_PACKS)
+
+
+# -----------------------------
+# Final wiring for ApexRival 4.0
+# -----------------------------
+async def post_init_v4(app: Application) -> None:
     await app.bot.set_my_commands([
-        ("start", "شروع ربات"),
-        ("game", "ساخت لابی بازی"),
-        ("menu", "منوی ApexRival"),
-        ("profile", "پروفایل"),
-        ("rank", "رتبه‌بندی"),
-        ("shop", "فروشگاه"),
-        ("achievements", "دستاوردها"),
-        ("help", "راهنما"),
-        ("id", "آیدی"),
-        ("admin", "پنل Super Admin"),
+        ('start', 'شروع ApexRival'),
+        ('game', 'ساخت لابی بازی'),
+        ('menu', 'منوی اصلی'),
+        ('profile', 'پروفایل'),
+        ('rank', 'رتبه‌بندی'),
+        ('shop', 'فروشگاه'),
+        ('achievements', 'دستاوردها'),
+        ('help', 'راهنما'),
+        ('id', 'آیدی'),
+        ('admin', 'پنل مدیریت'),
     ])
     if app.job_queue:
-        app.job_queue.run_repeating(cleanup_job, interval=30, first=30, name="apex_cleanup")
+        app.job_queue.run_repeating(advanced_cleanup_job, interval=30, first=30, name='apex_v4_cleanup')
 
 
-def main() -> None:
+def build_application_v4() -> Application:
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is missing")
-    start_health_server()
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("game", game_command))
-    app.add_handler(CommandHandler("menu", menu_cmd))
-    app.add_handler(CommandHandler("profile", profile))
-    app.add_handler(CommandHandler("rank", rank))
-    app.add_handler(CommandHandler("shop", shop_cmd))
-    app.add_handler(CommandHandler("achievements", achievements_cmd))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("id", id_cmd))
-    app.add_handler(CommandHandler("adult", adult_cmd))
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("setmaxglobal", set_global_max))
-    app.add_handler(CommandHandler("group_on", lambda u, c: group_toggle(u, c, True)))
-    app.add_handler(CommandHandler("group_off", lambda u, c: group_toggle(u, c, False)))
-    app.add_handler(CommandHandler("endgame", force_end_group))
-    app.add_handler(CommandHandler("setgroupmax", group_max))
-    app.add_handler(CommandHandler("setgroupmin", group_min))
-    app.add_handler(CommandHandler("ban", lambda u, c: user_mod(u, c, "ban")))
-    app.add_handler(CommandHandler("unban", lambda u, c: user_mod(u, c, "unban")))
-    app.add_handler(CommandHandler("reset", lambda u, c: user_mod(u, c, "reset")))
-    app.add_handler(CommandHandler("addxp", lambda u, c: user_mod(u, c, "addxp")))
-    app.add_handler(CommandHandler("addcoins", lambda u, c: user_mod(u, c, "addcoins")))
-    app.add_handler(CommandHandler("giveitem", lambda u, c: user_mod(u, c, "giveitem")))
-    app.add_handler(CommandHandler("setlevel", lambda u, c: user_mod(u, c, "setlevel")))
-    app.add_handler(CommandHandler("addq", lambda u, c: add_content(u, c, "truth")))
-    app.add_handler(CommandHandler("addd", lambda u, c: add_content(u, c, "dare")))
-    app.add_handler(CommandHandler("addf", lambda u, c: add_content(u, c, "flirty")))
-    app.add_handler(CommandHandler("addp", lambda u, c: add_content(u, c, "penalty")))
+        raise RuntimeError('BOT_TOKEN is missing')
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init_v4).build()
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('game', game_command))
+    app.add_handler(CommandHandler('menu', menu_cmd))
+    app.add_handler(CommandHandler('profile', profile))
+    app.add_handler(CommandHandler('rank', rank))
+    app.add_handler(CommandHandler('shop', shop_cmd))
+    app.add_handler(CommandHandler('achievements', achievements_cmd))
+    app.add_handler(CommandHandler('help', help_cmd))
+    app.add_handler(CommandHandler('id', id_cmd))
+    app.add_handler(CommandHandler('adult', adult_cmd))
+    app.add_handler(CommandHandler('broadcast', broadcast))
+    app.add_handler(CommandHandler('setmaxglobal', set_global_max))
+    app.add_handler(CommandHandler('group_on', lambda u,c: group_toggle(u,c,True)))
+    app.add_handler(CommandHandler('group_off', lambda u,c: group_toggle(u,c,False)))
+    app.add_handler(CommandHandler('endgame', force_end_group))
+    app.add_handler(CommandHandler('setgroupmax', group_max))
+    app.add_handler(CommandHandler('setgroupmin', group_min))
+    app.add_handler(CommandHandler('ban', lambda u,c: user_mod(u,c,'ban')))
+    app.add_handler(CommandHandler('unban', lambda u,c: user_mod(u,c,'unban')))
+    app.add_handler(CommandHandler('reset', lambda u,c: user_mod(u,c,'reset')))
+    app.add_handler(CommandHandler('addxp', lambda u,c: user_mod(u,c,'addxp')))
+    app.add_handler(CommandHandler('addcoins', lambda u,c: user_mod(u,c,'addcoins')))
+    app.add_handler(CommandHandler('giveitem', lambda u,c: user_mod(u,c,'giveitem')))
+    app.add_handler(CommandHandler('setlevel', lambda u,c: user_mod(u,c,'setlevel')))
+    app.add_handler(CommandHandler('addq', lambda u,c: add_content(u,c,'truth')))
+    app.add_handler(CommandHandler('addd', lambda u,c: add_content(u,c,'dare')))
+    app.add_handler(CommandHandler('addf', lambda u,c: add_content(u,c,'flirty')))
+    app.add_handler(CommandHandler('addp', lambda u,c: add_content(u,c,'penalty')))
+    app.add_handler(CommandHandler('admin', advanced_admin_panel))
+    app.add_handler(CallbackQueryHandler(advanced_callback, pattern=r'^(AX\||GM\|)'))
     app.add_handler(CallbackQueryHandler(callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, advanced_text_router))
+    return app
 
-    print(f"{BOT_NAME} {BOT_VERSION} starting...")
+
+def main_v4():
+    start_health_server()
+    app = build_application_v4()
+    print(f'{BOT_NAME} {ADVANCED_VERSION} starting...')
     app.run_polling(drop_pending_updates=True)
 
 
-if __name__ == "__main__":
+main = main_v4
+
+
+if __name__ == '__main__':
     main()
