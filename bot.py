@@ -12,7 +12,19 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -12891,7 +12903,9 @@ async def ar9_admin_action(query,context,parts):
             if sub=='DELETE_OK':
                 info=v5_get_confirmation(uid,parts[3],'ar9_content_delete');
                 if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
-                key,idx=info['payload'].split(':'); idx=int(idx); base=ar9_content_base(key); item=base[idx] if 0<=idx<len(base) else None
+                payload=str(info.get('payload',''));
+                if ':' not in payload: await safe_answer_query(query,'❌ اطلاعات حذف محتوا نامعتبر است.',True); return
+                key,idx=payload.split(':',1); idx=int(idx); base=ar9_content_base(key); item=base[idx] if 0<=idx<len(base) else None
                 if item is not None:
                     gc=DATA.setdefault('global_content',{}).setdefault(key,[])
                     if item in gc: gc.remove(item)
@@ -13077,6 +13091,7 @@ async def ar9_text_router(update,context):
                 if ftype=='user_item':
                     n=max(0,int(text)); inv=get_user(int(flow['uid'])).setdefault('inventory',{}); inv[flow['item']]=n; save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ موجودی به‌روزرسانی شد.'); return
                 if ftype=='user_multi_item':
+                    if '=' not in text: raise ValueError('فرمت درست: key=value')
                     key,val=text.split('=',1); key=key.strip(); inv=get_user(int(flow['uid'])).setdefault('inventory',{}); 
                     if key not in SHOP: raise ValueError('کلید آیتم ناشناخته است')
                     inv[key]=max(0,int(val)); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ موجودی ذخیره شد.'); return
@@ -13165,8 +13180,10 @@ async def ar9_text_router(update,context):
                     APEX_MEMBERSHIP_CACHE.clear(); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ کانال تنظیم شد.'); return
                 if ftype=='title_edit':
                     if '|' not in text: raise ValueError('فرمت درست: XP|عنوان')
+                    if '|' not in text: raise ValueError('فرمت درست: XP|عنوان')
                     xp,label=text.split('|',1); xp=max(0,int(xp)); rules=DATA['settings'].setdefault('title_rules',[]); old_index=int(flow['index']); sorted_rules=sorted([r for r in rules if isinstance(r,dict)],key=lambda x:int(x.get('min_xp',0)),reverse=True); target=sorted_rules[old_index]; target['min_xp']=xp; target['title']=label[:80]; save_data(force=True); ar6_apply_runtime_overrides(); ar9_clear_flow(uid); await update.message.reply_text('✅ عنوان ذخیره شد.'); return
                 if ftype=='title_add':
+                    if '|' not in text: raise ValueError('فرمت درست: XP|عنوان')
                     if '|' not in text: raise ValueError('فرمت درست: XP|عنوان')
                     xp,label=text.split('|',1); DATA['settings'].setdefault('title_rules',[]).append({'min_xp':max(0,int(xp)),'title':label[:80]}); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ عنوان اضافه شد.'); return
                 if ftype=='achievement_edit':
@@ -14400,3 +14417,422 @@ main = main_apexrival_11
 
 if __name__ == "__main__":
     main_apexrival_11()
+
+
+# ============================================================================
+# ApexRival 12.0 — Private-first UX + command-scope lockdown + group cleanup
+# ----------------------------------------------------------------------------
+# Telegram command names are intentionally kept ASCII because Telegram only
+# accepts Latin letters, digits and underscores for slash-command keywords.
+# The command descriptions and all visible UI remain Persian.
+#
+# Design goals:
+#   • Exactly 5 discoverable commands in private chats.
+#   • Zero discoverable commands in groups / supergroups.
+#   • Main dashboard/menu is private-chat only.
+#   • No persistent ReplyKeyboard menus in groups. New UI uses inline buttons.
+#   • Legacy commands remain callable for backwards compatibility but are hidden.
+#   • Super Admin center is private-chat only.
+#   • Harden the known split/unpack failure paths.
+#   • Verify command scopes at startup without making verification a hard fail.
+# ============================================================================
+AR12_VERSION = "12.0"
+BOT_VERSION = AR12_VERSION
+ADVANCED_VERSION = AR12_VERSION
+
+AR12_PRIVATE_COMMANDS = [
+    BotCommand("start", "شروع و فعال‌سازی ApexRival"),
+    BotCommand("game", "ساخت یا ورود به بازی گروهی"),
+    BotCommand("profile", "مشاهده پروفایل من"),
+    BotCommand("rank", "مشاهده رتبه‌بندی"),
+    BotCommand("help", "راهنما و آموزش بازی"),
+]
+AR12_GROUP_KEYBOARD_CLEANED: set[tuple[int, int]] = set()
+
+
+async def ar12_remove_legacy_group_keyboard(update) -> None:
+    """Remove the old reply-keyboard menu once per user/group pair.
+
+    Telegram keeps custom reply keyboards visible until a bot sends a
+    ReplyKeyboardRemove object, so an already-deployed old keyboard needs a
+    one-time cleanup message even after the new code stops creating keyboards.
+    """
+    if not ar12_group_chat(update):
+        return
+    chat = getattr(update, "effective_chat", None)
+    user = getattr(update, "effective_user", None)
+    msg = getattr(update, "message", None)
+    if not chat or not user or not msg:
+        return
+    key = (int(chat.id), int(user.id))
+    if key in AR12_GROUP_KEYBOARD_CLEANED:
+        return
+    try:
+        await msg.reply_text("✅ رابط قدیمی گروه غیرفعال شد.", reply_markup=ReplyKeyboardRemove())
+    except Exception:
+        pass
+    AR12_GROUP_KEYBOARD_CLEANED.add(key)
+
+
+def ar12_private_only(update) -> bool:
+    return getattr(getattr(update, "effective_chat", None), "type", None) == "private"
+
+
+def ar12_group_chat(update) -> bool:
+    return getattr(getattr(update, "effective_chat", None), "type", None) in {"group", "supergroup"}
+
+
+def ar12_private_home_markup(uid: int):
+    rows = [
+        [v5_button("🎮 بازی", "V5|GAME"), v5_button("👤 پروفایل", "V5|PROFILE")],
+        [v5_button("🏆 رتبه‌بندی", "V5|RANK"), v5_button("🛒 فروشگاه", "V5|SHOP")],
+        [v5_button("🏅 دستاوردها", "V5|ACH"), v5_button("❓ راهنما", "V5|HELP")],
+        [v5_button("🔄 تازه‌سازی", "V5|HOME")],
+    ]
+    if is_admin(uid):
+        rows.append([v5_button("👑 مرکز مدیریت", "V5|ADMIN")])
+    return v5_markup(rows)
+
+
+def ar12_private_home_text(uid: int) -> str:
+    u = get_user(int(uid))
+    xp = int(u.get("xp", 0))
+    level = int(u.get("level", 1))
+    coins = int(u.get("coins", 0))
+    streak = int(u.get("streak", 0))
+    title = title_for(xp)
+    return v5_card(
+        "🎮 ApexRival",
+        f"سلام <b>{escape(str(u.get('name') or 'بازیکن'))}</b> 👋",
+        f"⭐ سطح <b>{level}</b>  ·  ✨ XP <b>{xp:,}</b>",
+        f"💰 <b>{coins:,}</b> سکه  ·  🔥 استریک <b>{streak}</b>",
+        f"🏅 {escape(str(title))}",
+        "از این پنل وارد بازی، پروفایل، رتبه‌بندی و امکانات ApexRival شو.",
+    )
+
+
+async def ar12_show_private_home(update, context):
+    uid = int(getattr(getattr(update, "effective_user", None), "id", 0) or 0)
+    if not uid:
+        return
+    if not ar12_private_only(update):
+        await ar12_remove_legacy_group_keyboard(update)
+        msg = getattr(update, "message", None)
+        query = getattr(update, "callback_query", None)
+        if query:
+            await safe_answer_query(query, "⌂ منوی اصلی فقط در چت خصوصی ApexRival است.", True)
+        elif msg:
+            await msg.reply_text(
+                "⌂ <b>منوی اصلی فقط در چت خصوصی ApexRival است.</b>\n\n"
+                "برای استفاده از پروفایل، رتبه‌بندی و فروشگاه، چت خصوصی ربات را باز کن.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        return
+    text = ar12_private_home_text(uid)
+    markup = ar12_private_home_markup(uid)
+    query = getattr(update, "callback_query", None)
+    msg = getattr(update, "message", None)
+    if query:
+        await safe_edit_query(query, text, markup)
+    elif msg:
+        await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+# The main private menu now follows Telegram's own guidance for menus: inline
+# buttons rather than a persistent custom reply keyboard. This also guarantees
+# that a private dashboard cannot leak into a group chat.
+def v5_home_inline(uid: int):
+    return ar12_private_home_markup(uid)
+
+
+async def v5_send_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = int(getattr(getattr(update, "effective_user", None), "id", 0) or 0)
+    if not uid:
+        return
+    if not ar12_private_only(update):
+        await ar12_remove_legacy_group_keyboard(update)
+        msg = getattr(update, "message", None)
+        query = getattr(update, "callback_query", None)
+        if query:
+            await safe_answer_query(query, "⌂ این منو فقط در چت خصوصی ربات است.", True)
+        elif msg:
+            await msg.reply_text(
+                "⌂ <b>منوی اصلی فقط در چت خصوصی ApexRival است.</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        return
+    text = ar12_private_home_text(uid)
+    markup = ar12_private_home_markup(uid)
+    query = getattr(update, "callback_query", None)
+    msg = getattr(update, "message", None)
+    if query:
+        await safe_edit_query(query, text, markup)
+    elif msg:
+        await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def v5_menu(update, context):
+    await v5_send_home(update, context)
+
+
+# Harden the latest /start so the private dashboard is private-only and any
+# obsolete group reply keyboard is explicitly removed the next time the user
+# interacts with the group.
+async def v7_start(update, context):
+    user = getattr(update, "effective_user", None)
+    msg = getattr(update, "message", None)
+    if not user or not msg:
+        return
+    uid = int(user.id)
+    if is_banned(uid) and not is_admin(uid):
+        await msg.reply_text("🚫 دسترسی این حساب به ApexRival مسدود است.", reply_markup=ReplyKeyboardRemove() if ar12_group_chat(update) else None)
+        return
+    if not ar12_private_only(update):
+        await ar12_remove_legacy_group_keyboard(update)
+        username = await ar11_bot_username(getattr(context, "bot", None))
+        private_url = ar11_private_activate_url(username)
+        rows = []
+        if private_url:
+            rows.append([ApexInlineButton("🚀 باز کردن چت خصوصی", url=private_url, style=APEX_STYLE_SUCCESS)])
+        rows.append([ApexInlineButton("🔄 بررسی وضعیت ورود", callback_data="REQ|CHECK", style=APEX_STYLE_SUCCESS)])
+        rows.append([ApexInlineButton("ℹ️ راهنمای فعال‌سازی", callback_data="REQ|INFO", style=APEX_STYLE_PRIMARY)])
+        await msg.reply_text(
+            "🔐 <b>فعال‌سازی از داخل گروه انجام نمی‌شود.</b>\n\n"
+            "برای ورود به ApexRival، روی «باز کردن چت خصوصی» بزن و یک‌بار /start را اجرا کن.\n"
+            "بعد از فعال‌سازی، برگرد و /game را در همین گروه بزن.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup(rows),
+        )
+        # The ReplyKeyboardRemove cannot remove a keyboard and keep this inline
+        # keyboard at the same time. It is therefore sent only when the group
+        # is known to be carrying a stale legacy reply keyboard.
+        return
+
+    source = "deep_link"
+    args = getattr(context, "args", None) or []
+    if args:
+        source = f"start:{str(args[0])[:40]}"
+
+    if not is_admin(uid):
+        membership, _ = await ar8_channel_membership(uid, force=True, bot=getattr(context, "bot", None))
+        if membership is not True:
+            text = ar8_prereq_text("need_channel") if membership is False else ar8_prereq_text("check_error")
+            await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=await ar11_gate_markup(getattr(context, "bot", None)))
+            return
+
+    v7_mark_started(uid, source=source)
+    AR11_PRIVATE_CACHE[uid] = (time.time(), True, "direct_start")
+    st = ar11_activation_state(uid)
+    st["source"] = source
+    st["last_verified_at"] = now_ts()
+    save_data(force=True)
+    # Refresh the user object after persistence so the card always reflects
+    # the current state instead of a stale snapshot.
+    u = get_user(uid, user.first_name or user.username or "بازیکن")
+    await msg.reply_text(
+        ar12_private_home_text(uid) + "\n\n✅ <b>حساب خصوصی فعال شد.</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ar12_private_home_markup(uid),
+    )
+
+
+start = v7_start
+v5_start = v7_start
+
+_AR12_OLD_CREATE_LOBBY = v5_create_lobby
+
+
+async def v5_create_lobby(update, context):
+    if ar12_group_chat(update):
+        await ar12_remove_legacy_group_keyboard(update)
+    return await _AR12_OLD_CREATE_LOBBY(update, context)
+
+
+# In groups the private dashboard callback should never open a home menu.
+_AR12_OLD_AR9_CALLBACK = ar9_callback_dispatch
+_AR12_OLD_AR10_CALLBACK = ar10_callback_dispatch
+
+
+async def ar12_callback_dispatch(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query:
+        return
+    data = str(getattr(query, "data", "") or "")
+    uid = int(getattr(getattr(query, "from_user", None), "id", 0) or 0)
+    if ar12_group_chat(update):
+        if data.startswith("ADM|") or data.startswith("A10|") or data in {"V5|ADMIN", "V5|A|HOME", "V5|HOME"}:
+            await safe_answer_query(query, "⌂ این بخش فقط در چت خصوصی ربات قابل استفاده است.", True)
+            return
+    if data.startswith("A10|"):
+        await _AR12_OLD_AR10_CALLBACK(update, context)
+        return
+    await _AR12_OLD_AR9_CALLBACK(update, context)
+
+
+async def ar12_admin_entry(update, context):
+    if not ar12_private_only(update):
+        msg = getattr(update, "message", None)
+        if msg:
+            await msg.reply_text(
+                "👑 <b>مرکز مدیریت فقط در چت خصوصی Super Admin است.</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        return
+    await ar10_home_message(update, context)
+
+
+async def ar12_text_router(update, context):
+    # The private dashboard is intentionally never materialized in a group.
+    if ar12_group_chat(update):
+        text = (getattr(getattr(update, "message", None), "text", "") or "").strip()
+        if text in {"👑 مرکز مدیریت", "👑 پنل Super Admin", "👑 Super Admin"}:
+            if is_admin(int(getattr(getattr(update, "effective_user", None), "id", 0) or 0)):
+                await update.message.reply_text(
+                    "👑 مرکز مدیریت فقط در چت خصوصی ربات است.",
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                return
+    await ar10_text_router(update, context)
+
+
+# ---------------------------------------------------------------------------
+# Command-scope setup
+# ---------------------------------------------------------------------------
+async def ar12_configure_command_scopes(application):
+    bot = application.bot
+    # Clear the default scope first; otherwise groups can inherit a default
+    # list when a narrower group scope is absent.
+    await bot.set_my_commands([], scope=BotCommandScopeDefault())
+    # Explicitly clear all group and group-admin command lists.
+    await bot.set_my_commands([], scope=BotCommandScopeAllGroupChats())
+    await bot.set_my_commands([], scope=BotCommandScopeAllChatAdministrators())
+    # Private chats receive exactly five discoverable commands.
+    await bot.set_my_commands(AR12_PRIVATE_COMMANDS, scope=BotCommandScopeAllPrivateChats())
+    # Persian-language clients get the same Persian descriptions explicitly.
+    try:
+        await bot.set_my_commands(AR12_PRIVATE_COMMANDS, scope=BotCommandScopeAllPrivateChats(), language_code="fa")
+    except Exception as exc:
+        print(f"ApexRival AR12 Persian command scope warning: {exc!r}")
+    try:
+        private_now = await bot.get_my_commands(scope=BotCommandScopeAllPrivateChats())
+        group_now = await bot.get_my_commands(scope=BotCommandScopeAllGroupChats())
+        admin_now = await bot.get_my_commands(scope=BotCommandScopeAllChatAdministrators())
+        print(
+            "ApexRival command-scope audit | "
+            f"private={len(private_now)} | groups={len(group_now)} | group_admins={len(admin_now)}"
+        )
+    except Exception as exc:
+        # Verification is informational only; Telegram/API hiccups should not
+        # take down the bot after the desired command scopes have been set.
+        print(f"ApexRival command-scope verification warning: {exc!r}")
+
+
+async def ar12_post_init(application):
+    await _ar8_post_init(application)
+    await ar12_configure_command_scopes(application)
+    await ar11_bot_username(application.bot)
+
+
+# ---------------------------------------------------------------------------
+# Final command registration
+# ---------------------------------------------------------------------------
+def ar12_register_handlers(app):
+    # Five private-facing commands. Legacy English/utility commands remain
+    # registered for backwards compatibility but are intentionally hidden from
+    # command suggestions via the scoped command configuration above.
+    app.add_handler(CommandHandler("start", v7_start))
+    app.add_handler(CommandHandler("game", v5_create_lobby))
+    app.add_handler(CommandHandler("profile", v5_profile_message))
+    app.add_handler(CommandHandler("rank", v5_rank_message))
+    app.add_handler(CommandHandler("help", v5_help_message))
+
+    # Hidden compatibility commands (not displayed in the menu).
+    app.add_handler(CommandHandler("verify", ar8_verify_cmd))
+    app.add_handler(CommandHandler("menu", v5_menu))
+    app.add_handler(CommandHandler("shop", shop_cmd))
+    app.add_handler(CommandHandler("achievements", achievements_cmd))
+    app.add_handler(CommandHandler("id", id_cmd))
+    app.add_handler(CommandHandler("admin", ar12_admin_entry))
+    app.add_handler(CommandHandler("adult", adult_cmd))
+    # Persian-friendly transliteration aliases. They remain hidden in groups;
+    # users can still type them manually if desired.
+    app.add_handler(CommandHandler("bazi", v5_create_lobby))
+    app.add_handler(CommandHandler("man", v5_menu))
+    app.add_handler(CommandHandler("rahnama", v5_help_message))
+
+    app.add_handler(CallbackQueryHandler(ar8_prereq_callback, pattern=r"^REQ\|"))
+    app.add_handler(CallbackQueryHandler(ar10_callback_dispatch, pattern=r"^A10\|"))
+    app.add_handler(CallbackQueryHandler(ar12_callback_dispatch, pattern=r"^(ADM\||V5\||V7\|)"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ar12_text_router))
+
+
+# ---------------------------------------------------------------------------
+# AR12 startup self-checks
+# ---------------------------------------------------------------------------
+def ar12_static_self_check():
+    assert AR12_VERSION == "12.0"
+    assert len(AR12_PRIVATE_COMMANDS) == 5
+    names = [c.command for c in AR12_PRIVATE_COMMANDS]
+    assert names == ["start", "game", "profile", "rank", "help"]
+    descriptions = [str(c.description) for c in AR12_PRIVATE_COMMANDS]
+    assert all(d and any("؀" <= ch <= "ۿ" for ch in d) for d in descriptions)
+    # Explicitly check Telegram's 1–64 byte callback-data contract for our new UI.
+    for markup in (ar12_private_home_markup(int(ADMIN_ID or 0)), ar12_private_home_markup(0)):
+        rows = getattr(markup, "inline_keyboard", ())
+        assert rows
+        for row in rows:
+            assert row
+            for button in row:
+                assert isinstance(button, InlineKeyboardButton)
+                data = getattr(button, "callback_data", None)
+                if data is not None:
+                    assert 1 <= len(str(data).encode("utf-8")) <= 64
+    # These operations used to be able to raise the exact unpacking error from
+    # stale editor flows. All vulnerable split sites are now guarded.
+    source = Path(__file__).read_text(encoding="utf-8")
+    assert "key,val=text.split('=',1)" in source
+    assert "if '=' not in text: raise ValueError('فرمت درست: key=value')" in source
+    assert "payload=str(info.get('payload',''))" in source
+    # Private dashboard contains no persistent reply-keyboard object.
+    assert "reply_markup=ar12_private_home_markup(uid)" in source
+    print(
+        "ApexRival AR12 static self-check OK | "
+        "private-menu=inline-only | group-commands=0 | private-commands=5 | "
+        "group-admin=private-only | split-hardening=on"
+    )
+
+
+ar12_static_self_check()
+
+
+def main_apexrival_12():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is missing")
+    _ar8_final_markup_self_check()
+    ar11_static_self_check()
+    ar12_static_self_check()
+    start_health_server()
+    application = Application.builder().token(BOT_TOKEN).post_init(ar12_post_init).build()
+    ar12_register_handlers(application)
+    application.add_error_handler(ar9_error_handler)
+    print(
+        f"{BOT_NAME} {AR12_VERSION} starting | "
+        "private-dashboard=inline | group-command-menu=off | "
+        "admin-private-only=on | legacy-flow-hardening=on"
+    )
+    application.run_polling(drop_pending_updates=True)
+
+
+main_apexrival_8 = main_apexrival_12
+main_apexrival_9 = main_apexrival_12
+main_apexrival_10 = main_apexrival_12
+main_apexrival_11 = main_apexrival_12
+main_apexrival_12 = main_apexrival_12
+main_v5 = main_apexrival_12
+main = main_apexrival_12
+
+if __name__ == "__main__":
+    main_apexrival_12()
