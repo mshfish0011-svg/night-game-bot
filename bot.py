@@ -7633,7 +7633,7 @@ async def v5_admin_overview(query):
         f"🧩 محتوای افزوده‌شده <b>{sum(len(v) for v in DATA.get('global_content', {}).values())}</b>",
     )
     text = f"{v5_breadcrumb('مدیریت','نمای کلی')}\n\n{card}"
-    await safe_edit_query(query, text, v5_markup([v5_button("↻ بروزرسانی", "V5|A|O"), *v5_nav("V5|A|HOME")]))
+    await safe_edit_query(query, text, v5_markup([[v5_button("↻ بروزرسانی", "V5|A|O")], *v5_nav("V5|A|HOME")]))
 
 def v5_confirmation(uid: int, action: str, payload: str, ttl: int = 45) -> str:
     token = f"{random.randrange(100000, 999999)}"
@@ -7747,7 +7747,7 @@ async def v5_admin_economy(query):
     total_xp=sum(int(u.get('xp',0)) for u in users)
     total_coins=sum(int(u.get('coins',0)) for u in users)
     text=f"{v5_breadcrumb('مدیریت','اقتصاد')}\n\n{v5_card('Economy',f'⭐ XP کل <b>{total_xp}</b>',f'💰 سکه کل <b>{total_coins}</b>',f'👥 حساب‌ها <b>{len(DATA.get("users",{}))}</b>',f'📦 آیتم‌های فعال <b>{len(SHOP)}</b>')}"
-    await safe_edit_query(query,text,v5_markup([v5_button('💾 ذخیره', 'V5|A|XS'), *v5_nav('V5|A|HOME')]))
+    await safe_edit_query(query,text,v5_markup([[v5_button('💾 ذخیره', 'V5|A|XS')], *v5_nav('V5|A|HOME')]))
 
 
 async def v5_admin_security(query):
@@ -7774,7 +7774,7 @@ async def v5_admin_logs(query):
         dt=datetime.fromtimestamp(int(e.get('ts',0)),tz=timezone.utc).strftime('%m-%d %H:%M')
         lines.append(f"<code>{dt}</code>  {escape(str(e.get('action','-')))}  ·  {escape(str(e.get('details',''))[:55])}")
     text=f"{v5_breadcrumb('مدیریت','رویدادها')}\n\n{v5_card('Recent Events',*(lines or ['رویدادی ثبت نشده.']))}"
-    await safe_edit_query(query,text,v5_markup([v5_button('↻', 'V5|A|L'), *v5_nav('V5|A|HOME')]))
+    await safe_edit_query(query,text,v5_markup([[v5_button('↻', 'V5|A|L')], *v5_nav('V5|A|HOME')]))
 
 
 # ---------------------------------------------------------------------------
@@ -9429,7 +9429,9 @@ def main_v5():
 
 
 
-# Legacy entrypoint disabled; the final ApexRival runtime is defined below.
+main=main_v5
+
+# Main invocation is intentionally deferred until the final runtime layer below.
 # ============================================================
 # ApexRival 6.0 — polish + reliability + reply-driven group play
 # Appended as the final runtime layer so old mechanics remain
@@ -9783,18 +9785,20 @@ def v5_admin_home_markup():
 def v5_admin_home_text() -> str:
     active = sum(1 for g in DATA.get("groups", {}).values() if g.get("active_game"))
     lobbies = sum(1 for g in DATA.get("games", {}).values() if g.get("status") == "lobby")
-    return (
-        f"{v5_breadcrumb('مدیریت','مرکز فرماندهی')}\n\n"
-        f"{v5_card('👑 SUPER ADMIN',
-            f"👥 کاربران: <b>{len(DATA.get('users', {}))}</b>",
-            f"🌐 گروه‌ها: <b>{len(DATA.get('groups', {}))}</b>",
-            f'🎮 بازی فعال: <b>{active}</b>',
-            f'🟡 Lobby: <b>{lobbies}</b>',
-            f"🧩 محتوا: <b>{sum(len(v) for v in DATA.get('global_content', {}).values())}</b>",
-            f"📜 Audit: <b>{len(DATA.get('audit', []))}</b>"
-        )}\n\n"
-        "هر ابزار فقط در صفحه‌ای نمایش داده می‌شود که واقعاً به آن نیاز دارد."
+    user_count = len(DATA.get("users", {}))
+    group_count = len(DATA.get("groups", {}))
+    content_count = sum(len(v) for v in DATA.get("global_content", {}).values())
+    audit_count = len(DATA.get("audit", []))
+    card = v5_card(
+        "👑 SUPER ADMIN",
+        f"👥 کاربران: <b>{user_count}</b>",
+        f"🌐 گروه‌ها: <b>{group_count}</b>",
+        f"🎮 بازی فعال: <b>{active}</b>",
+        f"🟡 Lobby: <b>{lobbies}</b>",
+        f"🧩 محتوا: <b>{content_count}</b>",
+        f"📜 Audit: <b>{audit_count}</b>",
     )
+    return f"{v5_breadcrumb('مدیریت','مرکز فرماندهی')}\n\n{card}\n\nهر ابزار فقط در صفحه‌ای نمایش داده می‌شود که واقعاً به آن نیاز دارد."
 
 
 async def v5_admin_home(query):
@@ -9966,14 +9970,17 @@ def v5_game_home_text(game):
         scores.append((score, int(uid)))
     scores.sort(reverse=True)
     lines = [f"{i+1}. {escape(name_of(uid, game))} · <b>{score}</b>" for i, (score, uid) in enumerate(scores[:6])]
-    card_lines = [
-        f"👥 بازیکنان: <b>{len(game.get('players', []))}</b>",
-        f"🔢 دور: <b>{int(game.get('round', 0))}</b>",
-        f"🎯 مرحله: <b>{escape(str(game.get('phase', 'آزاد')))}</b>",
-        "🔞 بخش ۱۸+: همیشه فعال — محتوای غیرصریح",
-    ]
-    card_lines.extend(lines or ["هنوز امتیازی ثبت نشده."])
-    card = v5_card("🎮 دور بازی", *card_lines)
+    player_count = len(game.get("players", []))
+    round_no = int(game.get("round", 0))
+    phase = escape(str(game.get("phase", "آزاد")))
+    card = v5_card(
+        "🎮 دور بازی",
+        f"👥 بازیکنان: <b>{player_count}</b>",
+        f"🔢 دور: <b>{round_no}</b>",
+        f"🎯 مرحله: <b>{phase}</b>",
+        "🔞 بخش ۱۸+: همیشه فعال — محتوای بالغِ غیرگرافیکی",
+        *(lines or ["هنوز امتیازی ثبت نشده."]),
+    )
     return f"{v5_breadcrumb('بازی', 'ApexRival')}\n\n{card}\n\nیک حالت را انتخاب کن؛ پاسخ مرحله را با Reply ادامه بده."
 
 
@@ -10028,7 +10035,7 @@ def ar7_static_callback_audit() -> None:
     # Prefixes handled by this final layer or by the previous full editor.
     handled_prefixes = {
         "HOME","O","U","US","UT","UB","UD","SET","SETJ","UR","URY",
-        "G","GL","GD","GDV","GDET","GEN","GAD","GMAX","GMIN","GFV","FT","GE","GEY",
+        "G","GL","GD","GDV","GDET","GEN","GAD","GMAX","GMIN","GFV","FT","GE","GEY","GR",
         "P","PL","PG","GP","GN","GPEN","GPE","PE","PEY",
         "C","CA","CT","CD","CF","CQ","CP","CB","CM","CR","CL","CE","CADD","CLEAN","CC","FC",
         "E","EI","ED","ESH","EON","EX","EC","ES",
@@ -10038,7 +10045,7 @@ def ar7_static_callback_audit() -> None:
         "L","LL","LB","LC","LCY",
         "X","XS","XC","XN","XD","XB","SH",
         "Z","ZU","ZG","ZP","ZS","ZR","ZH","RAW",
-        "GR","S","SC","ST"
+        "S","SC","ST",
     }
     missing = sorted(x for x in literal_admin if x not in handled_prefixes)
     assert not missing, f"unwired admin callback prefixes: {missing}"
@@ -10085,43 +10092,1497 @@ def main_v5():
     return _old_main_v5_ar7()
 
 main = main_v5
+# ============================================================
+# ApexRival 7.0 — turn-based social game + strict private-start gate
+# Final runtime layer. Safe, non-explicit 18+ content only.
+# ============================================================
 
-# Final tiny reliability layer: after 18+ confirmation, continue directly
-# into the requested random adult round instead of making the user click twice.
-_ar7_callback_v6 = v5_callback
-async def v5_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query and str(getattr(query, 'data', '')) == 'V5|18|OK':
-        uid = int(query.from_user.id)
-        get_user(uid)["adult_ok"] = True
-        game = active_game(query.message.chat_id) if getattr(query, 'message', None) else None
-        if game:
-            game["_viewer_id"] = uid
-            audit("adult_confirm", uid, game.get("chat_id"), "always_on")
-            save_data(force=True)
-            await safe_answer_query(query, "✅ دسترسی ۱۸+ فعال شد.")
-            await send_adult(query.message, game)
-        else:
-            audit("adult_confirm", uid, None, "always_on")
-            save_data(force=True)
-            await safe_edit_query(query, v5_card("🔞 ۱۸+", "✅ دسترسی تو تأیید شد.", "وضعیت: 🟢 همیشه فعال"), v5_markup(ar7_game_nav("V5|HOME")))
+AR7X_VERSION = "7.0"
+AR7_VERSION = AR7X_VERSION
+APEX_V5 = AR7X_VERSION
+ADVANCED_VERSION = AR7X_VERSION
+BOT_VERSION = AR7X_VERSION
+
+# -----------------------------
+# Persistent migration
+# -----------------------------
+DATA.setdefault("started_users", {})
+DATA.setdefault("v7_sessions", {})
+DATA.setdefault("v7_prompt_history", {})
+
+
+def v7_has_started(uid: int) -> bool:
+    return str(int(uid)) in DATA.setdefault("started_users", {})
+
+
+def v7_mark_started(uid: int) -> None:
+    DATA.setdefault("started_users", {})[str(int(uid))] = now_ts()
+    get_user(int(uid))
+    save_data(force=True)
+
+
+def v7_chat_is_group(update: Update) -> bool:
+    chat = getattr(update, "effective_chat", None)
+    return bool(chat and getattr(chat, "type", None) in ("group", "supergroup"))
+
+
+async def v7_require_started(update: Update, *, allow_admin: bool = True) -> bool:
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return False
+    uid = int(user.id)
+    if allow_admin and is_admin(uid):
+        return True
+    if not v7_chat_is_group(update):
+        return True
+    if v7_has_started(uid):
+        return True
+    message = getattr(update, "message", None)
+    query = getattr(update, "callback_query", None)
+    text = (
+        "🔒 <b>یک مرحله لازم است</b>\n\n"
+        "برای ورود به ApexRival، اول باید ربات را در چت خصوصی باز کنی و <code>/start</code> بزنی.\n\n"
+        "بعد برگرد داخل گروه؛ ثبت‌نام و همه بخش‌های بازی برایت فعال می‌شود."
+    )
+    if query:
+        await safe_answer_query(query, "🔒 اول ربات را خصوصی /start کن.", True)
+        try:
+            if message:
+                await message.reply_text(text, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+    elif message:
+        await message.reply_text(text, parse_mode=ParseMode.HTML)
+    return False
+
+
+# -----------------------------
+# Final universal command gate
+# -----------------------------
+async def v7_ensure_allowed(update: Update) -> bool:
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return False
+    uid = int(user.id)
+    get_user(uid, getattr(user, "first_name", None) or getattr(user, "username", None) or "کاربر")
+    if is_banned(uid) and not is_admin(uid):
+        query = getattr(update, "callback_query", None)
+        message = getattr(update, "message", None)
+        if query:
+            await safe_answer_query(query, "🚫 دسترسی شما مسدود است.", True)
+        elif message:
+            await message.reply_text("🚫 دسترسی شما به ApexRival مسدود است.")
+        return False
+    return await v7_require_started(update)
+
+
+ensure_allowed = v7_ensure_allowed
+
+
+# -----------------------------
+# Final /start behavior
+# -----------------------------
+async def v7_start(update, context):
+    user = update.effective_user
+    if not user:
         return
-    await _ar7_callback_v6(update, context)
+    if is_banned(user.id) and not is_admin(user.id):
+        await update.message.reply_text("🚫 دسترسی این حساب به ApexRival مسدود است.")
+        return
+    chat = update.effective_chat
+    if getattr(chat, "type", None) != "private":
+        await update.message.reply_text(
+            "🔒 برای فعال‌سازی حسابت، ربات را در چت خصوصی باز کن و <code>/start</code> بزن.\n"
+            "بعد از آن می‌توانی داخل گروه وارد Lobby شوی.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    v7_mark_started(user.id)
+    u = get_user(user.id, user.first_name or user.username or "بازیکن")
+    card = v5_card(
+        "🎮 ApexRival",
+        f"سلام <b>{escape(user.first_name or 'بازیکن')}</b> 👋",
+        f"⭐ Level <b>{int(u.get('level', 1))}</b>  ·  XP <b>{int(u.get('xp', 0))}",
+        f"💰 <b>{int(u.get('coins', 0))}</b> سکه  ·  🔥 استریک <b>{int(u.get('streak', 0))}</b>",
+        f"🏅 {escape(title_for(int(u.get('xp', 0))))}",
+        "✅ حساب تو برای بازی‌های گروهی فعال شد.",
+    )
+    await update.message.reply_text(
+        f"{card}\n\nاز اینجا به بعد هر وقت وارد یک گروه ApexRival شدی، می‌توانی در Lobby ثبت‌نام کنی.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=v5_main_keyboard(user.id),
+    )
 
-# Expired reply prompts are cleared by background cleanup so old replies never
-# accidentally complete a later round.
-_ar7_old_v5_housekeeping = v5_housekeeping
-def v5_housekeeping():
-    _ar7_old_v5_housekeeping()
-    now = time.time()
-    for game in DATA.get("games", {}).values():
-        prompt = game.get("reply_prompt")
-        if isinstance(prompt, dict) and now > float(prompt.get("expires", 0)):
-            game.pop("reply_prompt", None)
 
-# Final runtime pointer.
-main = main_v5
+v5_start = v7_start
+start = v7_start
 
+
+# -----------------------------
+# High-quality content vault
+# Exact strings are unique across every category.
+# 18+ remains mature and non-explicit.
+# -----------------------------
+V7_TRUTH = [
+    "آخرین باری که از تصمیم خودت کاملاً مطمئن نبودی چه زمانی بود و چرا؟",
+    "یک عادتی که مدت‌هاست می‌دانی باید تغییرش بدهی چیست؟",
+    "کدام ویژگی خودت را بیشتر از چیزی که دیگران می‌بینند دوست داری؟",
+    "چه چیزی معمولاً سریع‌تر از هر چیز دیگری اعتماد تو را از بین می‌برد؟",
+    "کدام تصمیم کوچک زندگی‌ات اثر خیلی بزرگ‌تری از چیزی که انتظار داشتی داشت؟",
+    "وقتی از کسی ناراحت می‌شوی، بیشتر سکوت می‌کنی یا مستقیم حرف می‌زنی؟ چرا؟",
+    "آخرین تعریف صادقی که درباره خودت شنیدی چه بود؟",
+    "یک مهارت اجتماعی که دوست داری در آن بهتر شوی چیست؟",
+    "چه چیزی باعث می‌شود در یک جمع احساس راحتی کنی؟",
+    "یک اشتباه بی‌خطر که باعث شد چیز مهمی یاد بگیری چه بود؟",
+    "وقتی یک دوست ناراحت است، معمولاً اولین واکنش تو چیست؟",
+    "کدام ویژگی را در آدم‌ها خیلی زود تشخیص می‌دهی؟",
+    "یک کاری که برای آرام شدن بعد از یک روز بد انجام می‌دهی چیست؟",
+    "چه چیزی بیشتر از همه انگیزه‌ات را برمی‌گرداند؟",
+    "آخرین بار چه زمانی نظرت درباره یک نفر کاملاً عوض شد؟",
+    "کدام نوع شوخی را بیشتر از همه دوست داری؟",
+    "چه چیزی را دوست داری دیگران درباره شخصیتت بهتر درک کنند؟",
+    "در یک اختلاف معمولاً دنبال بردن بحث هستی یا حل کردنش؟",
+    "کدام تصمیم را دوست داشتی زودتر در زندگی بگیری؟",
+    "چه چیزی باعث می‌شود به یک نفر فرصت دوباره بدهی؟",
+    "یک ویژگی شخصیتی که حاضر نیستی به خاطر رابطه یا دوستی از دستش بدهی چیست؟",
+    "کدام نوع پیام از یک دوست می‌تواند فوراً حالت را بهتر کند؟",
+    "چه چیزی در یک گفت‌وگو باعث می‌شود احساس کنی واقعاً شنیده شده‌ای؟",
+    "آخرین چیزی که برایش واقعاً هیجان‌زده شدی چه بود؟",
+    "یک ترس معمولی که دوست داری بر آن غلبه کنی چیست؟",
+    "کدام بخش روزت معمولاً بهترین انرژی را به تو می‌دهد؟",
+    "اگر یک عادت جدید را همین امشب شروع کنی، چه خواهد بود؟",
+    "چه چیزی باعث می‌شود سریع با یک نفر صمیمی‌تر شوی؟",
+    "به نظرت کدام ویژگی تو در اولین برخورد اشتباه برداشت می‌شود؟",
+    "در یک گروه دوست داری بیشتر شنونده باشی یا شروع‌کننده بحث؟",
+    "یک چیزی که این روزها بیشتر از قبل برایت اهمیت پیدا کرده چیست؟",
+    "چه نوع آدمی معمولاً کنجکاویت را بیشتر می‌کند؟",
+    "وقتی کسی از تو انتقاد می‌کند، اول دفاع می‌کنی یا فکر می‌کنی؟",
+    "کدام خاطره ساده هنوز هر بار یادت می‌آید لبخندت را درمی‌آورد؟",
+    "چه چیزی باعث می‌شود یک دوستی را واقعاً ارزشمند بدانی؟",
+    "کدام تصمیم را فقط به خاطر نظر دیگران گرفته‌ای و بعد پشیمان شده‌ای؟",
+    "چه کاری هست که انجامش را مدام عقب می‌اندازی؟",
+    "در یک رابطه دوستانه چه چیزی برایت خط قرمز است؟",
+    "یک چیزی که دوست داری امسال در خودت بهترش کنی چیست؟",
+    "آخرین بار که از کسی صمیمانه عذرخواهی کردی برای چه بود؟",
+    "چه رفتاری سریعاً به تو احساس امنیت می‌دهد؟",
+    "کدام ویژگی تو در فشار و استرس بیشتر خودش را نشان می‌دهد؟",
+    "اگر قرار باشد یکی از توانایی‌هایت را برای همیشه قوی‌تر کنی، کدام را انتخاب می‌کنی؟",
+    "چه چیزی معمولاً تو را به خنده‌ای می‌اندازد که نمی‌توانی کنترلش کنی؟",
+    "در دوستی، وفاداری برایت مهم‌تر است یا صداقت؟ چرا؟",
+    "چه چیزی درباره آینده بیشتر از همه کنجکاوت می‌کند؟",
+    "یک موضوعی که می‌توانی ساعت‌ها درباره‌اش حرف بزنی چیست؟",
+    "چه چیزی باعث می‌شود یک آدم را قابل اعتماد بدانی؟",
+    "کدام ویژگی را در خودت با گذشت زمان بیشتر پذیرفته‌ای؟",
+]
+
+V7_DARE = [
+    "در ده ثانیه یک شعار تبلیغاتی برای نفر سمت راستت بساز.",
+    "برای سه پیام بعدی فقط از جمله‌های پنج‌کلمه‌ای استفاده کن.",
+    "یک تعریف خلاقانه از نفر انتخاب‌شده بگو که از کلمه «خوب» استفاده نکند.",
+    "یک خبر کاملاً ساختگی و بامزه درباره خودت بنویس و جدی اجراش کن.",
+    "در یک پیام، بدون استفاده از حرف «ر»، خودت را معرفی کن.",
+    "سه ایموجی انتخاب کن که حال امشبت را توضیح دهند و معنی هرکدام را بگو.",
+    "یک جمله رسمی را مثل گوینده اخبار با اعتمادبه‌نفس اجرا کن.",
+    "برای گروه یک قانون بامزه و بی‌ضرر برای یک دور پیشنهاد بده.",
+    "یک لقب سینمایی برای خودت بساز و دلیلش را توضیح بده.",
+    "اسم یک فیلم خیالی درباره زندگی امشبت پیشنهاد بده.",
+    "یک جمله را با سه لحن متفاوت بگو: جدی، هیجان‌زده و مرموز.",
+    "بدون گفتن نام یک بازیکن، سه ویژگی مثبتش را طوری بگو که بقیه حدس بزنند.",
+    "یک سؤال عجیب ولی بی‌خطر بساز که باعث خنده گروه شود.",
+    "برای نفر انتخاب‌شده یک شعار قهرمانی کوتاه بنویس.",
+    "یک جمله کاملاً معمولی را مثل دیالوگ فیلم اکشن بنویس.",
+    "تا نوبت بعدی‌ات هر بار که پیام می‌دهی یک ایموجی تصادفی اضافه کن.",
+    "یک خاطره خیلی معمولی را طوری تعریف کن که انگار یک ماجرای بزرگ بوده است.",
+    "یک نام مستعار خلاقانه برای خودت انتخاب کن و تا پایان دور از آن استفاده کن.",
+    "یک پیش‌بینی بامزه درباره نتیجه این بازی بنویس.",
+    "یک جمله مثبت درباره نفر انتخاب‌شده بگو که قبلاً نگفته باشی.",
+    "یک کلمه را در سه جمله پشت‌سرهم با سه معنی متفاوت به کار ببر.",
+    "برای گروه یک مرحله جدید پیشنهاد بده که کمتر از یک دقیقه طول بکشد.",
+    "یک پیام تشویقی یک‌خطی برای بازیکنی که کمترین امتیاز را دارد بنویس.",
+    "یک سناریوی خیلی کوتاه برای یک بازی خیالی با سه نفر بساز.",
+    "در پنج کلمه حال فعلی خودت را توضیح بده.",
+    "یک جمله عاشقانه برای یک شخصیت خیالی بنویس، بدون خطاب به کسی از گروه.",
+    "یک معمای خیلی کوتاه بساز و جوابش را تا پایان دور نگو.",
+    "یک اسم خنده‌دار برای تیم خیالی گروه انتخاب کن.",
+    "به یک اتفاق ساده امشب یک عنوان کاملاً حماسی بده.",
+    "سه گزینه برای «چه کسی...» بساز که همه بتوانند رأی بدهند.",
+    "یک پیام کوتاه بنویس که انگار مدیر یک شرکت بزرگ هستی و گروه را تشویق می‌کنی.",
+    "یک خاطره ساختگی بی‌ضرر تعریف کن و بگذار گروه حدس بزند واقعی نیست.",
+    "با سه ایموجی یک داستان بساز و از بقیه بخواه حدس بزنند.",
+    "یک جمله را برعکس از نظر ترتیب ایده‌ها بنویس و بعد ترجمه‌اش کن.",
+    "برای نفر انتخاب‌شده یک عنوان مثبت و خاص بساز.",
+    "یک پیام تشکر کوتاه و شخصی‌سازی‌شده برای یکی از بازیکنان بنویس.",
+    "یک اسم برای «دور امشب» انتخاب کن و از آن دفاع کن.",
+    "یک سؤال خلاقانه برای شناخت بهتر آدم‌ها مطرح کن.",
+    "سه کار کوچک معرفی کن که معمولاً یک روز بد را بهتر می‌کنند.",
+    "یک جمله معمولی را طوری بنویس که انگار تریلر یک فیلم است.",
+]
+
+V7_MIND = [
+    "اگر مجبور باشی یکی از مهارت‌های اجتماعی را یک‌باره عالی کنی، کدام را انتخاب می‌کنی؟",
+    "کدام مهم‌تر است: حافظه قوی یا تمرکز طولانی؟ دلیل بیاور.",
+    "اگر زمان فقط یک ساعت به عقب برگردد، چه کاری را عوض می‌کنی؟",
+    "چه چیزی معمولاً باعث می‌شود یک تصمیم را خیلی دیر بگیری؟",
+    "اگر بتوانی پاسخ دقیق یک سؤال درباره آینده را بدانی، چه می‌پرسی؟",
+    "به نظرت آدم‌ها بیشتر با انتخاب‌هایشان شناخته می‌شوند یا با واکنش‌هایشان؟",
+    "کدام نوع معما را بیشتر دوست داری: منطقی، کلمه‌ای یا تصویری؟ چرا؟",
+    "اگر یک قانون برای بهتر شدن چت گروه وضع کنی، چه خواهد بود؟",
+    "در یک بازی گروهی، شانس مهم‌تر است یا تصمیم خوب؟",
+    "اگر قرار باشد یک نفر را با سه ویژگی توصیف کنی، چه ویژگی‌هایی بیشترین اطلاعات را می‌دهند؟",
+    "کدام سؤال را باید قبل از شروع یک دوستی از خودمان بپرسیم؟",
+    "چه چیزی باعث می‌شود یک بحث به گفت‌وگوی مفید تبدیل شود؟",
+    "اگر فقط یک شاخص برای سنجش یک تیم داشته باشی، چه چیزی را انتخاب می‌کنی؟",
+    "آیا رأی اکثریت همیشه بهترین تصمیم را می‌سازد؟ یک مثال بزن.",
+    "اگر یک دقیقه فرصت داشته باشی همه گروه را قانع کنی، درباره چه موضوعی حرف می‌زنی؟",
+    "یک تصمیم بگیر که در آن سرعت از دقت مهم‌تر است و توضیح بده.",
+    "چه چیزی بیشتر از همه باعث می‌شود یک ایده در ذهن بماند؟",
+    "اگر یک بازی جدید برای چهار نفر بسازی، قانون اصلی‌اش چیست؟",
+    "به نظرت دروغ کوچک همیشه بدتر از سکوت است؟",
+    "یک موقعیت فرضی بگو که در آن تغییر نظر نشانه قدرت باشد.",
+    "اگر بتوانی فقط یک سؤال از خودت در پنج سال آینده بپرسی، چیست؟",
+    "در یک تیم، رهبر قوی مهم‌تر است یا اعضای هماهنگ؟",
+    "کدام عامل بیشتر روی تصمیم آدم‌ها اثر می‌گذارد: زمان، فشار یا اطلاعات؟",
+    "اگر هیچ‌کس نتواند دروغ بگوید، اولین چیزی که در گروه تغییر می‌کند چیست؟",
+    "یک مسئله روزمره را انتخاب کن و بگو چطور می‌توان آن را ساده‌تر کرد.",
+    "اگر یک قابلیت ذهنی را به‌صورت آپدیت دریافت کنی، چه می‌خواهی؟",
+    "کدام نوع بازخورد بیشتر باعث پیشرفت می‌شود: مستقیم یا نرم؟",
+    "اگر مجبور باشی بین کنجکاوی و آرامش یکی را انتخاب کنی، کدام را انتخاب می‌کنی؟",
+    "چطور می‌شود در یک بازی رقابتی جلوی دعوای واقعی را گرفت؟",
+    "به نظرت قانون بهتر است یا انعطاف؟ یک موقعیت برای هرکدام مثال بزن.",
+    "اگر نقش‌ها در این گروه جابه‌جا شوند، چه کسی رهبر خوبی می‌شود و چرا؟",
+    "کدام ویژگی را برای یک هم‌تیمی خوب مهم‌تر می‌دانی؟",
+    "اگر یک راز را همیشه بتوانی نگه داری، چه ویژگی شخصیتی لازم داری؟",
+    "یک سؤال بگو که پاسخ صادقانه‌اش ممکن است نظر آدم درباره خودش را تغییر دهد.",
+    "در یک تصمیم گروهی، چه زمانی باید به یک نفر اعتماد کرد؟",
+    "اگر یک شب کامل هیچ‌کس اینترنت نداشته باشد، بازی گروهی را چطور ادامه می‌دهی؟",
+    "چه چیزی یک چالش را جذاب می‌کند ولی خسته‌کننده نمی‌کند؟",
+    "چطور می‌توانی یک آدم خجالتی را در یک بازی گروهی راحت‌تر وارد کنی؟",
+    "اگر قرار باشد یک امتیاز جدید به ApexRival اضافه کنی، چه چیزی را اندازه می‌گیری؟",
+]
+
+V7_FLIRTY = [
+    "یک تعریف جذاب ولی محترمانه درباره شخصیت یک نفر بگو، بدون اشاره به ظاهر.",
+    "یک جمله شروع گفت‌وگو برای یک قرار اول بنویس که کلیشه‌ای نباشد.",
+    "به نظرت چه ویژگی‌ای باعث می‌شود یک نفر در گفت‌وگو جذاب‌تر به نظر برسد؟",
+    "یک سؤال رمانتیک کوتاه برای شناخت بهتر یک نفر بساز.",
+    "یک لقب رمانتیک اما بامزه برای یک شخصیت خیالی پیشنهاد کن.",
+    "یک جمله برای دعوت به یک قرار ساده و محترمانه بنویس.",
+    "بین شوخ‌طبعی و اعتمادبه‌نفس، کدام جذاب‌تر است و چرا؟",
+    "یک تعریف بگو که بیشتر روی رفتار یک نفر تمرکز داشته باشد تا ظاهرش.",
+    "یک پیام کوتاه برای شکستن یخ در اولین گفت‌وگو بنویس.",
+    "یک قرار خیالی سه‌مرحله‌ای پیشنهاد بده: شروع، سرگرمی، خداحافظی.",
+    "یک سؤال بامزه بگو که در یک قرار اول می‌تواند گفت‌وگو را باز کند.",
+    "به نظرت چه چیزی یک فلرت را از بی‌احترامی جدا می‌کند؟",
+    "یک جمله رمانتیک بنویس که زیادی جدی یا کلیشه‌ای نباشد.",
+    "یک ویژگی غیرظاهری انتخاب کن که در یک نفر برایت جذاب است و دلیلش را بگو.",
+    "اگر بخواهی یک نفر را با یک فیلم توصیف کنی، چه ژانری انتخاب می‌کنی؟",
+    "یک سؤال بساز که بدون فشار، علاقه دو نفر به هم را مشخص کند.",
+    "یک پیام کوتاه برای دعوت به پیاده‌روی یا قهوه بنویس.",
+    "چه نوع شوخی در شروع آشنایی می‌تواند صمیمیت ایجاد کند؟",
+    "یک جمله بنویس که نشان دهد واقعاً به حرف طرف مقابل توجه کرده‌ای.",
+    "یک تعریف دوخطی بساز که فقط بر انرژی و حضور یک نفر تمرکز داشته باشد.",
+    "اگر یک قرار اول موضوع داشته باشد، چه موضوعی را انتخاب می‌کنی؟",
+    "یک روش محترمانه برای نشان دادن علاقه بدون عجله پیشنهاد بده.",
+    "یک سؤال درباره سبک قرار ایده‌آل یک نفر بنویس.",
+    "کدام رفتار کوچک در یک گفت‌وگو می‌تواند بسیار جذاب باشد؟",
+    "یک پیام کوتاه بساز که پایان یک گفت‌وگوی خوب را زیبا کند.",
+    "یک سناریوی قرار شبانه ولی عمومی و بی‌خطر طراحی کن.",
+    "چه چیزی باعث می‌شود یک تعریف واقعی‌تر از تعریف کلیشه‌ای باشد؟",
+    "یک سؤال صمیمی برای شناخت ارزش‌های رابطه‌ای بنویس.",
+    "یک جمله برای پیشنهاد قرار دوم بنویس که فشار ایجاد نکند.",
+    "یک ویژگی در شخصیت آدم‌ها نام ببر که معمولاً دیرتر دیده می‌شود اما جذاب است.",
+]
+
+V7_SCENARIO = [
+    "اگر دو نفر از گروه بخواهند یک تیم شوند و هیچ‌کدام رهبر نباشند، قانون تصمیم‌گیری‌تان چیست؟",
+    "اگر نوبت تو باشد و دو انتخاب کاملاً جذاب داشته باشی، چه معیار مشترکی برای تصمیم می‌گذاری؟",
+    "اگر یک نفر دیر وارد بازی شود، بهترین راه برای وارد کردن او بدون عقب انداختن همه چیست؟",
+    "اگر دو بازیکن درباره نتیجه یک دور اختلاف داشته باشند، چه راه‌حلی پیشنهاد می‌دهی؟",
+    "اگر قرار باشد امتیازها مخفی بمانند تا پایان بازی، چه فایده‌ای دارد؟",
+    "اگر بتوانی یک قانون از این بازی حذف کنی، کدام قانون را حذف می‌کنی و چرا؟",
+    "اگر تمام گروه فقط پنج دقیقه وقت داشته باشد، کدام حالت بازی را انتخاب می‌کنی؟",
+    "اگر یکی از بازیکنان خیلی کم‌حرف باشد، چطور او را بدون فشار وارد بازی می‌کنی؟",
+    "اگر نقش سرگروه برای یک دور عوض شود، چه چیزی باید همچنان ثابت بماند؟",
+    "اگر یک بازیکن برتری زیادی پیدا کند، چه مکانیزم سالمی برای متعادل کردن بازی پیشنهاد می‌دهی؟",
+    "اگر سه نفر همزمان بخواهند حرف بزنند، قانون چرخش نوبتت چیست؟",
+    "اگر قرار باشد برای این گروه یک شب موضوعی بسازی، موضوعش چیست؟",
+    "اگر بازی امشب فقط یک قانون داشته باشد، آن قانون چیست؟",
+    "اگر یک بازیکن بخواهد از یک چالش رد شود، چه جایگزین منصفانه‌ای می‌دهی؟",
+    "اگر قرار باشد یک مرحله بر اساس اعتماد ساخته شود، چه ساختاری پیشنهاد می‌دهی؟",
+    "اگر پایان بازی به رأی‌گیری وابسته باشد، چطور از رأی‌دادن به خاطر دوستی جلوگیری می‌کنی؟",
+    "اگر یک چالش بیش از حد سخت شد، بهترین واکنش سرگروه چیست؟",
+    "اگر گروه بخواهد یک دست سریع و یک دست طولانی بازی کند، چه چیزی باید تغییر کند؟",
+    "اگر یکی از بازیکنان نخواهد درباره موضوعی شخصی جواب بدهد، چه گزینه‌ای باید داشته باشد؟",
+    "اگر قرار باشد برای یک برنده جایزه غیرمالی بدهی، چه جایزه‌ای انتخاب می‌کنی؟",
+]
+
+# Non-explicit 18+ material: mature, intimate, dating-oriented, consent-aware.
+V7_ADULT = [
+    "۱۸+: در یک رابطه، چه چیزی باعث می‌شود صمیمیت برایت واقعی و راحت باشد؟",
+    "۱۸+: یک مرز شخصی مهم که در رابطه باید از ابتدا روشن شود چیست؟",
+    "۱۸+: چه چیزی در یک گفت‌وگوی صمیمی باعث می‌شود احساس امنیت کنی؟",
+    "۱۸+: بین کشش، اعتماد و صمیمیت، کدام پایه یک رابطه ماندگارتر است؟",
+    "۱۸+: یک ویژگی رفتاری بگو که برایت از ظاهر جذاب‌تر است.",
+    "۱۸+: چه نوع قرار خصوصی یا آرامی را برای یک رابطه تازه ترجیح می‌دهی؟",
+    "۱۸+: یک نشانه سالم بگو که نشان دهد دو نفر برای نزدیک‌تر شدن آماده‌اند.",
+    "۱۸+: به نظرت چگونه می‌شود درباره مرزها بدون خراب کردن فضای صمیمی صحبت کرد؟",
+    "۱۸+: یک سؤال شخصی اما محترمانه بنویس که فقط در صورت رضایت دو طرف پرسیده شود.",
+    "۱۸+: چه چیزی یک گفت‌وگوی رمانتیک را از یک گفت‌وگوی معمولی متفاوت می‌کند؟",
+    "۱۸+: در یک رابطه، کدام نوع توجه بیشتر از هدیه‌ گران ارزش دارد؟",
+    "۱۸+: یک مثال از «نشانه سبز» در ارتباط عاطفی بگو.",
+    "۱۸+: یک «نشانه قرمز» در شروع رابطه که نباید نادیده گرفته شود چیست؟",
+    "۱۸+: اگر قرار باشد درباره صمیمیت یک قانون طلایی داشته باشی، چیست؟",
+    "۱۸+: به نظرت جذابیت بیشتر از ظاهر می‌آید یا از طرز رفتار؟ توضیح بده.",
+    "۱۸+: یک جمله برای شروع گفت‌وگویی درباره انتظارات عاطفی پیشنهاد بده.",
+    "۱۸+: چه چیزی باعث می‌شود یک نفر در قرار اول قابل اعتمادتر به نظر برسد؟",
+    "۱۸+: در یک رابطه، چگونه می‌شود درباره نه گفتن بدون ایجاد احساس گناه صحبت کرد؟",
+    "۱۸+: یک ویژگی از شخصیت خودت بگو که در رابطه دوست داری بیشتر دیده شود.",
+    "۱۸+: چه نوع شوخی رمانتیکی جذاب است ولی به مرز احترام نزدیک نمی‌شود؟",
+    "۱۸+: به نظرت هیجان و امنیت چطور می‌توانند کنار هم در رابطه وجود داشته باشند؟",
+    "۱۸+: یک موقعیت فرضی طراحی کن که در آن دو نفر درباره مرزشان شفاف صحبت می‌کنند.",
+    "۱۸+: چه چیزی باعث می‌شود یک پیام خصوصی جذاب ولی محترمانه باقی بماند؟",
+    "۱۸+: اگر بخواهی جذابیت شخصیتی یک نفر را در سه کلمه توصیف کنی، چه کلماتی را انتخاب می‌کنی؟",
+    "۱۸+: به نظرت گفتگو درباره خواسته‌ها باید زود انجام شود یا بعد از اعتماد؟ چرا؟",
+    "۱۸+: یک پیشنهاد برای قرار دونفره‌ای بده که گفت‌وگو را بیشتر از نمایش تحت‌تأثیر قرار دهد.",
+    "۱۸+: کدام ویژگی در یک نفر باعث می‌شود احساس کنی کنار او می‌توانی خودت باشی؟",
+    "۱۸+: یک سؤال برای فهمیدن سبک ارتباط عاطفی یک نفر بساز.",
+    "۱۸+: در یک رابطه، حریم خصوصی دیجیتال برایت چه معنایی دارد؟",
+    "۱۸+: چگونه می‌شود علاقه را نشان داد بدون اینکه طرف مقابل احساس فشار کند؟",
+    "۱۸+: یک فانتزی رمانتیکِ کاملاً غیرگرافیکی برای یک قرار ایده‌آل تعریف کن.",
+    "۱۸+: چه چیزی یک بغل یا تماس ساده را برای دو نفر معنادارتر می‌کند؟",
+    "۱۸+: به نظرت اعتماد چگونه روی جذابیت اثر می‌گذارد؟",
+    "۱۸+: چه نوع تعریف شخصی را صمیمی می‌دانی و چه نوعی را بیش از حد شخصی؟",
+    "۱۸+: یک سؤال درباره سبک ابراز علاقه بساز.",
+    "۱۸+: اگر دو نفر درباره میزان صمیمیت اختلاف نظر داشته باشند، بهترین راه گفت‌وگو چیست؟",
+    "۱۸+: یک رفتار کوچک بگو که نشان دهد طرف مقابل به مرزها احترام می‌گذارد.",
+    "۱۸+: آیا به نظرت هیجان رابطه باید برنامه‌ریزی شود یا طبیعی شکل بگیرد؟",
+    "۱۸+: یک قرار شبانه آرام و عمومی برای دو نفر طراحی کن.",
+    "۱۸+: به نظرت کدام مهم‌تر است: شیمی لحظه‌ای یا شناخت تدریجی؟",
+    "۱۸+: یک روش برای مطرح کردن موضوعی حساس بدون ایجاد فشار پیشنهاد بده.",
+    "۱۸+: در یک رابطه، درباره چه موضوعی باید زودتر از بقیه شفاف بود؟",
+    "۱۸+: چه چیزی می‌تواند یک گفت‌وگوی خصوصی را از ناراحت‌کننده به امن تبدیل کند؟",
+    "۱۸+: یک سؤال صمیمی ولی غیرگرافیکی بساز که جواب دادنش کاملاً اختیاری باشد.",
+    "۱۸+: اگر قرار باشد یک ویژگی جذاب در خودت را معرفی کنی، چه چیزی را انتخاب می‌کنی؟",
+    "۱۸+: چه چیزی باعث می‌شود علاقه متقابل برایت واقعی‌تر شود؟",
+    "۱۸+: یک جمله کوتاه برای تأکید بر احترام به انتخاب و رضایت طرف مقابل بنویس.",
+    "۱۸+: به نظرت صمیمیت بیشتر با حرف ساخته می‌شود یا با رفتار؟ چرا؟",
+    "۱۸+: یک مثال از گفت‌وگویی بزن که در آن هر دو نفر راحت بتوانند «نه» بگویند.",
+]
+
+V7_PENALTIES = [
+    "☠️ تا نوبت بعدی، هر پیام تو باید با یک ایموجی شروع شود.",
+    "☠️ یک تعریف خلاقانه و واقعی از بازیکنی که انتخاب می‌شود بگو.",
+    "☠️ برای دور بعدی یک شعار خنده‌دار برای گروه بساز و از آن استفاده کن.",
+    "☠️ یک جمله معمولی را مثل گوینده اخبار با لحن خیلی جدی بنویس.",
+    "☠️ یک سؤال جالب درباره یکی از بازیکنان بساز، بدون ورود به حریم شخصی.",
+    "☠️ سه ایموجی انتخاب کن و در یک جمله داستانی معنی‌شان را توضیح بده.",
+    "☠️ یک لقب مثبت برای خودت بساز و تا پایان دور از آن استفاده کن.",
+    "☠️ یک پیام تشویقی برای کم‌امتیازترین بازیکن گروه بنویس.",
+    "☠️ یک جمله را در سه سبک متفاوت بنویس: رسمی، دوستانه و حماسی.",
+    "☠️ یک مرحله کوتاه برای دور بعد طراحی کن که کمتر از یک دقیقه طول بکشد.",
+    "☠️ یک خاطره بی‌خطر و بامزه تعریف کن که بیشتر از دو خط نباشد.",
+    "☠️ یک اسم فیلم خیالی برای بازی امشب انتخاب کن.",
+    "☠️ یک قانون بی‌ضرر و خلاقانه برای یک دور پیشنهاد بده.",
+    "☠️ یک جمله مثبت درباره نفر سمت راستت بگو.",
+    "☠️ یک پیش‌بینی بامزه درباره نفر برنده این دور بنویس.",
+    "☠️ یک سؤال بساز که همه را مجبور کند بین دو گزینه سخت انتخاب کنند.",
+    "☠️ یک جمله کوتاه را با سه ایموجی جایگزین کن و گروه باید حدس بزند.",
+    "☠️ یک معرفی کوتاه از خودت بنویس انگار قهرمان یک بازی ویدیویی هستی.",
+    "☠️ در پاسخ بعدی خودت یک کلمه کاملاً انتخابی را حتماً استفاده کن.",
+    "☠️ یک پیام تشکر به یکی از بازیکنان بابت چیزی که در بازی خوب انجام داده بفرست.",
+]
+
+V7_BANKS_FINAL = {
+    "truth": V7_TRUTH,
+    "dare": V7_DARE,
+    "mind": V7_MIND,
+    "flirty": V7_FLIRTY,
+    "scenario": V7_SCENARIO,
+    "adult": V7_ADULT,
+    "penalty": V7_PENALTIES,
+}
+
+
+def v7_dedupe_bank_map(bank_map: dict[str, list[str]]) -> dict[str, list[str]]:
+    seen: set[str] = set()
+    out: dict[str, list[str]] = {}
+    for key, items in bank_map.items():
+        result = []
+        for raw in items:
+            text = str(raw).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+        out[key] = result
+    return out
+
+
+V7_BANKS_FINAL = v7_dedupe_bank_map(V7_BANKS_FINAL)
+V7_MODE_LABELS = {
+    "truth": "🕵️ اعتراف",
+    "dare": "🔥 جرئت",
+    "mind": "🧠 ذهنی",
+    "flirty": "💘 فلرت",
+    "scenario": "🎭 سناریو",
+    "adult": "🔞 بالغ",
+}
+
+
+def v7_pick(game: dict[str, Any], category: str) -> str:
+    bank = V7_BANKS_FINAL.get(category, [])
+    if not bank:
+        return "برای این حالت هنوز محتوایی ثبت نشده است."
+    # One global history prevents the same exact prompt from repeating across
+    # different modes/topics during the same game.
+    used = set(game.setdefault("v7_used_prompts_global", []))
+    choices = [x for x in bank if x not in used]
+    if not choices:
+        # Only when a category has genuinely been exhausted do we fall back.
+        # The full curated vault is large enough that normal small-group games
+        # will not hit this path.
+        choices = [x for x in bank if x not in used]
+        if not choices:
+            # Do not silently reuse another category's prompt. If the bank is
+            # exhausted, return a clear maintenance message instead.
+            return "🎲 این دسته برای این بازی کاملاً مصرف شده است؛ حالت دیگری را انتخاب کن."
+    item = random.choice(choices)
+    used.add(item)
+    game["v7_used_prompts_global"] = list(used)[-2000:]
+    return item
+
+
+def v7_pick_penalty(game: dict[str, Any]) -> str:
+    bank = V7_BANKS_FINAL.get("penalty", [])
+    used = set(game.setdefault("v7_used_penalties", []))
+    choices = [x for x in bank if x not in used]
+    if not choices:
+        used.clear()
+        choices = list(bank)
+    item = random.choice(choices)
+    used.add(item)
+    game["v7_used_penalties"] = list(used)
+    return item
+
+
+# Make the game's random penalty source use the curated vault.
+def assign_penalty(game: dict[str, Any], uid: int, text: str | None = None, source: str = "بازی") -> dict[str, Any]:
+    uid = int(uid)
+    penalty_text = str(text).strip() if text else v7_pick_penalty(game)
+    deadline = now_ts() + int(get_group(int(game["chat_id"])).get("settings", {}).get("penalty_deadline", 300))
+    item = {
+        "text": penalty_text,
+        "source": source,
+        "created_at": now_ts(),
+        "deadline": deadline,
+        "done": False,
+        "skipped": False,
+        "shielded": False,
+    }
+    game.setdefault("pending_penalties", {})[str(uid)] = item
+    return item
+
+
+# -----------------------------
+# Turn engine
+# -----------------------------
+def v7_seed_turn(game: dict[str, Any]) -> None:
+    players = [int(x) for x in game.get("players", [])]
+    players = list(dict.fromkeys(players))
+    if not players:
+        game["turn_order"] = []
+        game["turn_index"] = 0
+        game["current_questioner"] = None
+        return
+    old_order = [int(x) for x in game.get("turn_order", []) if int(x) in players]
+    # On the first game start, randomize fairly. Later, keep the established rotation.
+    if not old_order or set(old_order) != set(players):
+        random.shuffle(players)
+        game["turn_order"] = players
+        game["turn_index"] = 0
+    idx = int(game.get("turn_index", 0)) % max(1, len(game["turn_order"]))
+    game["current_questioner"] = int(game["turn_order"][idx])
+    game["turn_number"] = max(1, int(game.get("turn_number", 0)))
+
+
+def v7_current_questioner(game: dict[str, Any]) -> int | None:
+    v7_seed_turn(game)
+    val = game.get("current_questioner")
+    return int(val) if val is not None else None
+
+
+def v7_advance_turn(game: dict[str, Any]) -> int | None:
+    order = [int(x) for x in game.get("turn_order", []) if int(x) in {int(p) for p in game.get("players", [])}]
+    if not order:
+        game["current_questioner"] = None
+        return None
+    idx = (int(game.get("turn_index", 0)) + 1) % len(order)
+    game["turn_index"] = idx
+    game["turn_order"] = order
+    game["turn_number"] = int(game.get("turn_number", 0)) + 1
+    game["current_questioner"] = order[idx]
+    game["phase"] = "turn_waiting"
+    touch_game(game)
+    save_data(force=True)
+    return order[idx]
+
+
+def v7_turn_card(game: dict[str, Any]) -> str:
+    q = v7_current_questioner(game)
+    if q is None:
+        return v5_card("🎮 نوبت", "بازیکنی برای نوبت تعیین نشده است.")
+    label = escape(name_of(q, game))
+    turn_no = int(game.get("turn_number", 1))
+    total = len(game.get("players", []))
+    return v5_card(
+        "🎯 نوبت فعلی",
+        f"👑 پرسشگر: <b>{mention_user(q, label)}</b>",
+        f"🔢 نوبت: <b>{turn_no}</b>",
+        f"👥 بازیکنان: <b>{total}</b>",
+        "فقط پرسشگر فعلی می‌تواند موضوع را انتخاب کند.",
+    )
+
+
+def v7_turn_markup(game: dict[str, Any], viewer_uid: int):
+    q = v7_current_questioner(game)
+    if q is None:
+        return v5_markup([v5_nav("V5|GAME")])
+    if int(viewer_uid) == int(q):
+        rows = [
+            [v5_button("🕵️ اعتراف", "V7|MODE|truth"), v5_button("🔥 جرئت", "V7|MODE|dare")],
+            [v5_button("🧠 ذهنی", "V7|MODE|mind"), v5_button("🎭 سناریو", "V7|MODE|scenario")],
+            [v5_button("💘 فلرت", "V7|MODE|flirty"), v5_button("🔞 بالغ", "V7|MODE|adult")],
+            [v5_button("🎲 تغییر نوبت", "V7|SKIP"), v5_button("ℹ️ راهنما", "V7|HELP")],
+            ar7_game_nav("V5|GAME"),
+        ]
+    else:
+        rows = [
+            [v5_button("📊 وضعیت نوبت", "V7|TURN")],
+            [v5_button("☠️ حکم من", "V7|PENALTY"), v5_button("🏆 امتیازها", "V7|SCORES")],
+            [v5_button("ℹ️ راهنما", "V7|HELP")],
+            ar7_game_nav("V5|GAME"),
+        ]
+    return v5_markup(rows)
+
+
+async def v7_turn_screen(query, game):
+    viewer = int(query.from_user.id)
+    game["_viewer_id"] = viewer
+    await safe_edit_query(query, v7_turn_card(game), v7_turn_markup(game, viewer))
+
+
+def v7_target_markup(game: dict[str, Any], mode: str, questioner: int):
+    rows = []
+    eligible = []
+    for p in game.get("players", []):
+        uid = int(p)
+        if uid == int(questioner):
+            continue
+        if mode == "adult" and not get_user(uid).get("adult_ok", False):
+            continue
+        eligible.append(uid)
+    for uid in eligible:
+        label = str(name_of(uid, game))[:22]
+        rows.append([v5_button(f"🎯 {label}", f"V7|TARGET|{mode}|{uid}")])
+    if not rows:
+        if mode == "adult":
+            rows.append([v5_button("🔞 هیچ هدف فعالی نیست", "V7|HELP")])
+        else:
+            rows.append([v5_button("⚠️ بازیکن دیگری نیست", "V7|TURN")])
+    rows.append([v5_button("🔙 موضوعات", "V7|TURN")])
+    rows.append(ar7_game_nav("V5|GAME"))
+    return v5_markup(rows)
+
+
+async def v7_show_targets(query, game, mode: str):
+    questioner = v7_current_questioner(game)
+    if questioner is None:
+        await safe_answer_query(query, "⛔ نوبت هنوز آماده نیست.", True)
+        return
+    if int(query.from_user.id) != int(questioner):
+        await safe_answer_query(query, "👑 فقط پرسشگر فعلی می‌تواند انتخاب کند.", True)
+        return
+    eligible = [int(p) for p in game.get("players", []) if int(p) != int(questioner) and (mode != "adult" or get_user(int(p)).get("adult_ok", False))]
+    mode_label = V7_MODE_LABELS.get(mode, mode)
+    if not eligible:
+        await safe_edit_query(query, v5_card("🎯 انتخاب هدف", f"برای حالت <b>{escape(mode_label)}</b> هنوز هدف واجدشرایطی وجود ندارد."), v5_markup([[v5_button("🔙 نوبت", "V7|TURN")]]))
+        return
+    await safe_edit_query(
+        query,
+        v5_card("🎯 انتخاب هدف", f"حالت انتخاب‌شده: <b>{escape(mode_label)}</b>", "یک نفر را انتخاب کن؛ سؤال برای همان شخص ساخته می‌شود."),
+        v7_target_markup(game, mode, int(questioner)),
+    )
+
+
+async def v7_begin_prompt(query, mode: str, target_uid: int):
+    game = active_game(query.message.chat_id if query.message else 0)
+    if not game or game.get("status") != "active":
+        await safe_answer_query(query, "⛔ بازی فعال نیست.", True)
+        return
+    questioner = v7_current_questioner(game)
+    if questioner is None or int(query.from_user.id) != int(questioner):
+        await safe_answer_query(query, "👑 فقط پرسشگر فعلی.", True)
+        return
+    target_uid = int(target_uid)
+    if target_uid not in {int(p) for p in game.get("players", [])} or target_uid == int(questioner):
+        await safe_answer_query(query, "🎯 این بازیکن در نوبت فعلی قابل انتخاب نیست.", True)
+        return
+    if mode == "adult":
+        if not get_user(int(questioner)).get("adult_ok", False):
+            token = f"V7|18|OK|{mode}"
+            await safe_edit_query(query, v5_card("🔞 ورود به حالت بالغ", "این حالت فقط برای کاربران تأییدشده ۱۸+ باز است."), v5_markup([[v5_button("✅ تأیید ۱۸+", token)], [v5_button("🔙 بازگشت", "V7|TURN")]]))
+            return
+        if not get_user(target_uid).get("adult_ok", False):
+            await safe_answer_query(query, "🔒 این بازیکن هنوز دسترسی ۱۸+ خود را فعال نکرده است.", True)
+            return
+    prompt_text = v7_pick(game, mode)
+    mode_label = V7_MODE_LABELS.get(mode, mode)
+    questioner_tag = mention_user(questioner, name_of(questioner, game))
+    target_tag = mention_user(target_uid, name_of(target_uid, game))
+    display = (
+        f"{v7_mode_icon(mode)} <b>{escape(mode_label)}</b>\n\n"
+        f"🎤 پرسشگر: {questioner_tag}\n"
+        f"🎯 پاسخ‌دهنده: {target_tag}\n\n"
+        f"<blockquote>{escape(prompt_text)}</blockquote>\n"
+        "↩️ <b>پاسخ‌دهنده باید دقیقاً روی همین پیام Reply کند و جوابش را بنویسد.</b>\n"
+        "⏳ این نوبت تا ثبت پاسخ یا پایان زمان باز است."
+    )
+    sent = await query.message.reply_text(display, parse_mode=ParseMode.HTML)
+    game["round"] = int(game.get("round", 0)) + 1
+    game["phase"] = f"question:{mode}"
+    game["reply_prompt"] = {
+        "message_id": int(getattr(sent, "message_id", 0)),
+        "chat_id": int(game.get("chat_id", 0)),
+        "kind": mode,
+        "mode": mode,
+        "target_uid": int(target_uid),
+        "questioner_uid": int(questioner),
+        "any_player": False,
+        "expires": time.time() + 180,
+        "responders": [],
+        "max_replies": 1,
+        "created_at": now_ts(),
+    }
+    game.setdefault("turn_history", []).append({
+        "turn": int(game.get("turn_number", 1)),
+        "questioner": int(questioner),
+        "target": int(target_uid),
+        "mode": mode,
+        "prompt": prompt_text,
+        "ts": now_ts(),
+    })
+    game["turn_history"] = game["turn_history"][-100:]
+    touch_game(game)
+    save_data(force=True)
+    await safe_answer_query(query, "✅ سؤال ساخته شد و برای هدف ارسال شد.")
+
+
+def v7_mode_icon(mode: str) -> str:
+    return {"truth":"🕵️","dare":"🔥","mind":"🧠","scenario":"🎭","flirty":"💘","adult":"🔞"}.get(mode, "🎯")
+
+
+async def v7_handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    msg = update.message
+    if not msg or not msg.reply_to_message or not msg.text:
+        return False
+    if not v7_chat_is_group(update):
+        return False
+    if not await v7_require_started(update):
+        return True
+    game = active_game(int(update.effective_chat.id))
+    if not game or game.get("status") != "active":
+        return False
+    prompt = game.get("reply_prompt")
+    if not isinstance(prompt, dict):
+        return False
+    if int(prompt.get("message_id", -1)) != int(msg.reply_to_message.message_id):
+        return False
+    if time.time() > float(prompt.get("expires", 0)):
+        game.pop("reply_prompt", None)
+        save_data(force=True)
+        await msg.reply_text("⌛ این نوبت تمام شده است؛ نوبت بعدی را از منوی بازی دنبال کنید.")
+        return True
+    uid = int(update.effective_user.id)
+    target = int(prompt.get("target_uid", -1))
+    if uid != target and not is_admin(uid):
+        await msg.reply_text(f"🎯 فعلاً نوبت {mention_user(target, name_of(target, game))} است.")
+        return True
+    # One reply per prompt.
+    if uid in {int(x) for x in prompt.get("responders", [])}:
+        await msg.reply_text("✅ پاسخ تو قبلاً برای این نوبت ثبت شده است.")
+        return True
+    prompt.setdefault("responders", []).append(uid)
+    kind = str(prompt.get("mode") or prompt.get("kind") or "truth")
+    rewards = {"truth": (6, 2), "dare": (7, 3), "mind": (5, 2), "scenario": (6, 2), "flirty": (7, 2), "adult": (8, 3)}
+    xp, coins = rewards.get(kind, (5, 2))
+    reward_player(game, uid, xp, coins, win=True, reason=f"Turn Reply:{kind}")
+    questioner = int(prompt.get("questioner_uid", v7_current_questioner(game) or uid))
+    q_user = get_user(questioner)
+    add_xp(questioner, 2, name_of(questioner, game), 1)
+    game.setdefault("round_scores", {})[str(questioner)] = int(game.setdefault("round_scores", {}).get(str(questioner), 0)) + 2
+    game.pop("reply_prompt", None)
+    next_q = v7_advance_turn(game)
+    save_data(force=True)
+    await msg.reply_text(
+        f"✅ <b>پاسخ ثبت شد!</b>\n\n"
+        f"🎯 {mention_user(uid, name_of(uid, game))} پاسخ نوبت را داد.\n"
+        f"🎤 {mention_user(questioner, q_user.get('name', 'پرسشگر'))}، سؤال شما با موفقیت جواب داده شد.\n"
+        f"🎁 پاسخ‌دهنده: +{xp} XP و +{coins} سکه\n"
+        f"⭐ پرسشگر: +2 XP",
+        parse_mode=ParseMode.HTML,
+    )
+    if next_q is not None:
+        await msg.reply_text(
+            f"🎯 <b>نوبت بعدی</b>\n\nپرسشگر بعدی: {mention_user(next_q, name_of(next_q, game))}\n\n"
+            "فقط همان بازیکن گزینه‌های انتخاب مرحله را دارد.",
+            parse_mode=ParseMode.HTML,
+        )
+    return True
+
+
+# -----------------------------
+# Game help / scores / skip / penalty screens
+# -----------------------------
+def v7_game_help_text(game) -> str:
+    card = v5_card(
+        "ℹ️ چطور بازی کنیم؟",
+        "۱) نوبت فعلی یک نفر مشخص می‌شود.",
+        "۲) همان نفر یک حالت را انتخاب می‌کند.",
+        "۳) سپس یک بازیکن از لیست انتخاب می‌کند.",
+        "۴) ربات سؤال را کاملاً تصادفی می‌سازد.",
+        "۵) هدف باید با Reply به همان پیام جواب بدهد.",
+        "۶) بعد از ثبت جواب، نوبت به نفر بعد می‌رسد.",
+        "🔞 حالت بالغ همیشه موجود است اما برای هر دو طرف تأیید ۱۸+ لازم دارد.",
+        "☠️ حکم‌ها نیز کاملاً تصادفی هستند و از داخل منو انتخاب نمی‌شوند.",
+    )
+    return f"{v5_breadcrumb('بازی','راهنما')}\n\n{card}"
+
+
+async def v7_show_scores(query, game):
+    rows = []
+    entries = []
+    for uid in game.get("players", []):
+        score = int(game.get("round_scores", {}).get(str(uid), 0))
+        entries.append((score, int(uid)))
+    entries.sort(key=lambda x: (-x[0], name_of(x[1], game)))
+    for i, (score, uid) in enumerate(entries, 1):
+        rows.append(f"<b>{i}</b> · {mention_user(uid, name_of(uid, game))} · ⭐ {score}")
+    await safe_edit_query(query, f"{v5_breadcrumb('بازی','امتیازها')}\n\n{v5_card('🏆 Leaderboard', *(rows or ['هنوز امتیازی ثبت نشده.']))}", v5_markup([[v5_button("↻ تازه‌سازی", "V7|SCORES"), v5_button("🔙 نوبت", "V7|TURN")]]))
+
+
+async def v7_skip_turn(query, game):
+    current = v7_current_questioner(game)
+    if current is None or int(query.from_user.id) != int(current):
+        await safe_answer_query(query, "👑 فقط پرسشگر فعلی می‌تواند نوبت را رد کند.", True)
+        return
+    game.pop("reply_prompt", None)
+    nxt = v7_advance_turn(game)
+    save_data(force=True)
+    if nxt is None:
+        await safe_edit_query(query, "✅ نوبت رد شد و بازیکن دیگری برای ادامه وجود ندارد.", v5_markup(v5_nav("V5|GAME")))
+        return
+    await safe_edit_query(query, v7_turn_card(game), v7_turn_markup(game, int(nxt)))
+    await query.message.reply_text(f"🎲 نوبت تغییر کرد. اکنون نوبت {mention_user(nxt, name_of(nxt, game))} است.", parse_mode=ParseMode.HTML)
+
+
+async def v7_show_penalty(query, game):
+    uid = int(query.from_user.id)
+    p = game.get("pending_penalties", {}).get(str(uid))
+    if not p or p.get("done") or p.get("skipped"):
+        await safe_edit_query(query, v5_card("☠️ حکم من", "فعلاً حکم فعالی نداری."), v5_markup([[v5_button("🔙 بازی", "V5|GAME")]]))
+        return
+    await safe_edit_query(query, penalty_text(game, uid) + "\n\n↩️ برای تکمیل، همین پیام را Reply کن.", v5_markup([[v5_button("🔙 بازی", "V5|GAME")]]))
+
+
+# -----------------------------
+# Lobby start override: mandatory private start + initialize turns
+# -----------------------------
+async def v7_start_lobby(query, game):
+    uid = int(query.from_user.id)
+    if not await v7_require_started(query):
+        return
+    if not leader_of(game, uid) and not is_admin(uid):
+        await safe_answer_query(query, "👑 فقط سرگروه می‌تواند بازی را شروع کند.", True)
+        return
+    if len(game.get("players", [])) < int(game.get("settings", {}).get("min_players", 2)):
+        await safe_answer_query(query, f"⏳ حداقل {game.get('settings', {}).get('min_players', 2)} بازیکن لازم است.", True)
+        return
+    game["status"] = "active"
+    game["phase"] = "turn_waiting"
+    game["started_at"] = now_ts()
+    game["round"] = 0
+    game["turn_number"] = 1
+    game.pop("reply_prompt", None)
+    v7_seed_turn(game)
+    for p in game.get("players", []):
+        get_user(int(p))["games"] = int(get_user(int(p)).get("games", 0)) + 1
+    audit("v7_start_game", uid, int(game["chat_id"]), str(game["id"]))
+    save_data(force=True)
+    await safe_edit_query(query, v7_turn_card(game), v7_turn_markup(game, int(game["current_questioner"])))
+    await query.message.reply_text(
+        f"🎮 <b>ApexRival شروع شد!</b>\n\nنوبت اول: {mention_user(int(game['current_questioner']), name_of(int(game['current_questioner']), game))}\n\n"
+        "او موضوع را انتخاب می‌کند، بعد یک نفر را برای پاسخ انتخاب می‌کند.",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+# -----------------------------
+# Group command and callback gate wrappers
+# -----------------------------
+_original_v5_create_lobby_v7 = v5_create_lobby
+
+async def v5_create_lobby(update, context):
+    if not await v7_require_started(update):
+        return
+    return await _original_v5_create_lobby_v7(update, context)
+
+
+async def v7_mode_callback(query, context, mode: str):
+    game = active_game(int(query.message.chat_id)) if query.message else None
+    if not game or game.get("status") != "active":
+        await safe_answer_query(query, "⛔ بازی فعالی نیست.", True)
+        return
+    uid = int(query.from_user.id)
+    if not await v7_require_started(query):
+        return
+    current = v7_current_questioner(game)
+    if current is None or uid != int(current):
+        await safe_answer_query(query, "🎤 فقط پرسشگر فعلی می‌تواند موضوع را انتخاب کند.", True)
+        return
+    if mode == "adult" and not get_user(uid).get("adult_ok", False):
+        await safe_edit_query(query, v5_card("🔞 تأیید لازم", "برای حالت بالغ، ابتدا دسترسی ۱۸+ خودت را تأیید کن."), v5_markup([[v5_button("✅ تأیید ۱۸+", "V7|18|OK|adult")], [v5_button("🔙 نوبت", "V7|TURN")]]))
+        return
+    await v7_show_targets(query, game, mode)
+
+
+async def v7_callback(update, context):
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    if v7_chat_is_group(update) and not await v7_require_started(update):
+        return
+    data = str(query.data)
+    if not data.startswith("V7|"):
+        return
+    uid = int(query.from_user.id)
+    try:
+        await safe_answer_query(query)
+        parts = data.split("|")
+        action = parts[1] if len(parts) > 1 else ""
+        if action == "18":
+            if len(parts) < 3 or parts[2] != "OK":
+                return
+            if not v7_chat_is_group(update):
+                await safe_answer_query(query, "این تأیید باید از داخل بازی گروه انجام شود.", True)
+                return
+            get_user(uid)["adult_ok"] = True
+            audit("v7_adult_confirm", uid, int(query.message.chat_id), "always_on_non_explicit")
+            save_data(force=True)
+            mode = parts[3] if len(parts) > 3 else "adult"
+            game = active_game(int(query.message.chat_id))
+            if game and v7_current_questioner(game) == uid:
+                await v7_show_targets(query, game, mode)
+            else:
+                await safe_edit_query(query, v5_card("🔞 ۱۸+", "✅ دسترسی تو فعال شد.", "حالا می‌توانی حالت بالغ را انتخاب کنی."), v5_markup([[v5_button("🎮 بازی", "V5|GAME")]]))
+            return
+        if action == "MODE":
+            await v7_mode_callback(query, context, parts[2] if len(parts) > 2 else "truth")
+            return
+        if action == "TARGET":
+            if len(parts) < 4:
+                return
+            mode = parts[2]
+            target = int(parts[3])
+            await v7_begin_prompt(query, mode, target)
+            return
+        if action == "TURN":
+            game = active_game(int(query.message.chat_id)) if query.message else None
+            if not game:
+                await safe_answer_query(query, "⛔ بازی فعال نیست.", True); return
+            await v7_turn_screen(query, game)
+            return
+        if action == "SKIP":
+            game = active_game(int(query.message.chat_id)) if query.message else None
+            if not game:
+                await safe_answer_query(query, "⛔ بازی فعال نیست.", True); return
+            await v7_skip_turn(query, game)
+            return
+        if action == "HELP":
+            game = active_game(int(query.message.chat_id)) if query.message else None
+            if not game:
+                await safe_answer_query(query, "⛔ بازی فعال نیست.", True); return
+            await safe_edit_query(query, v7_game_help_text(game), v5_markup(ar7_game_nav("V7|TURN")))
+            return
+        if action == "SCORES":
+            game = active_game(int(query.message.chat_id)) if query.message else None
+            if not game:
+                return
+            await v7_show_scores(query, game)
+            return
+        if action == "PENALTY":
+            game = active_game(int(query.message.chat_id)) if query.message else None
+            if not game:
+                return
+            await v7_show_penalty(query, game)
+            return
+    except Exception as exc:
+        audit("v7_callback_error", uid, int(query.message.chat_id) if query.message else None, repr(exc))
+        await safe_answer_query(query, "⚠️ این عملیات انجام نشد. دوباره امتحان کن.", True)
+
+
+# -----------------------------
+# Final V5 callback: gate group use + route V7 + legacy menus
+# -----------------------------
+_original_v5_callback_v7 = v5_callback
+
+async def v5_callback(update, context):
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if data.startswith("V7|"):
+        await v7_callback(update, context)
+        return
+    if v7_chat_is_group(update) and not await v7_require_started(update):
+        return
+    # Handle the legacy lobby start button explicitly so turn engine always starts.
+    if data.startswith("V5|L|S|"):
+        parts = data.split("|")
+        token = parts[3] if len(parts) > 3 else ""
+        game = DATA.get("games", {}).get(token)
+        if not game:
+            await safe_answer_query(query, "⛔ Lobby پیدا نشد.", True)
+            return
+        await v7_start_lobby(query, game)
+        return
+    # The legacy lobby join remains, but every user is already checked by the gate above.
+    await _original_v5_callback_v7(update, context)
+
+
+# -----------------------------
+# Final text router: reply engine first + strict group start gate
+# -----------------------------
+_original_v5_text_router_v7 = v5_text_router
+
+async def v5_text_router(update, context):
+    if v7_chat_is_group(update) and not await v7_require_started(update):
+        return
+    try:
+        if await v7_handle_reply(update, context):
+            return
+    except Exception as exc:
+        audit("v7_reply_error", int(update.effective_user.id), int(update.effective_chat.id), repr(exc))
+        if update.message:
+            await update.message.reply_text("⚠️ پاسخ دریافت شد اما این مرحله یک خطای داخلی داشت؛ بازی ادامه دارد.")
+            return
+    await _original_v5_text_router_v7(update, context)
+
+
+# -----------------------------
+# Final game home and menu: current-turn experience
+# -----------------------------
+def v7_game_home_markup(game):
+    uid = int(game.get("_viewer_id", 0) or 0)
+    return v5_markup([
+        [v5_button("🎯 نوبت من / نوبت فعلی", "V7|TURN"), v5_button("🏆 امتیازها", "V7|SCORES")],
+        [v5_button("☠️ حکم من", "V7|PENALTY"), v5_button("ℹ️ راهنمای بازی", "V7|HELP")],
+        ar7_game_nav("V5|HOME"),
+    ])
+
+
+def v7_game_home_text(game):
+    q = v7_current_questioner(game)
+    q_line = mention_user(q, name_of(q, game)) if q is not None else "نامشخص"
+    card = v5_card(
+        "🎮 بازی در حال اجرا",
+        f"👥 بازیکنان: <b>{len(game.get('players', []))}</b>",
+        f"🔢 دور: <b>{int(game.get('round', 0))}</b>",
+        f"🎤 پرسشگر فعلی: <b>{q_line}</b>",
+        "🔞 حالت بالغ: همیشه موجود؛ محتوای بالغِ غیرگرافیکی و اختیاری",
+    )
+    return f"{v5_breadcrumb('بازی','ApexRival')}\n\n{card}\n\nهر نوبت به‌صورت چرخشی جلو می‌رود و پاسخ باید با Reply ثبت شود."
+
+
+v5_game_home_markup = v7_game_home_markup
+v5_game_home_text = v7_game_home_text
+
+
+# -----------------------------
+# Final admin panel — compact, complete, and every section has a submenu/help
+# -----------------------------
+def v7_admin_home_markup():
+    return v5_markup([
+        [v5_button("📊 داشبورد", "V7|A|D"), v5_button("👥 کاربران", "V7|A|U")],
+        [v5_button("🌐 گروه‌ها", "V7|A|G"), v5_button("🎮 بازی‌ها", "V7|A|P")],
+        [v5_button("📝 محتوا", "V7|A|C"), v5_button("🛒 اقتصاد", "V7|A|E")],
+        [v5_button("⚙️ تنظیمات", "V7|A|T"), v5_button("🛡 امنیت", "V7|A|S")],
+        [v5_button("💾 بکاپ", "V7|A|B"), v5_button("📜 لاگ‌ها", "V7|A|L")],
+        [v5_button("✍️ ویرایشگر", "V7|A|Z"), v5_button("🧰 ابزارها", "V7|A|X")],
+        [v5_button("ℹ️ راهنمای ادمین", "V7|A|H")],
+        [v5_button("✕ بستن", "V5|CLOSE")],
+    ])
+
+
+def v7_admin_home_text():
+    users = len(DATA.get("users", {}))
+    groups = len(DATA.get("groups", {}))
+    active = sum(1 for g in DATA.get("groups", {}).values() if g.get("active_game"))
+    lobbies = sum(1 for g in DATA.get("games", {}).values() if g.get("status") == "lobby")
+    content_total = sum(len(v) for v in V7_BANKS_FINAL.values())
+    card = v5_card(
+        "👑 SUPER ADMIN",
+        f"👥 کاربران: <b>{users}</b>",
+        f"🌐 گروه‌ها: <b>{groups}</b>",
+        f"🎮 بازی فعال: <b>{active}</b>",
+        f"🟡 Lobby: <b>{lobbies}</b>",
+        f"🧩 بانک پاسخ‌ها: <b>{content_total}</b>",
+        "🔞 حالت بالغ: همیشه موجود، با تأیید فردی و غیرگرافیکی",
+    )
+    return f"{v5_breadcrumb('مدیریت','مرکز فرماندهی')}\n\n{card}\n\nهر قسمت فقط ابزارهای مرتبط خودش را نشان می‌دهد."
+
+
+async def v7_admin_home(query):
+    await safe_edit_query(query, v7_admin_home_text(), v7_admin_home_markup())
+
+
+def v7_admin_section_markup(section):
+    nav = lambda: [v5_button("🔙 پنل اصلی", "V7|A|HOME")]
+    if section == "U":
+        return v5_markup([
+            [v5_button("🔎 جست‌وجوی کاربر", "V7|A|US"), v5_button("🏆 فهرست کاربران", "V7|A|UL")],
+            [v5_button("🚫 محدودشده‌ها", "V7|A|UB"), v5_button("✍️ ویرایشگر کاربر", "V7|A|UE")],
+            [v5_button("ℹ️ راهنمای کاربران", "V7|A|UH")],
+            nav(),
+        ])
+    if section == "G":
+        return v5_markup([
+            [v5_button("📋 فهرست گروه‌ها", "V7|A|GL"), v5_button("🎮 بازی‌های گروه", "V7|A|GP")],
+            [v5_button("⚙️ ویرایش گروه", "V7|A|GR"), v5_button("🎛 امکانات", "V7|A|GF")],
+            [v5_button("ℹ️ راهنمای گروه", "V7|A|GH")],
+            nav(),
+        ])
+    if section == "P":
+        return v5_markup([
+            [v5_button("🟢 بازی‌های فعال", "V7|A|PL"), v5_button("🧭 بررسی بازی", "V7|A|PI")],
+            [v5_button("🛑 پایان همه", "V7|A|PE")],
+            [v5_button("ℹ️ راهنمای بازی‌ها", "V7|A|PH")],
+            nav(),
+        ])
+    if section == "C":
+        rows = []
+        cats = [("truth","🕵️ اعتراف"),("dare","🔥 جرئت"),("mind","🧠 ذهنی"),("scenario","🎭 سناریو"),("flirty","💘 فلرت"),("adult","🔞 بالغ"),("penalty","☠️ حکم"),("boss","👑 Boss")]
+        for i in range(0, len(cats), 2):
+            row = [v5_button(cats[i][1], f"V7|A|CL|{cats[i][0]}")]
+            if i + 1 < len(cats): row.append(v5_button(cats[i+1][1], f"V7|A|CL|{cats[i+1][0]}"))
+            rows.append(row)
+        rows += [[v5_button("➕ افزودن", "V7|A|CA"), v5_button("🧹 پاکسازی", "V7|A|CC")], [v5_button("ℹ️ راهنمای محتوا", "V7|A|CH")], nav()]
+        return v5_markup(rows)
+    if section == "E":
+        return v5_markup([
+            [v5_button("🛒 آیتم‌ها", "V7|A|EI"), v5_button("📈 XP", "V7|A|EX")],
+            [v5_button("💰 سکه", "V7|A|EC"), v5_button("🏆 آمار اقتصاد", "V7|A|ES")],
+            [v5_button("ℹ️ راهنمای اقتصاد", "V7|A|EH")], nav(),
+        ])
+    if section == "T":
+        return v5_markup([
+            [v5_button("🌍 تنظیمات اصلی", "V7|A|TS"), v5_button("🔞 بالغ", "V7|A|TA")],
+            [v5_button("🏅 عنوان‌ها", "V7|A|TT"), v5_button("🏆 دستاوردها", "V7|A|ACH")],
+            [v5_button("ℹ️ راهنمای تنظیمات", "V7|A|TH")], nav(),
+        ])
+    if section == "S":
+        return v5_markup([
+            [v5_button("🚫 محدودشده‌ها", "V7|A|UB"), v5_button("🩺 سلامت", "V7|A|SH")],
+            [v5_button("🧹 پاکسازی", "V7|A|SC")],
+            [v5_button("ℹ️ راهنمای امنیت", "V7|A|SHL")], nav(),
+        ])
+    if section == "B":
+        return v5_markup([
+            [v5_button("📦 ساخت بکاپ", "V7|A|BM"), v5_button("📋 بکاپ‌ها", "V7|A|BL")],
+            [v5_button("♻️ بازیابی", "V7|A|BR"), v5_button("🗑 حذف بکاپ", "V7|A|BD")],
+            [v5_button("ℹ️ راهنمای بکاپ", "V7|A|BH")], nav(),
+        ])
+    if section == "L":
+        return v5_markup([
+            [v5_button("🧾 Audit", "V7|A|LL"), v5_button("📣 Broadcast", "V7|A|LB")],
+            [v5_button("🧹 پاک‌کردن لاگ", "V7|A|LC")],
+            [v5_button("ℹ️ راهنمای لاگ", "V7|A|LH")], nav(),
+        ])
+    if section == "Z":
+        return v5_markup([
+            [v5_button("👤 User", "V7|A|ZU"), v5_button("🌐 Group", "V7|A|ZG")],
+            [v5_button("🎮 Game", "V7|A|ZP"), v5_button("⚙️ Settings", "V7|A|ZS")],
+            [v5_button("📘 فرمت‌ها", "V7|A|ZH")], nav(),
+        ])
+    if section == "X":
+        return v5_markup([
+            [v5_button("💾 ذخیره فوری", "V7|A|XS"), v5_button("🩺 سلامت", "V7|A|SH")],
+            [v5_button("🧹 پاکسازی", "V7|A|XC"), v5_button("📤 خروجی", "V7|A|XD")],
+            [v5_button("🔢 شمارنده‌ها", "V7|A|XN"), v5_button("📣 Broadcast", "V7|A|XB")],
+            nav(),
+        ])
+    return v5_markup([nav()])
+
+
+def v7_admin_section_text(section):
+    titles = {"U":"👥 کاربران","G":"🌐 گروه‌ها","P":"🎮 بازی‌ها","C":"📝 محتوا","E":"🛒 اقتصاد","T":"⚙️ تنظیمات","S":"🛡 امنیت","B":"💾 بکاپ","L":"📜 لاگ‌ها","Z":"✍️ ویرایشگر","X":"🧰 ابزارها"}
+    return f"{v5_breadcrumb('مدیریت', titles.get(section, 'مدیریت'))}\n\n{v5_card(titles.get(section, 'مدیریت'), 'این بخش یک هدف مشخص دارد و هر ابزار زیرمجموعه خودش را در همین صفحه ارائه می‌کند.')}"
+
+
+async def v7_admin_section(query, section):
+    await safe_edit_query(query, v7_admin_section_text(section), v7_admin_section_markup(section))
+
+
+async def v7_admin_action(update_or_query, context, parts):
+    query = update_or_query
+    uid = int(query.from_user.id)
+    if not is_admin(uid):
+        await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+        return
+    action = parts[2] if len(parts) > 2 else "HOME"
+    section_map = {"U","G","P","C","E","T","S","B","L","Z","X"}
+    if action == "D":
+        total_xp = sum(int(u.get("xp", 0)) for u in DATA.get("users", {}).values())
+        total_coins = sum(int(u.get("coins", 0)) for u in DATA.get("users", {}).values())
+        active = sum(1 for g in DATA.get("groups", {}).values() if g.get("active_game"))
+        lobbies = sum(1 for g in DATA.get("games", {}).values() if g.get("status") == "lobby")
+        card = v5_card("📊 داشبورد", f"👥 کاربران: <b>{len(DATA.get('users', {}))}</b>", f"🌐 گروه‌ها: <b>{len(DATA.get('groups', {}))}</b>", f"🎮 بازی فعال: <b>{active}</b>", f"🟡 Lobby: <b>{lobbies}</b>", f"⭐ XP کل: <b>{total_xp}</b>", f"💰 سکه کل: <b>{total_coins}</b>")
+        await safe_edit_query(query, f"{v5_breadcrumb('مدیریت','داشبورد')}\n\n{card}", v5_markup([[v5_button("↻ تازه‌سازی", "V7|A|D"), v5_button("ℹ️ راهنما", "V7|A|H")], *v5_nav("V7|A|HOME")]))
+        return
+    if action == "V5ADMIN":
+        await v7_admin_home(query); return
+    if action == "HOME":
+        await v7_admin_home(query); return
+    if action in section_map and len(parts) == 3:
+        await v7_admin_section(query, action); return
+    if action == "H":
+        body = v5_card("ℹ️ راهنمای Super Admin", "👥 کاربران = حساب‌ها و ویرایش آنها", "🌐 گروه‌ها = تنظیمات و امکانات هر گروه", "🎮 بازی‌ها = نظارت روی بازی‌های زنده", "📝 محتوا = افزودن/ویرایش/غیرفعال‌سازی", "✍️ ویرایشگر = تغییر مستقیم مسیرهای داده", "💾 بکاپ = ساخت، حذف و Restore", "🛡 امنیت = Ban، سلامت و پاکسازی")
+        await safe_edit_query(query, body, v5_markup(v5_nav("V7|A|HOME"))); return
+    help_pages = {
+        "UH": ("👥 راهنمای کاربران", "جست‌وجو، مشاهده پروفایل، محدودسازی، ویرایش XP/سکه و ورود به ویرایشگر کامل."),
+        "GH": ("🌐 راهنمای گروه‌ها", "از اینجا وضعیت گروه، ظرفیت، امکانات بازی و ویرایش داده‌های گروه را کنترل کن."),
+        "PH": ("🎮 راهنمای بازی‌ها", "بازی‌های زنده را ببین، وضعیتشان را بررسی کن، دور را جلو ببر یا در صورت نیاز پایان بده."),
+        "CH": ("📝 راهنمای محتوا", "محتوا به‌صورت تصادفی انتخاب می‌شود؛ می‌توانی دسته‌ها را ببینی، اضافه کنی، ویرایش کنی یا غیرفعال کنی."),
+        "EH": ("🛒 راهنمای اقتصاد", "قیمت آیتم‌ها، ضرایب XP/سکه و وضعیت اقتصاد را از همین بخش کنترل کن."),
+        "TH": ("⚙️ راهنمای تنظیمات", "سقف بازیکنان، ضرایب، عنوان‌ها، دستاوردها و پیش‌فرض‌های سیستم در این بخش مدیریت می‌شوند."),
+        "SHL": ("🛡 راهنمای امنیت", "Ban، سلامت داده، پاکسازی و کنترل‌های حساس اینجا قرار دارند."),
+        "BH": ("💾 راهنمای بکاپ", "قبل از تغییرات مهم بکاپ بگیر؛ Restore جای داده فعلی را با نسخه بکاپ عوض می‌کند و با تأیید دومرحله‌ای انجام می‌شود."),
+        "LH": ("📜 راهنمای لاگ", "Audit تغییرات مدیریتی را ثبت می‌کند و Broadcast نیز گزارش ارسال خود را دارد."),
+    }
+    if action in help_pages:
+        title, desc = help_pages[action]
+        await safe_edit_query(query, v5_card(title, desc, "برای بازگشت از دکمه 🔙 استفاده کن."), v5_markup(v5_nav(f"V7|A|{action[0]}")))
+        return
+    if action == "TA":
+        await safe_edit_query(query, v5_card("🔞 ۱۸+", "🟢 همیشه در ApexRival قابل مشاهده است.", "👤 هر کاربر باید خودش دسترسی ۱۸+ را تأیید کند.", "🎯 برای انتخاب هدفِ حالت بالغ، هر دو نفر باید دسترسی را فعال کرده باشند.", "محتوای این نسخه بالغ و صمیمی اما غیرگرافیکی است."), v5_markup([[v5_button("📝 مدیریت محتوای بالغ", "V7|A|CL|adult"), v5_button("ℹ️ راهنما", "V7|A|TH")], *v5_nav("V7|A|T")]))
+        return
+    if action == "PI":
+        V5_FLOW[uid] = {"type":"admin_game_search"}
+        await safe_edit_query(query, v5_card("🧭 بررسی بازی", "Game ID را در پیام بعدی بفرست."), v5_markup([[v5_button("❌ لغو", "V7|A|FC")], *v7_admin_home_markup() .inline_keyboard[-2:]]))
+        return
+    # User section
+    if action in {"US","UL","UB","UE"}:
+        if action == "US":
+            V5_FLOW[uid] = {"type":"v7_admin_user_search"}
+            await safe_edit_query(query, v5_card("🔎 جست‌وجوی کاربر", "User ID عددی را در پیام بعدی بفرست."), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+        if action == "UL":
+            await v7_admin_user_list(query, int(parts[3]) if len(parts)>3 else 0); return
+        if action == "UB":
+            banned = [(k,u) for k,u in DATA.get("users",{}).items() if u.get("banned")]
+            body = v5_card("🚫 محدودشده‌ها", *(f"<code>{k}</code> · {escape(str(u.get('name','کاربر')))}" for k,u in banned[:30]) or ["لیست خالی است."])
+            await safe_edit_query(query, body, v5_markup(v7_admin_user_nav())); return
+        if action == "UE":
+            V5_FLOW[uid] = {"type":"v7_admin_user_edit_target"}
+            await safe_edit_query(query, v5_card("✍️ ویرایشگر کاربر", "User ID را در پیام بعدی بفرست."), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+    if action == "UD":
+        await ar6_user_detail(query, int(parts[3])); return
+    if action == "SET" and len(parts) >= 6:
+        scope, ident, field = parts[3], parts[4], parts[5]
+        V5_FLOW[uid] = {"type":"set_field","scope":scope,"ident":ident,"field":field}
+        obj = ar6_edit_target(scope, ident)
+        current = obj.get(field) if isinstance(obj, dict) else None
+        await safe_edit_query(query, v5_card("✏️ ویرایش مقدار", f"مسیر: <code>{escape(field)}</code>", f"مقدار فعلی: <b>{escape(str(current))}</b>", "مقدار جدید را در پیام بعدی بفرست."), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+    # Group section
+    if action == "PL":
+        await v5_admin_games(query); return
+    if action == "PE":
+        token=v5_confirmation(uid,"end_all_games","all")
+        await safe_edit_query(query,v5_card("⚠️ پایان همه بازی‌ها","تمام Lobbyها و بازی‌های فعال بسته می‌شوند."),ar6_confirm_markup(f"V7|A|PEY|{token}","V7|A|P")); return
+    if action == "PEY":
+        info=v5_get_confirmation(uid,parts[3] if len(parts)>3 else "","end_all_games")
+        if not info:
+            await safe_answer_query(query,"تأیید منقضی شده است.",True); return
+        count=0
+        for game in DATA.get("games",{}).values():
+            if game.get("status") in ("active","lobby"):
+                end_game(game,"پایان توسط Super Admin"); count += 1
+        save_data(force=True)
+        await safe_edit_query(query,v5_card("🛑 پایان بازی‌ها",f"<b>{count}</b> بازی بسته شد."),v5_markup(v5_nav("V7|A|P"))); return
+    if action == "SC":
+        await advanced_cleanup_job(context)
+        await safe_edit_query(query,v5_card("🧹 پاکسازی", "بازی‌های قدیمی و وضعیت‌های منقضی‌شده بررسی و پاکسازی شدند."),v5_markup(v5_nav("V7|A|S"))); return
+    if action == "CADD":
+        key=parts[3] if len(parts)>3 else "truth"
+        V5_FLOW[uid]={"type":"content_add","key":key}
+        await safe_edit_query(query,v5_card("➕ افزودن محتوا",f"دسته: <b>{escape(CONTENT_LABELS.get(key,key))}</b>","متن جدید را در پیام بعدی بفرست."),v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+    if action in {"GL","GP","GR","GF","GEN","GAD","GMAX","GMIN","FT","GDET","GE","GEY"}:
+        if action == "GL":
+            await v7_admin_group_list(query, int(parts[3]) if len(parts)>3 else 0); return
+        if action == "GP":
+            await v5_admin_games(query); return
+        if action == "GR":
+            V5_FLOW[uid] = {"type":"raw_target","scope":"group"}
+            await safe_edit_query(query, v5_card("⚡ ویرایش مستقیم گروه", "Chat ID را بفرست؛ سپس path=value."), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+        if action == "GF":
+            V5_FLOW[uid] = {"type":"v7_feature_target"}
+            await safe_edit_query(query, v5_card("🎛 امکانات گروه", "Chat ID را در پیام بعدی بفرست."), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+        if action in {"GDET","GEN","GAD","GMAX","GMIN","FT","GE","GEY"}:
+            # Translate directly to the battle-tested AR6 handlers.
+            translated = ["V5","A",action,*parts[3:]]
+            await _ar7_previous_admin_action(query, context, translated)
+            return
+    # Content
+    if action == "CA":
+        await v7_content_add_menu(query); return
+    if action == "CL":
+        key = parts[3] if len(parts)>3 else "truth"
+        body, markup = ar6_content_page(key, 0)
+        await safe_edit_query(query, body, markup); return
+    if action == "CC":
+        DATA["global_content_disabled"] = {}
+        DATA["global_content_overrides"] = {}
+        save_data(force=True)
+        await v7_admin_section(query, "C"); return
+    # Economy / settings / security / backups / logs / tools
+    if action in {"EI","EX","EC","ES"}:
+        translated = ["V5","A",action,*parts[3:]]
+        await _ar7_previous_admin_action(query, context, translated); return
+    if action in {"TS","TA","TT","ACH","AHE","ST","TR"}:
+        translated = ["V5","A",action,*parts[3:]]
+        await _ar7_previous_admin_action(query, context, translated); return
+    if action in {"BM","BL","BD","BDY","BDYY","BR","BRY"}:
+        translated = ["V5","A",action,*parts[3:]]
+        await _ar7_previous_admin_action(query, context, translated); return
+    if action in {"LL","LB","LC","LCY"}:
+        translated = ["V5","A",action,*parts[3:]]
+        await _ar7_previous_admin_action(query, context, translated); return
+    if action in {"XS","XC","XN","XD","XB","SH"}:
+        translated = ["V5","A",action,*parts[3:]]
+        await _ar7_previous_admin_action(query, context, translated); return
+    if action == "FC":
+        V5_FLOW.pop(uid, None)
+        await v7_admin_home(query); return
+    if action == "ZU":
+        V5_FLOW[uid] = {"type":"raw_target","scope":"user"}
+        await safe_edit_query(query, v5_card("👤 User Editor", "User ID را بفرست؛ سپس path=value."), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+    if action == "ZG":
+        V5_FLOW[uid] = {"type":"raw_target","scope":"group"}
+        await safe_edit_query(query, v5_card("🌐 Group Editor", "Chat ID را بفرست؛ سپس path=value."), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+    if action == "ZP":
+        V5_FLOW[uid] = {"type":"raw_target","scope":"game"}
+        await safe_edit_query(query, v5_card("🎮 Game Editor", "Game ID را بفرست؛ سپس path=value."), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+    if action == "ZS":
+        V5_FLOW[uid] = {"type":"raw_edit","scope":"settings","ident":"0"}
+        await safe_edit_query(query, v5_card("⚙️ Settings Editor", "مثال: <code>max_players_default=40</code>", "حذف: <code>DELETE key</code>"), v5_markup([[v5_button("❌ لغو","V7|A|FC")]])); return
+    if action == "ZH":
+        body = v5_card("📘 فرمت ویرایشگر", "<code>xp=500</code>", "<code>inventory.shield=10</code>", "<code>adult_ok=true</code>", "<code>DELETE stats.truth</code>", "<code>settings.penalty_deadline=600</code>")
+        await safe_edit_query(query, body, v5_markup(v5_nav("V7|A|Z"))); return
+    await safe_answer_query(query, "این بخش هنوز عملیاتی تعریف نشده است.", True)
+
+
+def v7_admin_user_nav():
+    return [v5_button("🔙 کاربران", "V7|A|U")]
+
+
+async def v7_admin_user_list(query, page=0):
+    items = sort_users_by_xp()
+    page = max(0, int(page)); chunk = 7; start = page*chunk
+    current = items[start:start+chunk]
+    rows=[]; lines=[]
+    for i,(uid_s,u) in enumerate(current,start=start+1):
+        uid=int(uid_s); flag="🚫" if u.get("banned") else "🟢"
+        lines.append(f"{flag} <b>{i:02d}</b> · {escape(str(u.get('name','کاربر')))} · ⭐ {int(u.get('xp',0))} · 💰 {int(u.get('coins',0))}")
+        rows.append([v5_button(f"👤 {str(u.get('name','کاربر'))[:18]}", f"V7|A|UD|{uid}")])
+    nav=[]
+    if page>0: nav.append(v5_button("◀️",f"V7|A|UL|{page-1}"))
+    if start+chunk<len(items): nav.append(v5_button("▶️",f"V7|A|UL|{page+1}"))
+    if nav: rows.append(nav)
+    rows.append([v5_button("↻",f"V7|A|UL|{page}")]); rows.append(v7_admin_user_nav())
+    await safe_edit_query(query, f"{v5_breadcrumb('مدیریت','کاربران')}\n\n{v5_card('👥 User Directory',*(lines or ['هیچ کاربری ثبت نشده است.']))}", v5_markup(rows))
+
+
+async def v7_content_add_menu(query):
+    cats=[("truth","🕵️"),("dare","🔥"),("mind","🧠"),("scenario","🎭"),("flirty","💘"),("adult","🔞"),("penalty","☠️")]
+    rows=[]
+    for i in range(0,len(cats),2):
+        row=[v5_button(cats[i][1],f"V7|A|CADD|{cats[i][0]}")]
+        if i+1<len(cats): row.append(v5_button(cats[i+1][1],f"V7|A|CADD|{cats[i+1][0]}"))
+        rows.append(row)
+    rows.append(v5_nav("V7|A|C"))
+    await safe_edit_query(query,v5_card("➕ افزودن محتوا","دسته را انتخاب کن؛ متن بعدی همان‌جا ذخیره می‌شود."),v5_markup(rows))
+
+
+# -----------------------------
+# V7 admin callback wrapper
+# -----------------------------
+async def v7_admin_callback(query, context, parts):
+    await v7_admin_action(query, context, parts)
+
+
+# -----------------------------
+# Final callback dispatcher
+# -----------------------------
+_original_v5_callback_v7b = v5_callback
+
+async def v5_callback(update, context):
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if data.startswith("V7|"):
+        if data.startswith("V7|A|"):
+            if v7_chat_is_group(update) and not await v7_require_started(update):
+                return
+            await v7_admin_action(query, context, data.split("|"))
+            return
+        if data.startswith("V7|"):
+            await v7_callback(update, context)
+            return
+    if v7_chat_is_group(update) and not await v7_require_started(update):
+        return
+    if data.startswith("V5|L|S|"):
+        parts=data.split("|")
+        token=parts[3] if len(parts)>3 else ""
+        game=DATA.get("games",{}).get(token)
+        if not game:
+            await safe_answer_query(query,"⛔ Lobby پیدا نشد.",True); return
+        await v7_start_lobby(query,game); return
+    await _original_v5_callback_v7b(update, context)
+
+
+# -----------------------------
+# Final text flow for V7 admin input
+# -----------------------------
+_previous_text_for_v7_admin = v5_text_router
+
+async def v5_text_router(update, context):
+    if v7_chat_is_group(update) and not await v7_require_started(update):
+        return
+    if update.message and update.message.text and is_admin(update.effective_user.id):
+        uid=int(update.effective_user.id); text=update.message.text.strip(); flow=V5_FLOW.get(uid)
+        if flow:
+            if text in ("لغو","❌ لغو"):
+                V5_FLOW.pop(uid,None); await update.message.reply_text("✅ عملیات لغو شد."); return
+            ftype=flow.get("type")
+            if ftype == "v7_admin_user_search":
+                V5_FLOW.pop(uid,None)
+                if text.isdigit():
+                    await ar6_user_detail_for_message_v7(update, context, int(text)); return
+                await update.message.reply_text("🆔 User ID باید عددی باشد."); return
+            if ftype == "v7_admin_user_edit_target":
+                if not text.isdigit():
+                    await update.message.reply_text("🆔 User ID باید عددی باشد."); return
+                V5_FLOW.pop(uid,None)
+                await ar6_user_detail_for_message_v7(update, context, int(text)); return
+            if ftype == "v7_feature_target":
+                if not text.lstrip('-').isdigit():
+                    await update.message.reply_text("🆔 Chat ID باید عددی باشد."); return
+                V5_FLOW.pop(uid,None)
+                cid=int(text)
+                await update.message.reply_text(v5_card("🎛 امکانات گروه",f"گروه <code>{cid}</code>","هر گزینه را برای روشن/خاموش کردن همان قابلیت بزن."),parse_mode=ParseMode.HTML,reply_markup=ar7_feature_rows(cid))
+                return
+            if ftype == "admin_game_search":
+                if not text:
+                    await update.message.reply_text("🆔 Game ID را بفرست."); return
+                V5_FLOW.pop(uid,None)
+                game=next((g for g in DATA.get('games',{}).values() if str(g.get('id','')).startswith(text)),None)
+                if not game:
+                    await update.message.reply_text("❌ بازی پیدا نشد."); return
+                gid=str(game.get('id'))
+                await update.message.reply_text(v5_card('🎮 بازی',f'ID: <code>{escape(gid)}</code>',f'گروه: <code>{game.get("chat_id")}</code>',f'وضعیت: <b>{escape(str(game.get("status","-")))}</b>',f'فاز: <b>{escape(str(game.get("phase","-")))}</b>',f'بازیکنان: <b>{len(game.get("players",[]))}</b>'),parse_mode=ParseMode.HTML,reply_markup=v5_markup([[v5_button("🎮 باز کردن",f"V7|A|GP|{gid[:18]}"),v5_button("🔙 بازی‌ها","V7|A|P")]]))
+                return
+    try:
+        if await v7_handle_reply(update, context):
+            return
+    except Exception as exc:
+        audit("v7_reply_router_error", int(update.effective_user.id), int(update.effective_chat.id), repr(exc))
+        await update.message.reply_text("⚠️ پاسخ ثبت شد اما مشکلی در مرحله بعدی رخ داد.")
+        return
+    await _previous_text_for_v7_admin(update, context)
+
+
+async def ar6_user_detail_for_message_v7(update, context, uid):
+    if int(uid) not in {int(x) for x in DATA.get("users",{}).keys() if str(x).lstrip('-').isdigit()}:
+        await update.message.reply_text("❌ کاربری با این ID ثبت نشده است.")
+        return
+    await update.message.reply_text(ar6_user_card(int(uid)), parse_mode=ParseMode.HTML, reply_markup=v5_markup([
+        [v5_button("✍️ باز کردن ویرایش", f"V7|A|UD|{int(uid)}")],
+        [v5_button("🔙 کاربران", "V7|A|U")],
+    ]))
+
+
+# -----------------------------
+# Final runtime self-check
+# -----------------------------
+def v7_runtime_self_check() -> None:
+    v7_bank_seen=set()
+    for key, bank in V7_BANKS_FINAL.items():
+        cleaned=[str(x).strip() for x in bank if str(x).strip()]
+        assert len(cleaned)==len(set(cleaned)), f"duplicate in {key}"
+        for item in cleaned:
+            assert item not in v7_bank_seen, f"cross-bank duplicate: {item}"
+            v7_bank_seen.add(item)
+    # Every admin section has at least one action plus navigation/help.
+    for sec in ("U","G","P","C","E","T","S","B","L","Z","X"):
+        markup=v7_admin_section_markup(sec)
+        rows=getattr(markup,"inline_keyboard",[])
+        assert rows, f"empty admin section {sec}"
+        assert any(getattr(b,"callback_data","") for row in rows for b in row), f"no callbacks in {sec}"
+    # Main turn markup must be non-empty and all callbacks stay under 64 bytes.
+    fake_game={"players":[1,2,3],"turn_order":[1,2,3],"turn_index":0,"current_questioner":1,"turn_number":1,"round_scores":{}}
+    for markup in (v7_turn_markup(fake_game,1),v7_target_markup(fake_game,"truth",1),v7_admin_home_markup()):
+        for row in getattr(markup,"inline_keyboard",[]):
+            for b in row:
+                data=getattr(b,"callback_data",None)
+                if data is not None:
+                    assert len(str(data).encode("utf-8")) <= 64, data
+    # Visual safety: no wide old frame markers.
+    sample=v5_card("Test","👥 3","⭐ 12","💰 5")
+    assert "╭━━" not in sample and "╰━━━━━━━━" not in sample
+    assert callable(start_health_server)
+    assert callable(v5_callback)
+    assert callable(v5_text_router)
+    print(f"ApexRival V7 self-check OK | banks={sum(len(v) for v in V7_BANKS_FINAL.values())} | started-gate=on | turn-engine=on")
+
+
+v7_runtime_self_check()
+
+# Rebind final handlers so the runtime cannot accidentally register a stale callback layer.
+def _register_v5_handlers(app):
+    app.add_handler(CommandHandler('start', v7_start))
+    app.add_handler(CommandHandler('game', v5_create_lobby))
+    app.add_handler(CommandHandler('menu', v5_menu))
+    app.add_handler(CommandHandler('profile', v5_profile_message))
+    app.add_handler(CommandHandler('rank', v5_rank_message))
+    app.add_handler(CommandHandler('shop', shop_cmd))
+    app.add_handler(CommandHandler('achievements', achievements_cmd))
+    app.add_handler(CommandHandler('help', v5_help_message))
+    app.add_handler(CommandHandler('id', id_cmd))
+    app.add_handler(CommandHandler('admin', v5_admin_cmd))
+    app.add_handler(CommandHandler('adult', adult_cmd))
+    app.add_handler(CallbackQueryHandler(v5_callback, pattern=r'^(V5\||V7\|)'))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, v5_text_router))
+
+
+# Final admin command uses the V7 shell.
+async def v5_admin_cmd(update, context):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("🚫 فقط Super Admin.")
+        return
+    await update.message.reply_text(v7_admin_home_text(), parse_mode=ParseMode.HTML, reply_markup=v7_admin_home_markup())
+
+
+# Final main stays the existing Render-safe main, but it now resolves the latest
+# handler registry and latest callbacks at runtime.
 
 if __name__ == '__main__':
-    main()
+    main_v5()
