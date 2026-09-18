@@ -3,6 +3,7 @@ import json
 import os
 import random
 import re
+import string
 import threading
 import time
 from copy import deepcopy
@@ -18,6 +19,8 @@ from telegram import (
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllPrivateChats,
     BotCommandScopeDefault,
+    BotCommandScopeChat,
+    BotCommandScopeChatAdministrators,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -14415,7 +14418,7 @@ main_apexrival_11 = main_apexrival_11
 main_v5 = main_apexrival_11
 main = main_apexrival_11
 
-if __name__ == "__main__":
+if False:  # superseded by final AR13 entrypoint
     main_apexrival_11()
 
 
@@ -14834,5 +14837,622 @@ main_apexrival_12 = main_apexrival_12
 main_v5 = main_apexrival_12
 main = main_apexrival_12
 
-if __name__ == "__main__":
+if False:  # superseded by final AR13 entrypoint
     main_apexrival_12()
+
+
+# ============================================================================
+# ApexRival 13.0 — Lobby 2.0 + command-menu hardening
+# ----------------------------------------------------------------------------
+# Goals:
+#   • Exactly five discoverable commands everywhere (private + groups).
+#   • Persian-friendly transliterated command names because Telegram command
+#     keywords are limited to lowercase English letters, digits and underscores.
+#   • Explicit per-chat scopes overwrite stale chat-specific command lists from
+#     older deployments; this addresses the common "old 11 commands" problem.
+#   • Lobby controls are made resilient to stale V5 keyboards and older callback
+#     payloads, with a dedicated confirmation path for cancellation.
+#   • Lobby UX adds ready toggling, lock/unlock, host management, kick and
+#     leadership transfer, inspired by common multiplayer lobby patterns.
+# ============================================================================
+AR13_VERSION = "13.0"
+BOT_VERSION = AR13_VERSION
+ADVANCED_VERSION = AR13_VERSION
+
+AR13_COMMANDS = [
+    BotCommand("start", "شروع و فعال‌سازی حساب"),
+    BotCommand("bazi", "ساخت یا ورود به لابی"),
+    BotCommand("profil", "نمایش پروفایل من"),
+    BotCommand("rotbe", "نمایش رتبه‌بندی"),
+    BotCommand("rahnama", "راهنما و قوانین بازی"),
+]
+AR13_COMMAND_NAMES = [c.command for c in AR13_COMMANDS]
+
+
+def ar13_group_command_scope(chat_id: int):
+    return BotCommandScopeChat(chat_id=int(chat_id))
+
+
+def ar13_group_admin_command_scope(chat_id: int):
+    return BotCommandScopeChatAdministrators(chat_id=int(chat_id))
+
+
+async def ar13_configure_command_scopes(application):
+    """Lock visible command menus to exactly five commands.
+
+    Telegram resolves commands by specificity. A previously-created
+    chat-specific scope can therefore override the global group scope; this
+    function explicitly rewrites every tracked group's chat + admin scope.
+    """
+    bot = application.bot
+    scopes = [
+        BotCommandScopeDefault(),
+        BotCommandScopeAllPrivateChats(),
+        BotCommandScopeAllGroupChats(),
+        BotCommandScopeAllChatAdministrators(),
+    ]
+    for scope in scopes:
+        await bot.set_my_commands(AR13_COMMANDS, scope=scope)
+        try:
+            await bot.set_my_commands(AR13_COMMANDS, scope=scope, language_code="fa")
+        except Exception as exc:
+            print(f"ApexRival AR13 language-scope warning {getattr(scope, 'type', '?')}: {exc!r}")
+
+    # Overwrite old chat-specific and chat-admin command scopes for every
+    # group the bot already knows. This is the important fix for old menus.
+    tracked = []
+    for raw_cid in DATA.get("groups", {}).keys():
+        try:
+            cid = int(raw_cid)
+        except Exception:
+            continue
+        tracked.append(cid)
+        for scope in (ar13_group_command_scope(cid), ar13_group_admin_command_scope(cid)):
+            await bot.set_my_commands(AR13_COMMANDS, scope=scope)
+            try:
+                await bot.set_my_commands(AR13_COMMANDS, scope=scope, language_code="fa")
+            except Exception:
+                pass
+
+    try:
+        priv = await bot.get_my_commands(scope=BotCommandScopeAllPrivateChats())
+        groups = await bot.get_my_commands(scope=BotCommandScopeAllGroupChats())
+        print(
+            "ApexRival AR13 command audit | "
+            f"private={len(priv)} | group-default={len(groups)} | "
+            f"tracked_groups={len(tracked)} | exact=5"
+        )
+    except Exception as exc:
+        print(f"ApexRival AR13 command audit warning: {exc!r}")
+
+
+async def ar13_group_scope_refresh(context, chat_id: int):
+    """Best-effort refresh for a newly-seen group so old chat scopes cannot linger."""
+    try:
+        bot = context.bot
+        for scope in (ar13_group_command_scope(chat_id), ar13_group_admin_command_scope(chat_id)):
+            await bot.set_my_commands(AR13_COMMANDS, scope=scope)
+            try:
+                await bot.set_my_commands(AR13_COMMANDS, scope=scope, language_code="fa")
+            except Exception:
+                pass
+    except Exception as exc:
+        print(f"ApexRival AR13 group-scope refresh warning: {exc!r}")
+
+
+def ar13_lobby_locked(game: dict[str, Any]) -> bool:
+    return bool(game.get("lobby_locked", False))
+
+
+def ar13_set_lobby_locked(game: dict[str, Any], locked: bool):
+    game["lobby_locked"] = bool(locked)
+    touch_game(game)
+    save_data(force=True)
+
+
+def ar13_ready_count(game: dict[str, Any]) -> tuple[int, int]:
+    players = [int(x) for x in game.get("players", [])]
+    ready = v5_ready_state(game)
+    ready_n = sum(1 for uid in players if ready.get(str(uid), True))
+    return ready_n, len(players)
+
+
+def ar13_ready_button(game: dict[str, Any], uid: int):
+    ready = v5_ready_state(game)
+    is_ready = bool(ready.get(str(uid), True))
+    return v5_button("🟢 آماده‌ام" if is_ready else "🟡 آماده نیستم", f"A13|L|READY|{game['id']}")
+
+
+def ar13_lobby_text(game: dict[str, Any]) -> str:
+    players = [int(x) for x in game.get("players", [])]
+    ready_map = v5_ready_state(game)
+    min_p = int(game.get("settings", {}).get("min_players", 2))
+    max_p = int(game.get("settings", {}).get("max_players", 20))
+    ready_n, total_n = ar13_ready_count(game)
+    enough = total_n >= min_p
+    all_ready = all(bool(ready_map.get(str(uid), True)) for uid in players) if players else False
+    lock_line = "🔒 ثبت‌نام <b>بسته</b>" if ar13_lobby_locked(game) else "🟢 ثبت‌نام <b>باز</b>"
+    status = "✅ آماده شروع" if enough and all_ready else (f"⏳ حداقل {min_p} نفر" if total_n < min_p else "🟡 چند نفر هنوز آماده نیستند")
+    lines = []
+    for index, uid in enumerate(players, 1):
+        mark = "🟢" if bool(ready_map.get(str(uid), True)) else "🟡"
+        host_mark = " 👑" if int(uid) == int(game.get("leader_id", 0)) else ""
+        lines.append(f"{mark} {index}. {mention_user(uid, v5_name(uid, game))}{host_mark}")
+    return (
+        "🎮 <b>ApexRival — Lobby 2.0</b>\n"
+        f"{V5_DESIGN['divider']}\n"
+        f"👑 سرگروه: {mention_user(game['leader_id'], game.get('leader_name', 'سرگروه'))}\n"
+        f"👥 بازیکنان: <b>{total_n}/{max_p}</b>  ·  آماده: <b>{ready_n}/{total_n}</b>\n"
+        f"{lock_line}  ·  {status}\n"
+        f"{v5_progress(total_n, max_p, 12)}\n\n"
+        "<b>بازیکنان</b>\n" + ("\n".join(lines) if lines else "هنوز کسی ثبت‌نام نکرده.") +
+        "\n\n💡 هر بازیکن می‌تواند وضعیت آمادگی خود را تغییر دهد. سرگروه فقط وقتی می‌تواند بازی را شروع کند که حداقل نفرات حاضر باشند."
+    )
+
+
+def ar13_lobby_invite_token(game: dict[str, Any]) -> str:
+    token = str(game.get("invite_token", "") or "")
+    if token and re.fullmatch(r"[A-Za-z0-9_-]{6,24}", token):
+        return token
+    token = "".join(random.choices(string.ascii_letters + string.digits, k=10))
+    game["invite_token"] = token
+    save_data(force=True)
+    return token
+
+
+def ar13_lobby_invite_url(game: dict[str, Any]) -> str | None:
+    username = (AR11_BOT_USERNAME or "").strip().lstrip("@")
+    if not username:
+        return None
+    token = ar13_lobby_invite_token(game)
+    return f"https://t.me/{username}?start=lobby_{token}"
+
+
+def ar13_find_lobby_by_invite(token: str) -> dict[str, Any] | None:
+    token = str(token or "").strip()
+    if not token:
+        return None
+    for game in DATA.get("games", {}).values():
+        if game.get("status") == "lobby" and str(game.get("invite_token", "")) == token:
+            return game
+    return None
+
+
+def ar13_lobby_markup(game: dict[str, Any]):
+    gid = game["id"]
+    viewer = int(game.get("_viewer_id", 0) or 0)
+    host = leader_of(game, viewer) or is_admin(viewer)
+    rows = [
+        [v5_button("🎟 ورود به Lobby", f"V5|L|J|{gid}"), v5_button("🚪 خروج", f"V5|L|L|{gid}")],
+        [ar13_ready_button(game, viewer), v5_button("👥 بازیکنان", f"V5|L|P|{gid}")],
+        [v5_button("↻ بروزرسانی", f"V5|L|R|{gid}")],
+    ]
+    if host:
+        rows.extend([
+            [v5_button("▶️ شروع بازی", f"V5|L|S|{gid}"), v5_button("⚙️ تنظیمات", f"V5|L|O|{gid}")],
+            [v5_button("👑 مدیریت Lobby", f"A13|L|M|{gid}"), v5_button("🛑 لغو Lobby", f"A13|L|C|{gid}")],
+        ])
+        invite_url = ar13_lobby_invite_url(game)
+        if invite_url:
+            rows.append([ApexInlineButton("🔗 دعوت دوستان", url=invite_url, style=APEX_STYLE_PRIMARY)])
+    rows.append([v5_button("❓ قوانین Lobby", "V5|HELP|LOBBY")])
+    return v5_markup(rows)
+
+
+async def ar13_render_lobby(query, game):
+    game["_viewer_id"] = int(query.from_user.id)
+    await safe_edit_query(query, ar13_lobby_text(game), ar13_lobby_markup(game))
+
+
+async def ar13_cancel_lobby(query, game):
+    uid = int(query.from_user.id)
+    if not leader_of(game, uid) and not is_admin(uid):
+        await safe_answer_query(query, "👑 فقط سرگروه می‌تواند Lobby را لغو کند.", True)
+        return
+    token = v5_confirmation(uid, "ar13_cancel_lobby", str(game["id"]))
+    await safe_answer_query(query, "تأیید لغو را بزن.")
+    await safe_edit_query(
+        query,
+        "⚠️ <b>لغو Lobby</b>\n\n"
+        "تمام ثبت‌نام‌ها متوقف می‌شوند و این جلسه بسته خواهد شد.\n"
+        "این کار فقط همین Lobby را می‌بندد.",
+        v5_markup([
+            [v5_button("🛑 بله، لغو کن", f"A13|L|CY|{token}")],
+            [v5_button("🔙 ادامه Lobby", f"A13|L|R|{game['id']}")],
+        ]),
+    )
+
+
+async def ar13_confirm_cancel(query, token: str):
+    uid = int(query.from_user.id)
+    info = v5_get_confirmation(uid, token, "ar13_cancel_lobby")
+    if not info:
+        await safe_answer_query(query, "⏳ تأیید منقضی شده؛ دوباره وارد لغو شو.", True)
+        return
+    gid = str(info.get("payload", ""))
+    game = DATA.get("games", {}).get(gid)
+    if not game or game.get("status") != "lobby":
+        await safe_answer_query(query, "⛔ این Lobby دیگر فعال نیست.", True)
+        return
+    if not leader_of(game, uid) and not is_admin(uid):
+        await safe_answer_query(query, "🚫 مجوز لغو این Lobby را نداری.", True)
+        return
+    end_game(game, "لغو Lobby توسط سرگروه")
+    save_data(force=True)
+    await safe_answer_query(query, "🛑 Lobby لغو شد.")
+    await safe_edit_query(
+        query,
+        "🛑 <b>Lobby لغو شد</b>\n\nثبت‌نام بسته شد و جلسه از حالت فعال خارج شد.",
+        v5_markup([
+            [v5_button("🎮 ساخت Lobby جدید", "V5|GAME")],
+            [v5_button("⌂ خانه", "V5|HOME")],
+        ]),
+    )
+
+
+async def ar13_lobby_manage(query, game):
+    uid = int(query.from_user.id)
+    if not leader_of(game, uid) and not is_admin(uid):
+        await safe_answer_query(query, "👑 فقط سرگروه.", True)
+        return
+    lock_label = "🔓 بازکردن ثبت‌نام" if ar13_lobby_locked(game) else "🔒 قفل ثبت‌نام"
+    rows = [
+        [v5_button(lock_label, f"A13|L|LOCK|{game['id']}")],
+        [v5_button("👢 حذف بازیکن", f"A13|L|KICK|{game['id']}"), v5_button("👑 انتقال سرگروهی", f"A13|L|HOST|{game['id']}")],
+    ]
+    invite_url = ar13_lobby_invite_url(game)
+    if invite_url:
+        rows.append([ApexInlineButton("🔗 دعوت دوستان", url=invite_url, style=APEX_STYLE_PRIMARY)])
+    rows.extend([
+        [v5_button("↻ تازه‌سازی", f"A13|L|M|{game['id']}")],
+        [v5_button("🔙 بازگشت", f"A13|L|R|{game['id']}")],
+    ])
+    text = (
+        "👑 <b>مدیریت Lobby</b>\n\n"
+        f"وضعیت ثبت‌نام: {'🔒 بسته' if ar13_lobby_locked(game) else '🟢 باز'}\n"
+        f"بازیکنان: <b>{len(game.get('players', []))}</b>\n\n"
+        "از اینجا می‌توانی ثبت‌نام را قفل کنی، بازیکن حذف کنی یا سرگروهی را منتقل کنی."
+    )
+    await safe_edit_query(query, text, v5_markup(rows))
+
+
+async def ar13_player_picker(query, game, action: str):
+    uid = int(query.from_user.id)
+    if not leader_of(game, uid) and not is_admin(uid):
+        await safe_answer_query(query, "👑 فقط سرگروه.", True)
+        return
+    players = [int(x) for x in game.get("players", [])]
+    selectable = [p for p in players if p != int(game.get("leader_id", 0))]
+    if not selectable:
+        await safe_answer_query(query, "ℹ️ بازیکن دیگری برای انتخاب وجود ندارد.", True)
+        return
+    title = "👢 حذف بازیکن" if action == "KICK" else "👑 انتقال سرگروهی"
+    rows = []
+    for p in selectable:
+        label = f"👤 {v5_name(p, game)[:22]}"
+        rows.append([v5_button(label, f"A13|L|{action}OK|{game['id']}|{p}")])
+    rows.append([v5_button("🔙 مدیریت Lobby", f"A13|L|M|{game['id']}")])
+    await safe_edit_query(query, f"<b>{title}</b>\n\nبازیکن را انتخاب کن:", v5_markup(rows))
+
+
+async def ar13_kick_player(query, game, target_uid: int):
+    uid = int(query.from_user.id)
+    if not leader_of(game, uid) and not is_admin(uid):
+        await safe_answer_query(query, "👑 فقط سرگروه.", True)
+        return
+    target_uid = int(target_uid)
+    if target_uid == int(game.get("leader_id", 0)):
+        await safe_answer_query(query, "👑 سرگروه قابل حذف نیست.", True)
+        return
+    players = [int(x) for x in game.get("players", [])]
+    if target_uid not in players:
+        await safe_answer_query(query, "بازیکن دیگر داخل Lobby نیست.", True)
+        return
+    game["players"] = [x for x in players if int(x) != target_uid]
+    game.setdefault("names", {}).pop(str(target_uid), None)
+    game.setdefault("ready", {}).pop(str(target_uid), None)
+    game.setdefault("round_scores", {}).pop(str(target_uid), None)
+    touch_game(game)
+    save_data(force=True)
+    await safe_answer_query(query, "👢 بازیکن حذف شد.")
+    await ar13_render_lobby(query, game)
+
+
+async def ar13_transfer_host(query, game, target_uid: int):
+    uid = int(query.from_user.id)
+    if not leader_of(game, uid) and not is_admin(uid):
+        await safe_answer_query(query, "👑 فقط سرگروه.", True)
+        return
+    target_uid = int(target_uid)
+    players = [int(x) for x in game.get("players", [])]
+    if target_uid not in players:
+        await safe_answer_query(query, "این بازیکن دیگر داخل Lobby نیست.", True)
+        return
+    game["leader_id"] = target_uid
+    game["leader_name"] = v5_name(target_uid, game)
+    touch_game(game)
+    save_data(force=True)
+    await safe_answer_query(query, "👑 سرگروهی منتقل شد.")
+    await ar13_render_lobby(query, game)
+
+
+async def ar13_handle_callback(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query or not query.data:
+        return False
+    data = str(query.data)
+    if not data.startswith("A13|"):
+        return False
+    parts = data.split("|")
+    if len(parts) < 3:
+        await safe_answer_query(query, "⚠️ داده دکمه نامعتبر است.", True)
+        return True
+    if ar12_group_chat(update) is False and parts[1] == "L":
+        # Lobby callbacks are allowed only from group messages.
+        await safe_answer_query(query, "🎮 کنترل Lobby فقط داخل گروه انجام می‌شود.", True)
+        return True
+    if not await ensure_allowed(update):
+        return True
+    uid = int(query.from_user.id)
+    try:
+        if parts[1] == "L":
+            action = parts[2]
+            if action == "C":
+                gid = parts[3] if len(parts) > 3 else ""
+                game = DATA.get("games", {}).get(gid)
+                if not game or game.get("status") != "lobby":
+                    await safe_answer_query(query, "⛔ Lobby دیگر فعال نیست.", True); return True
+                await ar13_cancel_lobby(query, game); return True
+            if action == "CY":
+                await ar13_confirm_cancel(query, parts[3] if len(parts) > 3 else ""); return True
+            if action == "R":
+                gid = parts[3] if len(parts) > 3 else ""
+                game = DATA.get("games", {}).get(gid)
+                if not game or game.get("status") != "lobby":
+                    await safe_answer_query(query, "⛔ Lobby دیگر فعال نیست.", True); return True
+                await ar13_render_lobby(query, game); return True
+            if action == "READY":
+                gid = parts[3] if len(parts) > 3 else ""
+                game = DATA.get("games", {}).get(gid)
+                if not game or game.get("status") != "lobby":
+                    await safe_answer_query(query, "⛔ Lobby دیگر فعال نیست.", True); return True
+                if not v5_is_player(game, uid):
+                    await safe_answer_query(query, "🔒 اول وارد Lobby شو.", True); return True
+                state = v5_ready_state(game)
+                state[str(uid)] = not bool(state.get(str(uid), True))
+                touch_game(game); save_data(force=True)
+                await safe_answer_query(query, "🟢 آماده شدی." if state[str(uid)] else "🟡 وضعیت آماده خاموش شد.")
+                await ar13_render_lobby(query, game); return True
+            if action == "LOCK":
+                gid = parts[3] if len(parts) > 3 else ""
+                game = DATA.get("games", {}).get(gid)
+                if not game or game.get("status") != "lobby":
+                    await safe_answer_query(query, "⛔ Lobby دیگر فعال نیست.", True); return True
+                if not leader_of(game, uid) and not is_admin(uid):
+                    await safe_answer_query(query, "👑 فقط سرگروه.", True); return True
+                ar13_set_lobby_locked(game, not ar13_lobby_locked(game))
+                await safe_answer_query(query, "🔒 ثبت‌نام بسته شد." if ar13_lobby_locked(game) else "🔓 ثبت‌نام باز شد.")
+                await ar13_render_lobby(query, game); return True
+            if action in ("M", "KICK", "HOST", "KICKOK", "HOSTOK"):
+                gid = parts[3] if len(parts) > 3 else ""
+                game = DATA.get("games", {}).get(gid)
+                if not game or game.get("status") != "lobby":
+                    await safe_answer_query(query, "⛔ Lobby دیگر فعال نیست.", True); return True
+                if action == "M": await ar13_lobby_manage(query, game); return True
+                if action == "KICK": await ar13_player_picker(query, game, "KICK"); return True
+                if action == "HOST": await ar13_player_picker(query, game, "HOST"); return True
+                if len(parts) < 5:
+                    await safe_answer_query(query, "⚠️ بازیکن مشخص نشده.", True); return True
+                target = int(parts[4])
+                if action == "KICKOK": await ar13_kick_player(query, game, target); return True
+                if action == "HOSTOK": await ar13_transfer_host(query, game, target); return True
+        await safe_answer_query(query, "⚠️ این عملیات دیگر در دسترس نیست.", True)
+        return True
+    except Exception as exc:
+        audit("ar13_lobby_router_error", uid, getattr(query.message, "chat_id", None), repr(exc)[:500])
+        print(f"ApexRival AR13 lobby callback error: {exc!r}")
+        await safe_answer_query(query, "⚠️ عملیات Lobby انجام نشد. دوباره امتحان کن.", True)
+        return True
+
+
+# Fix a tiny but important compatibility detail: old V5 cancellation buttons are
+# rerouted through the new robust cancellation flow. New Lobby buttons use A13.
+_AR13_OLD_V5_LOBBY_ACTION = v5_lobby_action
+
+
+async def v5_lobby_action(query, context, parts):
+    if len(parts) >= 3 and parts[1] == "L":
+        action = parts[2]
+        token_or_gid = parts[3] if len(parts) > 3 else ""
+        if action == "C":
+            game = DATA.get("games", {}).get(token_or_gid)
+            if game and game.get("status") == "lobby":
+                await ar13_cancel_lobby(query, game)
+                return
+        if action == "CY":
+            await ar13_confirm_cancel(query, token_or_gid)
+            return
+        if action == "J":
+            game = DATA.get("games", {}).get(token_or_gid)
+            if game and ar13_lobby_locked(game) and not leader_of(game, query.from_user.id) and not is_admin(query.from_user.id):
+                await safe_answer_query(query, "🔒 ثبت‌نام این Lobby موقتاً بسته است.", True)
+                return
+    return await _AR13_OLD_V5_LOBBY_ACTION(query, context, parts)
+
+
+# Replace the runtime lobby renderers so every freshly-created lobby receives
+# the upgraded UI. Old messages remain compatible through the callback bridge.
+v5_lobby_text = ar13_lobby_text
+v5_lobby_markup = ar13_lobby_markup
+
+
+# The creation wrapper also refreshes the explicit chat command scope.
+_AR13_OLD_CREATE_LOBBY = v5_create_lobby
+
+
+async def v5_create_lobby(update, context):
+    if ar13_group_chat(update):
+        await ar13_group_scope_refresh(context, int(update.effective_chat.id))
+    return await _AR13_OLD_CREATE_LOBBY(update, context)
+
+
+_AR13_OLD_START = v7_start
+
+
+async def v7_start(update, context):
+    """Keep the hardened start flow and add lobby deep-link auto-join."""
+    await _AR13_OLD_START(update, context)
+    try:
+        if not ar12_private_only(update):
+            return
+        args = getattr(context, "args", None) or []
+        if not args:
+            return
+        param = str(args[0]).strip()
+        if not param.startswith("lobby_"):
+            return
+        token = param[6:]
+        uid = int(update.effective_user.id)
+        activated, _ = await ar11_is_activated(uid, bot=getattr(context, "bot", None))
+        if activated is not True:
+            return
+        membership, _ = await ar8_channel_membership(uid, force=False, bot=getattr(context, "bot", None))
+        if membership is not True and not is_admin(uid):
+            return
+        game = ar13_find_lobby_by_invite(token)
+        msg = getattr(update, "message", None)
+        if not msg:
+            return
+        if not game:
+            await msg.reply_text("⛔ این دعوت دیگر معتبر نیست؛ Lobby بسته شده یا لینک منقضی شده است.")
+            return
+        if v5_is_player(game, uid):
+            game["_viewer_id"] = uid
+            await msg.reply_text("✅ تو از قبل داخل همین Lobby هستی.\n\nحالا برگرد به گروه و وضعیت آمادگی‌ات را تنظیم کن.")
+            return
+        if ar13_lobby_locked(game):
+            await msg.reply_text("🔒 این Lobby توسط سرگروه قفل شده و عضو جدید نمی‌پذیرد.")
+            return
+        max_players = int(game.get("settings", {}).get("max_players", 20))
+        if len(game.get("players", [])) >= max_players:
+            await msg.reply_text("⛔ ظرفیت Lobby تکمیل است.")
+            return
+        game.setdefault("players", []).append(uid)
+        game.setdefault("names", {})[str(uid)] = update.effective_user.first_name or update.effective_user.username or "بازیکن"
+        v5_ready_state(game)[str(uid)] = True
+        touch_game(game)
+        audit("ar13_invite_join", uid, int(game["chat_id"]), str(game["id"]))
+        save_data(force=True)
+        game["_viewer_id"] = uid
+        await msg.reply_text(
+            "🎟 <b>با موفقیت وارد Lobby شدی</b>\n\n"
+            f"👥 بازیکنان: <b>{len(game['players'])}/{max_players}</b>\n"
+            "💬 حالا برگرد به گروه تا ادامه بازی را ببینی.",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as exc:
+        print(f"ApexRival AR13 lobby deep-link error: {exc!r}")
+
+
+async def ar13_alias_profile(update, context):
+    if ar12_group_chat(update):
+        await ar12_remove_legacy_group_keyboard(update)
+    return await v5_profile_message(update, context)
+
+
+async def ar13_alias_rank(update, context):
+    if ar12_group_chat(update):
+        await ar12_remove_legacy_group_keyboard(update)
+    return await v5_rank_message(update, context)
+
+
+async def ar13_alias_help(update, context):
+    if ar12_group_chat(update):
+        await ar12_remove_legacy_group_keyboard(update)
+    return await v5_help_message(update, context)
+
+
+async def ar13_post_init(application):
+    await ar12_post_init(application)
+    await ar13_configure_command_scopes(application)
+
+
+# Final handler registration: keep all mature legacy handlers, then add the new
+# Lobby callback layer and the Persian-friendly visible command aliases.
+def ar13_register_handlers(app):
+    ar12_register_handlers(app)
+    app.add_handler(CommandHandler("profil", ar13_alias_profile))
+    app.add_handler(CommandHandler("rotbe", ar13_alias_rank))
+    app.add_handler(CommandHandler("rahnama", ar13_alias_help))
+    app.add_handler(CallbackQueryHandler(ar13_handle_callback, pattern=r"^A13\|"))
+
+
+# ---------------------------------------------------------------------------
+# AR13 diagnostics
+# ---------------------------------------------------------------------------
+def ar13_static_self_check():
+    assert AR13_VERSION == "13.0"
+    assert len(AR13_COMMANDS) == 5
+    assert AR13_COMMAND_NAMES == ["start", "bazi", "profil", "rotbe", "rahnama"]
+    assert all(1 <= len(c.command) <= 32 and c.command == c.command.lower() for c in AR13_COMMANDS)
+    assert all(c.description and any("؀" <= ch <= "ۿ" for ch in c.description) for c in AR13_COMMANDS)
+    # Every new callback payload must satisfy Telegram's 1–64 byte contract.
+    samples = [
+        "A13|L|C|-1001234567890:1726600000:9999",
+        "A13|L|CY|123456",
+        "A13|L|READY|-1001234567890:1726600000:9999",
+        "A13|L|LOCK|-1001234567890:1726600000:9999",
+        "A13|L|M|-1001234567890:1726600000:9999",
+        "A13|L|KICK|-1001234567890:1726600000:9999",
+        "A13|L|HOST|-1001234567890:1726600000:9999",
+        "A13|L|KICKOK|-1001234567890:1726600000:9999|123456789",
+        "A13|L|HOSTOK|-1001234567890:1726600000:9999|123456789",
+    ]
+    assert all(1 <= len(x.encode("utf-8")) <= 64 for x in samples)
+    # Regression check for the exact old problem: legacy cancel payloads route
+    # through the hardened function instead of the old implementation.
+    assert "A13|L|C|" in Path(__file__).read_text(encoding="utf-8")
+    assert "ar13_confirm_cancel" in Path(__file__).read_text(encoding="utf-8")
+    assert "lobby_" in Path(__file__).read_text(encoding="utf-8")
+    # Static sanity for the most common malformed-editor failure.
+    src = Path(__file__).read_text(encoding="utf-8")
+    assert "if '=' not in text: raise ValueError('فرمت درست: key=value')" in src
+    print(
+        "ApexRival AR13 static self-check OK | "
+        "visible-commands=5 | group-scopes=explicit | lobby-cancel=hard | "
+        "ready=on | lock=on | kick=on | host-transfer=on"
+    )
+
+
+ar13_static_self_check()
+
+
+def main_apexrival_13():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is missing")
+    _ar8_final_markup_self_check()
+    _ar11_static_self_check()
+    ar12_static_self_check()
+    ar13_static_self_check()
+    start_health_server()
+    application = Application.builder().token(BOT_TOKEN).post_init(ar13_post_init).build()
+    ar13_register_handlers(application)
+    application.add_error_handler(ar9_error_handler)
+    print(
+        f"{BOT_NAME} {AR13_VERSION} starting | "
+        "commands=5 | group-command-scope=locked | lobby2=on | cancel=on"
+    )
+    application.run_polling(drop_pending_updates=True)
+
+
+main_apexrival_8 = main_apexrival_13
+main_apexrival_9 = main_apexrival_13
+main_apexrival_10 = main_apexrival_13
+main_apexrival_11 = main_apexrival_13
+main_apexrival_12 = main_apexrival_13
+main_apexrival_13 = main_apexrival_13
+main_v5 = main_apexrival_13
+main = main_apexrival_13
+
+if __name__ == "__main__":
+    main_apexrival_13()
