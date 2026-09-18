@@ -12,7 +12,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -69,6 +69,55 @@ def start_health_server() -> None:
 
     thread = threading.Thread(target=_serve, name='apexrival-health', daemon=True)
     thread.start()
+
+
+# -----------------------------
+# ApexRival visual system — Telegram native button styles.
+# Bot API / python-telegram-bot 22.8 support three native button styles:
+# primary (blue), success (green), danger (red).
+# -----------------------------
+APEX_STYLE_PRIMARY = "primary"
+APEX_STYLE_SUCCESS = "success"
+APEX_STYLE_DANGER = "danger"
+
+
+def apex_button_style(label: str, data: str = "") -> str:
+    """Assign a meaningful native Telegram button color from the action itself."""
+    text = f"{label} {data}".lower()
+    danger_markers = (
+        "❌", "🛑", "✕", "🚫", "🗑", "حذف", "لغو", "پایان", "ریست", "بن", "پاکسازی",
+        "danger", "terminate", "delete", "cancel", "ban"
+    )
+    success_markers = (
+        "✅", "▶️", "🎟", "➕", "ثبت", "شروع", "خرید", "ذخیره", "تأیید", "قبول", "افزودن",
+        "فعال", "بازیابی", "♻️", "restore", "save", "start", "join", "approve"
+    )
+    if any(marker in text for marker in danger_markers):
+        return APEX_STYLE_DANGER
+    if any(marker in text for marker in success_markers):
+        return APEX_STYLE_SUCCESS
+    return APEX_STYLE_PRIMARY
+
+
+def ApexInlineButton(text, *args, **kwargs):
+    """Styled InlineKeyboardButton while keeping all existing call sites compatible."""
+    if "style" not in kwargs or kwargs.get("style") is None:
+        kwargs["style"] = apex_button_style(str(text), str(kwargs.get("callback_data", "")))
+    return InlineKeyboardButton(text, *args, **kwargs)
+
+
+def apex_reply_rows(rows):
+    """Convert simple string reply keyboards to styled KeyboardButton objects."""
+    converted = []
+    for row in rows:
+        current = []
+        for item in row:
+            if isinstance(item, KeyboardButton):
+                current.append(item)
+            else:
+                current.append(KeyboardButton(str(item), style=apex_button_style(str(item))))
+        converted.append(current)
+    return converted
 
 
 # -----------------------------
@@ -621,23 +670,23 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
     rows = [r[:] for r in MAIN_BUTTONS]
     if is_admin(uid):
         rows.append(["👑 پنل Super Admin"])
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True)
+    return ReplyKeyboardMarkup(apex_reply_rows(rows), resize_keyboard=True, is_persistent=True)
 
 
 def lobby_keyboard(gid: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎟 ثبت‌نام", callback_data=f"join|{gid}"), InlineKeyboardButton("❌ خروج", callback_data=f"leave|{gid}")],
-        [InlineKeyboardButton("👥 بازیکنان", callback_data=f"players|{gid}"), InlineKeyboardButton("🔄 بروزرسانی", callback_data=f"refresh|{gid}")],
-        [InlineKeyboardButton("▶️ شروع بازی", callback_data=f"start|{gid}"), InlineKeyboardButton("🛑 لغو", callback_data=f"cancel|{gid}")],
-        [InlineKeyboardButton("⚙️ تنظیمات لابی", callback_data=f"lset|{gid}"), InlineKeyboardButton("❓ قوانین", callback_data="rules")],
+        [ApexInlineButton("🎟 ثبت‌نام", callback_data=f"join|{gid}"), ApexInlineButton("❌ خروج", callback_data=f"leave|{gid}")],
+        [ApexInlineButton("👥 بازیکنان", callback_data=f"players|{gid}"), ApexInlineButton("🔄 بروزرسانی", callback_data=f"refresh|{gid}")],
+        [ApexInlineButton("▶️ شروع بازی", callback_data=f"start|{gid}"), ApexInlineButton("🛑 لغو", callback_data=f"cancel|{gid}")],
+        [ApexInlineButton("⚙️ تنظیمات لابی", callback_data=f"lset|{gid}"), ApexInlineButton("❓ قوانین", callback_data="rules")],
     ])
 
 
 def lobby_settings_keyboard(gid: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ حداکثر +1", callback_data=f"maxup|{gid}"), InlineKeyboardButton("➖ حداکثر -1", callback_data=f"maxdown|{gid}")],
-        [InlineKeyboardButton("➕ حداقل +1", callback_data=f"minup|{gid}"), InlineKeyboardButton("➖ حداقل -1", callback_data=f"mindown|{gid}")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data=f"refresh|{gid}")],
+        [ApexInlineButton("➕ حداکثر +1", callback_data=f"maxup|{gid}"), ApexInlineButton("➖ حداکثر -1", callback_data=f"maxdown|{gid}")],
+        [ApexInlineButton("➕ حداقل +1", callback_data=f"minup|{gid}"), ApexInlineButton("➖ حداقل -1", callback_data=f"mindown|{gid}")],
+        [ApexInlineButton("🔙 بازگشت", callback_data=f"refresh|{gid}")],
     ])
 
 
@@ -645,18 +694,18 @@ def game_keyboard(game: dict[str, Any]) -> InlineKeyboardMarkup:
     chat_id = int(game["chat_id"])
     gs = get_group(chat_id).get("settings", {})
     rows = [
-        [InlineKeyboardButton("🕵️ اعتراف", callback_data="play|truth"), InlineKeyboardButton("🔥 جرئت", callback_data="play|dare")],
-        [InlineKeyboardButton("💘 فلرت", callback_data="play|flirty"), InlineKeyboardButton("🧠 سؤال", callback_data="play|question")],
-        [InlineKeyboardButton("⚔️ دوئل", callback_data="mode|duel"), InlineKeyboardButton("🎰 گردونه", callback_data="mode|roulette")],
-        [InlineKeyboardButton("⚡ سرعت", callback_data="mode|speed"), InlineKeyboardButton("🤫 مأموریت", callback_data="mode|secret")],
-        [InlineKeyboardButton("🕵️ جاسوس", callback_data="mode|spy"), InlineKeyboardButton("🗳 رأی‌گیری", callback_data="mode|vote")],
-        [InlineKeyboardButton("👑 Boss", callback_data="mode|boss"), InlineKeyboardButton("🎲 رویداد", callback_data="mode|event")],
-        [InlineKeyboardButton("☠️ حکم من", callback_data="penalty|mine"), InlineKeyboardButton("🛒 فروشگاه", callback_data="shop")],
-        [InlineKeyboardButton("📊 وضعیت دست", callback_data="gameinfo"), InlineKeyboardButton("⏭ دور بعد", callback_data="leader|next")],
-        [InlineKeyboardButton("🛑 پایان بازی", callback_data="end")],
+        [ApexInlineButton("🕵️ اعتراف", callback_data="play|truth"), ApexInlineButton("🔥 جرئت", callback_data="play|dare")],
+        [ApexInlineButton("💘 فلرت", callback_data="play|flirty"), ApexInlineButton("🧠 سؤال", callback_data="play|question")],
+        [ApexInlineButton("⚔️ دوئل", callback_data="mode|duel"), ApexInlineButton("🎰 گردونه", callback_data="mode|roulette")],
+        [ApexInlineButton("⚡ سرعت", callback_data="mode|speed"), ApexInlineButton("🤫 مأموریت", callback_data="mode|secret")],
+        [ApexInlineButton("🕵️ جاسوس", callback_data="mode|spy"), ApexInlineButton("🗳 رأی‌گیری", callback_data="mode|vote")],
+        [ApexInlineButton("👑 Boss", callback_data="mode|boss"), ApexInlineButton("🎲 رویداد", callback_data="mode|event")],
+        [ApexInlineButton("☠️ حکم من", callback_data="penalty|mine"), ApexInlineButton("🛒 فروشگاه", callback_data="shop")],
+        [ApexInlineButton("📊 وضعیت دست", callback_data="gameinfo"), ApexInlineButton("⏭ دور بعد", callback_data="leader|next")],
+        [ApexInlineButton("🛑 پایان بازی", callback_data="end")],
     ]
     if get_group(chat_id).get("adult_mode"):
-        rows.insert(2, [InlineKeyboardButton("🔞 +18 غیرصریح", callback_data="play|adult")])
+        rows.insert(2, [ApexInlineButton("🔞 +18 غیرصریح", callback_data="play|adult")])
     if not gs.get("allow_duel", True):
         rows = [r for r in rows if not any("دوئل" in (b.text or "") for b in r)]
     return InlineKeyboardMarkup(rows)
@@ -665,21 +714,21 @@ def game_keyboard(game: dict[str, Any]) -> InlineKeyboardMarkup:
 def host_keyboard(game: dict[str, Any]) -> InlineKeyboardMarkup:
     gid = game["id"]
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎯 حالت تصادفی", callback_data="leader|random"), InlineKeyboardButton("☠️ حکم تصادفی", callback_data="leader|penalty")],
-        [InlineKeyboardButton("🛠 کنترل بازی", callback_data=f"host|{gid}"), InlineKeyboardButton("📊 آمار دست", callback_data="gameinfo")],
-        [InlineKeyboardButton("🛑 پایان بازی", callback_data="end")],
+        [ApexInlineButton("🎯 حالت تصادفی", callback_data="leader|random"), ApexInlineButton("☠️ حکم تصادفی", callback_data="leader|penalty")],
+        [ApexInlineButton("🛠 کنترل بازی", callback_data=f"host|{gid}"), ApexInlineButton("📊 آمار دست", callback_data="gameinfo")],
+        [ApexInlineButton("🛑 پایان بازی", callback_data="end")],
     ])
 
 
 def admin_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 آمار کلی", callback_data="admin|stats"), InlineKeyboardButton("👥 کاربران", callback_data="admin|users")],
-        [InlineKeyboardButton("🎮 بازی‌های فعال", callback_data="admin|games"), InlineKeyboardButton("🌐 گروه‌ها", callback_data="admin|groups")],
-        [InlineKeyboardButton("⚙️ تنظیمات سراسری", callback_data="admin|settings"), InlineKeyboardButton("🔞 +18 گروه", callback_data="admin|adult")],
-        [InlineKeyboardButton("📝 محتوای بازی", callback_data="admin|content"), InlineKeyboardButton("🛒 فروشگاه", callback_data="admin|shop")],
-        [InlineKeyboardButton("🧹 پاکسازی", callback_data="admin|cleanup"), InlineKeyboardButton("💾 ذخیره فوری", callback_data="admin|save")],
-        [InlineKeyboardButton("📜 Audit Log", callback_data="admin|audit"), InlineKeyboardButton("📣 Broadcast", callback_data="admin|broadcast")],
-        [InlineKeyboardButton("🏆 کاربران برتر", callback_data="admin|top"), InlineKeyboardButton("🔧 راهنما", callback_data="admin|help")],
+        [ApexInlineButton("📊 آمار کلی", callback_data="admin|stats"), ApexInlineButton("👥 کاربران", callback_data="admin|users")],
+        [ApexInlineButton("🎮 بازی‌های فعال", callback_data="admin|games"), ApexInlineButton("🌐 گروه‌ها", callback_data="admin|groups")],
+        [ApexInlineButton("⚙️ تنظیمات سراسری", callback_data="admin|settings"), ApexInlineButton("🔞 +18 گروه", callback_data="admin|adult")],
+        [ApexInlineButton("📝 محتوای بازی", callback_data="admin|content"), ApexInlineButton("🛒 فروشگاه", callback_data="admin|shop")],
+        [ApexInlineButton("🧹 پاکسازی", callback_data="admin|cleanup"), ApexInlineButton("💾 ذخیره فوری", callback_data="admin|save")],
+        [ApexInlineButton("📜 Audit Log", callback_data="admin|audit"), ApexInlineButton("📣 Broadcast", callback_data="admin|broadcast")],
+        [ApexInlineButton("🏆 کاربران برتر", callback_data="admin|top"), ApexInlineButton("🔧 راهنما", callback_data="admin|help")],
     ])
 
 # -----------------------------
@@ -869,7 +918,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🧰 موجودی: 🛡{inv['shield']} | 🎲{inv['reroll']} | ⚡{inv['double_xp']} | 🎫{inv['pass']} | 🍀{inv['lucky']}"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏅 دستاوردها", callback_data="achievements"), InlineKeyboardButton("🛒 فروشگاه", callback_data="shop")],
+        [ApexInlineButton("🏅 دستاوردها", callback_data="achievements"), ApexInlineButton("🛒 فروشگاه", callback_data="shop")],
     ]))
 
 
@@ -1088,8 +1137,8 @@ async def create_vote(message, game) -> None:
     touch_game(game); save_data(force=True)
     rows = []
     for uid in candidates:
-        rows.append([InlineKeyboardButton(name_of(uid, game), callback_data=f"vote|{game['id']}|{uid}")])
-    rows.append([InlineKeyboardButton("📊 نتیجه فعلی", callback_data="voteinfo")])
+        rows.append([ApexInlineButton(name_of(uid, game), callback_data=f"vote|{game['id']}|{uid}")])
+    rows.append([ApexInlineButton("📊 نتیجه فعلی", callback_data="voteinfo")])
     await message.reply_text("🗳 <b>چه کسی...؟</b>\n\nیک نفر را انتخاب کنید. هر بازیکن فقط یک رأی دارد.\n⏱ ۴۵ ثانیه", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows))
 
 
@@ -1108,7 +1157,7 @@ async def create_secret_mission(message, game, bot) -> None:
     get_user(target)["stats"]["secret"] += 1
     touch_game(game); save_data(force=True)
     try:
-        await bot.send_message(chat_id=target, text=f"🤫 <b>مأموریت مخفی ApexRival</b>\n\n{escape(mission)}\n\n⏱ حدود ۳ دقیقه\nوقتی انجام شد، در گروه از دکمه «✅ انجام شد» استفاده کن.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ انجام شد", callback_data="secret_done")]]))
+        await bot.send_message(chat_id=target, text=f"🤫 <b>مأموریت مخفی ApexRival</b>\n\n{escape(mission)}\n\n⏱ حدود ۳ دقیقه\nوقتی انجام شد، در گروه از دکمه «✅ انجام شد» استفاده کن.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[ApexInlineButton("✅ انجام شد", callback_data="secret_done")]]))
         public = f"🤫 <b>یک مأموریت مخفی فعال شد.</b>\n\nحدود ۳ دقیقه زمان دارد."
     except Exception:
         public = "🤫 مأموریت مخفی ساخته شد، اما ارسال پیام خصوصی ممکن نشد. بازیکن باید یک‌بار /start را در چت خصوصی ربات زده باشد."
@@ -1132,7 +1181,7 @@ async def create_spy(message, game, bot) -> None:
         except Exception:
             pass
     touch_game(game); save_data(force=True)
-    await message.reply_text("🕵️ <b>بازی جاسوس شروع شد.</b>\nنقش‌ها خصوصی ارسال شدند؛ هرکس باید آماده باشد.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗳 رأی نهایی", callback_data="spyvote")], [InlineKeyboardButton("🛑 پایان جاسوسی", callback_data="endmode")]]))
+    await message.reply_text("🕵️ <b>بازی جاسوس شروع شد.</b>\nنقش‌ها خصوصی ارسال شدند؛ هرکس باید آماده باشد.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[ApexInlineButton("🗳 رأی نهایی", callback_data="spyvote")], [ApexInlineButton("🛑 پایان جاسوسی", callback_data="endmode")]]))
 
 
 async def duel_start(message, game) -> None:
@@ -1149,7 +1198,7 @@ async def duel_start(message, game) -> None:
     await message.reply_text(
         f"⚔️ <b>دوئل</b>\n\n{mention_user(challenger, name_of(challenger, game))} حریف {mention_user(target, name_of(target, game))} را به چالش کشید.\n\nطرف مقابل می‌تواند قبول یا رد کند.",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚔️ قبول", callback_data=f"duelaccept|{game['id']}"), InlineKeyboardButton("❌ رد", callback_data=f"dueldecline|{game['id']}")]]),
+        reply_markup=InlineKeyboardMarkup([[ApexInlineButton("⚔️ قبول", callback_data=f"duelaccept|{game['id']}"), ApexInlineButton("❌ رد", callback_data=f"dueldecline|{game['id']}")]]),
     )
 
 
@@ -1166,7 +1215,7 @@ async def duel_accept(query, game) -> None:
         "⚔️ <b>دوئل شروع شد!</b>\n\nهر دو نفر یکی از گزینه‌ها را بزنند.",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🟥 سنگ", callback_data="duelpick|rock"), InlineKeyboardButton("📄 کاغذ", callback_data="duelpick|paper"), InlineKeyboardButton("✂️ قیچی", callback_data="duelpick|scissors")],
+            [ApexInlineButton("🟥 سنگ", callback_data="duelpick|rock"), ApexInlineButton("📄 کاغذ", callback_data="duelpick|paper"), ApexInlineButton("✂️ قیچی", callback_data="duelpick|scissors")],
         ]),
     )
 
@@ -1185,7 +1234,7 @@ async def duel_pick(query, game, choice: str) -> None:
     if ca == cb:
         result = "مساوی! دوباره انتخاب کنید."
         duel["choices"] = {}
-        await query.edit_message_text(result, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 دور دوم", callback_data="duelagain")]]))
+        await query.edit_message_text(result, reply_markup=InlineKeyboardMarkup([[ApexInlineButton("🔄 دور دوم", callback_data="duelagain")]]))
         save_data(force=True)
         return
     beats = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
@@ -1213,7 +1262,7 @@ async def send_shop(message, uid: int) -> None:
     rows = []
     for key, item in SHOP.items():
         lines.append(f"{item['name']} — {item['price']} سکه\n{item['desc']} | موجودی: {inventory(uid)[key]}")
-        rows.append([InlineKeyboardButton(f"🛒 خرید {item['name']} ({item['price']})", callback_data=f"buy|{key}")])
+        rows.append([ApexInlineButton(f"🛒 خرید {item['name']} ({item['price']})", callback_data=f"buy|{key}")])
     await message.reply_text("🛒 <b>فروشگاه ApexRival</b>\n\n" + "\n\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows))
 
 
@@ -1221,8 +1270,8 @@ async def penalty_mine(query, game) -> None:
     uid = query.from_user.id
     await query.answer()
     await query.edit_message_text(penalty_text(game, uid), parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ انجام شد", callback_data="penaltydone|1"), InlineKeyboardButton("🛡 استفاده از سپر", callback_data="penaltyshield|1")],
-        [InlineKeyboardButton("🎫 استفاده از پاس", callback_data="penaltypass|1")],
+        [ApexInlineButton("✅ انجام شد", callback_data="penaltydone|1"), ApexInlineButton("🛡 استفاده از سپر", callback_data="penaltyshield|1")],
+        [ApexInlineButton("🎫 استفاده از پاس", callback_data="penaltypass|1")],
     ]))
 
 
@@ -1323,10 +1372,10 @@ async def admin_settings(query) -> None:
     s = DATA["settings"]
     text = f"⚙️ <b>تنظیمات سراسری</b>\n\nMax Players: {s['max_players_default']}\nAdult default: {s['adult_default']}\nXP multiplier: {s['xp_multiplier']}\nCoins multiplier: {s['coins_multiplier']}"
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("XP ×2", callback_data="adminset|xp2"), InlineKeyboardButton("XP ×1", callback_data="adminset|xp1")],
-        [InlineKeyboardButton("Coins ×2", callback_data="adminset|coin2"), InlineKeyboardButton("Coins ×1", callback_data="adminset|coin1")],
-        [InlineKeyboardButton("Max +5", callback_data="adminset|maxup"), InlineKeyboardButton("Max -5", callback_data="adminset|maxdown")],
-        [InlineKeyboardButton("🔙 پنل", callback_data="admin|home")],
+        [ApexInlineButton("XP ×2", callback_data="adminset|xp2"), ApexInlineButton("XP ×1", callback_data="adminset|xp1")],
+        [ApexInlineButton("Coins ×2", callback_data="adminset|coin2"), ApexInlineButton("Coins ×1", callback_data="adminset|coin1")],
+        [ApexInlineButton("Max +5", callback_data="adminset|maxup"), ApexInlineButton("Max -5", callback_data="adminset|maxdown")],
+        [ApexInlineButton("🔙 پنل", callback_data="admin|home")],
     ]))
 
 
@@ -1556,7 +1605,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         elif kind == "flirty": await send_flirty(query.message, game)
         elif kind == "adult":
             if not get_user(query.from_user.id).get("adult_ok", False):
-                await query.message.reply_text("🔞 برای ورود به +18 غیرصریح، تأیید کنید که ۱۸+ هستید و می‌توانید هر مرحله‌ای را رد کنید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ تأیید +18", callback_data="adultok")]]))
+                await query.message.reply_text("🔞 برای ورود به +18 غیرصریح، تأیید کنید که ۱۸+ هستید و می‌توانید هر مرحله‌ای را رد کنید.", reply_markup=InlineKeyboardMarkup([[ApexInlineButton("✅ تأیید +18", callback_data="adultok")]]))
             else:
                 await send_adult(query.message, game)
         elif kind == "question": await send_question(query.message, game)
@@ -1609,7 +1658,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if action == "duelagain":
         game = await require_game(chat_id, update)
-        if game: await query.edit_message_text("⚔️ یک دور جدید دوئل آماده است.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🟥 سنگ", callback_data="duelpick|rock"), InlineKeyboardButton("📄 کاغذ", callback_data="duelpick|paper"), InlineKeyboardButton("✂️ قیچی", callback_data="duelpick|scissors")]]))
+        if game: await query.edit_message_text("⚔️ یک دور جدید دوئل آماده است.", reply_markup=InlineKeyboardMarkup([[ApexInlineButton("🟥 سنگ", callback_data="duelpick|rock"), ApexInlineButton("📄 کاغذ", callback_data="duelpick|paper"), ApexInlineButton("✂️ قیچی", callback_data="duelpick|scissors")]]))
         return
 
     if action == "vote":
@@ -1662,7 +1711,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if action == "spyvote":
         game = await require_game(chat_id, update)
         if not game or not game.get("spy"): return
-        rows = [[InlineKeyboardButton(name_of(uid, game), callback_data=f"spyguess|{game['id']}|{uid}")] for uid in game["players"]]
+        rows = [[ApexInlineButton(name_of(uid, game), callback_data=f"spyguess|{game['id']}|{uid}")] for uid in game["players"]]
         await query.edit_message_text("🕵️ <b>چه کسی جاسوس است؟</b>", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows)); return
 
     if action == "spyguess":
@@ -2185,15 +2234,15 @@ choose_content = choose_advanced_content
 
 
 def nav_row(*buttons):
-    return [InlineKeyboardButton(label, callback_data=data) for label, data in buttons]
+    return [ApexInlineButton(label, callback_data=data) for label, data in buttons]
 
 
 def back_button(target="GM|HOME"):
-    return [InlineKeyboardButton("🔙 بازگشت", callback_data=target)]
+    return [ApexInlineButton("🔙 بازگشت", callback_data=target)]
 
 
 def close_button(target="GM|CLOSE"):
-    return [InlineKeyboardButton("✖️ بستن", callback_data=target)]
+    return [ApexInlineButton("✖️ بستن", callback_data=target)]
 
 
 def main_keyboard_v4(uid: int) -> ReplyKeyboardMarkup:
@@ -2204,7 +2253,7 @@ def main_keyboard_v4(uid: int) -> ReplyKeyboardMarkup:
     ]
     if is_admin(uid):
         rows.append(["👑 مدیریت ApexRival"])
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=False, selective=False)
+    return ReplyKeyboardMarkup(apex_reply_rows(rows), resize_keyboard=True, one_time_keyboard=False, selective=False)
 
 
 def game_home_keyboard(game):
@@ -2285,17 +2334,17 @@ def admin_home_keyboard():
         nav_row(("🛡 امنیت", "AX|SECURITY"), ("⚙️ تنظیمات", "AX|SETTINGS")),
         nav_row(("💾 بکاپ", "AX|BACKUP"), ("📜 لاگ‌ها", "AX|LOGS")),
         nav_row(("📣 پیام همگانی", "AX|BROADCAST"), ("🧰 ابزارها", "AX|TOOLS")),
-        [InlineKeyboardButton("✖️ بستن پنل", callback_data="AX|CLOSE")],
+        [ApexInlineButton("✖️ بستن پنل", callback_data="AX|CLOSE")],
     ])
 
 
 def admin_back_home():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت به پنل اصلی", callback_data="AX|HOME")]])
+    return InlineKeyboardMarkup([[ApexInlineButton("🔙 بازگشت به پنل اصلی", callback_data="AX|HOME")]])
 
 
 def admin_two_back(rows, back="AX|HOME"):
     rows = [r for r in rows if r]
-    rows.append([InlineKeyboardButton("🔙 بازگشت", callback_data=back)])
+    rows.append([ApexInlineButton("🔙 بازگشت", callback_data=back)])
     return InlineKeyboardMarkup(rows)
 
 
@@ -2380,7 +2429,7 @@ def admin_user_actions(uid: int):
         nav_row(("🛡 +سپر", f"AX|UITEM|{uid}|shield|1"), ("🎲 +ریرول", f"AX|UITEM|{uid}|reroll|1")),
         nav_row(("🚫 بن" if not status else "✅ رفع بن", f"AX|BAN|{uid}"), ("🧹 ریست", f"AX|RESET|{uid}")),
         nav_row(("📊 جزئیات", f"AX|UDETAIL|{uid}"), ("📜 لاگ کاربر", f"AX|ULOG|{uid}")),
-        [InlineKeyboardButton("🔙 کاربران", callback_data="AX|USERS")],
+        [ApexInlineButton("🔙 کاربران", callback_data="AX|USERS")],
     ]
     return InlineKeyboardMarkup(rows)
 
@@ -2397,16 +2446,16 @@ async def admin_users_page(query, page=0):
         uid = int(uid_s)
         flag = "🚫" if user.get("banned") else "🟢"
         lines.append(f"{offset+start}. {flag} {escape(str(user.get('name','کاربر')))[:22]} — {user.get('xp',0)} XP")
-        buttons.append([InlineKeyboardButton(f"👤 {str(user.get('name','کاربر'))[:20]}", callback_data=f"AX|U|{uid}")])
+        buttons.append([ApexInlineButton(f"👤 {str(user.get('name','کاربر'))[:20]}", callback_data=f"AX|U|{uid}")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"AX|USERS|{page-1}"))
+        nav.append(ApexInlineButton("◀️", callback_data=f"AX|USERS|{page-1}"))
     if start + chunk < len(items):
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"AX|USERS|{page+1}"))
+        nav.append(ApexInlineButton("▶️", callback_data=f"AX|USERS|{page+1}"))
     if nav:
         buttons.append(nav)
-    buttons.append([InlineKeyboardButton("🔄 تازه‌سازی", callback_data=f"AX|USERS|{page}")])
-    buttons.append([InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")])
+    buttons.append([ApexInlineButton("🔄 تازه‌سازی", callback_data=f"AX|USERS|{page}")])
+    buttons.append([ApexInlineButton("🔙 پنل", callback_data="AX|HOME")])
     text = f"👥 <b>مدیریت کاربران</b>\nصفحه {page+1}\n\n" + ("\n".join(lines) or "کاربری ثبت نشده است.")
     await safe_edit_query(query, text, InlineKeyboardMarkup(buttons))
 
@@ -2423,16 +2472,16 @@ async def admin_groups_page(query, page=0):
         active = bool(group.get("active_game"))
         enabled = bool(group.get("enabled", True))
         lines.append(f"{idx}. <code>{cid}</code> | {'🟢' if enabled else '🔴'} | {'🎮' if active else '💤'}")
-        buttons.append([InlineKeyboardButton(f"🌐 {cid}", callback_data=f"AX|G|{cid}")])
+        buttons.append([ApexInlineButton(f"🌐 {cid}", callback_data=f"AX|G|{cid}")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"AX|GROUPS|{page-1}"))
+        nav.append(ApexInlineButton("◀️", callback_data=f"AX|GROUPS|{page-1}"))
     if start + chunk < len(items):
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"AX|GROUPS|{page+1}"))
+        nav.append(ApexInlineButton("▶️", callback_data=f"AX|GROUPS|{page+1}"))
     if nav:
         buttons.append(nav)
-    buttons.append([InlineKeyboardButton("🔄 تازه‌سازی", callback_data=f"AX|GROUPS|{page}")])
-    buttons.append([InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")])
+    buttons.append([ApexInlineButton("🔄 تازه‌سازی", callback_data=f"AX|GROUPS|{page}")])
+    buttons.append([ApexInlineButton("🔙 پنل", callback_data="AX|HOME")])
     text = "🌐 <b>مدیریت گروه‌ها</b>\n\n" + ("\n".join(lines) or "گروهی ثبت نشده است.")
     await safe_edit_query(query, text, InlineKeyboardMarkup(buttons))
 
@@ -2448,12 +2497,12 @@ async def admin_games_page(query, page=0):
         phase = game.get("phase", "-")
         lines.append(f"{idx}. <code>{game.get('chat_id')}</code> | {len(game.get('players',[]))} نفر | {escape(str(phase))}")
         token = str(gid)[:32]
-        buttons.append([InlineKeyboardButton(f"🎮 گروه {game.get('chat_id')}", callback_data=f"AX|GAME|{token}")])
+        buttons.append([ApexInlineButton(f"🎮 گروه {game.get('chat_id')}", callback_data=f"AX|GAME|{token}")])
     if start + chunk < len(items):
-        buttons.append([InlineKeyboardButton("▶️ بعدی", callback_data=f"AX|GAMES|{int(page)+1}")])
+        buttons.append([ApexInlineButton("▶️ بعدی", callback_data=f"AX|GAMES|{int(page)+1}")])
     if page > 0:
-        buttons.append([InlineKeyboardButton("◀️ قبلی", callback_data=f"AX|GAMES|{int(page)-1}")])
-    buttons.append([InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")])
+        buttons.append([ApexInlineButton("◀️ قبلی", callback_data=f"AX|GAMES|{int(page)-1}")])
+    buttons.append([ApexInlineButton("🔙 پنل", callback_data="AX|HOME")])
     text = "🎮 <b>بازی‌های جاری</b>\n\n" + ("\n".join(lines) or "هیچ بازی فعالی وجود ندارد.")
     await safe_edit_query(query, text, InlineKeyboardMarkup(buttons))
 
@@ -2496,8 +2545,8 @@ async def admin_group_detail(query, cid: int):
         nav_row(("🟢 فعال", f"AX|GEN|{cid}|on"), ("🔴 خاموش", f"AX|GEN|{cid}|off")),
         nav_row(("🔞 +18 ON", f"AX|GADULT|{cid}|on"), ("🔒 +18 OFF", f"AX|GADULT|{cid}|off")),
         nav_row(("➕ Max", f"AX|GMAX|{cid}|up"), ("➖ Max", f"AX|GMAX|{cid}|down")),
-        [InlineKeyboardButton("🛑 پایان بازی", callback_data=f"AX|GEND|{cid}")],
-        [InlineKeyboardButton("🔙 گروه‌ها", callback_data="AX|GROUPS")],
+        [ApexInlineButton("🛑 پایان بازی", callback_data=f"AX|GEND|{cid}")],
+        [ApexInlineButton("🔙 گروه‌ها", callback_data="AX|GROUPS")],
     ]
     await render_admin(query, "🌐 مدیریت گروه", text, InlineKeyboardMarkup(rows))
 
@@ -2524,7 +2573,7 @@ def admin_content_menu():
         nav_row((CONTENT_LABELS["flirty"], "AX|CONTENT|flirty"), (CONTENT_LABELS["question"], "AX|CONTENT|question")),
         nav_row((CONTENT_LABELS["penalty"], "AX|CONTENT|penalty"), (CONTENT_LABELS["boss"], "AX|CONTENT|boss")),
         nav_row((CONTENT_LABELS["mission"], "AX|CONTENT|mission"), (CONTENT_LABELS["riddle"], "AX|CONTENT|riddle")),
-        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+        [ApexInlineButton("🔙 پنل", callback_data="AX|HOME")],
     ]
     return InlineKeyboardMarkup(rows)
 
@@ -2546,17 +2595,17 @@ async def admin_content_category(query, key: str, page=0):
     lines = [f"{i+1+start}. {escape(item)}" for i, item in enumerate(current)]
     buttons = []
     for i, item in enumerate(current):
-        buttons.append([InlineKeyboardButton(f"🗑 حذف {i+1+start}", callback_data=f"AX|CDEL|{key}|{i+start}")])
+        buttons.append([ApexInlineButton(f"🗑 حذف {i+1+start}", callback_data=f"AX|CDEL|{key}|{i+start}")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"AX|CONTENT|{key}|{page-1}"))
+        nav.append(ApexInlineButton("◀️", callback_data=f"AX|CONTENT|{key}|{page-1}"))
     if start + chunk < len(pool):
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"AX|CONTENT|{key}|{page+1}"))
+        nav.append(ApexInlineButton("▶️", callback_data=f"AX|CONTENT|{key}|{page+1}"))
     if nav:
         buttons.append(nav)
-    buttons.append([InlineKeyboardButton("➕ افزودن", callback_data=f"AX|CADD|{key}")])
-    buttons.append([InlineKeyboardButton("🧹 پاک‌سازی سفارشی", callback_data=f"AX|CCLEAR|{key}")])
-    buttons.append([InlineKeyboardButton("🔙 دسته‌ها", callback_data="AX|CONTENT")])
+    buttons.append([ApexInlineButton("➕ افزودن", callback_data=f"AX|CADD|{key}")])
+    buttons.append([ApexInlineButton("🧹 پاک‌سازی سفارشی", callback_data=f"AX|CCLEAR|{key}")])
+    buttons.append([ApexInlineButton("🔙 دسته‌ها", callback_data="AX|CONTENT")])
     text = f"{CONTENT_LABELS.get(key,key)} <b>— صفحه {page+1}</b>\n\n" + ("\n\n".join(lines) or "هیچ محتوایی نیست.")
     await safe_edit_query(query, clip_text(text), InlineKeyboardMarkup(buttons))
 
@@ -2572,8 +2621,8 @@ async def admin_economy_page(query):
     rows = [
         nav_row(("⭐ XP ×1", "AX|MULT|xp|1"), ("⚡ XP ×2", "AX|MULT|xp|2")),
         nav_row(("💰 Coin ×1", "AX|MULT|coin|1"), ("💎 Coin ×2", "AX|MULT|coin|2")),
-        [InlineKeyboardButton("🔄 تازه‌سازی", callback_data="AX|ECONOMY")],
-        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+        [ApexInlineButton("🔄 تازه‌سازی", callback_data="AX|ECONOMY")],
+        [ApexInlineButton("🔙 پنل", callback_data="AX|HOME")],
     ]
     await render_admin(query, "🛒 اقتصاد", text, InlineKeyboardMarkup(rows))
 
@@ -2587,10 +2636,10 @@ async def admin_security_page(query):
         "\nابزارها در این نسخه بدون حدس‌زدن روی داده‌های حساس کار می‌کنند."
     )
     rows = [
-        [InlineKeyboardButton("🚫 لیست بن‌ها", callback_data="AX|BANLIST")],
-        [InlineKeyboardButton("🧹 پاکسازی بازی‌های قدیمی", callback_data="AX|CLEAN")],
-        [InlineKeyboardButton("🔄 بروزرسانی", callback_data="AX|SECURITY")],
-        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+        [ApexInlineButton("🚫 لیست بن‌ها", callback_data="AX|BANLIST")],
+        [ApexInlineButton("🧹 پاکسازی بازی‌های قدیمی", callback_data="AX|CLEAN")],
+        [ApexInlineButton("🔄 بروزرسانی", callback_data="AX|SECURITY")],
+        [ApexInlineButton("🔙 پنل", callback_data="AX|HOME")],
     ]
     await render_admin(query, "🛡 امنیت", text, InlineKeyboardMarkup(rows))
 
@@ -2609,8 +2658,8 @@ async def admin_settings_page(query):
         nav_row(("🔞 Default ON", "AX|ADULTDEF|on"), ("🔒 Default OFF", "AX|ADULTDEF|off")),
         nav_row(("⭐ XP ×1", "AX|MULT|xp|1"), ("⚡ XP ×2", "AX|MULT|xp|2")),
         nav_row(("💰 Coin ×1", "AX|MULT|coin|1"), ("💎 Coin ×2", "AX|MULT|coin|2")),
-        [InlineKeyboardButton("💾 ذخیره فوری", callback_data="AX|SAVE")],
-        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+        [ApexInlineButton("💾 ذخیره فوری", callback_data="AX|SAVE")],
+        [ApexInlineButton("🔙 پنل", callback_data="AX|HOME")],
     ]
     await render_admin(query, "⚙️ تنظیمات", text, InlineKeyboardMarkup(rows))
 
@@ -2670,11 +2719,11 @@ def restore_backup(path: Path) -> tuple[bool, str]:
 async def admin_backup_page(query):
     files = backup_files()
     lines = [f"{i+1}. {f.name}" for i, f in enumerate(files[:10])]
-    rows = [[InlineKeyboardButton("📦 ساخت بکاپ جدید", callback_data="AX|MAKEBACKUP")]]
+    rows = [[ApexInlineButton("📦 ساخت بکاپ جدید", callback_data="AX|MAKEBACKUP")]]
     for i, f in enumerate(files[:8]):
-        rows.append([InlineKeyboardButton(f"♻️ بازیابی {i+1}", callback_data=f"AX|RESTORE|{i}")])
-    rows.append([InlineKeyboardButton("🔄 تازه‌سازی", callback_data="AX|BACKUP")])
-    rows.append([InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")])
+        rows.append([ApexInlineButton(f"♻️ بازیابی {i+1}", callback_data=f"AX|RESTORE|{i}")])
+    rows.append([ApexInlineButton("🔄 تازه‌سازی", callback_data="AX|BACKUP")])
+    rows.append([ApexInlineButton("🔙 پنل", callback_data="AX|HOME")])
     text = "💾 <b>Backup Center</b>\n\n" + ("\n".join(lines) or "هنوز بکاپی ساخته نشده است.")
     await render_admin(query, "💾 بکاپ و بازیابی", text, InlineKeyboardMarkup(rows))
 
@@ -2702,7 +2751,7 @@ async def admin_tools_page(query):
         nav_row(("💾 Save", "AX|SAVE"), ("🧹 Cleanup", "AX|CLEAN")),
         nav_row(("📦 Backup", "AX|MAKEBACKUP"), ("📊 Health", "AX|HEALTH")),
         nav_row(("🛑 پایان همه بازی‌ها", "AX|ENDALL"), ("🔄 شمارنده‌ها", "AX|COUNTERS")),
-        [InlineKeyboardButton("🔙 پنل", callback_data="AX|HOME")],
+        [ApexInlineButton("🔙 پنل", callback_data="AX|HOME")],
     ]
     await render_admin(query, "🧰 ابزارها", text, InlineKeyboardMarkup(rows))
 
@@ -2751,7 +2800,7 @@ async def mini_reaction(message, game):
     game["reaction"] = {"expires": time.time() + 15, "winner": None}
     game["phase"] = "reaction"
     touch_game(game)
-    markup = InlineKeyboardMarkup([[InlineKeyboardButton("⚡ بزن!", callback_data="GM|FAST|REACTION|HIT")]])
+    markup = InlineKeyboardMarkup([[ApexInlineButton("⚡ بزن!", callback_data="GM|FAST|REACTION|HIT")]])
     await message.reply_text("⚡ <b>Reaction Rush</b>\n\nاولین بازیکنی که دکمه را بزند برنده است.", parse_mode=ParseMode.HTML, reply_markup=markup)
 
 
@@ -2811,7 +2860,7 @@ async def mini_predict(message, game):
     secret = random.choice(["شیر", "خط"])
     game["predict"] = {"secret": secret, "votes": {}, "expires": time.time() + 30}
     game["phase"] = "predict"
-    rows = [[InlineKeyboardButton("🪙 شیر", callback_data="GM|SECRET|PREDICT|heads"), InlineKeyboardButton("🪙 خط", callback_data="GM|SECRET|PREDICT|tails")]]
+    rows = [[ApexInlineButton("🪙 شیر", callback_data="GM|SECRET|PREDICT|heads"), ApexInlineButton("🪙 خط", callback_data="GM|SECRET|PREDICT|tails")]]
     await message.reply_text("🔮 <b>پیش‌بینی</b>\n\nیک طرف سکه را انتخاب کن. انتخابت ثبت می‌شود.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows))
 
 
@@ -2900,7 +2949,7 @@ async def advanced_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not found:
                 await render_admin(query, "🎮 بازی", "بازی پیدا نشد.", admin_back_home()); return
             body = game_info_text(found)
-            rows = [[InlineKeyboardButton("🛑 پایان بازی", callback_data=f"AX|GAMEEND|{found['chat_id']}|{escape(str(found['id']))[:15]}")], [InlineKeyboardButton("🔙 بازی‌ها", callback_data="AX|GAMES")]]
+            rows = [[ApexInlineButton("🛑 پایان بازی", callback_data=f"AX|GAMEEND|{found['chat_id']}|{escape(str(found['id']))[:15]}")], [ApexInlineButton("🔙 بازی‌ها", callback_data="AX|GAMES")]]
             await render_admin(query, "🎮 جزئیات بازی", body, InlineKeyboardMarkup(rows)); return
         if action == "GAMEEND":
             cid = int(parts[2]); game = active_game(cid)
@@ -2926,7 +2975,7 @@ async def advanced_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             key = parts[2]; DATA.setdefault("global_content", {})[key] = []; save_data(force=True); await admin_content_category(query, key, 0); return
         if action == "CADD":
             key = parts[2]; context.user_data["admin_flow"] = {"type": "content", "key": key}
-            await render_admin(query, "➕ افزودن محتوا", f"دسته: {CONTENT_LABELS.get(key,key)}\n\nحالا متن جدید را در یک پیام بفرست.\nبعد از دریافت، ربات آن را ذخیره می‌کند.", InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="AX|FLOWCANCEL")]])); return
+            await render_admin(query, "➕ افزودن محتوا", f"دسته: {CONTENT_LABELS.get(key,key)}\n\nحالا متن جدید را در یک پیام بفرست.\nبعد از دریافت، ربات آن را ذخیره می‌کند.", InlineKeyboardMarkup([[ApexInlineButton("❌ لغو", callback_data="AX|FLOWCANCEL")]])); return
         if action == "ECONOMY":
             await admin_economy_page(query); return
         if action == "MULT":
@@ -2967,7 +3016,7 @@ async def advanced_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await admin_logs_page(query); return
         if action == "BROADCAST":
             context.user_data["admin_flow"] = {"type": "broadcast"}
-            await render_admin(query, "📣 پیام همگانی", "پیام موردنظر را در یک پیام بفرست.\n\nربات فقط در صورت ارسال پیام بعدی آن را ارسال می‌کند.", InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="AX|FLOWCANCEL")]])); return
+            await render_admin(query, "📣 پیام همگانی", "پیام موردنظر را در یک پیام بفرست.\n\nربات فقط در صورت ارسال پیام بعدی آن را ارسال می‌کند.", InlineKeyboardMarkup([[ApexInlineButton("❌ لغو", callback_data="AX|FLOWCANCEL")]])); return
         if action == "FLOWCANCEL":
             context.user_data.pop("admin_flow", None); await advanced_admin_panel(update, context); return
         if action == "TOOLS":
@@ -6944,11 +6993,8 @@ def main_v4():
     app.run_polling(drop_pending_updates=True)
 
 
-main = main_v4
-
-
-if __name__ == '__main__':
-    main()
+# V4 is retained as internal compatibility code only. Do not start it here:
+# V5 must be fully defined before the application is constructed and run.
 
 
 # ============================================================================
@@ -7019,7 +7065,7 @@ def v5_button(label: str, data: str) -> InlineKeyboardButton:
     # Telegram callback_data is limited; keep our UX tokens compact.
     if len(data.encode("utf-8")) > 64:
         raise ValueError(f"callback_data too long: {data}")
-    return InlineKeyboardButton(label, callback_data=data)
+    return ApexInlineButton(label, callback_data=data)
 
 
 def v5_markup(rows) -> InlineKeyboardMarkup:
@@ -7150,13 +7196,23 @@ choose_content = v5_choose
 # V5 polished main menu — compact, predictable, role-aware.
 # ---------------------------------------------------------------------------
 def v5_main_keyboard(uid: int) -> ReplyKeyboardMarkup:
+    # Keep the persistent keyboard intentionally small; deep features live in
+    # context-aware inline menus so the user is never presented with a wall
+    # of buttons. Native Telegram styles make the primary actions visually
+    # distinct on supported clients.
     rows = [
-        ["🎮 بازی", "👤 پروفایل", "🏆 رتبه"],
-        ["🛒 فروشگاه", "🏅 دستاوردها", "❓ راهنما"],
+        ["🎮 بازی", "👤 پروفایل"],
+        ["🏆 رتبه", "🛒 فروشگاه"],
+        ["🏅 دستاوردها", "❓ راهنما"],
     ]
     if is_admin(uid):
         rows.append(["👑 مرکز مدیریت"])
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True, one_time_keyboard=False)
+    return ReplyKeyboardMarkup(
+        apex_reply_rows(rows),
+        resize_keyboard=True,
+        is_persistent=True,
+        one_time_keyboard=False,
+    )
 
 
 def v5_home_inline(uid: int):
@@ -8301,10 +8357,66 @@ def build_application_v5() -> Application:
     return app
 
 
+async def _v5_error_handler(update, context):
+    """Keep polling alive on handler exceptions and leave an auditable trace."""
+    try:
+        err = repr(getattr(context, "error", None))
+        actor = getattr(getattr(update, "effective_user", None), "id", 0) if update else 0
+        chat_id = getattr(getattr(update, "effective_chat", None), "id", None) if update else None
+        audit("v5_unhandled_error", int(actor or 0), chat_id, err[:600])
+        save_data()
+        print(f"ApexRival handler error: {err}")
+    except Exception as exc:
+        print(f"ApexRival error-handler failure: {exc!r}")
+
+
+def v5_runtime_self_check() -> None:
+    """Fail fast only for genuine UI wiring problems before Render starts polling."""
+    assert BOT_NAME == "ApexRival"
+    assert ADVANCED_VERSION == APEX_V5
+    assert callable(start_health_server)
+    assert callable(v5_callback)
+    assert callable(v5_text_router)
+    assert callable(_register_v5_handlers)
+
+    # Content integrity: each bank must be internally unique after cleanup.
+    for name, bank in V5_BANKS.items():
+        cleaned = [str(x).strip() for x in bank if str(x).strip()]
+        assert len(cleaned) == len(set(cleaned)), f"duplicate content in {name}"
+
+    # Native button style smoke tests. callback_data is still subject to the
+    # 1–64 byte Telegram limit and every generated button must satisfy it.
+    sample = [
+        *v5_home_inline(int(ADMIN_ID or 0)),
+        *v5_admin_home_markup(),
+    ]
+    for row in sample:
+        for button in row:
+            data = getattr(button, "callback_data", None)
+            if data is not None:
+                assert len(str(data).encode("utf-8")) <= 64, f"callback too long: {data}"
+            assert getattr(button, "style", None) in {None, APEX_STYLE_PRIMARY, APEX_STYLE_SUCCESS, APEX_STYLE_DANGER}
+
+    # Main reply keyboard must contain actual KeyboardButton objects, not raw strings.
+    main_kb = v5_main_keyboard(int(ADMIN_ID or 0))
+    assert all(isinstance(btn, KeyboardButton) for row in main_kb.keyboard for btn in row)
+    assert all(getattr(btn, "style", None) in {APEX_STYLE_PRIMARY, APEX_STYLE_SUCCESS, APEX_STYLE_DANGER} for row in main_kb.keyboard for btn in row)
+
+    print(
+        f"ApexRival self-check OK | version={APEX_V5} | "
+        f"users={len(DATA.get('users', {}))} | groups={len(DATA.get('groups', {}))} | "
+        f"features={len(V5_FEATURES)} | banks={len(V5_BANKS)}"
+    )
+
+
 def main_v5():
+    if not BOT_TOKEN:
+        raise RuntimeError('BOT_TOKEN is missing')
+    v5_runtime_self_check()
     start_health_server()
-    application=Application.builder().token(BOT_TOKEN).post_init(_v5_post_init).build() if BOT_TOKEN else (_ for _ in ()).throw(RuntimeError('BOT_TOKEN is missing'))
+    application = Application.builder().token(BOT_TOKEN).post_init(_v5_post_init).build()
     _register_v5_handlers(application)
+    application.add_error_handler(_v5_error_handler)
     print(f'{BOT_NAME} {APEX_V5} starting...')
     application.run_polling(drop_pending_updates=True)
 
