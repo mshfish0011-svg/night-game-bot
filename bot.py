@@ -12004,9 +12004,12 @@ def _ar8_final_markup_self_check():
     ]
     for markup in markups:
         rows = getattr(markup, "inline_keyboard", None)
-        assert isinstance(rows, list) and rows
+        # python-telegram-bot 22.8 converts inline_keyboard to an immutable
+        # tuple[tuple[InlineKeyboardButton, ...], ...].  The previous self-check
+        # incorrectly required a list and crashed a valid keyboard at startup.
+        assert isinstance(rows, (list, tuple)) and rows
         for row in rows:
-            assert isinstance(row, list) and row
+            assert isinstance(row, (list, tuple)) and row
             for button in row:
                 assert isinstance(button, InlineKeyboardButton)
                 data = getattr(button, "callback_data", None)
