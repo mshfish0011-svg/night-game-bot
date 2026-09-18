@@ -8386,16 +8386,21 @@ def v5_runtime_self_check() -> None:
 
     # Native button style smoke tests. callback_data is still subject to the
     # 1–64 byte Telegram limit and every generated button must satisfy it.
-    sample = [
-        *v5_home_inline(int(ADMIN_ID or 0)),
-        *v5_admin_home_markup(),
+    # InlineKeyboardMarkup is a TelegramObject, not a Python list.
+    # Always inspect its documented `.inline_keyboard` attribute instead of
+    # iterating/indexing the TelegramObject itself.
+    inline_samples = [
+        v5_home_inline(int(ADMIN_ID or 0)),
+        v5_admin_home_markup(),
     ]
-    for row in sample:
-        for button in row:
-            data = getattr(button, "callback_data", None)
-            if data is not None:
-                assert len(str(data).encode("utf-8")) <= 64, f"callback too long: {data}"
-            assert getattr(button, "style", None) in {None, APEX_STYLE_PRIMARY, APEX_STYLE_SUCCESS, APEX_STYLE_DANGER}
+    for markup in inline_samples:
+        keyboard = getattr(markup, "inline_keyboard", ())
+        for row in keyboard:
+            for button in row:
+                data = getattr(button, "callback_data", None)
+                if data is not None:
+                    assert len(str(data).encode("utf-8")) <= 64, f"callback too long: {data}"
+                assert getattr(button, "style", None) in {None, APEX_STYLE_PRIMARY, APEX_STYLE_SUCCESS, APEX_STYLE_DANGER}
 
     # Main reply keyboard must contain actual KeyboardButton objects, not raw strings.
     main_kb = v5_main_keyboard(int(ADMIN_ID or 0))
