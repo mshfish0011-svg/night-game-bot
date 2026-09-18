@@ -37,6 +37,40 @@ PORT = int(os.getenv("PORT", "10000") or 10000)
 DATA_FILE = os.getenv("DATA_FILE", "game_data.json")
 SAVE_EVERY_SECONDS = 12
 
+# Render health endpoint. Runs in a daemon thread so Telegram polling can
+# continue independently.
+def start_health_server() -> None:
+    class _HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path not in ('/', '/health', '/healthz'):
+                self.send_response(404)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(b'Not Found')
+                return
+            body = b'ApexRival OK'
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return
+
+    def _serve():
+        try:
+            server = ThreadingHTTPServer(('0.0.0.0', PORT), _HealthHandler)
+            server.daemon_threads = True
+            print(f'Health server listening on 0.0.0.0:{PORT}')
+            server.serve_forever()
+        except Exception as exc:
+            print(f'Health server error: {exc}')
+
+    thread = threading.Thread(target=_serve, name='apexrival-health', daemon=True)
+    thread.start()
+
+
 # -----------------------------
 # Content banks
 # -----------------------------
