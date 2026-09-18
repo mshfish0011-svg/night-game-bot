@@ -377,8 +377,12 @@ def load_data() -> dict[str, Any]:
             raw = json.load(f)
         if isinstance(raw, dict):
             data.update(raw)
-    except Exception:
+    except FileNotFoundError:
         pass
+    except Exception as exc:
+        # [FIX 10] A corrupted data file used to be swallowed silently and the
+        # bot restarted from empty data. Keep going, but make it visible.
+        print(f"ApexRival data warning: could not read {DATA_FILE!r} ({exc!r}); starting with defaults")
     data.setdefault("users", {})
     data.setdefault("groups", {})
     data.setdefault("games", {})
@@ -796,7 +800,10 @@ def reward_player(game: dict[str, Any], uid: int, xp: int, coins: int, win: bool
         xp *= 2
     add_xp(uid, xp, name_of(uid, game), mult_xp)
     add_coins(uid, coins, name_of(uid, game), mult_coins)
-    user["games"] = int(user.get("games", 0)) + 1
+    # [FIX 8] BUG: counting +1 game on EVERY reward inflated the "games"
+    # statistic (20 replies already unlocked the "20 games" achievement).
+    # Games are now counted exactly once per player when a lobby starts
+    # (see v7_start_lobby).
     if win:
         user["wins"] += 1
         user["streak"] += 1
@@ -9459,19 +9466,17 @@ APEX_V5 = AR7_VERSION
 ADVANCED_VERSION = AR7_VERSION
 BOT_VERSION = AR7_VERSION
 
-# The user's requested 18+ mode is always available as a group feature.
-# It remains individually gated by adult_ok and the content is mature,
-# romantic/relationship-oriented and NON-EXPLICIT.
-DEFAULT_GROUP["adult_mode"] = True
-DATA.setdefault("settings", {})["adult_default"] = True
-DATA.setdefault("global_features", {})["adult"] = True
-
-# Always-on group feature gate.
+# The user's requested 18+ mode is available as a group feature and stays
+# reachable in the turn menu; it is gated per-user through the adult_ok
+# confirmation. [FIX 7] BUG: AR7 used to force group["adult_mode"] = True on
+# EVERY get_group() call, which silently overrode the /adult admin command and
+# the admin panel's per-group toggle — turning adult mode OFF was impossible.
+# The flag now keeps its stored value (see v7_turn_markup, which shows the 18+
+# button independently of this flag).
 _ar7_original_get_group = get_group
 
 def get_group(chat_id: int) -> dict[str, Any]:
     group = _ar7_original_get_group(chat_id)
-    group["adult_mode"] = True
     group.setdefault("settings", {})["allow_flirty"] = True
     return group
 
@@ -10554,13 +10559,16 @@ def v7_pick(game: dict[str, Any], category: str) -> str:
     used = set(game.setdefault("v7_used_prompts_global", []))
     choices = [x for x in bank if x not in used]
     if not choices:
-        # Only when a category has genuinely been exhausted do we fall back.
-        # The full curated vault is large enough that normal small-group games
-        # will not hit this path.
-        choices = [x for x in bank if x not in used]
+        # [FIX 6] BUG: the old "fallback" re-applied the exact same filter, so
+        # once a category was exhausted mid-game it stayed exhausted forever
+        # (the dead-code branch never reset anything). Reset the history for
+        # this game so the bank becomes usable again.
+        used.clear()
+        game["v7_used_prompts_global"] = []
+        choices = list(bank)
         if not choices:
             # Do not silently reuse another category's prompt. If the bank is
-            # exhausted, return a clear maintenance message instead.
+            # empty, return a clear maintenance message instead.
             return "🎲 این دسته برای این بازی کاملاً مصرف شده است؛ حالت دیگری را انتخاب کن."
     item = random.choice(choices)
     used.add(item)
@@ -10647,7 +10655,9 @@ def v7_turn_card(game: dict[str, Any]) -> str:
     q = v7_current_questioner(game)
     if q is None:
         return v5_card("🎮 نوبت", "بازیکنی برای نوبت تعیین نشده است.")
-    label = escape(name_of(q, game))
+    # [FIX 9] mention_user() escapes names itself; the old code pre-escaped
+    # here, so names containing &/</> were double-escaped into visible junk.
+    label = name_of(q, game)
     turn_no = int(game.get("turn_number", 1))
     total = len(game.get("players", []))
     return v5_card(
@@ -10829,6 +10839,26 @@ async def v7_handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return True
     prompt.setdefault("responders", []).append(uid)
     kind = str(prompt.get("mode") or prompt.get("kind") or "truth")
+    # [FIX 5b] Penalty completion: a penalty prompt (created by v7_show_penalty)
+    # must mark the pending penalty as done, pay a small reward, and — unlike a
+    # turn answer — must NOT advance the turn or credit a questioner.
+    if kind == "penalty":
+        pending = game.get("pending_penalties", {}).get(str(uid))
+        if pending and not pending.get("done") and not pending.get("skipped"):
+            pending["done"] = True
+            pending["completed_at"] = now_ts()
+            add_xp(uid, 4, name_of(uid, game))
+            add_coins(uid, 2, name_of(uid, game))
+            if str(pending.get("source", "")).startswith("🤫"):
+                get_user(uid)["missions"] = int(get_user(uid).get("missions", 0)) + 1
+        game.pop("reply_prompt", None)
+        touch_game(game)
+        save_data(force=True)
+        await msg.reply_text(
+            "✅ <b>حکم انجام شد و ثبت شد.</b>\n🎁 +۴ XP و +۲ سکه",
+            parse_mode=ParseMode.HTML,
+        )
+        return True
     rewards = {"truth": (6, 2), "dare": (7, 3), "mind": (5, 2), "scenario": (6, 2), "flirty": (7, 2), "adult": (8, 3)}
     xp, coins = rewards.get(kind, (5, 2))
     reward_player(game, uid, xp, coins, win=True, reason=f"Turn Reply:{kind}")
@@ -10907,7 +10937,23 @@ async def v7_show_penalty(query, game):
     if not p or p.get("done") or p.get("skipped"):
         await safe_edit_query(query, v5_card("☠️ حکم من", "فعلاً حکم فعالی نداری."), v5_markup([[v5_button("🔙 بازی", "V5|GAME")]]))
         return
-    await safe_edit_query(query, penalty_text(game, uid) + "\n\n↩️ برای تکمیل، همین پیام را Reply کن.", v5_markup([[v5_button("🔙 بازی", "V5|GAME")]]))
+    # [FIX 5] BUG: this screen used to tell the player "Reply to this message
+    # to complete" but nothing ever registered that message as a replyable
+    # prompt and no completion button existed in the final UI — penalties could
+    # never be marked done. Now the penalty message is stored as a real
+    # "penalty" prompt (handled by v7_handle_reply) and carries the shield /
+    # pass item buttons whose callbacks are registered by [FIX 2c].
+    remain = max(60, int(p.get("deadline", now_ts() + 300)) - now_ts())
+    sent = await query.message.reply_text(
+        penalty_text(game, uid) + "\n\n↩️ انجامش دادی؟ همین پیام را Reply کن تا ثبت شود.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=v5_markup([
+            [v5_button("🛡 استفاده از سپر", "penaltyshield|1"), v5_button("🎫 استفاده از پاس", "penaltypass|1")],
+            *ar7_game_nav("V5|GAME"),
+        ]),
+    )
+    ar7_prompt_store(game, sent, "penalty", target_uid=uid, any_player=False, ttl=remain, max_replies=1)
+    await safe_answer_query(query, "✅ حکم آماده شد.")
 
 
 # -----------------------------
@@ -10915,7 +10961,14 @@ async def v7_show_penalty(query, game):
 # -----------------------------
 async def v7_start_lobby(query, game):
     uid = int(query.from_user.id)
-    if not await v7_require_started(query):
+    # [FIX 3] BUG: this used to call `v7_require_started(query)` — passing a
+    # CallbackQuery where every gate implementation expects an Update (they
+    # look up update.effective_user, which a query does not have). The check
+    # therefore ALWAYS returned False and the lobby start silently aborted.
+    # All callers already ran the full AR15 group gate on the update, so a
+    # local activation check on the presser is sufficient here.
+    if not (is_admin(uid) or v7_has_started(uid)):
+        await safe_answer_query(query, "🔐 اول /start را در چت خصوصی ربات انجام بده.", True)
         return
     if not leader_of(game, uid) and not is_admin(uid):
         await safe_answer_query(query, "👑 فقط سرگروه می‌تواند بازی را شروع کند.", True)
@@ -10959,7 +11012,11 @@ async def v7_mode_callback(query, context, mode: str):
         await safe_answer_query(query, "⛔ بازی فعالی نیست.", True)
         return
     uid = int(query.from_user.id)
-    if not await v7_require_started(query):
+    # [FIX 4] BUG: same query-vs-update confusion as v7_start_lobby — the gate
+    # always evaluated to False, so the questioner could never pick a mode and
+    # the core game loop never advanced past the turn screen.
+    if not (is_admin(uid) or v7_has_started(uid)):
+        await safe_answer_query(query, "🔐 اول /start را در چت خصوصی ربات انجام بده.", True)
         return
     current = v7_current_questioner(game)
     if current is None or uid != int(current):
@@ -12069,6 +12126,10 @@ async def _ar8_post_init(application):
     ])
     if application.job_queue:
         application.job_queue.run_repeating(v5_cleanup_job, interval=30, first=15, name="apexrival_cleanup")
+    else:
+        # [FIX 11] Without the job-queue extra the cleanup/auto-end job was
+        # silently skipped; games then never expired on inactivity.
+        print("ApexRival warning: job_queue unavailable (install python-telegram-bot[job-queue]); auto-cleanup disabled")
     await ar8_channel_setup_check(application.bot)
 
 
@@ -15455,7 +15516,10 @@ main_apexrival_13 = main_apexrival_13
 main_v5 = main_apexrival_13
 main = main_apexrival_13
 
-if __name__ == "__main__":
+# [FIX 1] BUG: this unguarded entry point used to hijack startup — the script
+# launched version 13.0 and run_polling() blocked forever, so the AR14/AR15
+# layers (and all their fixes) were never even defined. Superseded by AR15.
+if False:  # superseded by final AR15 entrypoint
     main_apexrival_13()
 
 # ============================================================================
@@ -15900,7 +15964,9 @@ main_apexrival_14 = main_apexrival_14
 main_v5 = main_apexrival_14
 main = main_apexrival_14
 
-if __name__ == "__main__":
+# [FIX 1] Same hijack bug as the AR13 entry above — must stay disabled so the
+# final AR15 entrypoint below is the one that actually runs.
+if False:  # superseded by final AR15 entrypoint
     main_apexrival_14()
 
 # ============================================================================
@@ -16401,7 +16467,10 @@ async def ar15_group_scope_background(update, context):
         bot = getattr(context, "bot", None) or getattr(update, "bot", None) or APEX_RUNTIME_BOT
         if not chat or not user or bot is None:
             return
-        await ar15_repair_group_scopes(bot, int(chat.id), int(user.id), ar15_user_language(update), force=True)
+        # [FIX 14] force=True bypassed the 30-minute scope cache and fired ~3
+        # setMyCommands API calls for EVERY message, quickly hitting Telegram
+        # rate limits in active groups. The cache still repairs stale menus.
+        await ar15_repair_group_scopes(bot, int(chat.id), int(user.id), ar15_user_language(update), force=False)
     except Exception as exc:
         print(f"ApexRival AR15 background command repair warning: {exc!r}")
 
@@ -16489,13 +16558,26 @@ def ar15_register_handlers(app):
     app.add_handler(CommandHandler("rahnama", v5_help_message))
 
     # Check activation buttons before old callback routers.
-    app.add_handler(CallbackQueryHandler(ar15_callback_check, pattern=r"^REQ\|"), group=-60)
-    app.add_handler(CallbackQueryHandler(ar15_callback_dispatch, pattern=r"^(A13\|L\||V5\|L\|)"), group=-50)
+    # [FIX 2] The old group=-50 dispatch for A13|L|/V5|L| overlapped the
+    # group-0 handlers (python-telegram-bot runs ONE handler per group, so
+    # BOTH ran). Every lobby action executed twice: the ready/lock toggles
+    # canceled themselves, kicks alerted an error after succeeding, and
+    # starting the game produced two messages. The single-execution group-0
+    # chain below already routes V5|L|S -> v7_start_lobby (turn engine) and
+    # applies the same AR15 gates, so the duplicate dispatch is removed.
+    app.add_handler(CallbackQueryHandler(ar15_callback_check, pattern=r"^REQ\|CHECK"), group=-60)
 
     # Generic handlers from the mature bot remain available for the rest of the UI.
     app.add_handler(CallbackQueryHandler(ar12_callback_dispatch, pattern=r"^(ADM\||V5\||V7\|)"))
     app.add_handler(CallbackQueryHandler(ar13_handle_callback, pattern=r"^A13\|"))
-    app.add_handler(CallbackQueryHandler(v7_callback, pattern=r"^V7\|"))
+    # [FIX 2b] REQ|INFO opens the guided channel/activation info screen
+    # (previously it fell into ar15_callback_check and behaved like CHECK).
+    app.add_handler(CallbackQueryHandler(ar8_prereq_callback, pattern=r"^REQ\|INFO"))
+    # [FIX 2c] The shop's buy buttons and the penalty item buttons emit legacy
+    # callback payloads (buy|..., penaltyshield|..., penaltypass|...). They had
+    # NO handler at all in the AR15 wiring, so purchases silently did nothing.
+    # The mature v3 callback router (ar6-wrapped for shop gating) handles them.
+    app.add_handler(CallbackQueryHandler(callback, pattern=r"^(buy\||penaltydone\||penaltyshield\||penaltypass\|)"))
 
     # Live scope repair for the current group/member. It never blocks gameplay.
     try:
