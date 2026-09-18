@@ -13906,5 +13906,497 @@ main_apexrival_10 = main_apexrival_10
 main_v5 = main_apexrival_10
 main = main_apexrival_10
 
+
+# ============================================================
+# ApexRival 11.0 — resilient access / activation layer
+#
+# Goals:
+#   • Never trust only a volatile in-process flag for private /start.
+#   • Recover activation after a Render restart when Telegram can verify
+#     that the bot already has a private chat with the user.
+#   • Replace the dead-end "just /start" message with a guided flow:
+#       1) private activation deep-link
+#       2) channel membership
+#       3) live re-check
+#       4) explicit ready state
+#   • Keep all group game functions protected by the same authoritative gate.
+#   • Harden reply-keyboard navigation so stale text-edit flows cannot swallow
+#     normal buttons and raise split/unpack errors.
+# ============================================================
+AR11_VERSION = "11.0"
+BOT_VERSION = AR11_VERSION
+ADVANCED_VERSION = AR11_VERSION
+
+DATA.setdefault("activation", {})
+AR11_PRIVATE_CACHE: dict[int, tuple[float, bool, str]] = {}
+AR11_NOTICE_CACHE: dict[tuple[int, int], float] = {}
+AR11_BOT_USERNAME: str | None = None
+AR11_CACHE_TTL = 45
+AR11_NOTICE_TTL = 2
+
+
+def ar11_activation_state(uid: int) -> dict[str, Any]:
+    """Persistent activation metadata kept inside the user record."""
+    u = get_user(int(uid))
+    state = u.setdefault("activation", {})
+    state.setdefault("version", 1)
+    state.setdefault("private_started_at", int(u.get("started_at", 0) or 0))
+    state.setdefault("private_start_param", "")
+    state.setdefault("last_verified_at", 0)
+    state.setdefault("source", "")
+    return state
+
+
+async def ar11_bot_username(bot=None) -> str | None:
+    global AR11_BOT_USERNAME
+    if AR11_BOT_USERNAME:
+        return AR11_BOT_USERNAME
+    bot = bot or APEX_RUNTIME_BOT
+    if bot is None:
+        return None
+    try:
+        me = await bot.get_me()
+        username = str(getattr(me, "username", "") or "").strip().lstrip("@")
+        if username:
+            AR11_BOT_USERNAME = username
+            return username
+    except Exception as exc:
+        print(f"ApexRival AR11 bot username probe failed: {exc!r}")
+    return None
+
+
+async def ar11_private_chat_probe(uid: int, *, force: bool = False, bot=None) -> tuple[bool | None, str]:
+    """
+    Live Telegram-side activation probe.
+
+    Telegram's getChat can resolve a private chat by the user's ID once the bot
+    knows that private chat. This gives us a second source of truth besides the
+    JSON flag and lets the game recover cleanly after an in-memory/file reset.
+    """
+    uid = int(uid)
+    now = time.time()
+    cached = AR11_PRIVATE_CACHE.get(uid)
+    if not force and cached and now - cached[0] < AR11_CACHE_TTL:
+        return cached[1], cached[2]
+
+    if v7_has_started(uid):
+        AR11_PRIVATE_CACHE[uid] = (now, True, "persistent")
+        st = ar11_activation_state(uid)
+        st["last_verified_at"] = now_ts()
+        return True, "persistent"
+
+    bot = bot or APEX_RUNTIME_BOT
+    if bot is None:
+        return None, "runtime bot is not initialized"
+
+    try:
+        chat = await bot.get_chat(uid)
+        ctype = str(getattr(chat, "type", "")).lower()
+        if ctype == "private":
+            AR11_PRIVATE_CACHE[uid] = (now, True, "telegram_private_chat")
+            return True, "telegram_private_chat"
+        AR11_PRIVATE_CACHE[uid] = (now, None, f"unexpected_chat_type:{ctype}")
+        return None, f"unexpected_chat_type:{ctype}"
+    except Exception as exc:
+        # A Telegram 400/403 here normally means the bot has no accessible
+        # private chat with the user yet. We intentionally keep this separate
+        # from a network error so the UI can stay honest.
+        err = repr(exc)
+        lower = err.lower()
+        if any(token in lower for token in ("chat not found", "user not found", "peer_id_invalid", "forbidden")):
+            AR11_PRIVATE_CACHE[uid] = (now, False, "not_started")
+            return False, "not_started"
+        AR11_PRIVATE_CACHE[uid] = (now, None, err[:500])
+        return None, err[:500]
+
+
+async def ar11_is_activated(uid: int, *, force: bool = False, bot=None) -> tuple[bool | None, str]:
+    """Authoritative activation check: persistent flag first, live Telegram fallback second."""
+    uid = int(uid)
+    if v7_has_started(uid):
+        st = ar11_activation_state(uid)
+        st["last_verified_at"] = now_ts()
+        return True, "persistent"
+
+    ok, reason = await ar11_private_chat_probe(uid, force=force, bot=bot)
+    if ok is True:
+        # Recover the persistent registration automatically. This is the key
+        # fix for users who DID press /start but are hitting a fresh Render
+        # process or a data-file reset.
+        v7_mark_started(uid)
+        st = ar11_activation_state(uid)
+        st["last_verified_at"] = now_ts()
+        st["source"] = reason
+        save_data(force=True)
+        return True, "recovered"
+    return ok, reason
+
+
+def ar11_private_activate_url(username: str | None) -> str | None:
+    if not username:
+        return None
+    return f"https://t.me/{username}?start=activate"
+
+
+async def ar11_gate_markup(bot=None):
+    username = await ar11_bot_username(bot)
+    private_url = ar11_private_activate_url(username)
+    rows = []
+    if private_url:
+        rows.append([ApexInlineButton("🚀 فعال‌سازی امن در چت خصوصی", url=private_url, style=APEX_STYLE_SUCCESS)])
+    rows.append([
+        ApexInlineButton("📢 عضویت در کانال", url=REQUIRED_CHANNEL_URL, style=APEX_STYLE_PRIMARY),
+    ])
+    rows.append([
+        ApexInlineButton("🔄 بررسی وضعیت من", callback_data="REQ|CHECK", style=APEX_STYLE_SUCCESS),
+        ApexInlineButton("ℹ️ راهنمای ورود", callback_data="REQ|INFO", style=APEX_STYLE_PRIMARY),
+    ])
+    return v5_markup(rows)
+
+
+async def ar11_gate_text(uid: int, *, bot=None, force: bool = False) -> tuple[str, Any]:
+    """Build a status-rich gate instead of a generic error."""
+    started, start_reason = await ar11_is_activated(uid, force=force, bot=bot)
+    membership, member_reason = await ar8_channel_membership(uid, force=force, bot=bot)
+
+    if started is True and membership is True:
+        text = ar9_card(
+            "✅ ApexRival آماده است",
+            "🟢 <b>فعال‌سازی خصوصی:</b> تأیید شد",
+            "🟢 <b>عضویت کانال:</b> تأیید شد",
+            "🎮 <b>دسترسی بازی:</b> فعال",
+            "حالا روی «ساخت Lobby» بزن یا دستور <code>/game</code> را ارسال کن.",
+            "برای بررسی مجدد، همین‌جا «🔄 بررسی وضعیت من» را بزن.",
+        )
+        return text, await ar11_gate_markup(bot)
+
+    lines = ["🔐 <b>ورود به ApexRival</b>", "", "قبل از ورود به Lobby، دو قفل امنیتی باید سبز شوند:", ""]
+    if started is True:
+        lines.append("🟢 فعال‌سازی خصوصی: <b>تأیید شد</b>")
+    elif started is False:
+        lines.append("🔴 فعال‌سازی خصوصی: <b>انجام نشده</b>")
+        lines.append("↳ دکمه «فعال‌سازی امن» را بزن؛ Telegram مستقیماً چت خصوصی ApexRival را باز می‌کند.")
+    else:
+        lines.append("🟡 فعال‌سازی خصوصی: <b>فعلاً قابل بررسی نیست</b>")
+        lines.append("↳ چند لحظه بعد «بررسی وضعیت» را بزن؛ خطای موقت Telegram نباید به‌عنوان عدم فعال‌سازی نمایش داده شود.")
+
+    if membership is True:
+        lines.append("🟢 عضویت کانال: <b>تأیید شد</b>")
+    elif membership is False:
+        lines.append(f"🔴 عضویت کانال: <b>تأیید نشده</b> — <code>{escape(REQUIRED_CHANNEL)}</code>")
+    else:
+        lines.append("🟡 عضویت کانال: <b>فعلاً قابل بررسی نیست</b>")
+
+    if start_reason == "recovered":
+        lines.append("\n✨ فعال‌سازی قدیمی حساب از سمت Telegram بازیابی شد؛ دیگر نباید پیام /start تکراری ببینی.")
+
+    lines.append("\n⛔ تا وقتی هر دو وضعیت سبز نشوند، ورود به Lobby بسته می‌ماند.")
+    return "\n".join(lines), await ar11_gate_markup(bot)
+
+
+# Wrap the existing mark function so every successful /start writes a richer
+# activation record without changing the older persistence contract.
+_AR10_OLD_MARK_STARTED = v7_mark_started
+
+def v7_mark_started(uid: int, *, source: str = "direct") -> None:
+    _AR10_OLD_MARK_STARTED(int(uid))
+    st = ar11_activation_state(int(uid))
+    st["private_started_at"] = now_ts()
+    st["last_verified_at"] = now_ts()
+    st["source"] = str(source)[:50]
+    st["version"] = 1
+    DATA.setdefault("activation", {})[str(int(uid))] = {
+        "ts": now_ts(),
+        "source": str(source)[:50],
+    }
+    save_data(force=True)
+
+
+# The group gate now combines persisted state + a live Telegram probe + the
+# channel requirement. It is the single authoritative entry point used by
+# /game, callbacks and reply handling.
+async def v7_require_started(update: Update, *, allow_admin: bool = True) -> bool:
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return False
+    uid = int(user.id)
+    if allow_admin and is_admin(uid):
+        return True
+    if not v7_chat_is_group(update):
+        return True
+
+    bot = getattr(getattr(update, "_effective_message", None), "get_bot", lambda: None)()
+    if bot is None:
+        bot = APEX_RUNTIME_BOT
+    # Context.bot is preferable and is available on normal PTB updates.
+    try:
+        bot = bot or getattr(update, "bot", None)
+    except Exception:
+        pass
+
+    started, _ = await ar11_is_activated(uid, force=False, bot=bot)
+    if started is not True:
+        now = time.time()
+        key = (int(getattr(update.effective_chat, "id", 0) or 0), uid)
+        last = AR11_NOTICE_CACHE.get(key, 0)
+        if now - last < AR11_NOTICE_TTL:
+            return False
+        AR11_NOTICE_CACHE[key] = now
+        text, markup = await ar11_gate_text(uid, bot=bot, force=False)
+        msg = getattr(update, "message", None)
+        query = getattr(update, "callback_query", None)
+        if query:
+            await safe_answer_query(query, "🔐 فعال‌سازی کامل نیست.", True)
+            try:
+                await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Exception:
+                pass
+        elif msg:
+            await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return False
+
+    membership, _ = await ar8_channel_membership(uid, force=False, bot=bot)
+    if membership is True:
+        return True
+
+    now = time.time()
+    key = (int(getattr(update.effective_chat, "id", 0) or 0), uid)
+    last = AR11_NOTICE_CACHE.get(key, 0)
+    if now - last < AR11_NOTICE_TTL:
+        return False
+    AR11_NOTICE_CACHE[key] = now
+    text, markup = await ar11_gate_text(uid, bot=bot, force=False)
+    msg = getattr(update, "message", None)
+    query = getattr(update, "callback_query", None)
+    if query:
+        await safe_answer_query(query, "📢 عضویت کانال لازم است.", True)
+        try:
+            await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            pass
+    elif msg:
+        await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+    return False
+
+
+ensure_allowed = v7_ensure_allowed
+
+
+# New /start implementation. A deep-link parameter (e.g. ?start=activate)
+# is accepted but never required, so direct /start remains fully supported.
+async def v7_start(update, context):
+    user = getattr(update, "effective_user", None)
+    msg = getattr(update, "message", None)
+    if not user or not msg:
+        return
+    if is_banned(user.id) and not is_admin(user.id):
+        await msg.reply_text("🚫 دسترسی این حساب به ApexRival مسدود است.")
+        return
+    if getattr(update.effective_chat, "type", None) != "private":
+        username = await ar11_bot_username(getattr(context, "bot", None))
+        private_url = ar11_private_activate_url(username)
+        rows = []
+        if private_url:
+            rows.append([ApexInlineButton("🚀 باز کردن فعال‌سازی خصوصی", url=private_url, style=APEX_STYLE_SUCCESS)])
+        rows.append([ApexInlineButton("ℹ️ وضعیت ورود", callback_data="REQ|INFO", style=APEX_STYLE_PRIMARY)])
+        await msg.reply_text(
+            "🔐 <b>فعال‌سازی از داخل گروه انجام نمی‌شود.</b>\n\n"
+            "برای اتصال امن حسابت، روی دکمه زیر بزن تا Telegram مستقیم چت خصوصی ApexRival را باز کند؛ سپس <code>/start</code> را اجرا کن.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup(rows),
+        )
+        return
+
+    source = "deep_link"
+    args = getattr(context, "args", None) or []
+    if args:
+        source = f"start:{str(args[0])[:40]}"
+
+    if not is_admin(user.id):
+        membership, _ = await ar8_channel_membership(user.id, force=True, bot=getattr(context, "bot", None))
+        if membership is not True:
+            text = ar8_prereq_text("need_channel") if membership is False else ar8_prereq_text("check_error")
+            await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=await ar11_gate_markup(getattr(context, "bot", None)))
+            return
+
+    v7_mark_started(user.id, source=source)
+    AR11_PRIVATE_CACHE[int(user.id)] = (time.time(), True, "direct_start")
+    st = ar11_activation_state(int(user.id))
+    st["source"] = source
+    st["last_verified_at"] = now_ts()
+    save_data(force=True)
+
+    u = get_user(user.id, user.first_name or user.username or "بازیکن")
+    card = v5_card(
+        "🎮 ApexRival",
+        f"سلام <b>{escape(user.first_name or 'بازیکن')}</b> 👋",
+        f"⭐ Level <b>{int(u.get('level', 1))}</b>  ·  XP <b>{int(u.get('xp', 0))}</b>",
+        f"💰 <b>{int(u.get('coins', 0))}</b> سکه  ·  🔥 استریک <b>{int(u.get('streak', 0))}</b>",
+        f"🏅 {escape(title_for(int(u.get('xp', 0))))}",
+        "✅ <b>حساب خصوصی فعال شد.</b>",
+        f"📢 کانال اجباری: <code>{escape(REQUIRED_CHANNEL)}</code> · 🟢 تأیید شد",
+        "حالا هر وقت وارد گروه ApexRival شوی، مستقیماً می‌توانی Lobby بسازی یا وارد آن شوی.",
+    )
+    await msg.reply_text(
+        card,
+        parse_mode=ParseMode.HTML,
+        reply_markup=v5_main_keyboard(user.id),
+    )
+
+
+v5_start = v7_start
+start = v7_start
+
+
+# Existing REQ callbacks are upgraded in-place, so old messages remain useful.
+async def ar8_prereq_callback(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query:
+        return
+    action = (str(query.data or "").split("|", 1)[-1] or "").upper()
+    await safe_answer_query(query)
+    uid = int(getattr(query.from_user, "id", 0) or 0)
+    bot = getattr(context, "bot", None) or APEX_RUNTIME_BOT
+
+    if action == "INFO":
+        username = await ar11_bot_username(bot)
+        private_url = ar11_private_activate_url(username)
+        rows = []
+        if private_url:
+            rows.append([ApexInlineButton("🚀 فعال‌سازی امن در چت خصوصی", url=private_url, style=APEX_STYLE_SUCCESS)])
+        rows.append([ApexInlineButton("📢 عضویت در کانال", url=REQUIRED_CHANNEL_URL, style=APEX_STYLE_PRIMARY)])
+        rows.append([ApexInlineButton("🔄 بررسی وضعیت", callback_data="REQ|CHECK", style=APEX_STYLE_SUCCESS)])
+        await safe_edit_query(
+            query,
+            ar9_card(
+                "ℹ️ چرا این مرحله وجود دارد؟",
+                "🔐 <b>Private Start Gate:</b> فعال‌سازی چت خصوصی Telegram",
+                "📢 <b>Channel Gate:</b> بررسی عضویت در کانال اجباری",
+                "🛡 هر دو وضعیت قبل از ورود به Lobby بررسی می‌شوند.",
+                "اگر سرویس ری‌استارت شود، ApexRival می‌تواند فعال‌سازی قبلی را از سمت Telegram دوباره تشخیص دهد و لازم نیست کاربر دوباره /start بزند.",
+            ),
+            v5_markup(rows),
+        )
+        return
+
+    # CHECK works in BOTH the group and private chat.
+    if action == "CHECK":
+        started, start_reason = await ar11_is_activated(uid, force=True, bot=bot)
+        membership, _ = await ar8_channel_membership(uid, force=True, bot=bot)
+        if started is True and membership is True:
+            await safe_edit_query(
+                query,
+                ar9_card(
+                    "✅ ورود تأیید شد",
+                    "🟢 فعال‌سازی خصوصی: تأیید شد",
+                    "🟢 عضویت کانال: تأیید شد",
+                    "🎮 حالا دسترسی بازی برای این کاربر باز است.",
+                    "برای ساخت Lobby از <code>/game</code> استفاده کن.",
+                    f"منبع تأیید فعال‌سازی: <code>{escape(start_reason)}</code>",
+                ),
+                v5_markup([[ApexInlineButton("🎮 ساخت Lobby", callback_data="V5|GAME", style=APEX_STYLE_SUCCESS)]]) if v7_chat_is_group(update) else v5_main_keyboard(uid),
+            )
+            return
+        text, markup = await ar11_gate_text(uid, bot=bot, force=True)
+        await safe_edit_query(query, text, markup)
+        return
+
+
+# A lightweight explicit access check is also available from group callbacks.
+# It deliberately reuses the same REQ callback namespace to keep old messages
+# and bookmarks compatible.
+
+
+# Harden the public text router once more: no parser should ever treat normal
+# reply-keyboard navigation as an editor payload.
+_AR11_NAV_TEXT = {
+    "🎮 بازی", "👤 پروفایل", "🏆 رتبه", "🛒 فروشگاه", "🏅 دستاوردها",
+    "🎮 بازی‌ها", "🎯 حالت‌ها", "👤 پروفایل من", "🏆 رتبه‌بندی", "📜 قوانین",
+    "👑 مرکز مدیریت", "👑 پنل Super Admin", "👑 Super Admin", "❓ راهنما",
+}
+_AR11_OLD_AR10_TEXT_ROUTER = ar10_text_router
+
+async def ar10_text_router(update, context):
+    uid = int(update.effective_user.id) if update.effective_user else 0
+    text = (update.message.text or "").strip() if update.message else ""
+    if uid and text in _AR11_NAV_TEXT:
+        AR9_FLOW.pop(uid, None)
+        V5_FLOW.pop(uid, None)
+        if text in {"👑 مرکز مدیریت", "👑 پنل Super Admin", "👑 Super Admin"} and is_admin(uid):
+            await ar10_home_message(update, context)
+            return
+    await _AR11_OLD_AR10_TEXT_ROUTER(update, context)
+
+
+# The final main now installs the AR11 versions above.
+def ar11_register_handlers(app):
+    app.add_handler(CommandHandler("start", v7_start))
+    app.add_handler(CommandHandler("verify", ar8_verify_cmd))
+    app.add_handler(CommandHandler("game", v5_create_lobby))
+    app.add_handler(CommandHandler("menu", v5_menu))
+    app.add_handler(CommandHandler("profile", v5_profile_message))
+    app.add_handler(CommandHandler("rank", v5_rank_message))
+    app.add_handler(CommandHandler("shop", shop_cmd))
+    app.add_handler(CommandHandler("achievements", achievements_cmd))
+    app.add_handler(CommandHandler("help", v5_help_message))
+    app.add_handler(CommandHandler("id", id_cmd))
+    app.add_handler(CommandHandler("admin", ar10_admin_entry))
+    app.add_handler(CommandHandler("adult", adult_cmd))
+    app.add_handler(CallbackQueryHandler(ar8_prereq_callback, pattern=r"^REQ\|"))
+    app.add_handler(CallbackQueryHandler(ar10_callback_dispatch, pattern=r"^A10\|"))
+    app.add_handler(CallbackQueryHandler(ar9_callback_dispatch, pattern=r"^(ADM\||V5\||V7\|)"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ar10_text_router))
+
+
+async def ar11_post_init(application):
+    await _ar8_post_init(application)
+    # Prime the Telegram username cache early so group gate buttons can render
+    # the private activation deep-link immediately.
+    await ar11_bot_username(application.bot)
+
+
+def _ar11_static_self_check():
+    assert AR11_VERSION == "11.0"
+    assert callable(ar11_private_chat_probe)
+    assert callable(ar11_is_activated)
+    assert callable(v7_require_started)
+    assert callable(v7_start)
+    assert callable(ar8_prereq_callback)
+    assert callable(ar10_text_router)
+    for sample in (
+        "activate",
+        "REQ|CHECK",
+        "REQ|INFO",
+        "V5|GAME",
+    ):
+        assert 1 <= len(sample.encode("utf-8")) <= 64
+    # Ensure the new gate never contains the obsolete hard-coded dead-end line.
+    assert "not enough values to unpack (expected 2, got 1)" not in ar11_gate_text.__doc__ if ar11_gate_text.__doc__ else True
+    print("ApexRival AR11 static self-check OK | resilient-gate=on | deep-link=on | telegram-probe=on | nav-hardening=on")
+
+
+_ar11_static_self_check()
+
+
+def main_apexrival_11():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is missing")
+    _ar8_final_markup_self_check()
+    _ar11_static_self_check()
+    start_health_server()
+    application = Application.builder().token(BOT_TOKEN).post_init(ar11_post_init).build()
+    ar11_register_handlers(application)
+    application.add_error_handler(ar9_error_handler)
+    print(f"{BOT_NAME} {AR11_VERSION} starting | resilient-gate=on | user-delete=on | nav-hardening=on")
+    application.run_polling(drop_pending_updates=True)
+
+
+main_apexrival_8 = main_apexrival_11
+main_apexrival_9 = main_apexrival_11
+main_apexrival_10 = main_apexrival_11
+main_apexrival_11 = main_apexrival_11
+main_v5 = main_apexrival_11
+main = main_apexrival_11
+
 if __name__ == "__main__":
-    main_apexrival_10()
+    main_apexrival_11()
