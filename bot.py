@@ -1435,7 +1435,7 @@ async def admin_content(query) -> None:
 
 
 async def admin_shop(query) -> None:
-    await query.edit_message_text("🛒 <b>فروشگاه سراسری</b>\n\nآیتم‌ها از دیکشنری SHOP کنترل می‌شوند. قیمت‌ها در نسخه فایل‌محور قابل تغییرند.", parse_mode=ParseMode.HTML, reply_markup=admin_keyboard())
+    await query.edit_message_text("🛒 <b>فروشگاه سراسری</b>\n\nآیتم‌ها از دیکشنری SHOP کنترل می‌شوند. قیمت‌ها به‌صورت فایل‌محور قابل تغییرند.", parse_mode=ParseMode.HTML, reply_markup=admin_keyboard())
 
 
 async def admin_audit(query) -> None:
@@ -2679,7 +2679,7 @@ async def admin_security_page(query):
         "🛡 <b>امنیت و کنترل</b>\n\n"
         f"🚫 کاربران بن‌شده: {banned}\n"
         f"📜 Audit نگهداری‌شده: {len(DATA.get('audit',[]))}\n"
-        "\nابزارها در این نسخه بدون حدس‌زدن روی داده‌های حساس کار می‌کنند."
+        "\nابزارها بدون حدس‌زدن روی داده‌های حساس کار می‌کنند."
     )
     rows = [
         [ApexInlineButton("🚫 لیست بن‌ها", callback_data="AX|BANLIST")],
@@ -18583,6 +18583,2049 @@ def v16_self_check() -> None:
 v16_self_check()
 
 
+
+
+# ================================================================
+# ▼▼▼ INJECTED APEX LAYER (start of injected block) ▼▼▼
+# ================================================================
+
+# ================================================================
+# ================================================================
+#  APEXRIVAL «APEX LAYER» V17 — دستورات اختصاصی بدون تداخل،
+#  آنبوردینگ ترکیبی (جنسیت + سن)، سیستم تبلیغات کامل،
+#  پنل مدیریت نسل جدید، زیباسازی رادیکال، حذف کامل ورژن از متن‌ها.
+# ================================================================
+# ================================================================
+
+try:
+    from telegram.ext import ApplicationHandlerStop as _V17_AHS
+except Exception:  # pragma: no cover
+    _V17_AHS = None
+
+V17_DIV = "━━━━━━━━━━━━━━━━━━"
+V17_DIV_SOFT = "──────────────────"
+V17_BOT_UNAME_CACHE: list[str] = []
+V17_START_HINT_TS: dict[int, float] = {}
+V17_UNIQUE_COMMANDS = ("apex", "apexend", "apexhelp", "apexstats", "apexpanel", "apexid")
+
+
+def v17_bot_username(context=None) -> str:
+    """یوزرنیم ربات (بدون @) — کش‌شده، بدون فراخوانی شبکه."""
+    if V17_BOT_UNAME_CACHE:
+        return V17_BOT_UNAME_CACHE[0]
+    name = ""
+    try:
+        bot = getattr(context, "bot", None)
+        name = str(getattr(bot, "username", "") or "").strip().lstrip("@")
+    except Exception:
+        name = ""
+    if not name:
+        try:
+            name = str(getattr(APEX_RUNTIME_BOT, "username", "") or "").strip().lstrip("@")
+        except Exception:
+            name = ""
+    if not name:
+        name = "ApexRivalBot"
+    V17_BOT_UNAME_CACHE.append(name)
+    return name
+
+
+def v17_is_our_bot(context, at: str) -> bool:
+    if not at:
+        return False
+    return at.strip().lstrip("@").lower() == v17_bot_username(context).lower()
+
+
+def v17_age_declared(u) -> bool:
+    """سن کاربر به‌صورت صریح ثبت شده؟ (پیش‌فرضِ قدیمی adult_ok=False به معنی ثبت‌نشده است)."""
+    try:
+        return bool(u.get("v17_age_set")) or u.get("adult_ok") is True
+    except Exception:
+        return False
+
+
+def v17_is_declared_minor(u) -> bool:
+    """کاربر صراحتاً «زیر ۱۸» را تأیید کرده (فلگ سن ثبت شده و ۱۸+ نیست)."""
+    try:
+        return bool(u.get("v17_age_set")) and u.get("adult_ok") is not True
+    except Exception:
+        return False
+
+
+def v17_verified(uid: int) -> bool:
+    """کاربر اعتبارسنجی‌شده = جنسیت + سن، هر دو ثبت‌شده."""
+    try:
+        u = get_user(int(uid))
+        return bool(u.get("gender")) and v17_age_declared(u)
+    except Exception:
+        return False
+
+
+def v17_verified_icon(uid: int) -> str:
+    return "✅" if v17_verified(uid) else "⚠️"
+
+
+def v17_touch_username(user_obj) -> None:
+    """ذخیره‌ی یوزرنیم واقعی برای نمایش در پنل مدیریت."""
+    try:
+        uid = int(getattr(user_obj, "id", 0) or 0)
+        uname = str(getattr(user_obj, "username", "") or "").strip()
+        if uid and uname:
+            u = get_user(uid)
+            if u.get("username") != uname:
+                u["username"] = uname
+                save_data(force=True)
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V17-ADS] موتور تبلیغات — ذخیره‌سازی، چرخش، ساخت کارت
+# ----------------------------------------------------------------
+def v17_ads() -> list:
+    return DATA.setdefault("v17_ads", [])
+
+
+def v17_ads_enabled() -> bool:
+    try:
+        return bool(DATA.setdefault("settings", {}).get("v17_ads_enabled", True))
+    except Exception:
+        return True
+
+
+def v17_ad_every() -> int:
+    try:
+        return max(0, int(DATA["settings"].get("v17_ad_every", 6) or 0))
+    except Exception:
+        return 6
+
+
+def v17_ad_on_end() -> bool:
+    try:
+        return bool(DATA["settings"].get("v17_ad_on_end", True))
+    except Exception:
+        return True
+
+
+def v17_ad_on_home() -> bool:
+    try:
+        return bool(DATA["settings"].get("v17_ad_on_home", True))
+    except Exception:
+        return True
+
+
+def v17_ad_totals() -> tuple[int, int, int]:
+    ads = v17_ads()
+    active = sum(1 for a in ads if a.get("active"))
+    shown = sum(int(a.get("shown", 0) or 0) for a in ads)
+    return len(ads), active, shown
+
+
+def v17_next_ad():
+    ads = [a for a in v17_ads() if a.get("active")]
+    if not ads:
+        return None
+    return min(ads, key=lambda a: int(a.get("shown", 0) or 0))
+
+
+def v17_ad_card(ad: dict) -> str:
+    text = str(ad.get("text", "") or "").strip()
+    return (
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+        "📢 <b>تبلیغ</b>\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+        f"{escape(text)}\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
+    )
+
+
+def v17_ad_markup(ad: dict):
+    btn = str(ad.get("btn", "") or "").strip()
+    url = str(ad.get("url", "") or "").strip()
+    if btn and url and url.startswith(("http://", "https://", "tg://")):
+        try:
+            return InlineKeyboardMarkup([[InlineKeyboardButton(btn[:40], url=url[:200])]])
+        except Exception:
+            return None
+    return None
+
+
+async def v17_send_ad(bot, chat_id: int, *, source: str = "turn") -> bool:
+    """ارسال تبلیغ چرخشی — نمایش شمرده می‌شود و ذخیره می‌گردد."""
+    try:
+        if not v17_ads_enabled():
+            return False
+        ad = v17_next_ad()
+        if not ad:
+            return False
+        ad["shown"] = int(ad.get("shown", 0) or 0) + 1
+        s = DATA.setdefault("settings", {})
+        s["v17_ad_shown_total"] = int(s.get("v17_ad_shown_total", 0) or 0) + 1
+        save_data(force=True)
+        audit("v17_ad_show", 0, int(chat_id), f"{source}:{ad.get('id')}")
+        await bot.send_message(
+            int(chat_id),
+            v17_ad_card(ad),
+            parse_mode=ParseMode.HTML,
+            reply_markup=v17_ad_markup(ad),
+            disable_web_page_preview=True,
+        )
+        return True
+    except Exception as exc:
+        print(f"ApexRival ad warning ({source}): {exc!r}")
+        return False
+
+
+# ----------------------------------------------------------------
+# [V17-CMD] گیت گروهی ضدتداخل — ربات ما در گروه فقط و فقط به
+# دستورات اختصاصی خودش جواب می‌دهد؛ دستورات عمومی (که هر ربات
+# دیگری مثل Ocean Game هم گوش می‌دهد) بلعیده می‌شوند تا دیگر
+# هیچ رباتی با ما تداخل نکند و ما هم با هیچ‌کس.
+# ----------------------------------------------------------------
+async def v17_group_start_hint(update, context) -> None:
+    try:
+        chat_id = int(update.effective_chat.id)
+        now = time.time()
+        if now - V17_START_HINT_TS.get(chat_id, 0.0) < 45.0:
+            return
+        V17_START_HINT_TS[chat_id] = now
+        msg = update.effective_message
+        await msg.reply_text(
+            "⚡ <b>ApexRival اینجاست!</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🎮 برای ساخت بازی جدید این دستورِ <b>اختصاصیِ</b> ما را بزن:\n"
+            "<code>/apex</code>\n"
+            "🛑 پایان بازی: <code>/apexend</code>   ·   ❓ راهنما: <code>/apexhelp</code>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+
+async def v17_group_command_gate(update, context):
+    """قبل از همه‌ی هندلرهای اصلی: فیلتر دستورات گروهی (خصوصی هرگز لمس نمی‌شود)."""
+    try:
+        chat = getattr(update, "effective_chat", None)
+        ctype = str(getattr(chat, "type", "") or "")
+        if ctype not in ("group", "supergroup"):
+            return
+        msg = getattr(update, "message", None) or getattr(update, "edited_message", None)
+        if not msg or not msg.text:
+            return
+        text = str(msg.text).strip()
+        if not text.startswith("/"):
+            return
+        user = getattr(update, "effective_user", None)
+        if user is not None and getattr(user, "is_bot", False):
+            if _V17_AHS is not None:
+                raise _V17_AHS
+            return
+        token = text.split()[0]
+        cmd = token.lstrip("/").split("@", 1)[0].lower()
+        at = token.split("@", 1)[1] if "@" in token else ""
+        # دستورات اختصاصی خودمان → عبور
+        if cmd in V17_UNIQUE_COMMANDS:
+            if at and not v17_is_our_bot(context, at):
+                if _V17_AHS is not None:
+                    raise _V17_AHS
+            return
+        # /game@ApexRivalBot (هدف‌گذاری صریح روی ما) → عبور
+        if cmd in ("game", "bazi") and at and v17_is_our_bot(context, at):
+            return
+        # /start در گروه → فقط یک راهنمای کوچک (با کول‌داون)
+        if cmd == "start" and (not at or v17_is_our_bot(context, at)):
+            await v17_group_start_hint(update, context)
+        # هر چیز دیگر در گروه → بی‌صدا بلعیده می‌شود (ضدتداخل کامل)
+        if _V17_AHS is not None:
+            raise _V17_AHS
+    except Exception as exc:
+        if _V17_AHS is not None and isinstance(exc, _V17_AHS):
+            raise
+        # هر خطایی نباید مسیر دستورات اختصاصی را ببندد
+        return
+
+
+# ----------------------------------------------------------------
+# [V17-CMD] دستورات اختصاصی ربات — هیچ ربات دیگری این‌ها را ندارد
+# ----------------------------------------------------------------
+async def v17_cmd_apex(update, context):
+    """🎮 /apex — ساخت بازی جدید (معادل /game ولی کاملاً اختصاصی)."""
+    user = getattr(update, "effective_user", None)
+    msg = getattr(update, "message", None)
+    if not v7_chat_is_group(update):
+        if msg:
+            await msg.reply_text(
+                "🎮 <b>/apex مخصوص گروه‌هاست!</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "این دستور را در <b>گروه</b> بزن تا Lobby ساخته شود.\n"
+                "برای منوی شخصی، همین‌جا /start بزن 👇",
+                parse_mode=ParseMode.HTML,
+            )
+        return
+    if user and v16_maintenance() and not is_admin(int(user.id)):
+        if msg:
+            await msg.reply_text("🛠 ربات در حال بروزرسانی است؛ چند دقیقه دیگر برگرد.")
+        return
+    v17_touch_username(user)
+    return await ar15_create_lobby(update, context)
+
+
+def v17_game_summary(game: dict, reason: str = "") -> str:
+    players = [int(p) for p in game.get("players", [])]
+    scores = sorted(
+        ((int(game.get("round_scores", {}).get(str(p), 0) or 0), p) for p in players),
+        reverse=True,
+    )
+    medals = ["🥇", "🥈", "🥉"]
+    podium = []
+    for i, (score, p) in enumerate(scores[:3]):
+        medal = medals[i] if i < 3 and len(scores) >= i + 1 else "▫️"
+        podium.append(f"{medal} {mention_user(p, name_of(p, game))} — <b>{score}</b> امتیاز")
+    if not podium:
+        podium = ["هنوز امتیازی ثبت نشده."]
+    turns = int(game.get("turn_number", 0) or 0)
+    rounds = int(game.get("round", 0) or 0)
+    return (
+        "🏁 <b>بازی تمام شد!</b>\n"
+        f"{V17_DIV}\n"
+        + ("\n".join(podium))
+        + f"\n{V17_DIV}\n"
+        f"🔢 نوبت‌ها: <b>{turns}</b> · 🎲 سؤال‌ها: <b>{rounds}</b> · 👥 بازیکنان: <b>{len(players)}</b>\n"
+        + (f"📝 دلیل پایان: {escape(reason[:80])}\n" if reason else "")
+        + f"{V17_DIV}\n"
+        "🎮 برای یک دور جدید: <code>/apex</code>"
+    )
+
+
+async def v17_cmd_apexend(update, context):
+    """🛑 /apexend — پایان بازی توسط سرگروه (یا ادمین)."""
+    user = getattr(update, "effective_user", None)
+    msg = getattr(update, "message", None)
+    chat = getattr(update, "effective_chat", None)
+    if not user or not msg or not chat:
+        return
+    uid = int(user.id)
+    if not ar12_private_only(update):
+        game = active_game(int(chat.id))
+        if not game or game.get("status") not in ("active", "lobby"):
+            await msg.reply_text("⛔ در این گروه بازی فعالی در جریان نیست.\n\n🎮 برای شروع: <code>/apex</code>", parse_mode=ParseMode.HTML)
+            return
+        if not leader_of(game, uid) and not is_admin(uid):
+            await msg.reply_text("👑 فقط <b>سرگروه</b> یا ادمین می‌تواند بازی را تمام کند.", parse_mode=ParseMode.HTML)
+            return
+        reason = "پایان توسط سرگروه"
+        try:
+            end_game(game, reason)
+        except Exception as exc:
+            print(f"ApexRival end warning: {exc!r}")
+        audit("v17_end_game", uid, int(chat.id), str(game.get("id")))
+        save_data(force=True)
+        await msg.reply_text(v17_game_summary(game, reason), parse_mode=ParseMode.HTML)
+        if v17_ad_on_end():
+            await v17_send_ad(context.bot, int(chat.id), source="game_end")
+        return
+    # --- شاخه‌ی خصوصی ---
+    if is_admin(uid):
+        live = [g for g in DATA.get("games", {}).values() if g.get("status") in ("active", "lobby")]
+        if not live:
+            await msg.reply_text("✅ هیچ بازی زنده‌ای وجود ندارد.", parse_mode=ParseMode.HTML)
+            return
+        lines = []
+        for g in live[:12]:
+            lines.append(f"🎮 گروه <code>{int(g.get('chat_id', 0))}</code> · {g.get('status', '?')} · 👥 {len(g.get('players', []))}")
+        await msg.reply_text(
+            "🎮 <b>بازی‌های زنده</b>\n" + V17_DIV + "\n" + "\n".join(lines) + f"\n{V17_DIV}\nبرای پایان، در خودِ گروه <code>/apexend</code> بزن.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    await msg.reply_text("🛑 برای پایان بازی، دستور <code>/apexend</code> را در خودِ گروه بزن.", parse_mode=ParseMode.HTML)
+
+
+V17_HELP_CARD = (
+    "❓ <b>راهنمای ApexRival</b>\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "🎮 <b>دستورات اختصاصی ما</b> (با هیچ ربات دیگری تداخل ندارد):\n"
+    "• <code>/apex</code> — ساخت بازی جدید در گروه\n"
+    "• <code>/apexend</code> — پایان بازی (سرگروه)\n"
+    "• <code>/apexhelp</code> — همین راهنما\n"
+    "• <code>/apexstats</code> — آمار و پروفایل تو\n"
+    "• <code>/apexid</code> — نمایش آی‌دی تو\n"
+    "• <code>/apexpanel</code> — پنل مدیریت (فقط مدیر)\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "🎬 <b>مسیر بازی:</b>\n"
+    "۱️⃣ <code>/apex</code> را در گروه بزن تا Lobby ساخته شود.\n"
+    "۲️⃣ بقیه با دکمه‌ی «🎟 ثبت‌نام» وارد می‌شوند.\n"
+    "۳️⃣ سرگروه «✅ تأیید و شروع» را می‌زند.\n"
+    "۴️⃣ پرسشگر هر نوبت، <b>موضوع</b> و بعد <b>پاسخ‌دهنده</b> را انتخاب می‌کند.\n"
+    "۵️⃣ پاسخ‌دهنده روی پیامِ سؤال <b>Reply</b> می‌کند و جواب می‌نویسد.\n"
+    "۶️⃣ امتیاز XP و سکه دائمی ثبت می‌شود.\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "🎭 ۱۲ موضوع: 🕵️ اعتراف · 🔥 جرئت · 🤫 راز · 😈 جنجال · 💘 فلرت · 🎭 سناریو · 🧠 ذهنی · 🤔 می‌کردی؟ · 📖 خاطره · 💔 عشق · 😳 خجالت · 🔞 ۱۸+\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "🔒 هیچ مرحله‌ای نباید شامل خطر، اجبار، آزار یا افشای اطلاعات خصوصی باشد."
+)
+
+
+async def v17_cmd_apexhelp(update, context):
+    msg = getattr(update, "message", None)
+    if msg:
+        await msg.reply_text(V17_HELP_CARD, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+
+async def v17_cmd_apexstats(update, context):
+    v17_touch_username(getattr(update, "effective_user", None))
+    await v5_profile_message(update, context)
+
+
+async def v17_cmd_apexid(update, context):
+    user = getattr(update, "effective_user", None)
+    msg = getattr(update, "message", None)
+    chat = getattr(update, "effective_chat", None)
+    if not user or not msg:
+        return
+    v17_touch_username(user)
+    uname = str(getattr(user, "username", "") or "").strip()
+    chat_line = ""
+    try:
+        if chat is not None and str(getattr(chat, "type", "")) != "private":
+            chat_line = f"\n💬 آی‌دی این گفتگو: <code>{int(chat.id)}</code>"
+    except Exception:
+        chat_line = ""
+    await msg.reply_text(
+        "🆔 <b>مشخصات تو</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👤 نام: <b>{escape(str(user.first_name or 'بازیکن'))}</b>\n"
+        f"🔗 یوزرنیم: {('@' + escape(uname)) if uname else '—'}\n"
+        f"🆔 آی‌دی عددی: <code>{int(user.id)}</code>"
+        + chat_line,
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def v17_cmd_apexpanel(update, context):
+    await ar12_admin_entry(update, context)
+
+
+# ----------------------------------------------------------------
+# [V17-ONBOARD] آنبوردینگ ترکیبی — جنسیت و سن، همان اولِ /start،
+# در یک پیام زنجیره‌ای (قدم ۱ → قدم ۲ → آماده). کاربر دیگر هیچ‌وقت
+# وسط بازی برای سن/جنسیت اذیت نمی‌شود.
+# ----------------------------------------------------------------
+def v17_gender_text(uid: int) -> str:
+    name = str(get_user(int(uid)).get("name") or "بازیکن")
+    return (
+        "🌟 <b>خوش اومدی به ApexRival!</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"سلام {escape(name)} 👋\n"
+        "برای اینکه بازی <b>دقیقاً مناسب خودت</b> ساخته بشه، فقط دو سؤال کوچیک جواب بده — "
+        "همین اول، یک بار برای همیشه:\n\n"
+        "┃ <b>قدم ۱ از ۲ — جنسیتت؟</b>\n"
+        "🎯 سؤال‌ها (مخصوصاً بخش 🔞) بر اساس همین انتخاب ساخته می‌شن.\n"
+        "⚡ فقط یک بار پرسیده می‌شود و دیگر تکرار نمی‌شود."
+    )
+
+
+def gender_prompt_markup():
+    return v5_markup([
+        [v5_button("👦 پسر", "GEN|M"), v5_button("👧 دختر", "GEN|F")],
+    ])
+
+
+def gender_prompt_text(uid: int) -> str:
+    return v17_gender_text(uid)
+
+
+def v17_age_text(uid: int) -> str:
+    name = str(get_user(int(uid)).get("name") or "بازیکن")
+    g = user_gender(uid)
+    g_line = f"{user_gender_icon(uid)} {GENDER_LABELS.get(g, '')}" if g else ""
+    return (
+        "🎂 <b>قدم ۲ از ۲ — سنِ تو؟</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"{escape(name)} جان، فقط همین یک سؤال می‌مونه {('— ' + g_line) if g_line else ''}\n\n"
+        "🔞 <b>بالای ۱۸ سال</b> ← موضوعات 🔞 داغ هم برایت باز می‌شود.\n"
+        "🧒 <b>زیر ۱۸ سال</b> ← بازی کاملاً امن و بدون موضوعات بزرگسال.\n\n"
+        "⚡ فقط یک بار پرسیده می‌شود؛ دیگر هیچ‌وقت اذیت نمی‌شوی."
+    )
+
+
+def v17_age_markup():
+    return v5_markup([
+        [v5_button("🔞 بالای ۱۸ سال", "V17|AGE|AD")],
+        [v5_button("🧒 زیر ۱۸ سال", "V17|AGE|MIN")],
+    ])
+
+
+async def v17_finish_onboarding(query, context, uid: int) -> None:
+    """پایان آنبوردینگ: کارت «همه‌چیز آماده» + منوی خانه + تبلیغ."""
+    try:
+        u = get_user(int(uid))
+        g = user_gender(int(uid))
+        adult = bool(u.get("adult_ok"))
+        ok_card = (
+            "🎉 <b>همه‌چیز آماده!</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"✅ جنسیت: <b>{GENDER_LABELS.get(g, '—')}</b> {user_gender_icon(int(uid))}\n"
+            f"✅ سن: <b>{'بالای ۱۸ سال 🔞' if adult else 'زیر ۱۸ سال 🧒'}</b>\n"
+            "🛡 حسابت <b>اعتبارسنجی کامل</b> شد — دیگر هیچ سؤالی ازت پرسیده نمی‌شود."
+        )
+        is_private = False
+        try:
+            is_private = str(getattr(query.message, "chat", None) and getattr(query.message.chat, "type", "")) == "private"
+        except Exception:
+            is_private = False
+        if is_private:
+            await safe_edit_query(query, ok_card, None)
+            await query.message.reply_text(
+                ar12_private_home_text(int(uid)),
+                parse_mode=ParseMode.HTML,
+                reply_markup=ar12_private_home_markup(int(uid)),
+            )
+        else:
+            await safe_edit_query(
+                query,
+                ok_card + "\n\n🎟 حالا از گروه، وضعیت Lobby را بروزرسانی کن یا با <code>/apex</code> بازی بساز.",
+                v5_markup([[v5_button("↻ بروزرسانی Lobby", "V5|GAME")]]),
+            )
+        # ---------- عضویت deep-link لابی در انتظار ----------
+        token = str(u.pop("v17_pending_lobby", "") or "")
+        if token:
+            save_data(force=True)
+            try:
+                game = ar13_find_lobby_by_invite(token)
+                if game and game.get("status") == "lobby":
+                    if not v5_is_player(game, uid) and not ar13_lobby_locked(game):
+                        max_players = int(game.get("settings", {}).get("max_players", 20))
+                        if len(game.get("players", [])) < max_players:
+                            game.setdefault("players", []).append(int(uid))
+                            game.setdefault("names", {})[str(uid)] = str(u.get("name") or "بازیکن")
+                            v5_ready_state(game)[str(uid)] = True
+                            touch_game(game)
+                            audit("v17_invite_join", int(uid), int(game.get("chat_id", 0)), str(game.get("id")))
+                            save_data(force=True)
+                            try:
+                                await query.message.reply_text(
+                                    "🎟 <b>با موفقیت وارد Lobby شدی!</b>\n💬 برگرد به گروه تا بازی را ببینی.",
+                                    parse_mode=ParseMode.HTML,
+                                )
+                            except Exception:
+                                pass
+            except Exception as exc:
+                print(f"ApexRival pending-lobby warning: {exc!r}")
+        # ---------- تبلیغ خوش‌آمد ----------
+        if v17_ad_on_home() and is_private:
+            await v17_send_ad(getattr(context, "bot", None), int(query.message.chat_id), source="onboard")
+    except Exception as exc:
+        print(f"ApexRival finish-onboarding warning: {exc!r}")
+
+
+async def v17_age_callback(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if not data.startswith("V17|AGE|"):
+        return
+    uid = int(getattr(query.from_user, "id", 0) or 0)
+    if not uid:
+        return
+    v17_touch_username(query.from_user)
+    u = get_user(uid)
+    if not user_gender(uid):
+        await safe_answer_query(query, "اول جنسیتت را انتخاب کن 👇", True)
+        await safe_edit_query(query, gender_prompt_text(uid), gender_prompt_markup())
+        return
+    if v17_age_declared(u):
+        await safe_answer_query(
+            query,
+            f"سن تو قبلاً ثبت شده: {'بالای ۱۸' if u.get('adult_ok') else 'زیر ۱۸'} — برای تغییر، به مدیر پیام بده.",
+            True,
+        )
+        return
+    is_adult = data == "V17|AGE|AD"
+    u["adult_ok"] = is_adult
+    u["v17_age_set"] = True
+    save_data(force=True)
+    audit("v17_age_set", uid, int(getattr(query.message, "chat_id", 0) or 0), "18+" if is_adult else "u18")
+    await safe_answer_query(query, "✅ ثبت شد — ممنون!")
+    await v17_finish_onboarding(query, context, uid)
+
+
+async def ar15_gender_callback(update, context):
+    """[V17] جنسیت → بلافاصله سن، در همان پیام."""
+    query = getattr(update, "callback_query", None)
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if not data.startswith("GEN|"):
+        return
+    uid = int(getattr(getattr(query, "from_user", None), "id", 0) or 0)
+    if not uid:
+        return
+    v17_touch_username(query.from_user)
+    choice = "male" if data == "GEN|M" else "female" if data == "GEN|F" else ""
+    if not choice:
+        return
+    u = get_user(uid)
+    existing = user_gender(uid)
+    if existing:
+        if not v17_age_declared(u):
+            await safe_answer_query(query, "جنسیتت ثبت بود — حالا سنِ تو را می‌پرسیم 👇")
+            await safe_edit_query(query, v17_age_text(uid), v17_age_markup())
+        else:
+            await safe_answer_query(query, f"جنسیت تو قبلاً ثبت شده: {GENDER_LABELS[existing]} — قابل تغییر نیست.", True)
+        return
+    u["gender"] = choice
+    save_data(force=True)
+    audit("gender_set", uid, int(getattr(getattr(query, "message", None), "chat_id", 0) or 0), choice + ":v17")
+    await safe_answer_query(query, f"✅ ثبت شد: {GENDER_LABELS[choice]}")
+    try:
+        await safe_edit_query(query, v17_age_text(uid), v17_age_markup())
+    except Exception:
+        try:
+            await query.message.reply_text(v17_age_text(uid), parse_mode=ParseMode.HTML, reply_markup=v17_age_markup())
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V17-START] /start بازنویسی‌شده — مسیر آنبوردینگ ترکیبی
+# ----------------------------------------------------------------
+_AR17_OLD_START = ar15_start
+
+
+async def ar15_start(update, context):
+    user = getattr(update, "effective_user", None)
+    msg = getattr(update, "message", None)
+    if not user or not msg:
+        return
+    uid = int(user.id)
+    bot = getattr(context, "bot", None) or APEX_RUNTIME_BOT
+    v17_touch_username(user)
+    if is_banned(uid) and not is_admin(uid):
+        await msg.reply_text("🚫 دسترسی این حساب به ApexRival مسدود است.", reply_markup=ReplyKeyboardRemove())
+        return
+    if v16_maintenance() and not is_admin(uid):
+        await msg.reply_text("🛠 <b>ربات در حال بروزرسانی است.</b>\nچند دقیقه دیگر دوباره /start بزن.", reply_markup=ReplyKeyboardRemove())
+        return
+
+    # ---------- شاخه‌ی گروه ----------
+    if not ar12_private_only(update):
+        u = get_user(uid, user.first_name or user.username or "بازیکن")
+        if v17_verified(uid):
+            await msg.reply_text(
+                "✅ <b>حسابت کاملاً آماده است!</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"{user_gender_icon(uid)} {GENDER_LABELS.get(user_gender(uid), '')} · "
+                f"{'۱۸+ 🔞' if u.get('adult_ok') else 'زیر ۱۸ 🧒'} · {v17_verified_icon(uid)} اعتبارسنجی‌شده\n\n"
+                "🎮 برای ساخت بازی جدید: <code>/apex</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        elif not user_gender(uid):
+            get_user(uid)
+            u["gender"] = ""
+            save_data(force=True)
+            await msg.reply_text(gender_prompt_text(uid), parse_mode=ParseMode.HTML, reply_markup=gender_prompt_markup())
+        else:
+            await msg.reply_text(v17_age_text(uid), parse_mode=ParseMode.HTML, reply_markup=v17_age_markup())
+        return
+
+    # ---------- شاخه‌ی خصوصی ----------
+    args = [str(a).strip() for a in (getattr(context, "args", None) or []) if str(a).strip()]
+    source = f"start:{args[0][:40]}" if args else "private_start"
+    u = get_user(uid, user.first_name or user.username or "بازیکن")
+    if v17_verified(uid):
+        return await _AR17_OLD_START(update, context)
+
+    strict_channel = False
+    if ar16_gate_mode() == "on" and not is_admin(uid):
+        membership, _ = await ar8_channel_membership(uid, force=True, bot=bot)
+        if membership is not True:
+            text = ar8_prereq_text("need_channel" if membership is False else "check_error")
+            await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=await ar11_gate_markup(bot))
+            return
+        strict_channel = True
+
+    v7_mark_started(uid, source=source)
+    AR11_PRIVATE_CACHE[uid] = (time.time(), True, "direct_start")
+    st = ar11_activation_state(uid)
+    st["source"] = source
+    st["last_verified_at"] = now_ts()
+    await ar15_record_lifetime_verified(uid, bot=bot, source=source, language_code=ar15_user_language(update))
+
+    # کارت نرم کانال — فقط یک بار در عمر حساب
+    if not strict_channel:
+        try:
+            if not u.get("v16_channel_card_ts"):
+                u["v16_channel_card_ts"] = now_ts()
+                save_data(force=True)
+                username = await ar11_bot_username(bot)
+                if username:
+                    await msg.reply_text(
+                        "📢 <b>اخبار و مسابقه‌های ApexRival</b>\n"
+                        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+                        "اگه دوست داری از امکانات جدید و مسابقه‌ها زودتر باخبر شی، کانال ما رو دنبال کن 👇",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=v5_markup([[ApexInlineButton("📢 عضویت در کانال", url=REQUIRED_CHANNEL_URL, style=APEX_STYLE_PRIMARY)]]),
+                    )
+        except Exception:
+            pass
+
+    # دعوت لابی در انتظار — بعد از تکمیل آنبوردینگ انجام می‌شود
+    if args and args[0].startswith("lobby_"):
+        u["v17_pending_lobby"] = args[0][6:]
+        save_data(force=True)
+
+    if not user_gender(uid):
+        u["gender"] = ""
+        save_data(force=True)
+        audit("gender_prompt_shown", uid, int(msg.chat_id), "v17_chain")
+        await msg.reply_text(gender_prompt_text(uid), parse_mode=ParseMode.HTML, reply_markup=gender_prompt_markup())
+        return
+    await msg.reply_text(v17_age_text(uid), parse_mode=ParseMode.HTML, reply_markup=v17_age_markup())
+
+
+# ----------------------------------------------------------------
+# [V17-JOIN] عضویت هوشمند با کارت راهنمای ترکیبی (جنسیت + سن)
+# ----------------------------------------------------------------
+async def ar16_smart_join(query, game):
+    uid = int(query.from_user.id)
+    try:
+        if game.get("status") != "lobby":
+            await safe_answer_query(query, "⛔ ثبت‌نام این Lobby بسته شده است.", True)
+            return
+        if v5_is_player(game, uid):
+            game["_viewer_id"] = uid
+            await safe_answer_query(query, "✅ تو همین الان ثبت‌نامی!", False)
+            await safe_edit_query(query, ar13_lobby_text(game), ar13_lobby_markup(game))
+            return
+        if ar13_lobby_locked(game) and not leader_of(game, uid) and not is_admin(uid):
+            await safe_answer_query(query, "🔒 سرگروه ثبت‌نام را موقتاً بسته است.", True)
+            return
+        max_p = int(game.get("settings", {}).get("max_players", 20))
+        if len(game.get("players", [])) >= max_p:
+            await safe_answer_query(query, "⛔ ظرفیت Lobby تکمیل است.", True)
+            return
+        v17_touch_username(query.from_user)
+        first_name = getattr(query.from_user, "first_name", None) or getattr(query.from_user, "username", None) or "بازیکن"
+        get_user(uid, first_name)
+        game.setdefault("players", []).append(uid)
+        game.setdefault("names", {})[str(uid)] = first_name
+        v5_ready_state(game)[str(uid)] = True
+        game["_viewer_id"] = uid
+        v5_touch(game)
+        audit("v5_join", uid, int(game.get("chat_id", 0)), f"smart:{game.get('id')}")
+        save_data(force=True)
+        await safe_answer_query(query, "✅ وارد Lobby شدی!")
+        await safe_edit_query(query, ar13_lobby_text(game), ar13_lobby_markup(game))
+        # ---- کارت راهنمای نرم (غیرمسدودکننده، فقط یک بار) ----
+        try:
+            need_gender = not user_gender(uid)
+            need_age = not v17_age_declared(get_user(uid))
+            need_start = not v7_has_started(uid)
+            if need_gender or need_age:
+                bot = getattr(query, "get_bot", lambda: None)() or APEX_RUNTIME_BOT
+                username = await ar11_bot_username(bot)
+                private_url = ar11_private_activate_url(username)
+                lines = [
+                    "🎟 <b>ثبت‌نامت کامل شد!</b>",
+                    "━━━━━━━━━━━━━━━━━━",
+                ]
+                rows = []
+                if need_gender:
+                    lines += [
+                        "🚻 <b>قدم ۱ — جنسیتت</b> را انتخاب کن تا سؤال‌ها دقیقاً مناسب خودت ساخته شوند:",
+                        "",
+                    ]
+                    rows.append([v5_button("👦 پسر", "V16|G|M"), v5_button("👧 دختر", "V16|G|F")])
+                if need_age:
+                    lines += [
+                        "🎂 <b>قدم ۲ — سنِ تو؟</b> (فقط همین یک بار، برای همیشه):",
+                        "",
+                    ]
+                    rows.append([v5_button("🔞 بالای ۱۸ سال", "V17|AGE|AD")])
+                    rows.append([v5_button("🧒 زیر ۱۸ سال", "V17|AGE|MIN")])
+                if need_start and private_url:
+                    lines += [
+                        "🔑 پیشنهاد: ربات را یک‌بار در چت خصوصی <b>/start</b> کن تا امتیاز و نشان‌هایت برای همیشه فعال شود.",
+                        "",
+                    ]
+                    rows.append([ApexInlineButton("🚀 فعال‌سازی در چت خصوصی", url=private_url, style=APEX_STYLE_SUCCESS)])
+                await query.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=v5_markup(rows))
+        except Exception as exc:
+            print(f"ApexRival V17 join followup warning: {exc!r}")
+    except Exception as exc:
+        audit("v17_smart_join_error", uid, None, repr(exc)[:300])
+        try:
+            await safe_answer_query(query, "⚠️ عضویت انجام نشد؛ دوباره امتحان کن.", True)
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V17-SAFETY] کودکان هرگز وارد موضوع 🔞 نمی‌شوند — حتی با دکمه
+# ----------------------------------------------------------------
+_AR17_OLD_DISPATCH = ar12_callback_dispatch
+
+
+async def ar12_callback_dispatch(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    try:
+        if data.startswith("V7|MODE|adult") and v7_chat_is_group(update):
+            uid = int(query.from_user.id)
+            if v17_is_declared_minor(get_user(uid)) and not is_admin(uid):
+                await safe_answer_query(query, "🔞 سنِ ثبت‌شدهٔ تو زیر ۱۸ است؛ این موضوع برای تو قفل است.", True)
+                return
+    except Exception:
+        pass
+    return await _AR17_OLD_DISPATCH(update, context)
+
+
+async def v16_adult_consent(query, data):
+    """[V17] تأیید ۱۸+ — کاربرِ ثبت‌شده به‌عنوان زیر ۱۸ هرگز نمی‌تواند قبول کند."""
+    try:
+        parts = data.split("|")
+        gid = parts[3] if len(parts) > 3 else ""
+        game = DATA.get("games", {}).get(gid)
+        pending = (game or {}).get("v16_adult_pending") or {}
+        target = int(pending.get("target") or 0)
+        uid = int(query.from_user.id)
+        if not game or not target or uid != target:
+            await safe_answer_query(query, "🔒 این پیام مخصوص پاسخ‌دهنده‌ی انتخاب‌شده است.", True)
+            return
+        if data.startswith("V7|18|ACC|") and v17_is_declared_minor(get_user(target)):
+            await safe_answer_query(query, "🔒 سنِ ثبت‌شدهٔ تو زیر ۱۸ است؛ این تأیید برای تو مجاز نیست.", True)
+            return
+        questioner = int(pending.get("questioner") or 0)
+        game.pop("v16_adult_pending", None)
+        if data.startswith("V7|18|ACC|"):
+            get_user(target)["adult_ok"] = True
+            audit("v16_adult_consent", target, int(game.get("chat_id", 0)), "accepted")
+            save_data(force=True)
+            await safe_answer_query(query, "✅ تأیید شد — این سؤال فقط همین یک بار پرسیده می‌شود.")
+            await v16_ask_question(query.message, game, "adult", target, questioner)
+        else:
+            audit("v16_adult_declined", target, int(game.get("chat_id", 0)), "declined")
+            save_data(force=True)
+            await safe_answer_query(query, "نپذیرفتی — هیچ اجباری نیست.")
+            try:
+                await query.message.edit_text(
+                    "❌ <b>پاسخ‌دهنده سؤال ۱۸+ را نپذیرفت.</b>\n"
+                    f"🎤 {mention_user(questioner, name_of(questioner, game))} نفر دیگری را انتخاب کن.",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+            try:
+                await query.message.reply_text(
+                    v7_turn_card(game),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=v7_turn_markup(game, questioner),
+                )
+            except Exception:
+                pass
+    except Exception as exc:
+        audit("v17_adult_consent_error", int(query.from_user.id), None, repr(exc)[:300])
+        try:
+            await safe_answer_query(query, "⚠️ عملیات انجام نشد.", True)
+        except Exception:
+            pass
+
+
+async def v7_begin_prompt(query, mode: str, target_uid: int):
+    """[V17] انتخاب هدف — بازیکنِ زیر ۱۸ هرگز سؤال ۱۸+ نمی‌گیرد."""
+    game = active_game(query.message.chat_id if query.message else 0)
+    if not game or game.get("status") != "active":
+        await safe_answer_query(query, "⛔ بازی فعال نیست.", True)
+        return
+    questioner = v7_current_questioner(game)
+    if questioner is None or int(query.from_user.id) != int(questioner):
+        await safe_answer_query(query, "👑 فقط پرسشگر فعلی.", True)
+        return
+    target_uid = int(target_uid)
+    if target_uid not in {int(p) for p in game.get("players", [])} or target_uid == int(questioner):
+        await safe_answer_query(query, "🎯 این بازیکن در نوبت فعلی قابل انتخاب نیست.", True)
+        return
+    if mode == "adult" and not is_admin(target_uid):
+        tgt = get_user(target_uid)
+        if v17_is_declared_minor(tgt):
+            await safe_answer_query(query, "🔒 این بازیکن سنِ زیر ۱۸ را ثبت کرده؛ موضوع 🔞 برای او قفل است.", True)
+            return
+        if not v17_age_declared(tgt):
+            game["v16_adult_pending"] = {"target": target_uid, "questioner": int(questioner), "mode": "adult"}
+            save_data(force=True)
+            await safe_answer_query(query, "🔞 منتظر تأیید پاسخ‌دهنده هستیم…")
+            g_icon = user_gender_icon(target_uid)
+            try:
+                await query.message.reply_text(
+                    "🔞 <b>درخواست سؤال ۱۸+</b>\n"
+                    "━━━━━━━━━━━━━━━━━━\n"
+                    f"{g_icon} پاسخ‌دهنده: <b>{mention_user(target_uid, name_of(target_uid, game))}</b>\n"
+                    f"🎤 پرسشگر: {mention_user(questioner, name_of(questioner, game))}\n"
+                    "━━━━━━━━━━━━━━━━━━\n"
+                    "پرسشگر می‌خواهد یک سؤال <b>۱۸+</b> از تو بپرسد.\n"
+                    "✅ این تأیید فقط یک بار در عمر حسابت پرسیده می‌شود.\n"
+                    "❌ اگر نپذیری، پرسشگر نفر دیگری را انتخاب می‌کند.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=v5_markup([
+                        [v5_button("✅ می‌پذیرم — بپرس", f"V7|18|ACC|{game['id']}")],
+                        [v5_button("❌ نه، نمی‌خواهم", f"V7|18|DEN|{game['id']}")],
+                    ]),
+                )
+            except Exception:
+                pass
+            return
+    await v16_ask_question(query.message, game, mode, target_uid, int(questioner))
+    await safe_answer_query(query, "✅ سؤال ساخته شد و برای هدف ارسال شد.")
+
+
+# ----------------------------------------------------------------
+# [V17-GEN-GROUP] هندلر V16|G| بازنویسی‌شده — بعد از جنسیت، سن پرسیده می‌شود
+# ----------------------------------------------------------------
+async def v16_gender_callback(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if not data.startswith("V16|G|"):
+        return
+    uid = int(getattr(query.from_user, "id", 0) or 0)
+    if not uid:
+        return
+    v17_touch_username(query.from_user)
+    choice = "male" if data == "V16|G|M" else "female"
+    u = get_user(uid)
+    existing = user_gender(uid)
+    if existing:
+        if not v17_age_declared(u):
+            await safe_answer_query(query, "جنسیتت ثبت بود — حالا سنِ تو را می‌پرسیم 👇")
+            await safe_edit_query(query, v17_age_text(uid), v17_age_markup())
+        else:
+            await safe_answer_query(query, f"جنسیت تو قبلاً ثبت شده: {GENDER_LABELS[existing]} — قابل تغییر نیست.", True)
+        return
+    u["gender"] = choice
+    save_data(force=True)
+    audit("gender_set", uid, int(getattr(query.message, "chat_id", 0) or 0), choice + ":v17g")
+    await safe_answer_query(query, f"✅ ثبت شد: {GENDER_LABELS[choice]}")
+    try:
+        await safe_edit_query(query, v17_age_text(uid), v17_age_markup())
+    except Exception:
+        try:
+            await query.message.reply_text(v17_age_text(uid), parse_mode=ParseMode.HTML, reply_markup=v17_age_markup())
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V17-BEAUTY] سیستم طراحی جدید — همه کارت‌ها بازطراحی رادیکال
+# ----------------------------------------------------------------
+def v5_card(title, *lines):
+    body = "\n".join(str(x) for x in lines if str(x).strip())
+    return f"◈ <b>{title}</b>\n{'━' * 18}\n{body}"
+
+
+def v5_progress(current: int, total: int, width: int = 12) -> str:
+    try:
+        current = max(0, int(current or 0))
+        total = max(1, int(total or 1))
+        filled = max(0, min(width, round(width * current / total)))
+        pct = min(100, max(0, round(100 * current / total)))
+    except Exception:
+        filled, pct = 0, 0
+    return "▰" * filled + "▱" * (width - filled) + f" {pct}%"
+
+
+def v5_breadcrumb(section: str, page=None) -> str:
+    if page:
+        return f"⚡ <b>ApexRival</b> · {escape(str(section))} · <b>{escape(str(page))}</b>"
+    return f"⚡ <b>ApexRival</b> · <b>{escape(str(section))}</b>"
+
+
+# ----------------------------------------------------------------
+# [V17-LOBBY] کارت Lobby جدید — بدون شماره ورژن
+# ----------------------------------------------------------------
+def ar13_lobby_text(game):
+    players = [int(x) for x in game.get("players", [])]
+    ready_map = v5_ready_state(game)
+    min_p = int(game.get("settings", {}).get("min_players", 2))
+    max_p = int(game.get("settings", {}).get("max_players", 20))
+    ready_n, total_n = ar13_ready_count(game)
+    enough = total_n >= min_p
+    all_ready = all(bool(ready_map.get(str(uid), True)) for uid in players) if players else False
+    lock_line = "🔒 ثبت‌نام <b>بسته</b>" if ar13_lobby_locked(game) else "🟢 ثبت‌نام <b>باز</b>"
+    if enough and all_ready:
+        status = "✅ آماده‌ی شروع"
+    elif total_n < min_p:
+        status = f"⏳ {min_p - total_n} نفر دیگر لازم است"
+    else:
+        status = "🟡 چند نفر هنوز آماده نیستند"
+    adults = sum(1 for uid in players if get_user(uid).get("adult_ok"))
+    heat = "🔥 حالت کامل" if players and adults == len(players) else ("🧒 بدون 🔞" if players else "")
+    ranks = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"]
+    lines = []
+    for index, uid in enumerate(players, 1):
+        mark = "🟢" if bool(ready_map.get(str(uid), True)) else "🟡"
+        host_mark = " 👑" if int(uid) == int(game.get("leader_id", 0)) else ""
+        badge = " ✅" if v17_verified(uid) else ""
+        rk = ranks[index - 1] if index <= len(ranks) else f"{index}."
+        lines.append(f"{mark} {rk} {user_gender_icon(uid)} {mention_user(uid, v5_name(uid, game))}{host_mark}{badge}")
+    header = (
+        "🎮 <b>ApexRival — Lobby</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👑 سرگروه: {mention_user(game['leader_id'], game.get('leader_name', 'سرگروه'))}\n"
+        f"👥 بازیکنان: <b>{total_n}/{max_p}</b> · آماده: <b>{ready_n}/{total_n}</b>\n"
+        f"{lock_line} · {status}"
+        + (f" · {heat}" if heat else "")
+        + "\n"
+        f"{v5_progress(total_n, max_p, 14)}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "<b>👥 بازیکنان</b>\n" + ("\n".join(lines) if lines else "هنوز کسی ثبت‌نام نکرده — <b>اولین نفر باش!</b> 🎟") +
+        "\n\n<b>🎭 موضوعات بازی</b>\n" + V16_MODE_CHIPS +
+        "\n\n💡 هر بازیکن با «🟢/🟡 آماده‌ام» وضعیتش را عوض می‌کند؛ سرگروه بعد از رسیدن به حداقل نفرات «✅ شروع» را می‌زند."
+    )
+    return header
+
+
+def v5_lobby_text(game):
+    return ar13_lobby_text(game)
+
+
+# ----------------------------------------------------------------
+# [V17-TURN] کارت نوبت + اعلان استیج
+# ----------------------------------------------------------------
+def v7_turn_card(game):
+    q = v7_current_questioner(game)
+    if q is None:
+        return v5_card("🎮 نوبت", "بازیکنی برای نوبت تعیین نشده است.")
+    label = name_of(q, game)
+    turn_no = int(game.get("turn_number", 1))
+    total = len(game.get("players", []))
+    order_len = len(game.get("turn_order", []) or [])
+    return (
+        "🎤 <b>استیجِ پرسشگری</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🎙 پرسشگر فعلی: <b>{mention_user(q, label)}</b> {user_gender_icon(q)}\n"
+        f"🔢 نوبت: <b>{turn_no}</b> · 👥 بازیکنان: <b>{total}</b> · 🎲 دور: <b>{int(game.get('round', 0))}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"{V16_MODE_CHIPS}\n"
+        "فقط پرسشگر فعلی می‌تواند موضوع را انتخاب کند."
+    )
+
+
+def v7_turn_announcement(game, questioner):
+    g_icon = user_gender_icon(int(questioner))
+    label = name_of(int(questioner), game)
+    turn_no = int(game.get("turn_number", 1))
+    order_len = len(game.get("turn_order", []) or []) or len(game.get("players", []))
+    return (
+        "🎤 <b>استیجِ پرسشگری</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"{g_icon} پرسشگر این نوبت: <b>{mention_user(int(questioner), label)}</b>\n"
+        f"🔢 نوبت <b>{turn_no}</b>"
+        + (f" از <b>{order_len}</b>" if order_len else "")
+        + "\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🎭 یک <b>موضوع</b> را از دکمه‌های زیر انتخاب کن،\n"
+        "🎯 بعدش <b>پاسخ‌دهنده</b> را انتخاب کن تا سؤال ساخته شود.\n\n"
+        f"💫 {escape(label)} عزیز، استیج مالِ توئه!"
+    )
+
+
+# ----------------------------------------------------------------
+# [V17-QUESTION] کارت سؤال جدید
+# ----------------------------------------------------------------
+async def v16_ask_question(message, game, mode: str, target_uid: int, questioner: int):
+    """ساخت و ارسال سؤال — کارت جدید با فلیر اختصاصی."""
+    target_uid = int(target_uid)
+    questioner = int(questioner)
+    prompt_text = v7_pick_question(game, mode, target_uid)
+    mode_label = V7_MODE_LABELS.get(mode, mode)
+    questioner_tag = mention_user(questioner, name_of(questioner, game))
+    target_tag = mention_user(target_uid, name_of(target_uid, game))
+    g_icon = user_gender_icon(target_uid)
+    flair = V16_MODE_FLAIR.get(mode, "")
+    adult_flair = "\n⚠️ این سؤال مخصوصِ جنسیتِ پاسخ‌دهنده انتخاب شده است." if mode == "adult" else ""
+    display = (
+        f"{v7_mode_icon(mode)} <b>{escape(mode_label)}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🎤 پرسشگر: {questioner_tag}\n"
+        f"🎯 پاسخ‌دهنده: {g_icon} {target_tag}\n"
+        f"🔢 نوبت: <b>{int(game.get('turn_number', 1))}</b> · 🎲 سؤال شماره: <b>{int(game.get('round', 0)) + 1}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"{flair}\n"
+        f"<blockquote>{escape(prompt_text)}</blockquote>\n"
+        f"{adult_flair}\n"
+        "↩️ <b>پاسخ‌دهنده باید روی همین پیام Reply کند و جوابش را بنویسد.</b>"
+    )
+    sent = await message.reply_text(display, parse_mode=ParseMode.HTML)
+    game["round"] = int(game.get("round", 0)) + 1
+    game["phase"] = f"question:{mode}"
+    game["reply_prompt"] = {
+        "message_id": int(getattr(sent, "message_id", 0)),
+        "chat_id": int(game.get("chat_id", 0)),
+        "kind": mode,
+        "mode": mode,
+        "target_uid": target_uid,
+        "questioner_uid": questioner,
+        "any_player": False,
+        "expires": time.time() + 180,
+        "responders": [],
+        "max_replies": 1,
+        "created_at": now_ts(),
+    }
+    game.setdefault("turn_history", []).append({
+        "turn": int(game.get("turn_number", 1)),
+        "questioner": questioner,
+        "target": target_uid,
+        "mode": mode,
+        "prompt": prompt_text,
+        "ts": now_ts(),
+    })
+    game["turn_history"] = game["turn_history"][-100:]
+    touch_game(game)
+    save_data(force=True)
+
+
+# ----------------------------------------------------------------
+# [V17-HOME] منوی خانه خصوصی — کارت قهرمان
+# ----------------------------------------------------------------
+def ar12_private_home_text(uid: int) -> str:
+    u = get_user(int(uid))
+    xp = int(u.get("xp", 0))
+    level = int(u.get("level", 1))
+    coins = int(u.get("coins", 0))
+    streak = int(u.get("streak", 0))
+    title = title_for(xp)
+    verified_line = (
+        f"{v17_verified_icon(int(uid))} وضعیت: <b>اعتبارسنجی‌شده</b> "
+        f"({user_gender_icon(int(uid))} {user_gender_label(int(uid))} · "
+        f"{('۱۸+ 🔞' if u.get('adult_ok') else 'زیر ۱۸ 🧒') if v17_age_declared(u) else 'سن ثبت نشده'})"
+    )
+    return (
+        "⚡ <b>ApexRival</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"سلام <b>{escape(str(u.get('name') or 'بازیکن'))}</b> 👋\n"
+        f"{verified_line}\n"
+        f"⭐ سطح <b>{level}</b> · ✨ XP <b>{xp:,}</b>\n"
+        f"💰 <b>{coins:,}</b> سکه · 🔥 استریک <b>{streak}</b>\n"
+        f"🏅 {escape(str(title))}\n"
+        f"{v5_progress(xp, max(xp, 1), 14)}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🎮 بازی جدید در گروه: <code>/apex</code>\n"
+        "از دکمه‌های زیر وارد امکانات شو 👇"
+    )
+
+
+def ar12_private_home_markup(uid: int):
+    rows = [
+        [v5_button("🎮 بازی", "V5|GAME"), v5_button("👤 پروفایل", "V5|PROFILE")],
+        [v5_button("🏆 رتبه‌بندی", "V5|RANK"), v5_button("🛒 فروشگاه", "V5|SHOP")],
+        [v5_button("🏅 دستاوردها", "V5|ACH"), v5_button("❓ راهنما", "V5|HELP")],
+        [v5_button("🔄 تازه‌سازی", "V5|HOME")],
+    ]
+    if is_admin(uid):
+        rows.append([v5_button("👑 مرکز مدیریت", "V5|ADMIN")])
+    return v5_markup(rows)
+
+
+# ----------------------------------------------------------------
+# [V17-PROFILE] کارت آمار من (/apexstats و /profile)
+# ----------------------------------------------------------------
+async def v5_profile_message(update, context):
+    if not await ensure_allowed(update):
+        return
+    uid = update.effective_user.id
+    v17_touch_username(update.effective_user)
+    u = get_user(uid, update.effective_user.first_name or "بازیکن")
+    inv = u.get("inventory", {})
+    xp = int(u.get("xp", 0))
+    if v17_age_declared(u):
+        age_line = "🔞 بالای ۱۸" if u.get("adult_ok") else "🧒 زیر ۱۸"
+    else:
+        age_line = "⚠️ ثبت نشده"
+    text = (
+        "📊 <b>آمار من</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>{escape(u.get('name', 'بازیکن'))}</b> {user_gender_icon(uid)}\n"
+        f"{v17_verified_icon(uid)} اعتبارسنجی: <b>{'کامل ✅' if v17_verified(uid) else 'ناقص'}</b>\n"
+        f"🚻 جنسیت: <b>{user_gender_label(uid)}</b> · {age_line}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🏅 {escape(title_for(xp))}\n"
+        f"⭐ سطح <b>{u.get('level', 1)}</b> · ✨ XP <b>{xp:,}</b>\n"
+        f"{v5_progress(xp, max(xp, 1), 14)}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🎮 بازی‌ها: <b>{u.get('games', 0)}</b> · 🏆 برد: <b>{u.get('wins', 0)}</b> · ☠️ باخت: <b>{u.get('losses', 0)}</b>\n"
+        f"🤫 مأموریت: <b>{u.get('missions', 0)}</b> · 💰 سکه: <b>{u.get('coins', 0):,}</b> · 🔥 استریک: <b>{u.get('streak', 0)}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🎒 <b>آیتم‌ها</b>\n"
+        f"🛡 {inv.get('shield', 0)} · 🎲 {inv.get('reroll', 0)} · ⚡ {inv.get('double_xp', 0)} · 🎫 {inv.get('pass', 0)} · 🍀 {inv.get('lucky', 0)}"
+    )
+    markup = v5_markup([
+        [v5_button("🏅 دستاوردها", "V5|ACH"), v5_button("🛒 فروشگاه", "V5|SHOP")],
+        *v5_nav("V5|HOME"),
+    ])
+    if update.callback_query:
+        await safe_edit_query(update.callback_query, text, markup)
+    else:
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+# ----------------------------------------------------------------
+# [V17-RANK] جدول قهرمانان با سکو
+# ----------------------------------------------------------------
+async def v5_rank_message(update, context):
+    if not await ensure_allowed(update):
+        return
+    rows = sorted(DATA["users"].items(), key=lambda x: int(x[1].get("xp", 0)), reverse=True)[:12]
+    me = str(update.effective_user.id)
+    lines = []
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (uid, u) in enumerate(rows, 1):
+        crown = medals[i - 1] if i <= 3 else "▫️"
+        marker = " ⬅️ <b>تو</b>" if uid == me else ""
+        g = user_gender_icon(int(uid))
+        lines.append(f"{crown} <b>{i:02d}</b> {g} {escape(str(u.get('name', 'بازیکن')))} · ⭐ {int(u.get('xp', 0)):,}{marker}")
+    text = (
+        "🏆 <b>جدول قهرمانان</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        + ("\n".join(lines) if lines else "هنوز داده‌ای نیست — اولین قهرمان باش!")
+    )
+    markup = v5_markup([v5_nav("V5|HOME")])
+    if update.callback_query:
+        await safe_edit_query(update.callback_query, text, markup)
+    else:
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+# ----------------------------------------------------------------
+# [V17-HELP] راهنمای جدید
+# ----------------------------------------------------------------
+async def v5_help_message(update, context, scope="HOME"):
+    if not await ensure_allowed(update):
+        return
+    if scope == "LOBBY":
+        text = (
+            "🎟 <b>قوانین Lobby</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "۱️⃣ هر کسی با دکمه‌ی «🎟 ثبت‌نام» وارد می‌شود.\n"
+            "۲️⃣ لابی تا رسیدن به حداقل ظرفیت باز می‌ماند.\n"
+            "۳️⃣ فقط سرگروه دکمه‌ی «✅ تأیید و شروع» را دارد.\n"
+            "۴️⃣ بعد از شروع، منوی ۱۲ موضوعی فعال می‌شود.\n"
+            "۵️⃣ پایان بازی: <code>/apexend</code>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🔒 هیچ مرحله‌ای نباید شامل خطر، اجبار یا آزار باشد."
+        )
+        markup = v5_markup([v5_nav("V5|GAME")])
+    else:
+        text = V17_HELP_CARD
+        markup = v5_markup(v5_nav("V5|HOME"))
+    if update.callback_query:
+        await safe_edit_query(update.callback_query, text, markup)
+    else:
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+# ----------------------------------------------------------------
+# [V17-ADMIN-RENDER] کارت کاربر + فهرست کاربران پنل مدیریت
+# ----------------------------------------------------------------
+def v16_user_card(uid: int) -> str:
+    u = get_user(uid)
+    gender = user_gender(uid)
+    g_label = GENDER_LABELS.get(gender, "ثبت نشده")
+    g_icon = user_gender_icon(uid)
+    username = str(u.get("username") or "").strip()
+    if v17_age_declared(u):
+        age_line = "🔞 بالای ۱۸" if u.get("adult_ok") else "🧒 زیر ۱۸"
+    else:
+        age_line = "⚠️ ثبت نشده"
+    joined = ""
+    try:
+        if int(u.get("created_at", 0) or 0):
+            joined = time.strftime("%Y/%m/%d", time.gmtime(int(u.get("created_at"))))
+    except Exception:
+        joined = "—"
+    return (
+        f"👤 <b>{escape(u.get('name', 'کاربر'))}</b> {g_icon}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🆔 آی‌دی: <code>{int(uid)}</code>\n"
+        f"🔗 یوزرنیم: {(('@' + escape(username)) if username else '—')}\n"
+        f"🚻 جنسیت: <b>{g_label}</b>\n"
+        f"🎂 سن: <b>{age_line}</b>\n"
+        f"{v17_verified_icon(int(uid))} اعتبارسنجی: <b>{'کامل ✅' if v17_verified(int(uid)) else 'ناقص ⚠️'}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"⭐ سطح: <b>{int(u.get('level', 1))}</b> · ✨ XP: <b>{int(u.get('xp', 0)):,}</b> · 💰 سکه: <b>{int(u.get('coins', 0)):,}</b>\n"
+        f"🎮 بازی‌ها: <b>{int(u.get('games', 0))}</b> · 🏆 برد: <b>{int(u.get('wins', 0))}</b> · 🤫 مأموریت: <b>{int(u.get('missions', 0))}</b>\n"
+        f"📅 عضویت: <b>{joined or '—'}</b>\n"
+        f"{'🚫 <b>مسدود شده</b>' if u.get('banned') else '🟢 فعال'}"
+    )
+
+
+def v16_users_page(offset: int):
+    uids = sorted(DATA.get("users", {}).keys(), key=lambda x: int(x))
+    total = len(uids)
+    page = uids[offset:offset + A16_PAGE]
+    rows = []
+    for uid in page:
+        u = DATA["users"][uid]
+        g_icon = user_gender_icon(int(uid))
+        ban_mark = " 🚫" if u.get("banned") else ""
+        ver_mark = v17_verified_icon(int(uid))
+        uname = str(u.get("username") or "").strip()
+        nm = str(u.get('name', 'کاربر'))[:14]
+        label = f"{g_icon} {nm}"
+        if uname:
+            label += f" · @{uname[:12]}"
+        label += f" · {int(uid)}{ban_mark} {ver_mark}"
+        rows.append([v5_button(label[:58], f"A16|U|VIEW|{uid}")])
+    nav = []
+    if offset > 0:
+        nav.append(v5_button("◀️ قبلی", f"A16|U|PG|{max(0, offset - A16_PAGE)}"))
+    nav.append(v5_button(f"📄 {total} کاربر", "A16|NONE"))
+    if offset + A16_PAGE < total:
+        nav.append(v5_button("بعدی ▶️", f"A16|U|PG|{offset + A16_PAGE}"))
+    rows.append(nav)
+    rows.append([v5_button("🔍 جست‌وجو", "A16|U|SEARCH"), v5_button("⌂ خانه", "A16|HOME")])
+    verified_n = sum(1 for u in DATA["users"].values() if u.get("gender") and u.get("adult_ok") is not None)
+    body = (
+        "👥 <b>مدیریت کاربران</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"مجموع: <b>{total}</b> · ✅ اعتبارسنجی‌شده: <b>{verified_n}</b> · 🚫 مسدود: <b>{sum(1 for u in DATA['users'].values() if u.get('banned'))}</b>\n"
+        f"👦 پسر: <b>{sum(1 for u in DATA['users'].values() if u.get('gender') == 'male')}</b> · "
+        f"👧 دختر: <b>{sum(1 for u in DATA['users'].values() if u.get('gender') == 'female')}</b> · "
+        f"🔞 ۱۸+: <b>{sum(1 for u in DATA['users'].values() if u.get('adult_ok'))}</b>\n\n"
+        "یکی را انتخاب کن 👇\n"
+        "🔎 در هر سطر: نام · یوزرنیم · آی‌دی · وضعیت"
+    )
+    return body, v5_markup(rows)
+
+
+# ----------------------------------------------------------------
+# [V17-ADMIN-HOME] داشبورد نسل جدید — بدون ورژن
+# ----------------------------------------------------------------
+def v16_admin_home_text() -> str:
+    users = DATA.get("users", {})
+    day_ago = now_ts() - 86400
+    new_24 = sum(1 for u in users.values() if int(u.get("joined_at", 0) or u.get("created_at", 0) or 0) >= day_ago)
+    started = DATA.get("started_users", {})
+    active_games = [g for g in DATA.get("games", {}).values() if g.get("status") in ("active", "lobby")]
+    lobbies = sum(1 for g in active_games if g.get("status") == "lobby")
+    prompts_total = sum(len(v) for v in V7_BANKS_FINAL.values())
+    adult_ok = sum(1 for u in users.values() if u.get("adult_ok"))
+    verified_n = sum(1 for u in users.values() if u.get("gender") and u.get("adult_ok") is not None)
+    ads_total, ads_active, ads_shown = v17_ad_totals()
+    return (
+        "👑 <b>مرکز مدیریت ApexRival</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👥 کاربران: <b>{len(users)}</b> · 🆕 جدید ۲۴ ساعت: <b>{new_24}</b> · ✅ اعتبارسنجی‌شده: <b>{verified_n}</b>\n"
+        f"🚻 👦 <b>{sum(1 for u in users.values() if u.get('gender') == 'male')}</b> · "
+        f"👧 <b>{sum(1 for u in users.values() if u.get('gender') == 'female')}</b> · "
+        f"🔞 ۱۸+: <b>{adult_ok}</b>\n"
+        f"🌐 گروه‌ها: <b>{len(DATA.get('groups', {}))}</b> · 🎮 بازی‌های زنده: <b>{len(active_games)}</b> (لابی: {lobbies})\n"
+        f"📚 بانک سؤال‌ها: <b>{prompts_total}</b> سؤال در <b>{len(V7_BANKS_FINAL)}</b> بانک\n"
+        f"📢 تبلیغات: <b>{ads_active}</b> فعال از <b>{ads_total}</b> · 📡 مجموع نمایش: <b>{ads_shown}</b>\n"
+        f"🚫 مسدود: <b>{sum(1 for u in users.values() if u.get('banned'))}</b> · "
+        f"🔒 گیت گروه: <b>{'سخت‌گیرانه' if ar16_gate_mode() == 'on' else 'باز'}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🛠 هر بخش را از دکمه‌های زیر انتخاب کن 👇"
+    )
+
+
+def v16_admin_home_markup():
+    return v5_markup([
+        [v5_button("👥 کاربران", "A16|U|PG|0"), v5_button("📢 تبلیغات", "A17|ADS|HOME")],
+        [v5_button("📨 ارسال همگانی", "A16|B|HOME"), v5_button("📝 بانک سؤال‌ها", "A16|C|HOME")],
+        [v5_button("🎮 بازی‌های زنده", "A16|G|HOME"), v5_button("🌐 گروه‌ها", "A16|R|PG|0")],
+        [v5_button("⚙️ تنظیمات", "A16|S|HOME"), v5_button("📋 لاگ‌ها", "A16|L|HOME")],
+        [v5_button("🩺 سلامت", "A16|H|HOME"), v5_button("🔄 تازه‌سازی", "A16|HOME")],
+    ])
+
+
+# ----------------------------------------------------------------
+# [V17-ADMIN] مرکز مدیریت نسل جدید — دسترسی ریز به ریز + تبلیغات
+# ----------------------------------------------------------------
+def v17_user_rows(target: int):
+    u = get_user(int(target))
+    uname = str(u.get("username") or "").strip()
+    pm_url = f"https://t.me/{uname}" if uname else f"https://t.me/{int(target)}"
+    rows = [
+        [v5_button("🔨 بن / رفع بن", f"A16|U|BAN|{target}"),
+         v5_button("🔞 ۱۸+ روشن/خاموش", f"A16|U|18|{target}")],
+        [v5_button("👦 تعیین پسر", f"A16|U|GEN|{target}|M"),
+         v5_button("👧 تعیین دختر", f"A16|U|GEN|{target}|F")],
+        [v5_button("➕ XP", f"A16|U|XP|{target}"),
+         v5_button("💰 سکه", f"A16|U|COIN|{target}")],
+        [v5_button("♻️ ریست آمار بازی", f"A16|U|RESET|{target}")],
+    ]
+    try:
+        rows.append([ApexInlineButton("✉️ پیام خصوصی به کاربر", url=pm_url, style=APEX_STYLE_PRIMARY)])
+    except Exception:
+        pass
+    rows.append([v5_button("🗑 حذف حساب", f"A16|U|DEL|{target}")])
+    rows.append([v5_button("👥 فهرست", "A16|U|PG|0"), v5_button("⌂ خانه", "A16|HOME")])
+    return rows
+
+
+async def v17_user_view(query, target: int):
+    await safe_edit_query(query, v16_user_card(int(target)), v5_markup(v17_user_rows(int(target))))
+
+
+async def v17_user_reset(query, target: int, actor: int):
+    u = get_user(int(target))
+    for field in ("games", "wins", "losses", "missions", "streak"):
+        u[field] = 0
+    save_data(force=True)
+    audit("v17_user_reset", int(actor), None, str(target))
+    await safe_answer_query(query, "♻️ آمار بازی این کاربر ریست شد.")
+    await safe_edit_query(query, v16_user_card(int(target)), v5_markup(v17_user_rows(int(target))))
+
+
+# مسیریاب A16| بازنویسی‌شده: نمای کاربر جدید + ریست آمار؛ بقیه به نسل قبل
+_AR17_OLD_ADMIN_ROUTER = v16_admin_router
+
+
+async def v16_admin_router(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if not data.startswith("A16|"):
+        return
+    uid = int(query.from_user.id)
+    if not is_admin(uid):
+        await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+        return
+    try:
+        if data == "A16|L|HOME":
+            entries = list(DATA.get("audit", []))[-15:]
+            import re as _v17_re
+
+            def _clean_action(name: str) -> str:
+                return _v17_re.sub(r"^(v|ar|a)\d+_", "", str(name), flags=_v17_re.IGNORECASE)
+
+            lines = [
+                f"• <code>{escape(str(e.get('ts', ''))[-8:])}</code> {escape(_clean_action(e.get('action', '')))} — {escape(str(e.get('actor', '')))}"
+                for e in reversed(entries)
+            ]
+            await safe_edit_query(
+                query,
+                "📋 <b>لاگ عملیات (آخرین ۱۵)</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                + ("\n".join(lines) if lines else "خالی است."),
+                v5_markup([[v5_button("🔄 بروزرسانی", "A16|L|HOME"), v5_button("⌂ خانه", "A16|HOME")]]),
+            )
+            return
+        if data == "A16|H|HOME":
+            try:
+                size = Path(DATA_FILE).stat().st_size if Path(DATA_FILE).exists() else 0
+            except Exception:
+                size = 0
+            ads_total, ads_active, ads_shown = v17_ad_totals()
+            await safe_edit_query(
+                query,
+                "🩺 <b>سلامت ربات</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"💾 حجم داده: <b>{ar9_num(size)}</b> بایت\n"
+                f"👥 کاربران: <b>{len(DATA.get('users', {}))}</b> · 🌐 گروه‌ها: <b>{len(DATA.get('groups', {}))}</b>\n"
+                f"📚 بانک‌ها: <b>{len(V7_BANKS_FINAL)}</b> · مجموع سؤال‌ها: <b>{sum(len(v) for v in V7_BANKS_FINAL.values())}</b>\n"
+                f"📢 تبلیغات: <b>{ads_active}</b> فعال · 📡 نمایش: <b>{ads_shown}</b>\n"
+                f"🎮 بازی‌ها (کل): <b>{len(DATA.get('games', {}))}</b>\n"
+                f"🔑 Super Admin: <b>{'OK' if ADMIN_ID else 'MISSING'}</b>\n"
+                f"⚙️ گیت گروه: <b>{ar16_gate_mode()}</b> · 🛠 بروزرسانی: <b>{'روشن' if v16_maintenance() else 'خاموش'}</b>\n"
+                f"⏰ سرویس از: <code>{time.strftime('%H:%M:%S', time.localtime(AR16_BOOT_TS))}</code>",
+                v5_markup([[v5_button("🔄 بروزرسانی", "A16|H|HOME"), v5_button("⌂ خانه", "A16|HOME")]]),
+            )
+            return
+        if data.startswith("A16|U|VIEW|"):
+            target = int(data.split("|")[3])
+            if str(target) not in DATA.get("users", {}):
+                await safe_answer_query(query, "❌ کاربر پیدا نشد.", True)
+                return
+            await safe_answer_query(query)
+            await v17_user_view(query, target)
+            return
+        if data.startswith("A16|U|RESET|"):
+            target = int(data.split("|")[3])
+            if str(target) not in DATA.get("users", {}):
+                await safe_answer_query(query, "❌ کاربر پیدا نشد.", True)
+                return
+            await v17_user_reset(query, target, uid)
+            return
+    except Exception as exc:
+        print(f"ApexRival admin-view warning: {exc!r}")
+    return await _AR17_OLD_ADMIN_ROUTER(update, context)
+
+
+# ----------------------------------------------------------------
+# [V17-ADS-ADMIN] مدیریت تبلیغات — افزودن/ویرایش/حذف/پیش‌نمایش
+# ----------------------------------------------------------------
+V17_FLOW: dict[int, dict] = {}
+
+
+def v17_ad_by_id(ad_id) -> dict | None:
+    try:
+        for ad in v17_ads():
+            if int(ad.get("id", -1)) == int(ad_id):
+                return ad
+    except Exception:
+        return None
+    return None
+
+
+def v17_new_ad_id() -> int:
+    ids = [int(a.get("id", 0)) for a in v17_ads()]
+    return (max(ids) + 1) if ids else 1
+
+
+def v17_ads_settings_line() -> str:
+    on_off = "روشن ✅" if v17_ads_enabled() else "خاموش ⛔"
+    every = v17_ad_every()
+    every_txt = f"هر <b>{every}</b> نوبت" if every > 0 else "خاموش"
+    end_txt = "روشن ✅" if v17_ad_on_end() else "خاموش ⛔"
+    home_txt = "روشن ✅" if v17_ad_on_home() else "خاموش ⛔"
+    return (
+        f"⚡ نمایش در بازی: <b>{on_off}</b> · {every_txt}\n"
+        f"🏁 پایان بازی: <b>{end_txt}</b> · 🎉 خوش‌آمد: <b>{home_txt}</b>"
+    )
+
+
+def v17_ads_home_body() -> str:
+    total, active, shown = v17_ad_totals()
+    return (
+        "📢 <b>مدیریت تبلیغات</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"📊 تبلیغ‌ها: <b>{total}</b> · فعال: <b>{active}</b> · 📡 مجموع نمایش: <b>{shown}</b>\n"
+        + v17_ads_settings_line() +
+        "\n━━━━━━━━━━━━━━━━━━\n"
+        + ("یکی از تبلیغ‌ها را برای مدیریت انتخاب کن 👇" if total else "هنوز تبلیغی نساخته‌ای — با «➕ تبلیغ جدید» شروع کن!")
+    )
+
+
+def v17_ads_home_markup():
+    ads = v17_ads()
+    rows = []
+    for ad in ads[:10]:
+        mark = "🟢" if ad.get("active") else "⚪️"
+        preview = str(ad.get("text", ""))[:26].replace("\n", " ")
+        rows.append([v5_button(f"{mark} {preview} · {int(ad.get('shown', 0))}📡", f"A17|ADS|VIEW|{int(ad.get('id'))}")])
+    rows.append([v5_button("➕ تبلیغ جدید", "A17|ADS|ADD")])
+    rows.append([v5_button("⚙️ تنظیمات نمایش", "A17|ADS|SET")])
+    rows.append([v5_button("⌂ خانه", "A16|HOME")])
+    return v5_markup(rows)
+
+
+def v17_ad_view_body(ad: dict) -> str:
+    btn = str(ad.get("btn", "") or "")
+    url = str(ad.get("url", "") or "")
+    if btn and url:
+        link_line = f"🔗 دکمه: <b>{escape(btn[:30])}</b> → <code>{escape(url[:60])}</code>\n"
+    else:
+        link_line = "🔗 دکمه: —\n"
+    return (
+        "📢 <b>جزئیات تبلیغ</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🟢 وضعیت: <b>{'فعال' if ad.get('active') else 'غیرفعال'}</b>\n"
+        f"📡 نمایش‌داده‌شده: <b>{int(ad.get('shown', 0))}</b>\n"
+        + link_line
+        + "━━━━━━━━━━━━━━━━━━\n"
+        "📝 <b>متن تبلیغ:</b>\n"
+        f"{escape(str(ad.get('text', ''))[:600])}"
+    )
+
+
+def v17_ad_view_markup(ad: dict):
+    aid = int(ad.get("id"))
+    rows = [
+        [v5_button("👁 روشن / خاموش", f"A17|ADS|TOG|{aid}"), v5_button("👁‍🗨 پیش‌نمایش", f"A17|ADS|PREV|{aid}")],
+        [v5_button("✏️ ویرایش متن", f"A17|ADS|EDIT|{aid}"), v5_button("🔗 دکمه و لینک", f"A17|ADS|BTN|{aid}")],
+        [v5_button("🗑 حذف تبلیغ", f"A17|ADS|DEL|{aid}")],
+        [v5_button("🔙 بازگشت", "A17|ADS|HOME"), v5_button("⌂ خانه", "A16|HOME")],
+    ]
+    return v5_markup(rows)
+
+
+def v17_ads_settings_body() -> str:
+    return (
+        "⚙️ <b>تنظیمات نمایش تبلیغات</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        + v17_ads_settings_line() +
+        "\n━━━━━━━━━━━━━━━━━━\n"
+        "💬 تبلیغ‌ها در این نقاط نمایش داده می‌شوند:\n"
+        "• 🎬 پایان هر بازی (اگر روشن باشد)\n"
+        "• 🔢 هر N نوبت در طول بازی\n"
+        "• 🎉 پایان ثبت‌نام کاربر جدید"
+    )
+
+
+def v17_ads_settings_markup():
+    on_label = "⛔ تبلیغات: خاموش" if v17_ads_enabled() else "✅ تبلیغات: روشن"
+    end_label = "🏁 پایان بازی: روشن" if v17_ad_on_end() else "🏁 پایان بازی: خاموش"
+    home_label = "🎉 خوش‌آمد: روشن" if v17_ad_on_home() else "🎉 خوش‌آمد: خاموش"
+    every = v17_ad_every()
+    every_label = f"🔢 هر {every} نوبت" if every > 0 else "🔢 هرچند نوبت؟ (خاموش)"
+    return v5_markup([
+        [v5_button(on_label, "A17|ADS|SET|ON")],
+        [v5_button(end_label, "A17|ADS|SET|END"), v5_button(home_label, "A17|ADS|SET|HOME")],
+        [v5_button(every_label, "A17|ADS|SET|EV")],
+        [v5_button("🔙 بازگشت", "A17|ADS|HOME"), v5_button("⌂ خانه", "A16|HOME")],
+    ])
+
+
+async def v17_admin_router(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query or not query.data:
+        return
+    data = str(query.data)
+    if not data.startswith("A17|"):
+        return
+    uid = int(query.from_user.id)
+    if not is_admin(uid):
+        await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+        return
+    await safe_answer_query(query)
+    parts = data.split("|")
+    sub = parts[2] if len(parts) > 2 else "HOME"
+    arg = parts[3] if len(parts) > 3 else ""
+    try:
+        if sub == "HOME":
+            await safe_edit_query(query, v17_ads_home_body(), v17_ads_home_markup())
+            return
+        if sub == "ADD":
+            if arg == "SKIP":
+                await v17_ads_add_skip(update, context)
+                return
+            V17_FLOW[uid] = {"t": "ad_add_text"}
+            await safe_edit_query(
+                query,
+                "➕ <b>تبلیغ جدید — مرحله ۱</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "📝 <b>متن تبلیغ</b> را همین‌جا بفرست (از ایموجی و قالب‌بندی آزادانه استفاده کن):",
+                v5_markup([[v5_button("❌ لغو", "A17|ADS|HOME")]]),
+            )
+            return
+        if sub == "SET":
+            if arg == "ON":
+                s = DATA.setdefault("settings", {})
+                s["v17_ads_enabled"] = not v17_ads_enabled()
+                save_data(force=True)
+                audit("v17_ads_toggle", uid, None, str(s["v17_ads_enabled"]))
+            elif arg == "END":
+                s = DATA.setdefault("settings", {})
+                s["v17_ad_on_end"] = not v17_ad_on_end()
+                save_data(force=True)
+            elif arg == "HOME":
+                s = DATA.setdefault("settings", {})
+                s["v17_ad_on_home"] = not v17_ad_on_home()
+                save_data(force=True)
+            elif arg == "EV":
+                V17_FLOW[uid] = {"t": "ad_every"}
+                await safe_edit_query(
+                    query,
+                    "🔢 <b>دوره‌ی نمایش در بازی</b>\n"
+                    "━━━━━━━━━━━━━━━━━━\n"
+                    "هر <b>چند نوبت</b> یک‌بار تبلیغ نمایش داده شود؟\n"
+                    "عدد را بفرست (مثلاً ۶). عدد ۰ = خاموش.",
+                    v5_markup([[v5_button("❌ لغو", "A17|ADS|SET")]]),
+                )
+                return
+            await safe_edit_query(query, v17_ads_settings_body(), v17_ads_settings_markup())
+            return
+        # زیرمجموعه‌های نیازمند تبلیغ
+        ad = v17_ad_by_id(arg) if arg.isdigit() else None
+        if sub in ("VIEW", "TOG", "EDIT", "BTN", "PREV", "DEL", "DELK") and not ad:
+            await safe_answer_query(query, "❌ این تبلیغ پیدا نشد (شاید حذف شده).", True)
+            await safe_edit_query(query, v17_ads_home_body(), v17_ads_home_markup())
+            return
+        if sub == "VIEW":
+            await safe_edit_query(query, v17_ad_view_body(ad), v17_ad_view_markup(ad))
+            return
+        if sub == "TOG":
+            ad["active"] = not bool(ad.get("active"))
+            save_data(force=True)
+            audit("v17_ad_toggle", uid, None, f"{ad.get('id')}:{ad['active']}")
+            await safe_edit_query(query, v17_ad_view_body(ad), v17_ad_view_markup(ad))
+            return
+        if sub == "EDIT":
+            V17_FLOW[uid] = {"t": "ad_edit", "id": int(ad.get("id"))}
+            await safe_edit_query(
+                query,
+                v17_ad_view_body(ad) + "\n\n✏️ <b>متن جدید</b> را بفرست تا جایگزین شود:",
+                v5_markup([[v5_button("❌ لغو", f"A17|ADS|VIEW|{ad.get('id')}")]]),
+            )
+            return
+        if sub == "BTN":
+            V17_FLOW[uid] = {"t": "ad_btn", "id": int(ad.get("id"))}
+            await safe_edit_query(
+                query,
+                "🔗 <b>دکمه و لینک تبلیغ</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "به این شکل بفرست:\n"
+                "<code>متن دکمه | https://example.com</code>\n\n"
+                "برای حذف دکمه فقط بنویس: <code>بدون</code>",
+                v5_markup([[v5_button("❌ لغو", f"A17|ADS|VIEW|{ad.get('id')}")]]),
+            )
+            return
+        if sub == "PREV":
+            try:
+                await query.message.reply_text(
+                    "👁‍🗨 <b>پیش‌نمایش واقعی تبلیغ:</b>\n\n" + v17_ad_card(ad),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=v17_ad_markup(ad),
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                pass
+            await safe_edit_query(query, v17_ad_view_body(ad), v17_ad_view_markup(ad))
+            return
+        if sub == "DEL":
+            await safe_edit_query(
+                query,
+                v17_ad_view_body(ad) + "\n\n⚠️ <b>این تبلیغ برای همیشه حذف شود؟</b>",
+                v5_markup([
+                    [v5_button("🗑 بله، حذف کن", f"A17|ADS|DELK|{ad.get('id')}")],
+                    [v5_button("🔙 انصراف", f"A17|ADS|VIEW|{ad.get('id')}")],
+                ]),
+            )
+            return
+        if sub == "DELK":
+            ads = v17_ads()
+            ads[:] = [a for a in ads if int(a.get("id", -1)) != int(ad.get("id"))]
+            save_data(force=True)
+            audit("v17_ad_delete", uid, None, str(ad.get("id")))
+            await safe_edit_query(query, v17_ads_home_body(), v17_ads_home_markup())
+            return
+    except Exception as exc:
+        print(f"ApexRival A17 router warning: {exc!r}")
+        try:
+            await safe_answer_query(query, "⚠️ عملیات انجام نشد؛ دوباره امتحان کن.", True)
+        except Exception:
+            pass
+
+
+async def v17_admin_flow_text(update, context) -> bool:
+    """ورودی‌های متنی ادمین برای تبلیغات و تنظیمات — قبل از روترهای قدیمی."""
+    msg = getattr(update, "message", None)
+    if not msg or not msg.text:
+        return False
+    uid = int(getattr(getattr(update, "effective_user", None), "id", 0) or 0)
+    if not uid or not is_admin(uid):
+        return False
+    flow = V17_FLOW.get(uid)
+    if not flow:
+        return False
+    text = str(msg.text).strip()
+    if text.startswith("/"):
+        V17_FLOW.pop(uid, None)
+        return False
+    t = str(flow.get("t"))
+    try:
+        if t == "ad_add_text":
+            if len(text) < 3:
+                await msg.reply_text("⚠️ متن خیلی کوتاه است؛ دوباره بفرست.")
+                return True
+            V17_FLOW[uid] = {"t": "ad_add_btn", "text": text[:3500]}
+            await msg.reply_text(
+                "✅ متن ثبت شد!\n\n🔗 <b>مرحله ۲ — دکمه و لینک</b> (اختیاری):\n"
+                "به این شکل بفرست: <code>متن دکمه | https://example.com</code>\n"
+                "یا فقط بنویس <code>بدون</code> تا تبلیغ بدون دکمه ساخته شود.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=v5_markup([[v5_button("⏭ بدون دکمه", "A17|ADS|ADD|SKIP")]]),
+            )
+            return True
+        if t == "ad_add_btn":
+            V17_FLOW.pop(uid, None)
+            ad_text = str(flow.get("text") or "")
+            btn, url = "", ""
+            if "|" in text and text.lower() != "بدون":
+                parts = text.split("|", 1)
+                btn = parts[0].strip()[:40]
+                url = parts[1].strip()[:200]
+            ad = {"id": v17_new_ad_id(), "text": ad_text, "btn": btn, "url": url, "active": True, "shown": 0, "created": now_ts()}
+            v17_ads().append(ad)
+            save_data(force=True)
+            audit("v17_ad_add", uid, None, f"{ad['id']}")
+            await msg.reply_text(
+                "🎉 <b>تبلیغ ساخته و فعال شد!</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=v5_markup([[v5_button("👁 مشاهده تبلیغ", f"A17|ADS|VIEW|{ad['id']}")]]),
+            )
+            return True
+        if t == "ad_edit":
+            V17_FLOW.pop(uid, None)
+            ad = v17_ad_by_id(flow.get("id"))
+            if not ad:
+                await msg.reply_text("❌ تبلیغ پیدا نشد.")
+                return True
+            ad["text"] = text[:3500]
+            save_data(force=True)
+            await msg.reply_text("✅ متن تبلیغ بروزرسانی شد.", reply_markup=v5_markup([[v5_button("👁 مشاهده", f"A17|ADS|VIEW|{ad['id']}")]]))
+            return True
+        if t == "ad_btn":
+            V17_FLOW.pop(uid, None)
+            ad = v17_ad_by_id(flow.get("id"))
+            if not ad:
+                await msg.reply_text("❌ تبلیغ پیدا نشد.")
+                return True
+            if text.lower() == "بدون" or "|" not in text:
+                ad["btn"] = ""
+                ad["url"] = ""
+            else:
+                parts = text.split("|", 1)
+                ad["btn"] = parts[0].strip()[:40]
+                ad["url"] = parts[1].strip()[:200]
+            save_data(force=True)
+            await msg.reply_text("✅ دکمه و لینک ذخیره شد.", reply_markup=v5_markup([[v5_button("👁 مشاهده", f"A17|ADS|VIEW|{ad['id']}")]]))
+            return True
+        if t == "ad_every":
+            V17_FLOW.pop(uid, None)
+            try:
+                n = max(0, min(50, int(text)))
+            except Exception:
+                n = 0
+            DATA.setdefault("settings", {})["v17_ad_every"] = n
+            save_data(force=True)
+            await msg.reply_text(
+                f"✅ تبلیغ در بازی {'هر ' + str(n) + ' نوبت' if n > 0 else 'خاموش'} نمایش داده می‌شود.",
+                reply_markup=v5_markup([[v5_button("⚙️ تنظیمات تبلیغات", "A17|ADS|SET")]]),
+            )
+            return True
+    except Exception as exc:
+        V17_FLOW.pop(uid, None)
+        print(f"ApexRival V17 flow warning: {exc!r}")
+        await msg.reply_text(f"❌ {escape(str(exc))}")
+        return True
+    return False
+
+
+# مسیر /A17|ADS|ADD|SKIP — دکمه‌ی «بدون دکمه»
+async def v17_ads_add_skip(update, context):
+    query = getattr(update, "callback_query", None)
+    if not query or not query.data:
+        return
+    if str(query.data) != "A17|ADS|ADD|SKIP":
+        return
+    uid = int(query.from_user.id)
+    if not is_admin(uid):
+        await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+        return
+    flow = V17_FLOW.get(uid) or {}
+    if flow.get("t") != "ad_add_btn":
+        await safe_answer_query(query, "⚠️ این درخواست منقضی شده؛ از اول شروع کن.", True)
+        return
+    await safe_answer_query(query, "⏭ تبلیغ بدون دکمه ساخته می‌شود…")
+    V17_FLOW.pop(uid, None)
+    ad = {"id": v17_new_ad_id(), "text": str(flow.get("text") or ""), "btn": "", "url": "", "active": True, "shown": 0, "created": now_ts()}
+    v17_ads().append(ad)
+    save_data(force=True)
+    audit("v17_ad_add", uid, None, f"{ad['id']}:skip")
+    try:
+        await query.message.reply_text(
+            "🎉 <b>تبلیغ ساخته و فعال شد!</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup([[v5_button("👁 مشاهده تبلیغ", f"A17|ADS|VIEW|{ad['id']}")]]),
+        )
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V17-TEXT-ROUTER] ورودی‌های متنی ادمین — فلوهای V17 اول، بعد زنجیره قدیم
+# ----------------------------------------------------------------
+_AR17_OLD_TEXT_ROUTER = ar12_text_router
+
+
+async def ar12_text_router(update, context):
+    try:
+        if await v17_admin_flow_text(update, context):
+            return
+    except Exception as exc:
+        print(f"ApexRival V17 admin flow warning: {exc!r}")
+    return await _AR17_OLD_TEXT_ROUTER(update, context)
+
+
+# ----------------------------------------------------------------
+# [V17-GAME-HOME] نمای بازی فعال (V5|GAME)
+# ----------------------------------------------------------------
+def v5_game_home_text(game):
+    players = [int(p) for p in game.get("players", [])]
+    scores = sorted(
+        ((int(game.get("round_scores", {}).get(str(p), 0) or 0), p) for p in players),
+        reverse=True,
+    )
+    medals = ["🥇", "🥈", "🥉"]
+    top_lines = [
+        f"{medals[i]} {mention_user(p, name_of(p, game))} — <b>{score}</b>"
+        for i, (score, p) in enumerate(scores[:3])
+    ]
+    return (
+        "🎮 <b>بازی فعال</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🎯 سؤال‌های رد‌شده: <b>{int(game.get('round', 0))}</b> · 👥 <b>{len(players)}</b> بازیکن\n"
+        f"🎙 پرسشگر فعلی: <b>{mention_user(v7_current_questioner(game) or players[0] if players else 0, name_of(v7_current_questioner(game) or (players[0] if players else 0), game) if players else '—')}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "<b>🏆 صدرنشینان این بازی</b>\n" + ("\n".join(top_lines) if top_lines else "هنوز امتیازی ثبت نشده.")
+    )
+
+
+# ----------------------------------------------------------------
+# [V17-REPLY-HOOK] تبلیغ دوره‌ای در طول بازی
+# ----------------------------------------------------------------
+_AR17_OLD_REPLY = v7_handle_reply
+
+
+async def v7_handle_reply(update, context):
+    handled = await _AR17_OLD_REPLY(update, context)
+    try:
+        if handled:
+            game = active_game(int(update.effective_chat.id))
+            if game and game.get("status") == "active":
+                every = v17_ad_every()
+                turn_no = int(game.get("turn_number", 0) or 0)
+                if every > 0 and turn_no > 0 and turn_no % every == 0:
+                    await v17_send_ad(context.bot, int(game.get("chat_id", 0) or int(update.effective_chat.id)), source="turn")
+    except Exception:
+        pass
+    return handled
+
+
+# ----------------------------------------------------------------
+# [V17-CMDS] منوی دستورات تلگرام — دستورات اختصاصی اول
+# ----------------------------------------------------------------
+V17_COMMAND_MENU = [
+    BotCommand("apex", "🎮 ساخت بازی جدید (اختصاصی ما)"),
+    BotCommand("apexend", "🛑 پایان بازی (سرگروه)"),
+    BotCommand("apexhelp", "❓ راهنما و دستورات"),
+    BotCommand("apexstats", "📊 آمار و پروفایل من"),
+    BotCommand("apexid", "🆔 نمایش آی‌دی من"),
+    BotCommand("start", "⚡ شروع و فعال‌سازی حساب"),
+    BotCommand("profile", "👤 پروفایل"),
+    BotCommand("rank", "🏆 رتبه‌بندی"),
+    BotCommand("help", "❓ راهنما"),
+]
+
+
+def _v17_menu_signature():
+    return tuple((str(c.command), str(c.description)) for c in V17_COMMAND_MENU)
+
+
+async def ar15_force_scope5(bot, scope, language_code=None, *, verify=True):
+    """منوی دستورات — نسخه جدید با دستورات اختصاصی در صدر."""
+    try:
+        await bot.set_my_commands(V17_COMMAND_MENU, scope=scope)
+        if language_code:
+            try:
+                await bot.set_my_commands(V17_COMMAND_MENU, scope=scope, language_code=language_code)
+            except Exception:
+                pass
+        if not verify:
+            return True
+        try:
+            got = await bot.get_my_commands(scope=scope)
+            if tuple((str(c.command), str(c.description)) for c in (got or [])) == _v17_menu_signature():
+                return True
+            await bot.set_my_commands(V17_COMMAND_MENU, scope=scope)
+        except Exception:
+            pass
+        return True
+    except Exception as exc:
+        print(f"ApexRival command-scope warning: {exc!r}")
+        return False
+
+
+# ----------------------------------------------------------------
+# [V17-REG] ثبت هندلرها — گیت ضدتداخل + دستورات اختصاصی + A17
+# ----------------------------------------------------------------
+_AR17_OLD_REGISTER = ar15_register_handlers
+
+
+def ar15_register_handlers(app):
+    _AR17_OLD_REGISTER(app)
+    # گیت گروهی ضدتداخل — قبل از روترهای اصلی (پس از بک‌گراند)
+    try:
+        app.add_handler(MessageHandler(filters.COMMAND, v17_group_command_gate), group=-95)
+    except Exception:
+        pass
+    # سن (V17|AGE|) — قبل از روترهای قدیمی
+    app.add_handler(CallbackQueryHandler(v17_age_callback, pattern=r"^V17\|AGE\|"), group=-69)
+    # پنل تبلیغات (A17|)
+    app.add_handler(CallbackQueryHandler(v17_admin_router, pattern=r"^A17\|"))
+    # دستورات اختصاصی ربات — هیچ ربات دیگری این‌ها را ندارد
+    app.add_handler(CommandHandler("apex", v17_cmd_apex))
+    app.add_handler(CommandHandler("apexend", v17_cmd_apexend))
+    app.add_handler(CommandHandler("apexhelp", v17_cmd_apexhelp))
+    app.add_handler(CommandHandler("apexstats", v17_cmd_apexstats))
+    app.add_handler(CommandHandler("apexpanel", v17_cmd_apexpanel))
+    app.add_handler(CommandHandler("apexid", v17_cmd_apexid))
+
+
+# ----------------------------------------------------------------
+# [V17-CHECK] سلف-چک نهایی لایه
+# ----------------------------------------------------------------
+def v17_self_check() -> None:
+    # دستورات اختصاصی یکتا
+    assert len(set(V17_UNIQUE_COMMANDS)) == 6
+    for c in V17_UNIQUE_COMMANDS:
+        assert 1 <= len(c) <= 32 and c.isascii() and c.islower(), c
+    # payload های کوتاه
+    for sample in (
+        "V17|AGE|AD", "V17|AGE|MIN", "A17|ADS|VIEW|999999",
+        "A17|ADS|SET|ON", "A16|U|RESET|123456789", "A17|ADS|ADD|SKIP",
+    ):
+        assert 1 <= len(sample.encode("utf-8")) <= 64, sample
+    # کارت‌های استاتیک بدون هیچ اشاره‌ی ورژنی
+    for txt in (V17_HELP_CARD, v17_ad_card({"text": "تست"}), v17_ads_home_body(), v17_ads_settings_body()):
+        low = str(txt).lower()
+        for bad in ("v16", "v17", "v15", "v14", "2.5", "نسخه", "ورژن"):
+            assert bad not in low, f"version leak: {bad}"
+    # منوی دستورات: دستور اختصاصی در صدر
+    assert _v17_menu_signature()[0][0] == "apex"
+    # موتور تبلیغات سالم
+    assert isinstance(v17_ads(), list)
+    _probe_users_before = set(DATA.get("users", {}).keys())
+    fake = {"players": [1, 2, 3], "round_scores": {"1": 5}, "turn_number": 4, "round": 3, "names": {"1": "A", "2": "B", "3": "C"}}
+    summary = v17_game_summary(fake, "")
+    assert "🏁" in summary and "🥇" in summary
+    # کارت لابی بدون ورژن
+    lobby_probe = {
+        "players": [1, 2], "settings": {"min_players": 2, "max_players": 20},
+        "leader_id": 1, "leader_name": "A", "names": {"1": "A", "2": "B"}, "ready": {},
+    }
+    txt = ar13_lobby_text(lobby_probe)
+    assert "Lobby" in txt and "2.5" not in txt and "v16" not in txt.lower()
+    # پاک‌سازی کاربران ساختگیِ احتمالیِ سلف-چک
+    try:
+        for k in ("1", "2", "3"):
+            if k not in _probe_users_before:
+                DATA.get("users", {}).pop(k, None)
+    except Exception:
+        pass
+    # کارت نوبت
+    turn_probe = {"players": [1, 2, 3], "turn_order": [1, 2, 3], "turn_index": 0, "current_questioner": 1, "turn_number": 1, "round": 0, "round_scores": {}}
+    markup = v7_turn_markup(turn_probe, 1)
+    mode_buttons = []
+    for row in getattr(markup, "inline_keyboard", []):
+        for b in row:
+            d = getattr(b, "callback_data", None)
+            if d is not None and str(d).startswith("V7|MODE|"):
+                mode_buttons.append(str(d).split("|")[2])
+    assert len(mode_buttons) == 12, f"expected 12 mode buttons, got {len(mode_buttons)}"
+    print(
+        "ApexRival self-check OK | unique-commands=on | combined-onboarding=on | "
+        "ads-engine=on | admin-panel=next-gen | anti-collision=on"
+    )
+
+
+v17_self_check()
+
+
+# ================================================================
+# ▲▲▲ END OF INJECTED APEX LAYER ▲▲▲
+# ================================================================
+
+
 def main_apexrival_15():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is missing")
@@ -18597,8 +20640,8 @@ def main_apexrival_15():
     ar15_register_handlers(application)
     application.add_error_handler(ar9_error_handler)
     print(
-        f"{BOT_NAME} {AR15_VERSION} starting | commands=5 | "
-        "lifetime-verification=on | fresh-lobby=on | scope-repair=on"
+        f"{BOT_NAME} starting | unique-commands=on | combined-onboarding=on | "
+        "ads=on | anti-collision=on | fresh-lobby=on | scope-repair=on"
     )
     application.run_polling(drop_pending_updates=True)
 
