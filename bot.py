@@ -11590,6 +11590,15 @@ def _ar8_channel_target(raw: str) -> str:
 
 
 REQUIRED_CHANNEL = _ar8_channel_target(REQUIRED_CHANNEL)
+try:
+    _saved_channel = DATA.get('settings', {}).get('required_channel')
+    _saved_url = DATA.get('settings', {}).get('required_channel_url')
+    if _saved_channel:
+        REQUIRED_CHANNEL = _ar8_channel_target(str(_saved_channel))
+    if _saved_url:
+        REQUIRED_CHANNEL_URL = str(_saved_url)
+except Exception:
+    pass
 
 
 def _ar8_is_button(value) -> bool:
@@ -12092,9 +12101,1154 @@ def main_apexrival_8():
     application.run_polling(drop_pending_updates=True)
 
 
-main_v5 = main_apexrival_8
-main = main_apexrival_8
 
 
-if __name__ == "__main__":
-    main_apexrival_8()
+# ============================================================================
+# ApexRival 9.0 — Super Admin Control Center
+# -----------------------------------------------------------------------------
+# This layer replaces the previous admin UI only. The game engine remains
+# intact; admin navigation, editing, persistence and safety confirmations are
+# centralized here so every admin action is reachable from visual menus.
+# No "close" buttons are used in this control center: pages expose Back + Home.
+# ============================================================================
+
+AR9_VERSION = "9.0"
+AR9_PREFIX = "ADM"
+AR9_PAGE_SIZE = 7
+AR9_FLOW = V5_FLOW
+
+
+def ar9_callback_data(*parts: object) -> str:
+    data = AR9_PREFIX + "|" + "|".join(str(x) for x in parts)
+    raw = data.encode("utf-8")
+    if len(raw) > 64:
+        raise ValueError(f"admin callback too long: {data}")
+    return data
+
+
+def ar9_button(label: str, *parts: object) -> InlineKeyboardButton:
+    return v5_button(label, ar9_callback_data(*parts))
+
+
+def ar9_nav(back_parts=("HOME",), refresh_parts=None):
+    row = [ar9_button("🔙 بازگشت", *back_parts), ar9_button("⌂ خانه", "HOME")]
+    if refresh_parts:
+        row.insert(1, ar9_button("↻", *refresh_parts))
+    return [row]
+
+
+def ar9_status(value: bool, yes="فعال", no="خاموش") -> str:
+    return f"🟢 {yes}" if value else f"🔴 {no}"
+
+
+def ar9_num(value) -> str:
+    try:
+        return f"{int(value):,}"
+    except Exception:
+        return escape(str(value))
+
+
+def ar9_card(title: str, *lines: str) -> str:
+    body = "\n".join(f"• {line}" for line in lines if str(line).strip())
+    if not body:
+        body = "• —"
+    return f"<b>{title}</b>\n<blockquote>{body}</blockquote>"
+
+
+def ar9_page(title: str, body: str, *extra: str) -> str:
+    tail = "\n".join(x for x in extra if x)
+    return f"{v5_breadcrumb('مرکز مدیریت', title)}\n\n{body}" + (f"\n\n{tail}" if tail else "")
+
+
+async def ar9_render(query, title: str, body: str, rows, *, back=("HOME",), refresh=None):
+    markup_rows = list(rows or [])
+    markup_rows.extend(ar9_nav(back, refresh))
+    await safe_edit_query(query, ar9_page(title, body), v5_markup(markup_rows))
+
+
+async def ar9_home(query):
+    users = DATA.get("users", {})
+    groups = DATA.get("groups", {})
+    games = DATA.get("games", {})
+    active_games = sum(1 for g in groups.values() if g.get("active_game"))
+    lobbies = sum(1 for g in games.values() if g.get("status") == "lobby")
+    total_xp = sum(int(u.get("xp", 0)) for u in users.values())
+    total_coins = sum(int(u.get("coins", 0)) for u in users.values())
+    custom_content = sum(len(v) for v in DATA.get("global_content", {}).values())
+    audit_count = len(DATA.get("audit", []))
+    body = ar9_card(
+        "👑 مرکز فرماندهی ApexRival",
+        f"👥 کاربران  <b>{ar9_num(len(users))}</b>",
+        f"🌐 گروه‌ها  <b>{ar9_num(len(groups))}</b>",
+        f"🎮 بازی زنده  <b>{ar9_num(active_games)}</b>  ·  🟡 Lobby  <b>{ar9_num(lobbies)}</b>",
+        f"⭐ XP کل  <b>{ar9_num(total_xp)}</b>  ·  💰 سکه کل  <b>{ar9_num(total_coins)}</b>",
+        f"🧩 محتوای سفارشی  <b>{ar9_num(custom_content)}</b>  ·  📜 رویدادها  <b>{ar9_num(audit_count)}</b>",
+        f"🛡 کانال اجباری  <code>{escape(REQUIRED_CHANNEL)}</code>",
+    )
+    rows = [
+        [ar9_button("📊 داشبورد زنده", "D"), ar9_button("👥 کاربران", "U")],
+        [ar9_button("🌐 گروه‌ها", "G"), ar9_button("🎮 بازی‌ها", "P")],
+        [ar9_button("📝 محتوا", "C"), ar9_button("🛒 اقتصاد", "E")],
+        [ar9_button("⚙️ تنظیمات", "T"), ar9_button("🛡 امنیت", "S")],
+        [ar9_button("💾 بکاپ", "B"), ar9_button("📜 لاگ‌ها", "L")],
+        [ar9_button("🧰 ابزارها", "X"), ar9_button("ℹ️ راهنمای کامل", "H")],
+        [ar9_button("↻ بروزرسانی", "HOME")],
+    ]
+    await safe_edit_query(query, ar9_page("خانه", body), v5_markup(rows))
+
+
+async def ar9_home_message(update, context):
+    if not is_admin(int(update.effective_user.id)):
+        await update.message.reply_text("🚫 فقط Super Admin.")
+        return
+    await update.message.reply_text(ar9_page("خانه", ar9_card("👑 مرکز فرماندهی", "همه کنترل‌های مدیریتی از همین‌جا در دسترس‌اند.")), parse_mode=ParseMode.HTML, reply_markup=v5_markup([
+        [ar9_button("📊 داشبورد", "D"), ar9_button("👥 کاربران", "U")],
+        [ar9_button("🌐 گروه‌ها", "G"), ar9_button("🎮 بازی‌ها", "P")],
+        [ar9_button("📝 محتوا", "C"), ar9_button("🛒 اقتصاد", "E")],
+        [ar9_button("⚙️ تنظیمات", "T"), ar9_button("🛡 امنیت", "S")],
+        [ar9_button("💾 بکاپ", "B"), ar9_button("📜 لاگ‌ها", "L")],
+        [ar9_button("🧰 ابزارها", "X"), ar9_button("ℹ️ راهنما", "H")],
+    ]))
+
+
+# ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+AR9_USER_FIELDS = [
+    ("name", "👤 نام", "text"),
+    ("xp", "⭐ XP", "int"),
+    ("coins", "💰 سکه", "int"),
+    ("wins", "🏆 برد", "int"),
+    ("losses", "☠️ باخت", "int"),
+    ("games", "🎮 بازی", "int"),
+    ("streak", "🔥 استریک", "int"),
+    ("best_streak", "📈 بهترین استریک", "int"),
+    ("duels", "⚔️ دوئل", "int"),
+    ("votes", "🗳 رأی", "int"),
+    ("missions", "🤫 مأموریت", "int"),
+    ("boss", "👑 Boss", "int"),
+    ("level", "🏅 Level", "int"),
+    ("adult_ok", "🔞 تأیید بالغ", "bool"),
+    ("banned", "🚫 محدودیت", "bool"),
+]
+
+
+def ar9_user_status_line(u):
+    return (
+        f"🏅 Level <b>{ar9_num(u.get('level', 1))}</b>  ·  ⭐ XP <b>{ar9_num(u.get('xp', 0))}</b>  ·  💰 <b>{ar9_num(u.get('coins', 0))}</b>",
+        f"🏆 برد <b>{ar9_num(u.get('wins', 0))}</b>  ·  ☠️ باخت <b>{ar9_num(u.get('losses', 0))}</b>  ·  🎮 بازی <b>{ar9_num(u.get('games', 0))}</b>",
+        f"🔥 استریک <b>{ar9_num(u.get('streak', 0))}</b>  ·  📈 رکورد <b>{ar9_num(u.get('best_streak', 0))}</b>",
+    )
+
+
+async def ar9_user_list(query, page=0):
+    items = sort_users_by_xp()
+    page = max(0, int(page))
+    start = page * AR9_PAGE_SIZE
+    current = items[start:start + AR9_PAGE_SIZE]
+    rows = []
+    lines = []
+    for idx, (uid_s, u) in enumerate(current, start=start + 1):
+        uid = int(uid_s)
+        flag = "🚫" if u.get("banned") else "🟢"
+        name = escape(str(u.get("name", "کاربر"))[:20])
+        lines.append(f"{flag} <b>{idx:02d}</b>  {name}  ·  ⭐ {ar9_num(u.get('xp', 0))}  ·  💰 {ar9_num(u.get('coins', 0))}")
+        rows.append([ar9_button(f"👤 {str(u.get('name', 'کاربر'))[:20]}", "U", "VIEW", uid)])
+    if start > 0 or start + AR9_PAGE_SIZE < len(items):
+        nav = []
+        if start > 0:
+            nav.append(ar9_button("◀️", "U", "LIST", page - 1))
+        if start + AR9_PAGE_SIZE < len(items):
+            nav.append(ar9_button("▶️", "U", "LIST", page + 1))
+        rows.append(nav)
+    rows.append([ar9_button("🔎 جست‌وجو", "U", "SEARCH"), ar9_button("🚫 محدودشده‌ها", "U", "BANNED")])
+    rows.append([ar9_button("➕ افزودن دستی", "U", "ADD")])
+    await ar9_render(query, "👥 کاربران", ar9_card("فهرست کاربران", *(lines or ["هنوز کاربری ثبت نشده است."])), rows, back=("HOME",), refresh=("U", "LIST", page))
+
+
+async def ar9_user_view(query, uid: int, page="HOME"):
+    u = get_user(int(uid))
+    name = escape(str(u.get("name", "کاربر")))
+    st1, st2, st3 = ar9_user_status_line(u)
+    body = ar9_card(
+        "👤 پروفایل مدیریتی",
+        f"{name}  ·  <code>{uid}</code>",
+        f"🏷 عنوان فعلی: <b>{escape(title_for(int(u.get('xp', 0))))}</b>",
+        st1, st2, st3,
+        f"🔞 بالغ: {ar9_status(bool(u.get('adult_ok')))}  ·  🚫 دسترسی: {ar9_status(not bool(u.get('banned')), 'آزاد', 'محدود')}",
+        f"🏅 دستاورد: <b>{len(u.get('achievements', []))}/{len(ACHIEVEMENTS)}</b>",
+    )
+    if page == "HOME":
+        rows = [
+            [ar9_button("✏️ ویرایش اطلاعات", "U", "EDIT", uid), ar9_button("🎒 موجودی", "U", "INV", uid)],
+            [ar9_button("📊 آمار جزئی", "U", "STAT", uid), ar9_button("🏆 دستاوردها", "U", "ACH", uid)],
+            [ar9_button("🛡 دسترسی و عضویت", "U", "ACCESS", uid)],
+            [ar9_button("➕ XP", "U", "ADJ", uid, "xp"), ar9_button("💰 +سکه", "U", "ADJ", uid, "coin")],
+            [ar9_button("🚫/✅ محدودیت", "U", "BAN", uid), ar9_button("🧹 ریست", "U", "RESET", uid)],
+        ]
+    elif page == "EDIT":
+        rows = []
+        for key, label, kind in AR9_USER_FIELDS:
+            value = u.get(key)
+            if kind == "bool":
+                rows.append([ar9_button(f"{label}: {'🟢' if value else '🔴'}", "U", "TOGGLE", uid, key)])
+            else:
+                shown = str(value)[:18]
+                rows.append([ar9_button(f"{label} = {shown}", "U", "FIELD", uid, key)])
+    elif page == "INV":
+        rows = []
+        for key, item in SHOP.items():
+            count = int(u.setdefault("inventory", {}).get(key, 0))
+            rows.append([ar9_button(f"{item.get('name', key)} ×{count}", "U", "ITEM", uid, key)])
+        rows.append([ar9_button("➕/➖ آیتم دقیق", "U", "ITEMS", uid)])
+    elif page == "STAT":
+        rows = []
+        stats = u.setdefault("stats", {})
+        for key, value in stats.items():
+            rows.append([ar9_button(f"{key}: {value}", "U", "STATF", uid, key)])
+    elif page == "ACH":
+        rows = []
+        owned = set(u.get("achievements", []))
+        for key, (title, _) in ACHIEVEMENTS.items():
+            rows.append([ar9_button(f"{'✅' if key in owned else '⬜'} {title}", "U", "ACH_TOGGLE", uid, key)])
+    elif page == "ACCESS":
+        membership = await ar8_channel_membership(uid, force=True)
+        member_text = "🟢 عضو" if membership[0] is True else "🔴 غیرعضو" if membership[0] is False else "🟡 نامشخص"
+        body += "\n\n" + ar9_card("🛡 دسترسی", f"📢 کانال: {member_text}", f"🔒 Start Gate: {'🟢 فعال' if v7_has_started(uid) else '🔴 فعال نشده'}")
+        rows = [
+            [ar9_button("🔞 تغییر تأیید بالغ", "U", "TOGGLE", uid, "adult_ok")],
+            [ar9_button("🛡 رفع/اعمال محدودیت", "U", "BAN", uid)],
+            [ar9_button("♻️ پاک‌کردن کش عضویت", "U", "MCLEAR", uid)],
+        ]
+    else:
+        rows = []
+    await ar9_render(query, "👤 مدیریت کاربر", body, rows, back=("U", "LIST"))
+
+
+# ---------------------------------------------------------------------------
+# Groups
+# ---------------------------------------------------------------------------
+AR9_GROUP_BOOL_SETTINGS = [
+    ("allow_flirty", "💘 فلرت"),
+    ("allow_random_events", "🎲 رویداد"),
+    ("allow_vote", "🗳 رأی"),
+    ("allow_duel", "⚔️ دوئل"),
+    ("allow_secret", "🤫 مخفی"),
+    ("allow_boss", "👑 Boss"),
+    ("allow_mini_games", "🎮 مینی‌گیم"),
+    ("allow_teams", "👥 تیم"),
+    ("allow_spy", "🕵️ جاسوس"),
+]
+
+
+async def ar9_group_list(query, page=0):
+    items = sort_groups_by_activity()
+    page = max(0, int(page))
+    start = page * AR9_PAGE_SIZE
+    current = items[start:start + AR9_PAGE_SIZE]
+    rows, lines = [], []
+    for idx, (cid, g) in enumerate(current, start=start + 1):
+        enabled = bool(g.get("enabled", True)); active = bool(g.get("active_game"))
+        lines.append(f"{idx:02d}. {'🟢' if enabled else '🔴'} <code>{cid}</code>  ·  {'🎮' if active else '💤'}  ·  {int(g.get('max_players', 20))} نفر")
+        rows.append([ar9_button(f"🌐 {cid}", "G", "VIEW", cid)])
+    nav=[]
+    if start>0: nav.append(ar9_button("◀️", "G", "LIST", page-1))
+    if start+AR9_PAGE_SIZE<len(items): nav.append(ar9_button("▶️", "G", "LIST", page+1))
+    if nav: rows.append(nav)
+    rows.append([ar9_button("➕ افزودن گروه", "G", "ADD"), ar9_button("🔎 جست‌وجو", "G", "SEARCH")])
+    await ar9_render(query,"🌐 گروه‌ها",ar9_card("Group Directory",*(lines or ["هنوز گروهی ثبت نشده است."])),rows,back=("HOME",),refresh=("G","LIST",page))
+
+
+async def ar9_group_view(query,cid:int,page="HOME"):
+    g=get_group(int(cid)); game=active_game(int(cid)); s=g.setdefault("settings",{})
+    body=ar9_card(
+        "🌐 مدیریت گروه",
+        f"🆔 <code>{cid}</code>",
+        f"وضعیت: {ar9_status(bool(g.get('enabled',True)))}  ·  🔞 بالغ: {ar9_status(bool(g.get('adult_mode')))}",
+        f"👥 ظرفیت: <b>{int(g.get('min_players',2))}–{int(g.get('max_players',20))}</b>",
+        f"⏱ مهلت حکم: <b>{int(s.get('penalty_deadline',300))}</b> ثانیه  ·  Auto-End: <b>{int(s.get('auto_end_minutes',90))}</b> دقیقه",
+        f"🎮 بازی فعلی: {'🟢 فعال' if game else '💤 ندارد'}",
+    )
+    if page=="HOME":
+        rows=[
+            [ar9_button("⚙️ تنظیمات پایه", "G","EDIT",cid), ar9_button("🎛 امکانات", "G","FEATURES",cid)],
+            [ar9_button("🎮 بازی فعلی", "G","GAME",cid)],
+            [ar9_button("📝 محتوای مخصوص گروه", "G","CONTENT",cid)],
+            [ar9_button("🟢/🔴 فعال‌سازی", "G","TOGGLE",cid), ar9_button("🔞 بالغ", "G","ADULT",cid)],
+            [ar9_button("🛑 پایان بازی", "G","END",cid)],
+        ]
+    elif page=="EDIT":
+        rows=[]
+        for key,label,kind in [
+            ("min_players","👥 حداقل","int"),("max_players","👥 حداکثر","int"),
+            ("penalty_deadline","☠️ مهلت حکم","int"),("auto_end_minutes","⏱ Auto-End","int")
+        ]:
+            value = s.get(key,g.get(key)) if key in s else g.get(key)
+            rows.append([ar9_button(f"{label}: {value}","G","FIELD",cid,key)])
+        rows.append([ar9_button("🔞 حالت بالغ: "+("🟢" if g.get('adult_mode') else "🔴"),"G","ADULT",cid)])
+    elif page=="FEATURES":
+        rows=[]
+        for key,label in AR9_GROUP_BOOL_SETTINGS:
+            value=bool(s.get(key,True))
+            rows.append([ar9_button(f"{label}: {'🟢' if value else '🔴'}","G","BOOL",cid,key)])
+    elif page=="CONTENT":
+        keys=sorted(set(list(V7_BANKS_FINAL.keys())+list(g.get("content",{}).keys())))
+        rows=[]
+        for key in keys:
+            count=len(g.get("content",{}).get(key,[]))
+            rows.append([ar9_button(f"{CONTENT_LABELS.get(key,key)} · {count}","G","CAT",cid,key)])
+        rows.append([ar9_button("➕ افزودن متن گروهی","G","CADD",cid,"truth")])
+    elif page=="GAME":
+        if game:
+            body += "\n\n" + ar9_card("🎮 بازی جاری", f"Phase: <b>{escape(str(game.get('phase','-')))}</b>", f"Round: <b>{int(game.get('round',0))}</b>", f"Players: <b>{len(game.get('players',[]))}</b>")
+            rows=[[ar9_button("🎮 بازکردن بازی","P","VIEW",str(game.get('id'))[:24])],[ar9_button("⏭ دور بعد","P","NEXT",str(game.get('id'))[:24])],[ar9_button("🎲 حکم تصادفی","P","PEN",str(game.get('id'))[:24])]]
+        else:
+            rows=[]
+    await ar9_render(query,"🌐 مدیریت گروه",body,rows,back=("G","LIST"))
+
+
+# ---------------------------------------------------------------------------
+# Games
+# ---------------------------------------------------------------------------
+
+def ar9_find_game(token):
+    token=str(token)
+    if token in DATA.get("games",{}): return DATA["games"][token]
+    return next((g for gid,g in DATA.get("games",{}).items() if str(gid).startswith(token) or str(g.get("id","")).startswith(token)),None)
+
+
+async def ar9_game_list(query,page=0):
+    items=active_games(); page=max(0,int(page)); start=page*AR9_PAGE_SIZE; current=items[start:start+AR9_PAGE_SIZE]
+    rows=[]; lines=[]
+    for idx,(gid,g) in enumerate(current,start=start+1):
+        lines.append(f"{idx:02d}. <code>{g.get('chat_id')}</code>  ·  {len(g.get('players',[]))} نفر  ·  {escape(str(g.get('phase','-')))}  ·  {'🟢' if g.get('status')=='active' else '🟡'}")
+        rows.append([ar9_button(f"🎮 {g.get('chat_id')}","P","VIEW",str(gid)[:24])])
+    nav=[]
+    if start>0: nav.append(ar9_button("◀️","P","LIST",page-1))
+    if start+AR9_PAGE_SIZE<len(items): nav.append(ar9_button("▶️","P","LIST",page+1))
+    if nav: rows.append(nav)
+    rows.append([ar9_button("🔎 پیدا کردن بازی","P","SEARCH"),ar9_button("🛑 پایان همه","P","ENDALL")])
+    await ar9_render(query,"🎮 بازی‌ها",ar9_card("Live Games",*(lines or ["هیچ بازی فعالی وجود ندارد."])),rows,back=("HOME",),refresh=("P","LIST",page))
+
+
+async def ar9_game_view(query,token):
+    g=ar9_find_game(token)
+    if not g:
+        await safe_answer_query(query,"❌ بازی پیدا نشد.",True); return
+    gid=str(g.get("id",token)); players=g.get("players",[])
+    q=g.get("current_questioner")
+    body=ar9_card("🎮 بازی",f"🆔 <code>{escape(gid)}</code>",f"🌐 گروه: <code>{g.get('chat_id')}</code>",f"وضعیت: <b>{escape(str(g.get('status','-')))}</b>",f"فاز: <b>{escape(str(g.get('phase','-')))}</b>",f"دور: <b>{int(g.get('round',0))}</b>",f"🎤 پرسشگر: <b>{escape(name_of(int(q),g)) if q else '—'}</b>",f"👥 بازیکن: <b>{len(players)}</b>")
+    rows=[
+        [ar9_button("👥 بازیکنان","P","PLAYERS",gid[:24]),ar9_button("⚙️ فیلدهای بازی","P","EDIT",gid[:24])],
+        [ar9_button("⏭ دور بعد","P","NEXT",gid[:24]),ar9_button("🎯 نوبت بعد","P","TURN",gid[:24])],
+        [ar9_button("🎲 حکم تصادفی","P","PEN",gid[:24]),ar9_button("🎲 رویداد","P","EVENT",gid[:24])],
+        [ar9_button("🛑 پایان بازی","P","END",gid[:24])],
+    ]
+    await ar9_render(query,"🎮 کنترل بازی",body,rows,back=("P","LIST"),refresh=("P","VIEW",gid[:24]))
+
+
+async def ar9_game_players(query,token):
+    g=ar9_find_game(token)
+    if not g: await safe_answer_query(query,"❌ بازی پیدا نشد.",True); return
+    rows=[]; lines=[]
+    for idx,p in enumerate(g.get("players",[]),1):
+        uid=int(p); nm=escape(name_of(uid,g)); lines.append(f"{idx}. {nm}  ·  <code>{uid}</code>"); rows.append([ar9_button(f"🗑 حذف {name_of(uid,g)[:18]}","P","REMOVE",str(g.get('id'))[:24],uid)])
+    rows.append([ar9_button("➕ افزودن بازیکن","P","ADD",str(g.get('id'))[:24])])
+    await ar9_render(query,"👥 بازیکنان بازی",ar9_card("Players",*(lines or ["خالی"])),rows,back=("P","VIEW",str(g.get('id'))[:24]))
+
+
+# ---------------------------------------------------------------------------
+# Content editor
+# ---------------------------------------------------------------------------
+AR9_CONTENT_CATS=[
+    ("truth","🕵️ اعتراف"),("dare","🔥 جرئت"),("mind","🧠 ذهنی"),("scenario","🎭 سناریو"),
+    ("flirty","💘 فلرت"),("adult","🔞 بالغ"),("penalty","☠️ حکم"),("boss","👑 Boss"),("question","❓ سؤال"),
+]
+
+
+def ar9_content_base(key):
+    return ar6_base_content(key)
+
+
+def ar9_content_disabled(key):
+    return set(DATA.get("global_content_disabled",{}).get(key,[]))
+
+
+def ar9_content_value(key, raw):
+    return str(DATA.get("global_content_overrides",{}).get(key,{}).get(raw,raw))
+
+
+async def ar9_content_home(query):
+    rows=[]
+    for i in range(0,len(AR9_CONTENT_CATS),2):
+        row=[ar9_button(AR9_CONTENT_CATS[i][1],"C","LIST",AR9_CONTENT_CATS[i][0],0)]
+        if i+1<len(AR9_CONTENT_CATS): row.append(ar9_button(AR9_CONTENT_CATS[i+1][1],"C","LIST",AR9_CONTENT_CATS[i+1][0],0))
+        rows.append(row)
+    rows.append([ar9_button("➕ افزودن محتوا","C","ADD")])
+    await ar9_render(query,"📝 محتوا",ar9_card("Content Vault","هر آیتم را از همان صفحه می‌توانی ویرایش، غیرفعال یا حذف کنی.","انتخاب سؤال/حکم در بازی همچنان تصادفی است."),rows,back=("HOME",))
+
+
+async def ar9_content_list(query,key,page=0):
+    base=ar9_content_base(key); page=max(0,int(page)); start=page*5; current=base[start:start+5]; disabled=ar9_content_disabled(key)
+    rows=[]; lines=[]
+    for idx,item in enumerate(current,start=start):
+        shown=escape(ar9_content_value(key,item)[:140]); state="🔴" if item in disabled else "🟢"; lines.append(f"{state} <b>{idx+1}</b>. {shown}")
+        rows.append([ar9_button("✏️", "C","EDIT",key,idx), ar9_button("▶️ فعال" if item in disabled else "⏸ غیرفعال","C","TOGGLE",key,idx), ar9_button("🗑","C","DELETE",key,idx)])
+    nav=[]
+    if start>0: nav.append(ar9_button("◀️","C","LIST",key,page-1))
+    if start+5<len(base): nav.append(ar9_button("▶️","C","LIST",key,page+1))
+    if nav: rows.append(nav)
+    rows.append([ar9_button("➕ افزودن در این دسته","C","ADD","HERE",key)])
+    await ar9_render(query, f"📝 {CONTENT_LABELS.get(key,key)}", ar9_card("Content",*(lines or ["این دسته خالی است."])), rows, back=("C","HOME"), refresh=("C","LIST",key,page))
+
+
+# ---------------------------------------------------------------------------
+# Economy
+# ---------------------------------------------------------------------------
+async def ar9_economy_home(query):
+    total_coins=sum(int(u.get("coins",0)) for u in DATA.get("users",{}).values())
+    rows=[]
+    for key,item in SHOP.items():
+        live=ar6_shop_item(key)
+        rows.append([ar9_button(f"{live['name']} · {live['price']}🪙 · {'🟢' if live.get('enabled',True) else '🔴'}","E","ITEM",key)])
+    rows += [
+        [ar9_button("⭐ ضریب XP","E","MULT","xp"),ar9_button("💰 ضریب سکه","E","MULT","coin")],
+        [ar9_button("📊 آمار اقتصاد","E","STATS"),ar9_button("➕ آیتم جدید","E","ADD")],
+    ]
+    await ar9_render(query,"🛒 اقتصاد",ar9_card("Economy",f"💰 سکه در گردش: <b>{ar9_num(total_coins)}</b>",f"⭐ XP multiplier: <b>{DATA['settings'].get('xp_multiplier',1)}</b>",f"💰 Coin multiplier: <b>{DATA['settings'].get('coins_multiplier',1)}</b>"),rows,back=("HOME",))
+
+
+async def ar9_economy_item(query,key):
+    if key not in SHOP: await safe_answer_query(query,"❌ آیتم پیدا نشد.",True); return
+    item=ar6_shop_item(key)
+    body=ar9_card("🛒 آیتم فروشگاه",f"کلید: <code>{escape(key)}</code>",f"نام: <b>{escape(str(item['name']))}</b>",f"قیمت: <b>{int(item['price'])}</b> 🪙",f"توضیح: {escape(str(item['desc']))}",f"وضعیت: {ar9_status(bool(item.get('enabled',True)))}")
+    rows=[
+        [ar9_button("✏️ نام","E","FIELD",key,"name"),ar9_button("💰 قیمت","E","FIELD",key,"price")],
+        [ar9_button("📝 توضیح","E","FIELD",key,"desc"),ar9_button("🟢/🔴 وضعیت","E","TOGGLE",key)],
+        [ar9_button("🗑 حذف آیتم","E","DELETE",key)],
+    ]
+    await ar9_render(query,"🛒 مدیریت آیتم",body,rows,back=("E","HOME"))
+
+
+# ---------------------------------------------------------------------------
+# Settings, titles, achievements
+# ---------------------------------------------------------------------------
+AR9_SETTING_FIELDS=[
+    ("max_players_default","👥 سقف بازیکن پیش‌فرض","int"),
+    ("adult_default","🔞 بالغ پیش‌فرض","bool"),
+    ("xp_multiplier","⭐ ضریب XP","int"),
+    ("coins_multiplier","💰 ضریب سکه","int"),
+    ("required_channel_cache_ttl","⏱ کش عضویت","int"),
+]
+
+
+async def ar9_settings_home(query):
+    s=DATA.setdefault("settings",{})
+    rows=[]
+    for key,label,kind in AR9_SETTING_FIELDS:
+        value=s.get(key, REQUIRED_CHANNEL_CACHE_TTL if key=="required_channel_cache_ttl" else False if kind=="bool" else 1)
+        shown=("🟢" if value else "🔴") if kind=="bool" else str(value)
+        rows.append([ar9_button(f"{label}: {shown}","T","FIELD",key)])
+    rows += [
+        [ar9_button("📢 کانال اجباری","T","CHANNEL"),ar9_button("🧩 امکانات سراسری","T","FEATURES")],
+        [ar9_button("🏅 عنوان‌ها","T","TITLES"),ar9_button("🏆 دستاوردها","T","ACH")],
+    ]
+    await ar9_render(query,"⚙️ تنظیمات",ar9_card("Global Settings",f"📢 کانال: <code>{escape(REQUIRED_CHANNEL)}</code>",f"🔗 لینک: <code>{escape(REQUIRED_CHANNEL_URL)}</code>"),rows,back=("HOME",))
+
+
+async def ar9_settings_channel(query):
+    await ar9_render(query,"📢 کانال اجباری",ar9_card("Channel Gate",f"کانال فعلی: <code>{escape(REQUIRED_CHANNEL)}</code>",f"لینک فعلی: <code>{escape(REQUIRED_CHANNEL_URL)}</code>","هر دو را می‌توانی از همین صفحه تغییر بدهی."),[
+        [ar9_button("✏️ تغییر کانال","T","CF","channel"),ar9_button("🔗 تغییر لینک","T","CF","url")],
+        [ar9_button("♻️ پاک‌کردن کش","T","MCLEAR")],
+    ],back=("T","HOME"))
+
+
+async def ar9_settings_features(query):
+    feats=DATA.setdefault("global_features",{})
+    rows=[]
+    for key,val in feats.items():
+        rows.append([ar9_button(f"{key}: {'🟢' if val else '🔴'}","T","FEATURE",key)])
+    await ar9_render(query,"🧩 امکانات سراسری",ar9_card("Feature Switchboard","فعال/غیرفعال کردن هر موتور بازی از همین صفحه انجام می‌شود."),rows,back=("T","HOME"))
+
+
+async def ar9_settings_titles(query):
+    rules=DATA.setdefault("settings",{}).setdefault("title_rules",[])
+    rows=[]; lines=[]
+    for i,r in enumerate(sorted([x for x in rules if isinstance(x,dict)],key=lambda x:int(x.get('min_xp',0)),reverse=True)):
+        lines.append(f"{i+1}. <b>{int(r.get('min_xp',0))} XP</b> → {escape(str(r.get('title','')))}")
+        rows.append([ar9_button(f"✏️ عنوان {i+1}","T","TITLE",i), ar9_button("🗑","T","TITLEDEL",i)])
+    rows.append([ar9_button("➕ عنوان جدید","T","TITLEADD")])
+    await ar9_render(query,"🏅 عنوان‌ها",ar9_card("Title Ladder",*(lines or ["خالی"])),rows,back=("T","HOME"))
+
+
+async def ar9_settings_achievements(query):
+    rows=[]
+    for key,(name,desc) in ACHIEVEMENTS.items(): rows.append([ar9_button(str(name)[:26],"T","ACH_ITEM",key)])
+    await ar9_render(query,"🏆 دستاوردها",ar9_card("Achievements","نام و توضیح هر دستاورد را همان‌جا ویرایش کن."),rows,back=("T","HOME"))
+
+
+# ---------------------------------------------------------------------------
+# Security / backups / logs / tools
+# ---------------------------------------------------------------------------
+async def ar9_security_home(query):
+    banned=[(uid,u) for uid,u in DATA.get('users',{}).items() if u.get('banned')]
+    body=ar9_card("🛡 امنیت",f"🚫 محدودشده‌ها: <b>{len(banned)}</b>",f"📢 کانال: <code>{escape(REQUIRED_CHANNEL)}</code>",f"🔒 Start Gate: فعال",f"🧾 Audit: <b>{len(DATA.get('audit',[]))}</b>")
+    rows=[
+        [ar9_button("🚫 فهرست محدودشده‌ها","S","BANNED"),ar9_button("🩺 سلامت","S","HEALTH")],
+        [ar9_button("♻️ پاک‌کردن کش عضویت","S","MCLEAR"),ar9_button("🧹 پاکسازی","S","CLEAN")],
+        [ar9_button("🔐 تست کانال","S","CHANNEL")],
+    ]
+    await ar9_render(query,"🛡 امنیت",body,rows,back=("HOME",))
+
+
+async def ar9_backup_home(query):
+    files=backup_files(); rows=[]; lines=[]
+    for i,p in enumerate(files[:10]):
+        lines.append(f"{i+1:02d}. <code>{escape(Path(p).name)}</code>")
+        rows.append([ar9_button(f"♻️ {i+1}","B","RESTORE",i),ar9_button(f"🗑 {i+1}","B","DELETE",i)])
+    rows.append([ar9_button("📦 ساخت بکاپ","B","MAKE"),ar9_button("📤 ارسال آخرین بکاپ","B","SEND")])
+    await ar9_render(query,"💾 بکاپ",ar9_card("Backup Vault",*(lines or ["هنوز بکاپی وجود ندارد."])),rows,back=("HOME",),refresh=("B","HOME"))
+
+
+async def ar9_logs_home(query,page=0):
+    entries=list(DATA.get('audit',[]))[::-1]; page=max(0,int(page)); start=page*10; current=entries[start:start+10]
+    lines=[]
+    for e in current:
+        stamp=datetime.fromtimestamp(int(e.get('ts',0)),tz=timezone.utc).strftime('%m-%d %H:%M')
+        lines.append(f"<code>{stamp}</code>  {escape(str(e.get('action','-')))}  ·  <code>{escape(str(e.get('actor','-')))}</code>")
+    rows=[]; nav=[]
+    if start>0: nav.append(ar9_button("◀️","L","LIST",page-1))
+    if start+10<len(entries): nav.append(ar9_button("▶️","L","LIST",page+1))
+    if nav: rows.append(nav)
+    rows.append([ar9_button("🧹 پاک‌کردن لاگ","L","CLEAR"),ar9_button("📣 Broadcast","L","BROADCAST")])
+    await ar9_render(query,"📜 لاگ‌ها",ar9_card("Audit Trail",*(lines or ["لاگی ثبت نشده است."])),rows,back=("HOME",),refresh=("L","LIST",page))
+
+
+async def ar9_tools_home(query):
+    path=Path(DATA_FILE); size=path.stat().st_size if path.exists() else 0
+    body=ar9_card("🧰 ابزارها",f"💾 حجم داده: <b>{ar9_num(size)}</b> bytes",f"🧩 بانک‌ها: <b>{sum(len(v) for v in V7_BANKS_FINAL.values())}</b>",f"🐍 Python: <b>{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}</b>")
+    rows=[
+        [ar9_button("💾 ذخیره فوری","X","SAVE"),ar9_button("🧹 پاکسازی","X","CLEAN")],
+        [ar9_button("🩺 Health Check","X","HEALTH"),ar9_button("🔢 شمارنده‌ها","X","COUNTS")],
+        [ar9_button("📣 پیام همگانی","X","BROADCAST")],
+    ]
+    await ar9_render(query,"🧰 ابزارها",body,rows,back=("HOME",))
+
+
+async def ar9_help(query):
+    body=ar9_card("ℹ️ راهنمای مرکز مدیریت","🟣 هر بخش ابزارهای ویرایش خودش را دارد.","✏️ روی همان مورد بزن و مقدار جدید را وارد کن.","🔙 بازگشت همیشه به صفحه قبلی است.","⌂ خانه همیشه به مرکز مدیریت برمی‌گردد.","🛑 عملیات مخرب قبل از اجرا تأیید می‌خواهند.","💾 تغییرات مهم فوراً در JSON ذخیره می‌شوند.","🔐 پنل فقط برای Super Admin فعال است.")
+    rows=[[ar9_button("👥 راهنمای کاربران","H","U"),ar9_button("🌐 راهنمای گروه‌ها","H","G")],[ar9_button("🎮 راهنمای بازی‌ها","H","P"),ar9_button("📝 راهنمای محتوا","H","C")],[ar9_button("⚙️ راهنمای تنظیمات","H","T"),ar9_button("🛡 راهنمای امنیت","H","S")]]
+    await ar9_render(query,"ℹ️ راهنمای مدیریت",body,rows,back=("HOME",))
+
+
+async def ar9_sub_help(query,key):
+    texts={
+        'U':"هر کاربر یک کارت مدیریتی دارد؛ XP، سکه، آمار، موجودی، دستاورد و دسترسی از همان کارت قابل تغییر است.",
+        'G':"گروه را باز کن؛ ظرفیت، امکانات، حالت بالغ، زمان‌ها و بازی فعال از همان صفحه مدیریت می‌شوند.",
+        'P':"بازی فعال را باز کن؛ بازیکنان، نوبت، دور، حکم، رویداد و پایان بازی از همان صفحه در دسترس‌اند.",
+        'C':"هر متن می‌تواند ویرایش، غیرفعال یا حذف شود؛ انتخاب در خود بازی همچنان تصادفی می‌ماند.",
+        'T':"تنظیمات سراسری و کلیدهای موتور بازی را بدون دستور متنی کنترل می‌کنی.",
+        'S':"این بخش برای وضعیت دسترسی، کانال اجباری، کش عضویت و سلامت داده است.",
+    }
+    await ar9_render(query,"ℹ️ راهنما",ar9_card("راهنمای بخش",texts.get(key,"")),[],back=("HOME",))
+
+
+# ---------------------------------------------------------------------------
+# Generic admin input flows
+# ---------------------------------------------------------------------------
+def ar9_start_flow(uid:int,payload:dict):
+    AR9_FLOW[int(uid)] = dict(payload)
+
+
+AR9_FLOW: dict[int, dict] = {}
+
+
+def ar9_get_flow(uid):
+    return AR9_FLOW.get(int(uid))
+
+
+def ar9_clear_flow(uid):
+    AR9_FLOW.pop(int(uid),None)
+
+
+def ar9_parse_text_value(text,kind='text'):
+    text=text.strip()
+    if kind=='text': return text
+    if kind=='int':
+        return int(text.replace(',',''))
+    if kind=='bool':
+        low=text.lower()
+        if low in ('1','true','on','yes','روشن','فعال','بله'): return True
+        if low in ('0','false','off','no','خاموش','غیرفعال','خیر'): return False
+        raise ValueError('برای مقدار بولی از روشن/خاموش یا true/false استفاده کن.')
+    return ar6_parse_value(text)
+
+
+async def ar9_value_prompt(query,title,current,flow):
+    ar9_start_flow(query.from_user.id,flow)
+    await safe_edit_query(query,ar9_card(title,f"مقدار فعلی: <b>{escape(str(current))}</b>","مقدار جدید را در یک پیام بفرست.","برای انصراف: «لغو»"),v5_markup([[ar9_button("🔙 بازگشت",*flow.get('back',('HOME',)) ), ar9_button("⌂ خانه","HOME")]]))
+
+
+# ---------------------------------------------------------------------------
+# Admin action router
+# ---------------------------------------------------------------------------
+async def ar9_admin_action(query,context,parts):
+    uid=int(query.from_user.id)
+    if not is_admin(uid):
+        await safe_answer_query(query,"🚫 فقط Super Admin.",True); return
+    action=parts[1] if len(parts)>1 else 'HOME'
+    try:
+        # Home/dashboard
+        if action=='HOME': await ar9_home(query); return
+        if action=='D':
+            users=len(DATA.get('users',{})); groups=len(DATA.get('groups',{})); games=DATA.get('games',{})
+            active=sum(1 for g in games.values() if g.get('status')=='active'); lobby=sum(1 for g in games.values() if g.get('status')=='lobby')
+            await ar9_render(query,'📊 داشبورد',ar9_card('Live Snapshot',f'👥 کاربران: <b>{ar9_num(users)}</b>',f'🌐 گروه‌ها: <b>{ar9_num(groups)}</b>',f'🎮 فعال: <b>{active}</b> · 🟡 Lobby: <b>{lobby}</b>',f'⭐ XP: <b>{ar9_num(sum(int(u.get("xp",0)) for u in DATA["users"].values()))}</b>',f'💰 سکه: <b>{ar9_num(sum(int(u.get("coins",0)) for u in DATA["users"].values()))}</b>'),[[ar9_button('↻ تازه‌سازی','D')],[ar9_button('ℹ️ راهنما','H','D')]],back=('HOME',),refresh=('D',)); return
+        if action=='H':
+            await ar9_help(query); return
+        if action=='U':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub in ('HOME',):
+                await ar9_render(query,'👥 کاربران',ar9_card('User Center','جست‌وجو، فهرست، دسترسی، موجودی و ویرایش همه فیلدهای کاربر در همین بخش.'),[[ar9_button('📋 فهرست','U','LIST',0),ar9_button('🔎 جست‌وجو','U','SEARCH')],[ar9_button('🚫 محدودشده‌ها','U','BANNED')],[ar9_button('➕ افزودن دستی','U','ADD')],[ar9_button('ℹ️ راهنما','H','U')]],back=('HOME',)); return
+            if sub=='LIST': await ar9_user_list(query,int(parts[3]) if len(parts)>3 else 0); return
+            if sub=='SEARCH':
+                ar9_start_flow(uid,{'type':'search_user','back':('U','HOME')})
+                await safe_edit_query(query,ar9_card('🔎 جست‌وجوی کاربر','User ID یا بخشی از نام را در پیام بعدی بفرست.'),v5_markup([ar9_nav(('U','HOME'))])); return
+            if sub=='BANNED':
+                banned=[(k,u) for k,u in DATA.get('users',{}).items() if u.get('banned')]; rows=[]
+                for k,u in banned[:30]: rows.append([ar9_button(f'🚫 {str(u.get("name","کاربر"))[:20]}','U','VIEW',int(k))])
+                rows.append([ar9_button('↻','U','BANNED')]); await ar9_render(query,'🚫 محدودشده‌ها',ar9_card('Restricted',*(f'{escape(str(u.get("name","کاربر")))} · <code>{k}</code>' for k,u in banned) or ['لیست خالی است.']),rows,back=('U','HOME')); return
+            if sub=='ADD':
+                ar9_start_flow(uid,{'type':'add_user','back':('U','HOME')}); await safe_edit_query(query,ar9_card('➕ افزودن کاربر','User ID عددی را در پیام بعدی بفرست.'),v5_markup([ar9_nav(('U','HOME'))])); return
+            if sub=='VIEW': await ar9_user_view(query,int(parts[3]),'HOME'); return
+            if sub=='EDIT': await ar9_user_view(query,int(parts[3]),'EDIT'); return
+            if sub=='INV': await ar9_user_view(query,int(parts[3]),'INV'); return
+            if sub=='STAT': await ar9_user_view(query,int(parts[3]),'STAT'); return
+            if sub=='ACH': await ar9_user_view(query,int(parts[3]),'ACH'); return
+            if sub=='ACCESS': await ar9_user_view(query,int(parts[3]),'ACCESS'); return
+            if sub=='FIELD':
+                target=int(parts[3]); field=parts[4]; u=get_user(target); kind=next((x[2] for x in AR9_USER_FIELDS if x[0]==field),'text'); label=next((x[1] for x in AR9_USER_FIELDS if x[0]==field),field)
+                await ar9_value_prompt(query,f'✏️ {label}',u.get(field),{'type':'user_field','uid':target,'field':field,'kind':kind,'back':('U','EDIT',target)}); return
+            if sub=='TOGGLE':
+                target=int(parts[3]); field=parts[4]; u=get_user(target); u[field]=not bool(u.get(field)); save_data(force=True); audit('ar9_user_toggle',uid,None,f'{target}:{field}'); await ar9_user_view(query,target,'EDIT'); return
+            if sub=='ADJ':
+                target=int(parts[3]); what=parts[4] if len(parts)>4 else 'xp'; ar9_start_flow(uid,{'type':'user_adjust','uid':target,'what':what,'back':('U','VIEW',target)}); await safe_edit_query(query,ar9_card('➕ افزایش',f'{"XP" if what=="xp" else "سکه"} را چند واحد زیاد کنم؟'),v5_markup([ar9_nav(('U','VIEW',target))])); return
+            if sub=='BAN':
+                target=int(parts[3]); u=get_user(target); u['banned']=not bool(u.get('banned')); save_data(force=True); audit('ar9_user_ban',uid,None,str(target)); await ar9_user_view(query,target,'HOME'); return
+            if sub=='RESET':
+                target=int(parts[3]); token=v5_confirmation(uid,'ar9_user_reset',str(target)); await safe_edit_query(query,ar9_card('⚠️ ریست کاربر',f'<code>{target}</code>','اطلاعات بازی، XP، سکه و آمار این حساب بازنشانی می‌شود.'),v5_markup([[ar9_button('✅ تأیید','U','RESET_OK',token)],[ar9_button('🔙 لغو','U','VIEW',target)]])); return
+            if sub=='RESET_OK':
+                info=v5_get_confirmation(uid,parts[3],'ar9_user_reset')
+                if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+                target=int(info['payload']); DATA['users'][str(target)]=deepcopy(DEFAULT_USER); get_user(target)['created_at']=now_ts(); save_data(force=True); audit('ar9_user_reset',uid,None,str(target)); await ar9_user_view(query,target,'HOME'); return
+            if sub=='ITEM':
+                target=int(parts[3]); key=parts[4]; current=int(get_user(target).setdefault('inventory',{}).get(key,0));
+                await ar9_value_prompt(query,'🎒 مقدار آیتم',current,{'type':'user_item','uid':target,'item':key,'kind':'int','back':('U','INV',target)}); return
+            if sub=='STATF':
+                target=int(parts[3]); key=parts[4]; cur=int(get_user(target).setdefault('stats',{}).get(key,0)); await ar9_value_prompt(query,'📊 مقدار آمار',cur,{'type':'user_stat','uid':target,'key':key,'kind':'int','back':('U','STAT',target)}); return
+            if sub=='ACH_TOGGLE':
+                target=int(parts[3]); key=parts[4]; u=get_user(target); ach=set(u.get('achievements',[]));
+                if key in ach: ach.remove(key)
+                else: ach.add(key)
+                u['achievements']=list(ach); save_data(force=True); audit('ar9_user_achievement',uid,None,f'{target}:{key}'); await ar9_user_view(query,target,'ACH'); return
+            if sub=='MCLEAR': APEX_MEMBERSHIP_CACHE.pop(int(parts[3]),None); await ar9_user_view(query,int(parts[3]),'ACCESS'); return
+            if sub=='ITEMS': await ar9_value_prompt(query,'🎒 موجودی دقیق','برای تغییر یک آیتم، «کلید=مقدار» بفرست مثل <code>shield=5</code>.',{'type':'user_multi_item','uid':int(parts[3]),'kind':'kv','back':('U','INV',int(parts[3]))}); return
+
+        # Groups
+        if action=='G':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub=='HOME':
+                await ar9_render(query,'🌐 گروه‌ها',ar9_card('Group Center','هر گروه کارت مستقل دارد و تنظیمات، امکانات و بازی فعال از داخل همان کارت کنترل می‌شوند.'),[[ar9_button('📋 فهرست','G','LIST',0),ar9_button('🔎 جست‌وجو','G','SEARCH')],[ar9_button('➕ افزودن گروه','G','ADD')],[ar9_button('ℹ️ راهنما','H','G')]],back=('HOME',)); return
+            if sub=='LIST': await ar9_group_list(query,int(parts[3]) if len(parts)>3 else 0); return
+            if sub=='SEARCH': ar9_start_flow(uid,{'type':'search_group','back':('G','HOME')}); await safe_edit_query(query,ar9_card('🔎 جست‌وجوی گروه','Chat ID را بفرست.'),v5_markup([ar9_nav(('G','HOME'))])); return
+            if sub=='ADD': ar9_start_flow(uid,{'type':'add_group','back':('G','HOME')}); await safe_edit_query(query,ar9_card('➕ افزودن گروه','Chat ID را بفرست.'),v5_markup([ar9_nav(('G','HOME'))])); return
+            if sub=='VIEW': await ar9_group_view(query,int(parts[3]),'HOME'); return
+            if sub=='EDIT': await ar9_group_view(query,int(parts[3]),'EDIT'); return
+            if sub=='FEATURES': await ar9_group_view(query,int(parts[3]),'FEATURES'); return
+            if sub=='CONTENT': await ar9_group_view(query,int(parts[3]),'CONTENT'); return
+            if sub=='GAME': await ar9_group_view(query,int(parts[3]),'GAME'); return
+            if sub=='TOGGLE': g=get_group(int(parts[3])); g['enabled']=not bool(g.get('enabled',True)); save_data(force=True); audit('ar9_group_toggle',uid,int(parts[3]),str(g['enabled'])); await ar9_group_view(query,int(parts[3])); return
+            if sub=='ADULT': g=get_group(int(parts[3])); g['adult_mode']=not bool(g.get('adult_mode')); save_data(force=True); audit('ar9_group_adult',uid,int(parts[3]),str(g['adult_mode'])); await ar9_group_view(query,int(parts[3])); return
+            if sub=='FIELD':
+                cid=int(parts[3]); key=parts[4]; g=get_group(cid); s=g.setdefault('settings',{}); current=s.get(key,g.get(key)); await ar9_value_prompt(query,'✏️ تنظیم گروه',current,{'type':'group_field','cid':cid,'field':key,'kind':'int','back':('G','EDIT',cid)}); return
+            if sub=='BOOL':
+                cid=int(parts[3]); key=parts[4]; g=get_group(cid); g.setdefault('settings',{})[key]=not bool(g['settings'].get(key,True)); save_data(force=True); audit('ar9_group_feature',uid,cid,key); await ar9_group_view(query,cid,'FEATURES'); return
+            if sub=='CAT':
+                cid=int(parts[3]); key=parts[4]; items=g=get_group(cid).setdefault('content',{}).get(key,[]); body=ar9_card('📝 محتوای گروهی',f'دسته: {CONTENT_LABELS.get(key,key)}',*(f'{i+1}. {escape(str(x))}' for i,x in enumerate(items[:15])) or ['خالی']); await ar9_render(query,'📝 محتوای گروه',body,[[ar9_button('➕ افزودن','G','CADD',cid,key)],[ar9_button('🧹 پاک‌سازی','G','CCLEAR',cid,key)]],back=('G','CONTENT',cid)); return
+            if sub=='CADD': ar9_start_flow(uid,{'type':'group_content_add','cid':int(parts[3]),'key':parts[4],'back':('G','CONTENT',int(parts[3]))}); await safe_edit_query(query,ar9_card('➕ متن گروهی','متن را در پیام بعدی بفرست.'),v5_markup([ar9_nav(('G','CONTENT',int(parts[3])))])); return
+            if sub=='CCLEAR': get_group(int(parts[3])).setdefault('content',{})[parts[4]]=[]; save_data(force=True); await ar9_group_view(query,int(parts[3]),'CONTENT'); return
+            if sub=='END':
+                cid=int(parts[3]); g=active_game(cid)
+                if not g: await safe_answer_query(query,'بازی فعالی نیست.',True); return
+                token=v5_confirmation(uid,'ar9_group_end',str(cid)); await safe_edit_query(query,ar9_card('⚠️ پایان بازی',f'گروه <code>{cid}</code>'),v5_markup([[ar9_button('✅ پایان','G','END_OK',token)],[ar9_button('🔙 لغو','G','VIEW',cid)]])); return
+            if sub=='END_OK':
+                info=v5_get_confirmation(uid,parts[3],'ar9_group_end');
+                if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+                cid=int(info['payload']); g=active_game(cid)
+                if g: end_game(g,'پایان توسط Super Admin')
+                save_data(force=True); await ar9_group_view(query,cid,'HOME'); return
+
+        # Games
+        if action=='P':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub=='HOME': await ar9_render(query,'🎮 بازی‌ها',ar9_card('Game Center','نظارت زنده روی Lobbyها و بازی‌های فعال، بدون نیاز به دستور.'),[[ar9_button('🟢 بازی‌های فعال','P','LIST',0),ar9_button('🔎 جست‌وجو','P','SEARCH')],[ar9_button('🛑 پایان همه','P','ENDALL')],[ar9_button('ℹ️ راهنما','H','P')]],back=('HOME',)); return
+            if sub=='LIST': await ar9_game_list(query,int(parts[3]) if len(parts)>3 else 0); return
+            if sub=='SEARCH': ar9_start_flow(uid,{'type':'search_game','back':('P','HOME')}); await safe_edit_query(query,ar9_card('🔎 جست‌وجوی بازی','Game ID یا Chat ID را بفرست.'),v5_markup([ar9_nav(('P','HOME'))])); return
+            if sub=='VIEW': await ar9_game_view(query,parts[3]); return
+            if sub=='PLAYERS': await ar9_game_players(query,parts[3]); return
+            if sub=='EDIT':
+                g=ar9_find_game(parts[3]);
+                if not g: await safe_answer_query(query,'❌ بازی پیدا نشد.',True); return
+                rows=[]
+                rows.append([ar9_button(f'🔢 دور: {g.get("round",0)}','P','FIELD',str(g.get('id'))[:24],'round'), ar9_button(f'🎯 index نوبت: {g.get("turn_index",0)}','P','FIELD',str(g.get('id'))[:24],'turn_index')])
+                rows.append([ar9_button(f'🌀 فاز: {str(g.get("phase","-"))[:16]}','P','PHASE',str(g.get('id'))[:24])])
+                await ar9_render(query,'⚙️ فیلدهای بازی',ar9_card('Editable Fields','فقط فیلدهایی که تغییرشان با موتور بازی سازگار است اینجا در دسترس‌اند.'),rows,back=('P','VIEW',str(g.get('id'))[:24])); return
+            if sub=='FIELD':
+                g=ar9_find_game(parts[3]); key=parts[4];
+                if not g: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+                kind='int' if key in ('round','turn_index') else 'text'; await ar9_value_prompt(query,'✏️ فیلد بازی',g.get(key),{'type':'game_field','gid':str(g.get('id')),'field':key,'kind':kind,'back':('P','EDIT',str(g.get('id'))[:24])}); return
+            if sub=='PHASE':
+                g=ar9_find_game(parts[3]);
+                if not g: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+                phases=['turn_waiting','choosing_mode','choosing_target','awaiting_answer','penalty','free']
+                rows=[]
+                for ph in phases: rows.append([ar9_button(('✅ ' if ph==g.get('phase') else '▫️ ')+ph,'P','SET_PHASE',str(g.get('id'))[:24],ph)])
+                await ar9_render(query,'🌀 فاز بازی',ar9_card('Safe Phase Switch','فقط فازهای شناخته‌شده قابل انتخاب‌اند.'),rows,back=('P','EDIT',str(g.get('id'))[:24])); return
+            if sub=='SET_PHASE':
+                g=ar9_find_game(parts[3]); ph=parts[4] if len(parts)>4 else 'free'
+                if not g: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+                allowed={'turn_waiting','choosing_mode','choosing_target','awaiting_answer','penalty','free'}
+                if ph not in allowed: await safe_answer_query(query,'فاز نامعتبر است.',True); return
+                g['phase']=ph; save_data(force=True); audit('ar9_game_phase',uid,int(g.get('chat_id',0)),ph); await ar9_game_view(query,str(g.get('id'))[:24]); return
+            if sub=='NEXT':
+                g=ar9_find_game(parts[3]);
+                if not g: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+                g['round']=int(g.get('round',0))+1; g['phase']='turn_waiting';
+                if 'v7_advance_turn' in globals(): v7_advance_turn(g)
+                else: save_data(force=True)
+                save_data(force=True); await ar9_game_view(query,str(g.get('id'))[:24]); return
+            if sub=='TURN':
+                g=ar9_find_game(parts[3]);
+                if not g: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+                if 'v7_advance_turn' in globals(): v7_advance_turn(g)
+                else: g['round']=int(g.get('round',0))+1
+                save_data(force=True); await ar9_game_view(query,str(g.get('id'))[:24]); return
+            if sub=='PEN':
+                g=ar9_find_game(parts[3]);
+                if not g or not g.get('players'): await safe_answer_query(query,'بازیکنی وجود ندارد.',True); return
+                target=random.choice(g['players']); assign_penalty(g,int(target),source='Super Admin'); save_data(force=True); await ar9_game_view(query,str(g.get('id'))[:24]); return
+            if sub=='EVENT':
+                g=ar9_find_game(parts[3]);
+                if not g: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+                msg=random.choice(RANDOM_EVENTS) if RANDOM_EVENTS else 'رویداد جدید';
+                try: await query.message.reply_text(f'🎲 <b>رویداد مدیر:</b> {escape(msg)}',parse_mode=ParseMode.HTML)
+                except Exception: pass
+                g['last_event']=msg; save_data(force=True); await ar9_game_view(query,str(g.get('id'))[:24]); return
+            if sub=='REMOVE':
+                g=ar9_find_game(parts[3]); target=int(parts[4])
+                if g and target in g.get('players',[]):
+                    g['players']=[x for x in g['players'] if int(x)!=target]; g.get('names',{}).pop(str(target),None); save_data(force=True)
+                await ar9_game_players(query,str(g.get('id'))[:24]); return
+            if sub=='ADD':
+                g=ar9_find_game(parts[3]);
+                if not g: await safe_answer_query(query,'بازی پیدا نشد.',True); return
+                ar9_start_flow(uid,{'type':'game_add_player','gid':str(g.get('id')),'back':('P','PLAYERS',str(g.get('id'))[:24])}); await safe_edit_query(query,ar9_card('➕ افزودن بازیکن','User ID را بفرست.'),v5_markup([ar9_nav(('P','PLAYERS',str(g.get('id'))[:24]))])); return
+            if sub=='ENDALL':
+                token=v5_confirmation(uid,'ar9_end_all','all'); await safe_edit_query(query,ar9_card('⚠️ پایان همه بازی‌ها','همه Lobbyها و بازی‌های فعال بسته می‌شوند.'),v5_markup([[ar9_button('✅ تأیید','P','ENDALL_OK',token)],[ar9_button('🔙 لغو','P','HOME')]])); return
+            if sub=='ENDALL_OK':
+                info=v5_get_confirmation(uid,parts[3],'ar9_end_all');
+                if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+                count=0
+                for g in DATA.get('games',{}).values():
+                    if g.get('status') in ('active','lobby'): end_game(g,'پایان توسط Super Admin'); count+=1
+                save_data(force=True); await ar9_render(query,'🛑 پایان بازی‌ها',ar9_card('نتیجه',f'<b>{count}</b> بازی بسته شد.'),[],back=('P','HOME')); return
+
+        # Content
+        if action=='C':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub in ('HOME',): await ar9_content_home(query); return
+            if sub=='LIST': await ar9_content_list(query,parts[3],int(parts[4]) if len(parts)>4 else 0); return
+            if sub=='ADD':
+                if len(parts)>3 and parts[3]=='HERE': key=parts[4]
+                else: key='truth'
+                if len(parts)>3 and parts[3] in {k for k,_ in AR9_CONTENT_CATS}: key=parts[3]
+                ar9_start_flow(uid,{'type':'content_add','key':key,'back':('C','HOME')}); await safe_edit_query(query,ar9_card('➕ افزودن محتوا',f'دسته: <b>{CONTENT_LABELS.get(key,key)}</b>','متن جدید را بفرست.'),v5_markup([ar9_nav(('C','HOME'))])); return
+            if sub=='EDIT':
+                key=parts[3]; idx=int(parts[4]); base=ar9_content_base(key)
+                if not (0<=idx<len(base)): await safe_answer_query(query,'آیتم پیدا نشد.',True); return
+                old=base[idx]; ar9_start_flow(uid,{'type':'content_edit','key':key,'old':old,'back':('C','LIST',key,idx//5)}); await safe_edit_query(query,ar9_card('✏️ ویرایش محتوا',f'متن فعلی:\n{escape(ar9_content_value(key,old))}','متن جدید را بفرست.'),v5_markup([ar9_nav(('C','LIST',key,idx//5))])); return
+            if sub=='TOGGLE':
+                key=parts[3]; idx=int(parts[4]); base=ar9_content_base(key)
+                if not (0<=idx<len(base)): await safe_answer_query(query,'آیتم پیدا نشد.',True); return
+                item=base[idx]; disabled=DATA.setdefault('global_content_disabled',{}).setdefault(key,[])
+                if item in disabled: disabled.remove(item)
+                else: disabled.append(item)
+                save_data(force=True); audit('ar9_content_toggle',uid,None,f'{key}:{idx}'); await ar9_content_list(query,key,idx//5); return
+            if sub=='DELETE':
+                key=parts[3]; idx=int(parts[4]); base=ar9_content_base(key)
+                if not (0<=idx<len(base)): await safe_answer_query(query,'آیتم پیدا نشد.',True); return
+                token=v5_confirmation(uid,'ar9_content_delete',f'{key}:{idx}'); await safe_edit_query(query,ar9_card('⚠️ حذف محتوا','آیتم سفارشی حذف می‌شود؛ محتوای پایه به‌صورت امن فقط غیرفعال می‌شود.'),v5_markup([[ar9_button('✅ تأیید','C','DELETE_OK',token)],[ar9_button('🔙 لغو','C','LIST',key,idx//5)]])); return
+            if sub=='DELETE_OK':
+                info=v5_get_confirmation(uid,parts[3],'ar9_content_delete');
+                if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+                key,idx=info['payload'].split(':'); idx=int(idx); base=ar9_content_base(key); item=base[idx] if 0<=idx<len(base) else None
+                if item is not None:
+                    gc=DATA.setdefault('global_content',{}).setdefault(key,[])
+                    if item in gc: gc.remove(item)
+                    else: DATA.setdefault('global_content_disabled',{}).setdefault(key,[]); 
+                    if item not in DATA.setdefault('global_content_disabled',{}).setdefault(key,[]): DATA['global_content_disabled'][key].append(item)
+                    DATA.setdefault('global_content_overrides',{}).setdefault(key,{}).pop(item,None)
+                save_data(force=True); await ar9_content_list(query,key,idx//5); return
+
+        # Economy
+        if action=='E':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub=='HOME': await ar9_economy_home(query); return
+            if sub=='ITEM': await ar9_economy_item(query,parts[3]); return
+            if sub=='FIELD':
+                key,field=parts[3],parts[4]; item=ar6_shop_item(key); kind='int' if field=='price' else 'text'; await ar9_value_prompt(query,'✏️ آیتم فروشگاه',item.get(field),{'type':'shop_field','key':key,'field':field,'kind':kind,'back':('E','ITEM',key)}); return
+            if sub=='TOGGLE':
+                key=parts[3]; ov=DATA.setdefault('shop_overrides',{}).setdefault(key,{}); ov['enabled']=not ar6_shop_enabled(key); ar6_apply_runtime_overrides(); save_data(force=True); await ar9_economy_item(query,key); return
+            if sub=='DELETE':
+                key=parts[3]; token=v5_confirmation(uid,'ar9_shop_delete',key); await safe_edit_query(query,ar9_card('⚠️ حذف آیتم',f'<code>{key}</code>'),v5_markup([[ar9_button('✅ حذف','E','DELETE_OK',token)],[ar9_button('🔙 لغو','E','ITEM',key)]])); return
+            if sub=='DELETE_OK':
+                info=v5_get_confirmation(uid,parts[3],'ar9_shop_delete');
+                if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+                key=info['payload']; DATA.setdefault('shop_overrides',{}).setdefault(key,{})['enabled']=False; ar6_apply_runtime_overrides(); save_data(force=True); await ar9_economy_home(query); return
+            if sub=='MULT':
+                target=parts[3]; key='xp_multiplier' if target=='xp' else 'coins_multiplier'; cur=int(DATA['settings'].get(key,1)); new=2 if cur<2 else 1; DATA['settings'][key]=new; save_data(force=True); await ar9_economy_home(query); return
+            if sub=='STATS':
+                await ar9_render(query,'📊 اقتصاد',ar9_card('اقتصاد',f'⭐ XP کل: <b>{ar9_num(sum(int(u.get("xp",0)) for u in DATA["users"].values()))}</b>',f'💰 سکه کل: <b>{ar9_num(sum(int(u.get("coins",0)) for u in DATA["users"].values()))}</b>',f'🛒 آیتم‌ها: <b>{len(SHOP)}</b>'),[],back=('E','HOME')); return
+            if sub=='ADD': ar9_start_flow(uid,{'type':'shop_add','stage':1,'back':('E','HOME')}); await safe_edit_query(query,ar9_card('➕ آیتم جدید','یک کلید یکتا برای آیتم در پیام بعدی بفرست.'),v5_markup([ar9_nav(('E','HOME'))])); return
+
+        # Settings
+        if action=='T':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub=='HOME': await ar9_settings_home(query); return
+            if sub=='FIELD':
+                key=parts[3]; s=DATA.setdefault('settings',{}); current=s.get(key); kind='bool' if key=='adult_default' else 'int'; await ar9_value_prompt(query,'⚙️ تنظیم سراسری',current,{'type':'setting_field','field':key,'kind':kind,'back':('T','HOME')}); return
+            if sub=='CHANNEL': await ar9_settings_channel(query); return
+            if sub=='CF':
+                field=parts[3]; ar9_start_flow(uid,{'type':'channel_edit','field':field,'back':('T','CHANNEL')}); current=REQUIRED_CHANNEL if field=='channel' else REQUIRED_CHANNEL_URL; await safe_edit_query(query,ar9_card('📢 ویرایش کانال',f'مقدار فعلی: <code>{escape(current)}</code>','مقدار جدید را بفرست.'),v5_markup([ar9_nav(('T','CHANNEL'))])); return
+            if sub=='MCLEAR': APEX_MEMBERSHIP_CACHE.clear(); await safe_answer_query(query,'✅ کش عضویت پاک شد.'); await ar9_settings_channel(query); return
+            if sub=='FEATURES': await ar9_settings_features(query); return
+            if sub=='FEATURE':
+                key=parts[3]; feats=DATA.setdefault('global_features',{}); feats[key]=not bool(feats.get(key,True)); save_data(force=True); await ar9_settings_features(query); return
+            if sub=='TITLES': await ar9_settings_titles(query); return
+            if sub=='TITLE':
+                idx=int(parts[3]); rules=DATA['settings'].setdefault('title_rules',[]); rules_sorted=sorted([r for r in rules if isinstance(r,dict)],key=lambda x:int(x.get('min_xp',0)),reverse=True)
+                if not 0<=idx<len(rules_sorted): await safe_answer_query(query,'عنوان پیدا نشد.',True); return
+                actual=rules_sorted[idx]; ar9_start_flow(uid,{'type':'title_edit','index':idx,'mode':'both','current':actual,'back':('T','TITLES')}); await safe_edit_query(query,ar9_card('✏️ عنوان',f"XP: <b>{actual.get('min_xp',0)}</b>",f"متن: <b>{escape(str(actual.get('title','')))}</b>","فرمت: XP|عنوان  — مثال: 500|💀 کابوس حرفه‌ای"),v5_markup([ar9_nav(('T','TITLES'))])); return
+            if sub=='TITLEADD': ar9_start_flow(uid,{'type':'title_add','back':('T','TITLES')}); await safe_edit_query(query,ar9_card('➕ عنوان جدید','فرمت: XP|متن عنوان'),v5_markup([ar9_nav(('T','TITLES'))])); return
+            if sub=='TITLEDEL':
+                rules=DATA['settings'].setdefault('title_rules',[]); idx=int(parts[3]); ordered=sorted([r for r in rules if isinstance(r,dict)],key=lambda x:int(x.get('min_xp',0)),reverse=True)
+                if not 0<=idx<len(ordered): await safe_answer_query(query,'عنوان پیدا نشد.',True); return
+                target=ordered[idx]; rules.remove(target); save_data(force=True); await ar9_settings_titles(query); return
+            if sub=='ACH': await ar9_settings_achievements(query); return
+            if sub=='ACH_ITEM':
+                key=parts[3]; cur=ACHIEVEMENTS.get(key)
+                if not cur: await safe_answer_query(query,'دستاورد پیدا نشد.',True); return
+                await ar9_render(query,'🏆 دستاورد',ar9_card('Achievement',f'کلید: <code>{key}</code>',f'نام: <b>{escape(cur[0])}</b>',f'توضیح: {escape(cur[1])}'),[[ar9_button('✏️ نام','T','ACH_EDIT',key,'name'),ar9_button('📝 توضیح','T','ACH_EDIT',key,'desc')]],back=('T','ACH')); return
+            if sub=='ACH_EDIT':
+                key,field=parts[3],parts[4]; cur=ACHIEVEMENTS.get(key)
+                ar9_start_flow(uid,{'type':'achievement_edit','key':key,'field':field,'back':('T','ACH_ITEM',key)}); await safe_edit_query(query,ar9_card('✏️ دستاورد',f'فعلی: <b>{escape(cur[0 if field=="name" else 1])}</b>','مقدار جدید را بفرست.'),v5_markup([ar9_nav(('T','ACH_ITEM',key))])); return
+
+        # Security
+        if action=='S':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub=='HOME': await ar9_security_home(query); return
+            if sub=='BANNED':
+                banned=[(k,u) for k,u in DATA.get('users',{}).items() if u.get('banned')]; rows=[]
+                for k,u in banned[:30]: rows.append([ar9_button(f'✅ رفع {str(u.get("name","کاربر"))[:18]}','U','BAN',int(k))])
+                await ar9_render(query,'🚫 محدودشده‌ها',ar9_card('Restricted',*(f'{escape(str(u.get("name","کاربر")))} · <code>{k}</code>' for k,u in banned) or ['خالی']),rows,back=('S','HOME')); return
+            if sub=='HEALTH':
+                size=Path(DATA_FILE).stat().st_size if Path(DATA_FILE).exists() else 0; await ar9_render(query,'🩺 سلامت',ar9_card('Health',f'💾 Data: <b>{ar9_num(size)}</b> bytes',f'🔐 Admin ID: {"OK" if ADMIN_ID else "MISSING"}',f'📢 Channel: <code>{escape(REQUIRED_CHANNEL)}</code>',f'📚 Features: <b>{len(DATA.get("global_features", {}))}</b>'),[],back=('S','HOME')); return
+            if sub=='MCLEAR': APEX_MEMBERSHIP_CACHE.clear(); await safe_answer_query(query,'✅ کش پاک شد.'); await ar9_security_home(query); return
+            if sub=='CLEAN': await advanced_cleanup_job(context); await ar9_security_home(query); return
+            if sub=='CHANNEL': ok=await ar8_channel_setup_check(context.bot); await ar9_render(query,'📢 تست کانال',ar9_card('Channel Gate',f'وضعیت: {ar9_status(ok)}',f'کانال: <code>{escape(REQUIRED_CHANNEL)}</code>'),[],back=('S','HOME')); return
+
+        # Backup
+        if action=='B':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub=='HOME': await ar9_backup_home(query); return
+            if sub=='MAKE': make_backup_file('admin9'); await ar9_backup_home(query); return
+            if sub=='SEND':
+                files=backup_files()
+                if not files: await safe_answer_query(query,'بکاپی نیست.',True); return
+                try: await query.message.reply_document(document=open(files[0],'rb'),filename=files[0].name,caption='📦 بکاپ ApexRival')
+                except Exception as exc: await safe_answer_query(query,f'ارسال نشد: {exc}',True)
+                return
+            if sub=='RESTORE':
+                idx=int(parts[3]); files=backup_files()
+                if not 0<=idx<len(files): await safe_answer_query(query,'فایل پیدا نشد.',True); return
+                token=v5_confirmation(uid,'ar9_restore',str(idx)); await safe_edit_query(query,ar9_card('⚠️ Restore',f'<code>{escape(files[idx].name)}</code>','داده فعلی جایگزین می‌شود.'),v5_markup([[ar9_button('✅ بازیابی','B','RESTORE_OK',token)],[ar9_button('🔙 لغو','B','HOME')]])); return
+            if sub=='RESTORE_OK':
+                info=v5_get_confirmation(uid,parts[3],'ar9_restore');
+                if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+                files=backup_files(); idx=int(info['payload'])
+                if 0<=idx<len(files):
+                    ok,msg=restore_backup(files[idx]); ar6_apply_runtime_overrides(); await ar9_backup_home(query)
+                else: await safe_answer_query(query,'فایل پیدا نشد.',True)
+                return
+            if sub=='DELETE':
+                idx=int(parts[3]); files=backup_files()
+                if not 0<=idx<len(files): await safe_answer_query(query,'فایل پیدا نشد.',True); return
+                token=v5_confirmation(uid,'ar9_backup_delete',str(idx)); await safe_edit_query(query,ar9_card('⚠️ حذف بکاپ',files[idx].name),v5_markup([[ar9_button('✅ حذف','B','DELETE_OK',token)],[ar9_button('🔙 لغو','B','HOME')]])); return
+            if sub=='DELETE_OK':
+                info=v5_get_confirmation(uid,parts[3],'ar9_backup_delete');
+                if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+                files=backup_files(); idx=int(info['payload'])
+                if 0<=idx<len(files): files[idx].unlink(missing_ok=True)
+                await ar9_backup_home(query); return
+
+        # Logs
+        if action=='L':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub in ('HOME','LIST'): await ar9_logs_home(query,int(parts[3]) if len(parts)>3 else 0); return
+            if sub=='CLEAR':
+                token=v5_confirmation(uid,'ar9_clear_logs','audit'); await safe_edit_query(query,ar9_card('⚠️ پاک‌کردن Audit','تمام رویدادهای ثبت‌شده حذف می‌شوند.'),v5_markup([[ar9_button('✅ پاک کن','L','CLEAR_OK',token)],[ar9_button('🔙 لغو','L','HOME')]])); return
+            if sub=='CLEAR_OK':
+                info=v5_get_confirmation(uid,parts[3],'ar9_clear_logs');
+                if not info: await safe_answer_query(query,'تأیید منقضی شده.',True); return
+                DATA['audit']=[]; save_data(force=True); await ar9_logs_home(query,0); return
+            if sub=='BROADCAST': AR9_FLOW[uid]={'type':'broadcast','back':('L','HOME')}; await safe_edit_query(query,ar9_card('📣 Broadcast','متن پیام همگانی را بفرست.'),v5_markup([ar9_nav(('L','HOME'))])); return
+
+        # Tools
+        if action=='X':
+            sub=parts[2] if len(parts)>2 else 'HOME'
+            if sub=='HOME': await ar9_tools_home(query); return
+            if sub=='SAVE': save_data(force=True); await ar9_tools_home(query); return
+            if sub=='CLEAN': await advanced_cleanup_job(context); await ar9_tools_home(query); return
+            if sub=='HEALTH': await ar9_admin_action(query,context,['ADM','S','HEALTH']); return
+            if sub=='COUNTS': await ar9_render(query,'🔢 شمارنده‌ها',ar9_card('Counters',f'👥 {len(DATA["users"])}',f'🌐 {len(DATA["groups"])}',f'🎮 {len(DATA["games"])}',f'📜 {len(DATA["audit"])}',f'🧩 {sum(len(v) for v in V7_BANKS_FINAL.values())}'),[],back=('X','HOME')); return
+            if sub=='BROADCAST': AR9_FLOW[uid]={'type':'broadcast','back':('X','HOME')}; await safe_edit_query(query,ar9_card('📣 Broadcast','متن پیام همگانی را بفرست.'),v5_markup([ar9_nav(('X','HOME'))])); return
+
+        await safe_answer_query(query,"این گزینه هنوز متصل نشده است.",True)
+    except Exception as exc:
+        audit('ar9_admin_router_error',uid,None,repr(exc)[:500]); print(f'Ar9 admin error: {exc!r}')
+        await safe_answer_query(query,"⚠️ عملیات انجام نشد؛ تغییرات ناقص ذخیره نشد.",True)
+
+
+# ---------------------------------------------------------------------------
+# Final admin callback dispatcher
+# ---------------------------------------------------------------------------
+_AR9_OLD_V5_CALLBACK = v5_callback
+_AR9_OLD_TEXT_ROUTER = v5_text_router
+
+
+async def ar9_callback_dispatch(update, context):
+    query=update.callback_query
+    if not query or not query.data:
+        return
+    data=str(query.data)
+    if data.startswith('ADM|'):
+        await safe_answer_query(query)
+        await ar9_admin_action(query,context,data.split('|'))
+        return
+    # Home button from the persistent private keyboard or legacy admin callback.
+    if data in ('V5|ADMIN','V5|A|HOME') and is_admin(int(query.from_user.id)):
+        await safe_answer_query(query); await ar9_home(query); return
+    await _AR9_OLD_V5_CALLBACK(update,context)
+
+
+# ---------------------------------------------------------------------------
+# Final admin text router — visual menu only, text is requested only when a
+# value itself cannot be represented as a button.
+# ---------------------------------------------------------------------------
+async def ar9_text_router(update,context):
+    uid=int(update.effective_user.id) if update.effective_user else 0
+    text=(update.message.text or '').strip() if update.message else ''
+    if is_admin(uid):
+        if text in ('👑 مرکز مدیریت','👑 پنل Super Admin','👑 Super Admin'):
+            await ar9_home_message(update,context); return
+        flow=ar9_get_flow(uid)
+        if flow:
+            if text in ('لغو','❌ لغو'):
+                ar9_clear_flow(uid); await update.message.reply_text('✅ عملیات لغو شد.'); return
+            ftype=flow.get('type')
+            try:
+                if ftype=='user_field':
+                    u=get_user(int(flow['uid'])); value=ar9_parse_text_value(text,flow['kind']);
+                    if flow['field']=='level': value=max(1,min(100,int(value)))
+                    if flow['field'] in ('xp','coins','wins','losses','games','streak','best_streak','duels','votes','missions','boss'): value=max(0,int(value))
+                    u[flow['field']]=value; save_data(force=True); audit('ar9_user_field',uid,None,f"{flow['uid']}:{flow['field']}"); back=flow.get('back',('U','EDIT',flow['uid'])); ar9_clear_flow(uid); await update.message.reply_text('✅ ذخیره شد.'); return
+                if ftype=='user_adjust':
+                    n=max(0,int(text.replace(',',''))); u=get_user(int(flow['uid'])); key='xp' if flow['what']=='xp' else 'coins'; u[key]=int(u.get(key,0))+n; u['level']=level_for_xp(int(u.get('xp',0))); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ اضافه شد.'); return
+                if ftype=='user_item':
+                    n=max(0,int(text)); inv=get_user(int(flow['uid'])).setdefault('inventory',{}); inv[flow['item']]=n; save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ موجودی به‌روزرسانی شد.'); return
+                if ftype=='user_multi_item':
+                    key,val=text.split('=',1); key=key.strip(); inv=get_user(int(flow['uid'])).setdefault('inventory',{}); 
+                    if key not in SHOP: raise ValueError('کلید آیتم ناشناخته است')
+                    inv[key]=max(0,int(val)); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ موجودی ذخیره شد.'); return
+                if ftype=='user_stat':
+                    get_user(int(flow['uid'])).setdefault('stats',{})[flow['key']]=max(0,int(text)); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ آمار تغییر کرد.'); return
+                if ftype=='search_user':
+                    q=text.lower(); matches=[]
+                    for k,u in DATA.get('users',{}).items():
+                        if q in str(k).lower() or q in str(u.get('name','')).lower(): matches.append(int(k))
+                    ar9_clear_flow(uid)
+                    if not matches: await update.message.reply_text('❌ کاربری پیدا نشد.'); return
+                    await update.message.reply_text('👥 نتایج جست‌وجو:',reply_markup=v5_markup([[ar9_button(str(get_user(x).get('name','کاربر'))[:20],'U','VIEW',x)] for x in matches[:15]]+[ar9_nav(('U','HOME'))])); return
+                if ftype=='add_user':
+                    target=int(text); get_user(target); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ کاربر اضافه شد. حالا از مرکز مدیریت بازش کن.'); return
+                if ftype=='search_group':
+                    cid=int(text); ar9_clear_flow(uid); await update.message.reply_text('🌐 گروه انتخاب شد.',reply_markup=v5_markup([[ar9_button('🌐 بازکردن','G','VIEW',cid)],[ar9_button('⌂ خانه','HOME')]])); return
+                if ftype=='add_group':
+                    cid=int(text); get_group(cid); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ گروه اضافه شد.'); return
+                if ftype=='group_field':
+                    cid=int(flow['cid']); g=get_group(cid); val=max(0,int(text)); field=flow['field'];
+                    if field=='min_players': val=max(1,min(60,val))
+                    if field=='max_players': val=max(int(g.get('min_players',2)),min(100,val))
+                    if field in ('min_players','max_players'):
+                        g[field]=val
+                    else:
+                        g.setdefault('settings',{})[field]=val
+                    save_data(force=True); audit('ar9_group_field',uid,cid,field); ar9_clear_flow(uid); await update.message.reply_text('✅ تنظیم گروه ذخیره شد.'); return
+                if ftype=='group_content_add':
+                    g=get_group(int(flow['cid'])); bucket=g.setdefault('content',{}).setdefault(flow['key'],[]); bucket.append(text[:1200]); g['content'][flow['key']]=v5_unique(bucket); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ متن گروهی اضافه شد.'); return
+                if ftype=='game_field':
+                    g=ar9_find_game(flow['gid']);
+                    if not g: raise ValueError('بازی پیدا نشد')
+                    if flow['kind']=='int': value=max(0,int(text))
+                    else: value=text[:100]
+                    if flow['field']=='round': value=max(0,value)
+                    if flow['field']=='turn_index': value=max(0,min(value,max(0,len(g.get('players',[]))-1)))
+                    g[flow['field']]=value; save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ فیلد بازی ذخیره شد.'); return
+                if ftype=='game_add_player':
+                    g=ar9_find_game(flow['gid']); pid=int(text)
+                    if not g: raise ValueError('بازی پیدا نشد')
+                    if pid not in [int(x) for x in g.get('players',[])]:
+                        ok,_=await ar8_channel_membership(pid,force=True)
+                        if ok is not True: raise ValueError('بازیکن عضو کانال اجباری نیست')
+                        g.setdefault('players',[]).append(pid); g.setdefault('names',{})[str(pid)]=get_user(pid).get('name','بازیکن')
+                    save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ بازیکن اضافه شد.'); return
+                if ftype=='content_add':
+                    key=flow['key']; bucket=DATA.setdefault('global_content',{}).setdefault(key,[]); bucket.append(text[:1200]); DATA['global_content'][key]=v5_unique(bucket); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ محتوا اضافه شد.'); return
+                if ftype=='content_edit':
+                    key=flow['key']; old=flow['old']; DATA.setdefault('global_content_overrides',{}).setdefault(key,{})[old]=text[:1200]; gc=DATA.setdefault('global_content',{}).setdefault(key,[])
+                    if old in gc: gc[gc.index(old)]=text[:1200]
+                    save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ محتوا ویرایش شد.'); return
+                if ftype=='shop_field':
+                    key,field=flow['key'],flow['field']; val=ar9_parse_text_value(text,flow['kind']);
+                    if field=='price': val=max(0,int(val))
+                    DATA.setdefault('shop_overrides',{}).setdefault(key,{})[field]=val; ar6_apply_runtime_overrides(); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ آیتم ذخیره شد.'); return
+                if ftype=='shop_add':
+                    stage=int(flow['stage'])
+                    if stage==1:
+                        key=text.strip();
+                        if not re.fullmatch(r'[A-Za-z0-9_-]{2,24}',key): raise ValueError('کلید فقط حروف انگلیسی، عدد، - و _ باشد')
+                        if key in SHOP: raise ValueError('این کلید از قبل وجود دارد')
+                        ar9_start_flow(uid,{'type':'shop_add','stage':2,'key':key,'back':('E','HOME')}); await update.message.reply_text('📝 حالا نام آیتم را بفرست.'); return
+                    if stage==2:
+                        ar9_start_flow(uid,{'type':'shop_add','stage':3,'key':flow['key'],'name':text[:80],'back':('E','HOME')}); await update.message.reply_text('💰 قیمت آیتم را به عدد بفرست.'); return
+                    if stage==3:
+                        price=max(0,int(text)); ar9_start_flow(uid,{'type':'shop_add','stage':4,'key':flow['key'],'name':flow['name'],'price':price,'back':('E','HOME')}); await update.message.reply_text('📝 توضیح آیتم را بفرست.'); return
+                    if stage==4:
+                        key=flow['key']; SHOP[key]={'name':flow['name'],'price':int(flow['price']),'desc':text[:200]}; DEFAULT_USER.setdefault('inventory',{})[key]=0
+                        for u in DATA.get('users',{}).values(): u.setdefault('inventory',{}).setdefault(key,0)
+                        save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ آیتم جدید ساخته شد.'); return
+                if ftype=='setting_field':
+                    key=flow['field']; val=ar9_parse_text_value(text,flow['kind']);
+                    if key=='max_players_default': val=max(2,min(100,int(val)))
+                    if key in ('xp_multiplier','coins_multiplier'): val=max(1,min(10,int(val)))
+                    if key=='required_channel_cache_ttl': val=max(10,min(3600,int(val)))
+                    DATA['settings'][key]=val
+                    if key=='required_channel_cache_ttl':
+                        global REQUIRED_CHANNEL_CACHE_TTL
+                        REQUIRED_CHANNEL_CACHE_TTL=max(10,min(3600,int(val)))
+                    save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ تنظیم ذخیره شد.'); return
+                if ftype=='channel_edit':
+                    global REQUIRED_CHANNEL, REQUIRED_CHANNEL_URL
+                    value=text.strip()
+                    if flow['field']=='channel': REQUIRED_CHANNEL=_ar8_channel_target(value); DATA['settings']['required_channel']=REQUIRED_CHANNEL
+                    else: REQUIRED_CHANNEL_URL=value; DATA['settings']['required_channel_url']=value
+                    APEX_MEMBERSHIP_CACHE.clear(); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ کانال تنظیم شد.'); return
+                if ftype=='title_edit':
+                    if '|' not in text: raise ValueError('فرمت درست: XP|عنوان')
+                    xp,label=text.split('|',1); xp=max(0,int(xp)); rules=DATA['settings'].setdefault('title_rules',[]); old_index=int(flow['index']); sorted_rules=sorted([r for r in rules if isinstance(r,dict)],key=lambda x:int(x.get('min_xp',0)),reverse=True); target=sorted_rules[old_index]; target['min_xp']=xp; target['title']=label[:80]; save_data(force=True); ar6_apply_runtime_overrides(); ar9_clear_flow(uid); await update.message.reply_text('✅ عنوان ذخیره شد.'); return
+                if ftype=='title_add':
+                    if '|' not in text: raise ValueError('فرمت درست: XP|عنوان')
+                    xp,label=text.split('|',1); DATA['settings'].setdefault('title_rules',[]).append({'min_xp':max(0,int(xp)),'title':label[:80]}); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ عنوان اضافه شد.'); return
+                if ftype=='achievement_edit':
+                    key,field=flow['key'],flow['field']; DATA.setdefault('achievement_overrides',{}).setdefault(key,{})[field]=text[:300]; ar6_apply_runtime_overrides(); save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text('✅ دستاورد ذخیره شد.'); return
+                if ftype=='broadcast':
+                    ok=fail=0
+                    for target in list(DATA.get('users',{})):
+                        try:
+                            await context.bot.send_message(chat_id=int(target),text=f'📣 <b>ApexRival</b>\n\n{escape(text[:3500])}',parse_mode=ParseMode.HTML); ok+=1
+                        except Exception: fail+=1
+                    DATA.setdefault('broadcast_log',[]).append({'ts':now_ts(),'actor':uid,'ok':ok,'fail':fail}); DATA['broadcast_log']=DATA['broadcast_log'][-100:]; save_data(force=True); ar9_clear_flow(uid); await update.message.reply_text(f'📣 ارسال شد. ✅ {ok} · ❌ {fail}'); return
+            except Exception as exc:
+                await update.message.reply_text(f'❌ {escape(str(exc))}')
+                return
+    # Everything not consumed by admin editing goes to the original game/UI router.
+    await _AR9_OLD_TEXT_ROUTER(update,context)
+
+
+# ---------------------------------------------------------------------------
+# Final command/callback registration
+# ---------------------------------------------------------------------------
+async def ar9_admin_entry(update,context):
+    await ar9_home_message(update,context)
+
+
+async def ar9_error_handler(update,context):
+    try:
+        err=repr(getattr(context,'error',None))
+        uid=int(getattr(getattr(update,'effective_user',None),'id',0) or 0) if update else 0
+        cid=getattr(getattr(update,'effective_chat',None),'id',None) if update else None
+        audit('ar9_unhandled_error',uid,cid,err[:600]); save_data(force=True); print(f'ApexRival AR9 error: {err}')
+    except Exception as exc:
+        print(f'ApexRival AR9 error handler failed: {exc!r}')
+
+
+def ar9_register_handlers(app):
+    app.add_handler(CommandHandler('start',v7_start))
+    app.add_handler(CommandHandler('verify',ar8_verify_cmd))
+    app.add_handler(CommandHandler('game',v5_create_lobby))
+    app.add_handler(CommandHandler('menu',v5_menu))
+    app.add_handler(CommandHandler('profile',v5_profile_message))
+    app.add_handler(CommandHandler('rank',v5_rank_message))
+    app.add_handler(CommandHandler('shop',shop_cmd))
+    app.add_handler(CommandHandler('achievements',achievements_cmd))
+    app.add_handler(CommandHandler('help',v5_help_message))
+    app.add_handler(CommandHandler('id',id_cmd))
+    app.add_handler(CommandHandler('admin',ar9_admin_entry))
+    app.add_handler(CommandHandler('adult',adult_cmd))
+    app.add_handler(CallbackQueryHandler(ar8_prereq_callback,pattern=r'^REQ\|'))
+    app.add_handler(CallbackQueryHandler(ar9_callback_dispatch,pattern=r'^(ADM\||V5\||V7\|)'))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,ar9_text_router))
+
+
+async def ar9_post_init(application):
+    await _ar8_post_init(application)
+
+
+def main_apexrival_9():
+    if not BOT_TOKEN:
+        raise RuntimeError('BOT_TOKEN is missing')
+    # Run the existing runtime checks plus an admin-specific wiring check.
+    try:
+        _ar8_final_markup_self_check()
+    except Exception:
+        # The admin overlay should not hide a genuine game-level self-check.
+        raise
+    # Admin smoke checks independent of Telegram network.
+    assert is_admin(ADMIN_ID) or ADMIN_ID == 0
+    for action in ('HOME','D','U','G','P','C','E','T','S','B','L','X','H'):
+        assert len(ar9_callback_data(action).encode('utf-8')) <= 64
+    start_health_server()
+    application=Application.builder().token(BOT_TOKEN).post_init(ar9_post_init).build()
+    ar9_register_handlers(application)
+    application.add_error_handler(ar9_error_handler)
+    print(f'{BOT_NAME} {AR9_VERSION} starting | admin-control=on | visual-editor=on | home-back-nav=on')
+    application.run_polling(drop_pending_updates=True)
+
+
+main_apexrival_8 = main_apexrival_9
+main_apexrival_9 = main_apexrival_9
+main_v5 = main_apexrival_9
+main = main_apexrival_9
+
+if __name__ == '__main__':
+    main_apexrival_9()
