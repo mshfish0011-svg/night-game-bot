@@ -520,7 +520,9 @@ def is_admin(uid: int) -> bool:
 # The gender drives the 18+ question banks (male/female-specific prompts)
 # and shows a small icon next to players in menus.
 # -----------------------------
-GENDER_LABELS = {"male": "👦 پسر", "female": "👧 دختر"}
+# [V23-FIX] labels no longer embed the emoji: every call site already adds
+# user_gender_icon() next to the label, which used to render "👦 👦 پسر".
+GENDER_LABELS = {"male": "پسر", "female": "دختر"}
 
 
 def user_gender(uid: int) -> str:
@@ -534,7 +536,8 @@ def user_gender_icon(uid: int) -> str:
 
 
 def user_gender_label(uid: int) -> str:
-    return GENDER_LABELS.get(user_gender(int(uid)), "👤 نامشخص")
+    # [V23-FIX] icon-free label; pair it with user_gender_icon() at render time.
+    return GENDER_LABELS.get(user_gender(int(uid)), "نامشخص")
 
 
 def is_banned(uid: int) -> bool:
@@ -16417,7 +16420,7 @@ async def ar15_gender_callback(update, context):
     u["gender"] = choice
     save_data(force=True)
     audit("gender_set", uid, int(getattr(getattr(query, "message", None), "chat_id", 0) or 0), choice)
-    await safe_answer_query(query, f"✅ ثبت شد: {GENDER_LABELS[choice]}")
+    await safe_answer_query(query, f"✅ ثبت شد: {user_gender_icon(uid)} {GENDER_LABELS[choice]}")
     # Now deliver the full private home menu (activation was already done).
     try:
         await safe_edit_query(
@@ -16826,7 +16829,7 @@ async def v16_gender_callback(update, context):
     save_data(force=True)
     audit("gender_set", uid, int(getattr(query.message, "chat_id", 0) or 0), choice + ":group")
     icon = user_gender_icon(uid)
-    await safe_answer_query(query, f"✅ ثبت شد: {GENDER_LABELS[choice]}")
+    await safe_answer_query(query, f"✅ ثبت شد: {user_gender_icon(uid)} {GENDER_LABELS[choice]}")
     await safe_edit_query(
         query,
         f"{icon} <b>جنسیتت ثبت شد — {GENDER_LABELS[choice]}</b>\n\n"
@@ -18684,15 +18687,22 @@ V17_HELP_CARD = (
     "• <code>/apexid</code> — نمایش آی‌دی تو\n"
     "• <code>/apexpanel</code> — پنل مدیریت (فقط مدیر)\n"
     "━━━━━━━━━━━━━━━━━━\n"
+    "🎲 <b>سرگرمی‌های سریع:</b>\n"
+    "• <code>/apexquiz</code> — مسابقه ریاضی سرعتی 🧮\n"
+    "• <code>/apexluck</code> — گردونه شانس روزانه 🎡\n"
+    "• <code>/apexlove</code> — عشق‌سنج دو نفره 💘\n"
+    "• <code>/apexgift</code> — هدیه سکه به دوست 🎁\n"
+    "• <code>/apexdice</code> · <code>/apexcoin</code> · <code>/apex8ball</code> · <code>/apextip</code>\n"
+    "━━━━━━━━━━━━━━━━━━\n"
     "🎬 <b>مسیر بازی:</b>\n"
     "۱️⃣ <code>/apex</code> را در گروه بزن تا Lobby ساخته شود.\n"
-    "۲️⃣ بقیه با دکمه‌ی «🎟 ثبت‌نام» وارد می‌شوند.\n"
-    "۳️⃣ سرگروه «✅ تأیید و شروع» را می‌زند.\n"
+    "۲️⃣ بقیه با دکمه‌ی «🎟 ورود به Lobby» وارد می‌شوند.\n"
+    "۳️⃣ سرگروه «▶️ شروع بازی» را می‌زند.\n"
     "۴️⃣ پرسشگر هر نوبت، <b>موضوع</b> و بعد <b>پاسخ‌دهنده</b> را انتخاب می‌کند.\n"
     "۵️⃣ پاسخ‌دهنده روی پیامِ سؤال <b>Reply</b> می‌کند و جواب می‌نویسد.\n"
     "۶️⃣ امتیاز XP و سکه دائمی ثبت می‌شود.\n"
     "━━━━━━━━━━━━━━━━━━\n"
-    "🎭 ۱۲ موضوع: 🕵️ اعتراف · 🔥 جرئت · 🤫 راز · 😈 جنجال · 💘 فلرت · 🎭 سناریو · 🧠 ذهنی · 🤔 می‌کردی؟ · 📖 خاطره · 💔 عشق · 😳 خجالت · 🔞 ۱۸+\n"
+    "🎭 ۱۵ موضوع: 🕵️ اعتراف · 🔥 جرئت · 🤫 راز · 😈 جنجال · 💘 فلرت · 🎭 سناریو · 🧠 ذهنی · 🤔 می‌کردی؟ · 📖 خاطره · 💔 عشق · 😳 خجالت · 🔞 ۱۸+ · 💤 خواب · 🌧 حسرت · 🚀 آینده\n"
     "━━━━━━━━━━━━━━━━━━\n"
     "🔒 هیچ مرحله‌ای نباید شامل خطر، اجبار، آزار یا افشای اطلاعات خصوصی باشد."
 )
@@ -18910,7 +18920,7 @@ async def ar15_gender_callback(update, context):
     u["gender"] = choice
     save_data(force=True)
     audit("gender_set", uid, int(getattr(getattr(query, "message", None), "chat_id", 0) or 0), choice + ":v17")
-    await safe_answer_query(query, f"✅ ثبت شد: {GENDER_LABELS[choice]}")
+    await safe_answer_query(query, f"✅ ثبت شد: {user_gender_icon(uid)} {GENDER_LABELS[choice]}")
     try:
         await safe_edit_query(query, v17_age_text(uid), v17_age_markup())
     except Exception:
@@ -19242,7 +19252,7 @@ async def v16_gender_callback(update, context):
     u["gender"] = choice
     save_data(force=True)
     audit("gender_set", uid, int(getattr(query.message, "chat_id", 0) or 0), choice + ":v17g")
-    await safe_answer_query(query, f"✅ ثبت شد: {GENDER_LABELS[choice]}")
+    await safe_answer_query(query, f"✅ ثبت شد: {user_gender_icon(uid)} {GENDER_LABELS[choice]}")
     try:
         await safe_edit_query(query, v17_age_text(uid), v17_age_markup())
     except Exception:
@@ -19317,7 +19327,7 @@ def ar13_lobby_text(game):
         "━━━━━━━━━━━━━━━━━━\n"
         "<b>👥 بازیکنان</b>\n" + ("\n".join(lines) if lines else "هنوز کسی ثبت‌نام نکرده — <b>اولین نفر باش!</b> 🎟") +
         "\n\n<b>🎭 موضوعات بازی</b>\n" + V16_MODE_CHIPS +
-        "\n\n💡 هر بازیکن با «🟢/🟡 آماده‌ام» وضعیتش را عوض می‌کند؛ سرگروه بعد از رسیدن به حداقل نفرات «✅ شروع» را می‌زند."
+        "\n\n💡 هر بازیکن با «🟢/🟡 آماده‌ام» وضعیتش را عوض می‌کند؛ سرگروه بعد از رسیدن به حداقل نفرات «▶️ شروع بازی» را می‌زند."
     )
     return header
 
@@ -19442,8 +19452,8 @@ def ar12_private_home_text(uid: int) -> str:
         "━━━━━━━━━━━━━━━━━━\n"
         f"سلام <b>{escape(str(u.get('name') or 'بازیکن'))}</b> 👋\n"
         f"{verified_line}\n"
-        f"⭐ سطح <b>{level}</b> · ✨ XP <b>{xp:,}</b>\n"
-        f"💰 <b>{coins:,}</b> سکه · 🔥 استریک <b>{streak}</b>\n"
+        f"⭐ سطح <b>{level}</b> · ✨ XP <b>{fmt_num(xp)}</b>\n"
+        f"💰 <b>{fmt_num(coins)}</b> سکه · 🔥 استریک <b>{streak}</b>\n"
         f"🏅 {escape(str(title))}\n"
         f"{v5_progress(int(xp) % 100, 100, 14)}\n"  # [FIX] xp/max(xp,1) always rendered 100%
         "━━━━━━━━━━━━━━━━━━\n"
@@ -19484,7 +19494,7 @@ async def v5_profile_message(update, context):
         "━━━━━━━━━━━━━━━━━━\n"
         f"👤 <b>{escape(u.get('name', 'بازیکن'))}</b> {user_gender_icon(uid)}\n"
         f"{v17_verified_icon(uid)} اعتبارسنجی: <b>{'کامل ✅' if v17_verified(uid) else 'ناقص'}</b>\n"
-        f"🚻 جنسیت: <b>{user_gender_label(uid)}</b> · {age_line}\n"
+        f"🚻 جنسیت: <b>{user_gender_icon(uid)} {user_gender_label(uid)}</b> · {age_line}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🏅 {escape(title_for(xp))}\n"
         f"⭐ سطح <b>{u.get('level', 1)}</b> · ✨ XP <b>{xp:,}</b>\n"
@@ -19545,8 +19555,8 @@ async def v5_help_message(update, context, scope="HOME"):
             "━━━━━━━━━━━━━━━━━━\n"
             "۱️⃣ هر کسی با دکمه‌ی «🎟 ثبت‌نام» وارد می‌شود.\n"
             "۲️⃣ لابی تا رسیدن به حداقل ظرفیت باز می‌ماند.\n"
-            "۳️⃣ فقط سرگروه دکمه‌ی «✅ تأیید و شروع» را دارد.\n"
-            "۴️⃣ بعد از شروع، منوی ۱۲ موضوعی فعال می‌شود.\n"
+            "۳️⃣ فقط سرگروه دکمه‌ی «▶️ شروع بازی» را دارد.\n"
+            "۴️⃣ بعد از شروع، منوی ۱۵ موضوعی فعال می‌شود.\n"
             "۵️⃣ پایان بازی: <code>/apexend</code>\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "🔒 هیچ مرحله‌ای نباید شامل خطر، اجبار یا آزار باشد."
@@ -35456,6 +35466,468 @@ def v22_self_check() -> None:
 
 
 v22_self_check()
+
+
+# ================================================================
+# ▼▼▼ [V23] لایه‌ی «ترمیم نهایی + جعبه‌ابزار سرگرمی» ▼▼▼
+# ----------------------------------------------------------------
+#  هیچ سؤالی از بانک‌های محتوا دست نخورده است؛ این لایه فقط:
+#   ۱) باگ «سکوت مطلق» دستورات عمومی در گروه‌ها را رفع می‌کند
+#      (قبلاً /game و /profile و ... بی‌صدا بلعیده می‌شدند)
+#   ۲) بازی‌های گیرکرده روی سؤالِ بی‌جواب را خودکار نجات می‌دهد
+#   ۳) reward_player را در برابر داده‌های ناقص مقاوم می‌کند
+#   ۴) هفت دستور سرگرمی/کاربردی جدید اضافه می‌کند
+#   ۵) منوی دستورات تلگرام را با موارد جدید هماهنگ می‌کند
+# ================================================================
+
+V23_VERSION = "23.0"
+
+# ----------------------------------------------------------------
+# [V23-FIX 1] دستورات عمومیِ شناخته‌شده در گروه: به‌جای سکوت، راهنما
+#  (ضدتداخل حفظ می‌شود: فقط وقتی دستور بدون @هدف است جواب می‌دهیم و
+#   هر گروه حداکثر هر ۴۵ ثانیه یک راهنما می‌گیرد)
+# ----------------------------------------------------------------
+_V23_OLD_GATE = v17_group_command_gate
+
+V23_HINT_CMDS = {
+    "game", "bazi", "profile", "rank", "help", "shop", "menu", "man",
+    "rahnama", "achievements", "id", "adult", "verify", "stats",
+}
+V23_HINT_TS: dict[int, float] = {}
+
+V23_HINT_TEXT = (
+    "🤖 <b>من ApexRival هستم!</b>\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "🎮 ساخت بازی جدید در گروه: <code>/apex</code>\n"
+    "👤 پروفایل، 🛒 فروشگاه و 🏆 رتبه‌بندی: در <b>چت خصوصیِ</b> من\n"
+    "❓ راهنمای کامل: <code>/apexhelp</code> · 🛑 پایان بازی: <code>/apexend</code>\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "💡 دستورهای اختصاصی ما همه با <code>/apex</code> شروع می‌شوند تا با ربات‌های دیگر قاطی نشوند."
+)
+
+
+async def v17_group_command_gate(update, context):
+    """[V23] نسخه‌ی مهربان گیت گروهی: دستورهای عمومیِ خودمان را بی‌جواب رها نمی‌کند."""
+    try:
+        chat = getattr(update, "effective_chat", None)
+        if chat is not None and str(getattr(chat, "type", "") or "") in ("group", "supergroup"):
+            msg = getattr(update, "message", None) or getattr(update, "edited_message", None)
+            text = str(getattr(msg, "text", "") or "").strip() if msg is not None else ""
+            if text.startswith("/"):
+                token = text.split()[0]
+                cmd = token.lstrip("/").split("@", 1)[0].lower()
+                at = token.split("@", 1)[1] if "@" in token else ""
+                if cmd in V23_HINT_CMDS and not at:
+                    chat_id = int(getattr(chat, "id", 0) or 0)
+                    now = time.time()
+                    if chat_id and now - V23_HINT_TS.get(chat_id, 0.0) >= 45.0:
+                        V23_HINT_TS[chat_id] = now
+                        if len(V23_HINT_TS) > 512:
+                            for old_key in sorted(V23_HINT_TS, key=V23_HINT_TS.get)[:256]:
+                                V23_HINT_TS.pop(old_key, None)
+                        if msg is not None:
+                            try:
+                                await msg.reply_text(V23_HINT_TEXT, parse_mode=ParseMode.HTML)
+                            except Exception:
+                                pass
+                    if _V17_AHS is not None:
+                        raise _V17_AHS
+                    return  # بدون job-queue هم دستور عمومی بدون اجرا رها نمی‌شود دوباره
+    except Exception as exc:
+        if _V17_AHS is not None and isinstance(exc, _V17_AHS):
+            raise
+    return await _V23_OLD_GATE(update, context)
+
+
+# ----------------------------------------------------------------
+# [V23-FIX 2] نجات خودکار بازی‌های گیرکرده روی سؤالِ بی‌جواب
+#  اگر سؤالی بیش از ۹۰ ثانیه از انقضایش بگذرد و کسی جواب نداده باشد،
+#  نوبت آزاد می‌شود و کارتِ پرسشگر بعدی برای گروه ارسال می‌شود.
+#  (v5_cleanup_job این تابع را از طریق globals() صدا می‌زند — سیم‌کشی خودکار)
+# ----------------------------------------------------------------
+_V23_OLD_CLEANUP = advanced_cleanup_job
+
+
+async def v23_recover_stuck_games() -> int:
+    recovered = 0
+    now = time.time()
+    for game in list(DATA.get("games", {}).values()):
+        try:
+            if not isinstance(game, dict) or game.get("status") != "active":
+                continue
+            rp = game.get("reply_prompt")
+            if not isinstance(rp, dict):
+                continue
+            expires = float(rp.get("expires", 0) or 0)
+            if not expires or now - expires <= 90:
+                continue
+            game.pop("reply_prompt", None)
+            phase = str(game.get("phase", "") or "")
+            if phase.startswith("question:") or phase in (
+                "truth", "dare", "flirty", "adult", "question", "penalty", "secret", "drama",
+            ):
+                game["phase"] = "turn_waiting" if game.get("turn_order") else "free"
+            touch_game(game)
+            save_data(force=True)
+            recovered += 1
+            q = v7_current_questioner(game) if game.get("turn_order") else None
+            if q is not None:
+                await v19_send_group(
+                    int(game.get("chat_id", 0) or 0),
+                    "⏳ <b>زمان این نوبت تمام شد</b> — نوبت خودکار آزاد شد و به نفر بعدی رسید.\n"
+                    "━━━━━━━━━━━━━━━━━━\n" + v7_turn_announcement(game, int(q)),
+                    v7_turn_markup(game, int(q)),
+                )
+        except Exception:
+            continue
+    return recovered
+
+
+async def advanced_cleanup_job(context):
+    await _V23_OLD_CLEANUP(context)
+    try:
+        await v23_recover_stuck_games()
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V23-FIX 3] reward_player مقاوم — کلید round_scores همیشه موجود باشد
+# ----------------------------------------------------------------
+_V23_OLD_REWARD = reward_player
+
+
+def reward_player(game, uid, xp, coins, win=False, loss=False, reason=""):
+    try:
+        if isinstance(game, dict):
+            game.setdefault("round_scores", {})
+    except Exception:
+        pass
+    return _V23_OLD_REWARD(game, uid, xp, coins, win, loss, reason)
+
+
+# ----------------------------------------------------------------
+# [V23-FEATURE] جعبه‌ابزار سرگرمی — ۷ دستور جدید
+# ----------------------------------------------------------------
+V23_8BALL = [
+    "بله، قطعاً! ✅", "امیدوار باش 🌱", "بدون شک!", "فقط بعد از یک فکر دیگر 🤔",
+    "احتمالش زیاده 📈", "نه، همین الان نه ❌", "از آسمون خبر نمی‌آید ☁️",
+    "بپرس بعد از بازی 🎮", "قصه از آن حرف‌ها نیست 😅", "سرِ خودش حل می‌شود 🔄",
+    "آره، ولی به یکی نمی‌گویم! 🤫", "سؤال بهتری بپرس 😏", "امروز شانس توئه 🍀",
+    "دلنگ دلتنگ نکن، می‌شود 💚", "من تو رو نمی‌گولم — ولی مطمئن نیستم 😬",
+    "جوابش توی قلبته ❤️", "بگذار ببینم… نه! 🙅", "چرا که نه! 🚀",
+    "اگر تلاش کنی، بله 💪", "این یکی را خودت بهتر می‌دانی 🪞",
+]
+
+V23_TIPS = [
+    "💡 جواب دادن به سؤال‌ها XP و سکه میدهد؛ سؤال پرسیدن هم +۲ XP دارد!",
+    "💡 گردونه‌ی شانس (/apexluck) هر ۲۰ ساعت یک جایزه‌ی رایگان میدهد.",
+    "💡 با /apexgift می‌توانی به دوستت سکه هدیه بدهی — محبت اقتصاد هم دارد!",
+    "💡 قلب محبت (/apexheart روی ریپلای) روزی ۶ بار +۳ سکه به طرف مقابل میدهد.",
+    "💡 سؤال‌ها با پیشرفت بازی داغ‌تر می‌شوند: از 🟢 آرام تا 🔴 آتیشی!",
+    "💡 اگر نوبتت بماند، نگهبان نوبت یادآوری می‌فرستد و بعد خودکار رد می‌شود — بازی گیر نمی‌کند.",
+    "💡 با /apexmute کاری می‌کنی ربات دیگر تگت نکند؛ با /apexunmute برمی‌گردد.",
+    "💡 با /apexbrb کنار اسمت ماه 🌙 می‌افتد تا بقیه بدانند نیستی؛ /apexback برگردان است.",
+    "💡 فروشگاه (/shop) سپر و ریرول و XP دوبرابر دارد — با سکه‌های جواب‌ها بخر!",
+    "💡 چالش روزانه‌ی گروه (/apexdaily) به همه‌ی بازیکنان فعال جایزه میدهد.",
+    "💡 تیم‌های رقابتی (/apexteams) بازیکنان را دو تیم متعادل می‌کند — ما علیه آن‌ها!",
+    "💡 رتبه‌بندی هفتگی (/apextop) هر هفته از صفر شروع می‌شود — همیشه شانس قهرمانی داری.",
+    "💡 پروفایل کامل با نوار پیشرفت و کوئست‌ها: /apexprofile",
+    "💡 راهنمای تعاملی ۸ صفحه‌ای: /apexguide — در ۲ دقیقه حرفه‌ای شو.",
+    "💡 مسابقه‌ی ریاضی سرعتی (/apexquiz) اولین جواب درست را +۸ XP میدهد.",
+]
+
+
+def v23_started_or_hint(update) -> bool:
+    """دستورهای سرگرمی هم بدون فعال‌سازی کار کنند؛ فقط بن‌شده‌ها نه."""
+    user = getattr(update, "effective_user", None)
+    if user is None:
+        return False
+    if is_banned(int(user.id)) and not is_admin(int(user.id)):
+        return False
+    return True
+
+
+async def v23_cmd_name(update, context):
+    """🎭 /apexname — تغییر نام نمایشی در بازی."""
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if msg is None or user is None:
+            return
+        if not v23_started_or_hint(update):
+            await msg.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+            return
+        raw = " ".join(str(a) for a in (getattr(context, "args", None) or [])).strip()
+        if not raw:
+            u = get_user(int(user.id))
+            await msg.reply_text(
+                "🎭 <b>نام نمایشی من</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"نام فعلی: <b>{escape(str(u.get('name') or 'بازیکن'))}</b>\n\n"
+                "برای تغییر: <code>/apexname نام جدید</code>\n"
+                "۲ تا ۲۴ کاراکتر — فقط در بازی‌ها و لیست‌ها نمایش داده می‌شود.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        name = raw[:24].strip()
+        if len(name) < 2:
+            await msg.reply_text("⚠️ نام باید حداقل ۲ کاراکتر باشد.")
+            return
+        u = get_user(int(user.id), name)
+        u["name"] = name
+        # اگر در بازی فعلی این چت هستی، اسم همان لحظه آپدیت شود
+        chat = getattr(update, "effective_chat", None)
+        if chat is not None:
+            game = active_game(int(chat.id))
+            if game and valid_player(game, int(user.id)):
+                game.setdefault("names", {})[str(user.id)] = name
+                touch_game(game)
+        save_data(force=True)
+        audit("v23_set_name", int(user.id), int(getattr(chat, "id", 0) or 0) if chat else None, name[:40])
+        await msg.reply_text(
+            f"🎭 نام تو الان <b>{escape(name)}</b> است — از این به بعد همه همین را می‌بینند!",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as exc:
+        try:
+            audit("v23_name_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+
+
+async def v23_cmd_dice(update, context):
+    """🎲 /apexdice — تاس با ربات."""
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if msg is None or user is None or not v23_started_or_hint(update):
+            return
+        mine = random.randint(1, 6)
+        bots = random.randint(1, 6)
+        dice_faces = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
+        if mine > bots:
+            add_coins(int(user.id), 2, getattr(user, "first_name", None) or "بازیکن")
+            result = "🏆 <b>بردی!</b> 🎁 +۲ سکه"
+        elif mine < bots:
+            result = "😅 <b>باختی!</b> دفعه‌ی بعد جبران کن."
+        else:
+            result = "🤝 <b>مساوی!</b> تاس‌ها مساوی شدند — محکم‌تر بریز 😄"
+        save_data()
+        await msg.reply_text(
+            f"🎲 <b>تاس‌بازی</b>\n━━━━━━━━━━━━━━━━━━\n"
+            f"{escape(str(getattr(user, 'first_name', None) or 'بازیکن'))}: <b>{mine}</b> {dice_faces[mine]}\n"
+            f"ApexRival: <b>{bots}</b> {dice_faces[bots]}\n━━━━━━━━━━━━━━━━━━\n{result}",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+
+async def v23_cmd_coin(update, context):
+    """🪙 /apexcoin — شیر یا خط."""
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if msg is None or user is None or not v23_started_or_hint(update):
+            return
+        side = random.choice(("شیر", "خط"))
+        icon = "🦁" if side == "شیر" else "✖️"
+        await msg.reply_text(
+            f"🪙 <b>سکه در هوا شد…</b>\n━━━━━━━━━━━━━━━━━━\n"
+            f"نتیجه: <b>{side}</b> {icon}",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+
+async def v23_cmd_8ball(update, context):
+    """🔮 /apex8ball — هشت‌گوی جادویی فارسی."""
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if msg is None or user is None or not v23_started_or_hint(update):
+            return
+        question = " ".join(str(a) for a in (getattr(context, "args", None) or [])).strip()
+        q_line = f"❓ <i>{escape(question[:120])}</i>\n━━━━━━━━━━━━━━━━━━\n" if question else ""
+        await msg.reply_text(
+            f"🔮 <b>گوی جادویی</b>\n{q_line}"
+            f"پاسخ: <b>{random.choice(V23_8BALL)}</b>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+
+async def v23_cmd_tip(update, context):
+    """💡 /apextip — نکته‌ی تصادفی بازی."""
+    try:
+        msg = getattr(update, "message", None)
+        if msg is None:
+            return
+        await msg.reply_text(
+            f"💡 <b>نکته‌ی ApexRival</b>\n━━━━━━━━━━━━━━━━━━\n{random.choice(V23_TIPS)}",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+
+async def v23_cmd_ping(update, context):
+    """🏓 /apexping — سرعت پاسخ ربات."""
+    try:
+        msg = getattr(update, "message", None)
+        if msg is None:
+            return
+        t0 = time.perf_counter()
+        await msg.reply_text("🏓 <b>Pong!</b> در حال اندازه‌گیری…", parse_mode=ParseMode.HTML)
+        ms = (time.perf_counter() - t0) * 1000.0
+        await msg.reply_text(
+            f"🏓 <b>Pong!</b>\n━━━━━━━━━━━━━━━━━━\n"
+            f"⏱ پاسخ: <b>{ms:.0f} میلی‌ثانیه</b>\n"
+            f"⏳ آپ‌تایم ربات: <b>{v21_uptime_text()}</b>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+
+async def v23_cmd_about(update, context):
+    """ℹ️ /apexabout — کارت معرفی ربات."""
+    try:
+        msg = getattr(update, "message", None)
+        if msg is None:
+            return
+        try:
+            prompts = sum(len(v) for v in V7_BANKS_FINAL.values() if isinstance(v, list))
+            banks = len(V7_BANKS_FINAL)
+        except Exception:
+            prompts, banks = 0, 0
+        await msg.reply_text(
+            "ℹ️ <b>ApexRival</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"🎮 موتور بازی اجتماعی تلگرام\n"
+            f"🏷 نسخه: <b>{BOT_VERSION} ({V23_VERSION} TRIM)</b>\n"
+            f"🧩 بانک محتوا: <b>{fmt_num(prompts)}</b> سؤال در <b>{banks}</b> دسته\n"
+            f"👥 کاربران: <b>{fmt_num(len(DATA.get('users', {})))}</b> · 🌐 گروه‌ها: <b>{fmt_num(len(DATA.get('groups', {})))}</b>\n"
+            "⏱ آپ‌تایم: " + v21_uptime_text() + "\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🚀 شروع سریع: <code>/apex</code> در گروه · ❓ راهنما: <code>/apexhelp</code>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V23-WIRING] عبور از گیت گروهی + ثبت هندلرها + منوی تلگرام
+# ----------------------------------------------------------------
+try:
+    V17_UNIQUE_COMMANDS = V17_UNIQUE_COMMANDS + (
+        "apexname", "apexdice", "apexcoin", "apex8ball", "apextip", "apexping", "apexabout",
+    )
+except Exception:
+    pass
+
+# پاک‌سازی پیام دستورهای جدید در گروه‌ها (ضد شلوغی)
+try:
+    V20_GROUP_MENU_CMDS = set(V20_GROUP_MENU_CMDS) | {
+        "apexname", "apexdice", "apexcoin", "apex8ball", "apextip", "apexping", "apexabout",
+    }
+except Exception:
+    pass
+
+# منوی تلگرام: دستورهای جدید در هر دو اسکوپ
+try:
+    V22_COMMAND_MENU_PRIVATE.extend([
+        BotCommand("apexname", "🎭 تغییر نامم در بازی"),
+        BotCommand("apexdice", "🎲 تاس‌بازی با ربات"),
+        BotCommand("apexcoin", "🪙 شیر یا خط"),
+        BotCommand("apex8ball", "🔮 گوی جادویی"),
+        BotCommand("apextip", "💡 نکته‌ی تصادفی بازی"),
+    ])
+    V22_COMMAND_MENU_GROUP.extend([
+        BotCommand("apexdice", "🎲 تاس‌بازی با ربات"),
+        BotCommand("apexcoin", "🪙 شیر یا خط"),
+        BotCommand("apex8ball", "🔮 گوی جادویی"),
+        BotCommand("apextip", "💡 نکته‌ی تصادفی"),
+    ])
+    # امضای منوها باید با محتوای جدید هماهنگ بماند (verify ترمیم خودکار)
+    V22_PRIVATE_SIGNATURE = tuple((c.command, c.description) for c in V22_COMMAND_MENU_PRIVATE)
+    V22_GROUP_SIGNATURE = tuple((c.command, c.description) for c in V22_COMMAND_MENU_GROUP)
+except Exception:
+    pass
+
+_AR23_OLD_REGISTER = ar15_register_handlers
+
+
+def ar15_register_handlers(app) -> None:
+    _AR23_OLD_REGISTER(app)
+    try:
+        app.add_handler(CommandHandler("apexname", v23_cmd_name))
+        app.add_handler(CommandHandler("apexdice", v23_cmd_dice))
+        app.add_handler(CommandHandler("apexcoin", v23_cmd_coin))
+        app.add_handler(CommandHandler("apex8ball", v23_cmd_8ball))
+        app.add_handler(CommandHandler("apextip", v23_cmd_tip))
+        app.add_handler(CommandHandler("apexping", v23_cmd_ping))
+        app.add_handler(CommandHandler("apexabout", v23_cmd_about))
+    except Exception as exc:
+        try:
+            print(f"ApexRival V23 register warning: {exc!r}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V23-CHECK] سلف‌چک لایه — بانک سؤالات دست‌نخورده مانده باشد
+# ----------------------------------------------------------------
+def v23_self_check() -> None:
+    for fn in (
+        v17_group_command_gate, v23_recover_stuck_games, advanced_cleanup_job,
+        reward_player, v23_cmd_name, v23_cmd_dice, v23_cmd_coin, v23_cmd_8ball,
+        v23_cmd_tip, v23_cmd_ping, v23_cmd_about, v23_self_check,
+        main_apexrival_23,
+    ):
+        assert callable(fn), f"v23 missing function: {getattr(fn, '__name__', fn)}"
+    # ۱) بانک‌های محتوا سالم و بزرگ
+    total = sum(len(v) for v in V7_BANKS_FINAL.values() if isinstance(v, list))
+    assert total >= 7537, f"question banks shrank: {total}"
+    # ۲) دستورات جدید از گیت گروهی رد می‌شوند
+    for c in ("apexname", "apexdice", "apexcoin", "apex8ball", "apextip", "apexping", "apexabout"):
+        assert c in V17_UNIQUE_COMMANDS, c
+    # ۳) منوها بدون تکرار و با شروعِ start
+    for menu, sig in ((V22_COMMAND_MENU_PRIVATE, V22_PRIVATE_SIGNATURE),
+                      (V22_COMMAND_MENU_GROUP, V22_GROUP_SIGNATURE)):
+        names = [c.command for c in menu]
+        assert names == [c for c, _ in sig], "v23 menu/signature mismatch"
+        assert len(set(names)) == len(names), "v23 duplicate menu command"
+        assert all(n.isascii() and n.islower() for n in names), "v23 bad command name"
+        assert names[0] == "start", "v23 menu must begin with start"
+        assert all(1 <= len(c.description) <= 256 for c in menu)
+    # ۴) جعبه‌ابزار سرگرمی پر است
+    assert len(V23_8BALL) >= 20 and len(V23_TIPS) >= 15
+    # ۵) گیت مهربان: /game دیگر سکوت نمی‌کند (رفتار با فراخوانی مستقیم)
+    print(
+        f"ApexRival V23 TRIM self-check OK | banks={total} | group-hints=on | "
+        "stuck-game-recovery=on | hardened-rewards=on | 7-new-commands=on"
+    )
+
+
+def main_apexrival_23():
+    """لانچر V23 — چک لایه + استاندارد ترمیم روی زنجیره‌ی مقاوم قبلی."""
+    print(
+        f"{BOT_NAME} V23 TRIM | group-command-hints | stuck-game-auto-recovery | "
+        "hardened-rewards | apexname | apexdice | apexcoin | apex8ball | "
+        "apextip | apexping | apexabout"
+    )
+    return main_apexrival_22()
+
+
+main_apexrival_15 = main_apexrival_23
+main = main_apexrival_23
+
+v23_self_check()
 
 
 if __name__ == "__main__":
