@@ -35045,12 +35045,32 @@ def v21_self_check() -> None:
     assert v21_love_score("id:1", "id:2") == v21_love_score("id:2", "id:1")
     assert 0 <= v21_love_score("id:1", "id:2") <= 100
     # مسابقه: جواب درست
-    for _ in range(50):
-        q, a = v21_quiz_make()
-        assert "؟" not in q and isinstance(a, int)
-        aa, bb, o = q.split()
-        x, y = int(aa), int(bb)
-        assert {"+": x + y, "-": x - y, "×": x * y}[o] == a
+for _ in range(50):
+    q, a = v21_quiz_make()
+
+    assert isinstance(a, int)
+
+    parts = q.split()
+
+    assert len(parts) == 3, f"bad quiz format: {q}"
+
+    aa, o, bb = parts
+
+    assert aa.lstrip("-").isdigit(), f"bad left number: {q}"
+    assert bb.lstrip("-").isdigit(), f"bad right number: {q}"
+
+    x = int(aa)
+    y = int(bb)
+
+    assert o in {"+", "-", "×"}, f"bad operator: {q}"
+
+    result = {
+        "+": x + y,
+        "-": x - y,
+        "×": x * y
+    }[o]
+
+    assert result == a, f"wrong answer: {q} != {a}"
     # مخزن پایدار
     st = v21_store()
     assert isinstance(st["stats"], dict)
@@ -35105,3 +35125,4 @@ main = main_apexrival_21
 
 if __name__ == "__main__":
     main_apexrival_15()
+
