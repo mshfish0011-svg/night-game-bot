@@ -9029,6 +9029,8 @@ async def v5_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def v5_game_home_markup(game):
     uid = int(game.get("_viewer_id", 0))
     rows = [
+        # [V24-FIX 2] برگشت مستقیم به انتخاب موضوع — کاربر قبلاً اینجا گیر می‌کرد
+        [v5_button("🔙 انتخاب موضوع", "V7|TURN")],
         [v5_button("⚡ سریع", "V5|G|Q"), v5_button("🎭 اجتماعی", "V5|G|S")],
         [v5_button("⚔️ رقابتی", "V5|G|B"), v5_button("🤫 مخفی", "V5|G|X")],
         [v5_button("☠️ حکم", "V5|G|R"), v5_button("📊 وضعیت", "V5|G|I")],
@@ -14540,12 +14542,60 @@ async def ar12_show_private_home(update, context):
     if not uid:
         return
     if not ar12_private_only(update):
+        # [V24-FIX 3] قبلاً اینجا خطای «فقط در چت خصوصی» می‌آمد و کاربرِ
+        # داخل گروه گیر می‌کرد. حالا دکمه‌ی خانه در گروه، پنل بازیِ همان
+        # گروه را باز می‌کند؛ اگر بازی نیست، منوی گروه نشان داده می‌شود.
         await ar12_remove_legacy_group_keyboard(update)
         msg = getattr(update, "message", None)
         query = getattr(update, "callback_query", None)
-        if query:
-            await safe_answer_query(query, "⌂ منوی اصلی فقط در چت خصوصی ApexRival است.", True)
-        elif msg:
+        chat = getattr(update, "effective_chat", None)
+        game = None
+        try:
+            game = active_game(int(chat.id)) if chat is not None else None
+        except Exception:
+            game = None
+        try:
+            if query is not None:
+                await safe_answer_query(query)
+        except Exception:
+            pass
+        if game and game.get("status") == "active":
+            try:
+                game["_viewer_id"] = uid
+                await v5_show_active_game(query, game)
+                return
+            except Exception:
+                pass
+        group_rows = [
+            [v5_button("🎮 ساخت بازی جدید", "V24|GRP|NEW")],
+            [v5_button("🎪 بازی‌های گروهی", "V24|GRP|FUN")],
+            [v5_button("🆔 آیدی من", "V24|GRP|ID")],
+            [v5_button("✕ بستن", "V5|CLOSE")],
+        ]
+        body = (
+            "🎪 <b>منوی گروه — ApexRival</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🎮 ساخت بازی جرئت و حقیقت: <code>/apex</code>\n"
+            "🍾 چرخش بطری: <code>/apexspin</code>\n"
+            "🤔 یا این یا اون: <code>/apexwyr</code>\n"
+            "🙈 هیچوقت نگفتم: <code>/apexnhie</code>\n"
+            "👀 محتمل‌ترین شخص: <code>/apexlikely</code>\n"
+            "⚖️ مجازات (ریپلای): <code>/apexpunish</code>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "👤 پروفایل، 🛒 فروشگاه و 🏆 رتبه‌بندی در <b>چت خصوصی</b> من "
+            "(دکمه‌ی زیر) در دسترس‌اند."
+        )
+        try:
+            if query is not None:
+                await safe_edit_query(query, body, v5_markup(group_rows))
+                return
+            if msg is not None:
+                await msg.reply_text(body, parse_mode=ParseMode.HTML,
+                                     reply_markup=v5_markup(group_rows))
+                return
+        except Exception:
+            pass
+        if msg is not None:
             await msg.reply_text(
                 "⌂ <b>منوی اصلی فقط در چت خصوصی ApexRival است.</b>\n\n"
                 "برای استفاده از پروفایل، رتبه‌بندی و فروشگاه، چت خصوصی ربات را باز کن.",
@@ -17103,23 +17153,16 @@ async def v7_start_lobby(query, game):
     save_data(force=True)
     await safe_answer_query(query, "🎮 بازی شروع شد!")
     current = int(game.get("current_questioner") or players[0])
-    await safe_edit_query(query, v7_turn_card(game), v7_turn_markup(game, current))
-    # [FIX 15b] اعلان شروع همراه با کیبورد موضوعات — همان پیام، همان لحظه.
-    try:
-        await query.message.reply_text(
-            v7_turn_announcement(game, current).replace("نوبت بعدی شروع شد", "بازی شروع شد — نوبت اول"),
-            parse_mode=ParseMode.HTML,
-            reply_markup=v7_turn_markup(game, current),
-        )
-    except Exception:
-        try:
-            await query.message.reply_text(
-                f"🎮 <b>ApexRival شروع شد!</b>\n\nنوبت اول: {mention_user(current, name_of(current, game))}",
-                parse_mode=ParseMode.HTML,
-                reply_markup=v7_turn_markup(game, current),
-            )
-        except Exception:
-            pass
+    # [V24-FIX 1] قبلاً اینجا «دو پیامِ انتخاب موضوع» ساخته می‌شد:
+    # یکی ادیتِ پنل لابی و یکی پیام جدید با همان کیبورد. حالا فقط
+    # همان پنل لابی به کارتِ نوبتِ شروع تبدیل می‌شود (تک‌پنل، بدون تکرار).
+    await safe_edit_query(
+        query,
+        v7_turn_announcement(game, current).replace(
+            "🎯 <b>نوبت بعدی شروع شد!</b>", "🎮 <b>بازی شروع شد — نوبت اول!</b>"
+        ),
+        v7_turn_markup(game, current),
+    )
 
 
 # ----------------------------------------------------------------
@@ -17703,6 +17746,8 @@ async def v16_admin_router(update, context):
             await v16_admin_home_render(query)
             return
         if section == "NONE":
+            # [V24-FIX 8] دکمه‌ی نمایشی هم جواب می‌دهد — دیگر بی‌صدا نیست
+            await safe_answer_query(query, "ℹ️ این دکمه فقط نمایشی است — کاری انجام نمی‌دهد.", False)
             return
         # ---------------- USERS ----------------
         if section == "U":
@@ -18807,6 +18852,9 @@ async def v17_finish_onboarding(query, context, uid: int) -> None:
         ok_card = (
             "🎉 <b>همه‌چیز آماده!</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
+            f"💛 {escape(str(u.get('name') or 'بازیکن'))} عزیز، \u200f<b>به جمع ما خوش اومدی!</b>\n"
+            "از این لحظه عضو خانواده‌ی \u200f<b>ApexRival</b> هستی \U0001F9E1\n"
+            "━━━━━━━━━━━━━━━━━━\n"
             f"✅ جنسیت: <b>{GENDER_LABELS.get(g, '—')}</b> {user_gender_icon(int(uid))}\n"
             f"✅ سن: <b>{'بالای ۱۸ سال 🔞' if adult else 'زیر ۱۸ سال 🧒'}</b>\n"
             "🛡 حسابت <b>اعتبارسنجی کامل</b> شد — دیگر هیچ سؤالی ازت پرسیده نمی‌شود."
@@ -19458,7 +19506,10 @@ def ar12_private_home_text(uid: int) -> str:
         f"{v5_progress(int(xp) % 100, 100, 14)}\n"  # [FIX] xp/max(xp,1) always rendered 100%
         "━━━━━━━━━━━━━━━━━━\n"
         "🎮 بازی جدید در گروه: <code>/apex</code>\n"
-        "از دکمه‌های زیر وارد امکانات شو 👇"
+        "👥 بازی دو نفره در چت خصوصی: <code>/apexduel</code>\n"
+        "از دکمه‌های زیر وارد امکانات شو 👇\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "⭐ <b>ApexRival</b> · نسخه‌ی <b>1.0.0</b>"
     )
 
 
@@ -28275,6 +28326,8 @@ async def v18_admin_router(update, context):
             await safe_edit_query(query, v18_editor_home_body(), v18_editor_home_markup())
             return
         if section == "NONE":
+            # [V24-FIX 8] شمارنده‌ی صفحه — جواب نمایشی محترمانه
+            await safe_answer_query(query, "📄 این دکمه شمارنده‌ی صفحه است؛ با ◀️/▶️ ورق بزن.", False)
             return
 
         # ---------------- بانک‌ها ----------------
@@ -28864,9 +28917,11 @@ V19_CFG_DEFAULTS = {
 
 V19_RATE_LIMITS = {
     # سطح: (حداکثر دکمه در ۱۵ ثانیه، حداکثر دستور در ۱۲ ثانیه)
-    0: (6, 4),
-    1: (10, 8),
-    2: (18, 14),
+    # [V24-FIX 9] سقف‌ها بالا رفت: کاربرِ در حال گشتنِ پنل‌ها دیگر
+    # دکمه‌های «بی‌جواب» نمی‌دید (۱۰ کلیک در ۱۵ ثانیه خیلی کم بود).
+    0: (8, 5),
+    1: (16, 11),
+    2: (26, 18),
 }
 
 
@@ -29037,6 +29092,8 @@ async def v19_rate_guard_callback(update, context):
             return
         if not v19_rate_hit(int(user.id), "callback", int(chat.id)):
             return
+        # [V24-FIX 9] حتی موقع محدودیت، کوئری جواب داده می‌شود تا دکمه
+        # «مرده» به نظر نرسد؛ اعلان با همان اختیار قبلی مدیریت می‌شود.
         if v19_nag_allowed(int(user.id), "nag"):
             try:
                 await safe_answer_query(
@@ -29044,6 +29101,14 @@ async def v19_rate_guard_callback(update, context):
                     "🌿 آروم‌تر قربان! چند لحظه صبر کن و دوباره بزن.",
                     False,
                 )
+            except Exception:
+                try:
+                    await query.answer()
+                except Exception:
+                    pass
+        else:
+            try:
+                await query.answer()
             except Exception:
                 pass
         if _V19_AHS is not None:
@@ -30232,11 +30297,20 @@ async def v19_callback_router(update, context):
                 await v19_set_home(update, context, chat_id)
             return
 
-        # ---------- عمل ناشناخته: بی‌صدا ----------
+        # ---------- عمل ناشناخته: [V24-FIX 10] دیگر بی‌صدا نیست ----------
+        try:
+            await safe_answer_query(query, "⚠️ این گزینه الان در دسترس نیست؛ /apexhelp راهنمای کامل است.", True)
+        except Exception:
+            pass
         return
     except Exception as exc:
         try:
             audit("v19_callback_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+        # [V24-FIX 10] خطا همیشه به کاربر اعلام می‌شود — دکمه‌ی مرده ممنوع
+        try:
+            await safe_answer_query(query, "⚠️ یک خطای کوچک پیش آمد؛ دوباره امتحان کن.", True)
         except Exception:
             pass
 
@@ -34852,7 +34926,7 @@ async def v21_quiz_timeout(gid: str, chat_id: int, answer: int, question: str) -
             return  # راند قبلاً برنده داشته و بسته شده
         V21_RUNTIME["quiz_rounds"].pop(gid, None)
         try:
-            await v19_send_group(chat_id, f"⌛ <b>زمان تمام شد!</b>\nجوابِ <code>{question}</code> برابر بود با <b>{answer}</b>.\n هیچ‌کس امتیاز نگرفت — دوباره امتحان کن: <code>/apexquiz</code>")
+            await v19_send_group(chat_id, f"⌛ <b>زمان تمام شد!</b>\nجواب: <code>\u200e{question} = {answer}\u200e</code>\n هیچ‌کس امتیاز نگرفت — دوباره امتحان کن: <code>/apexquiz</code>")
         except Exception:
             pass
     except asyncio.CancelledError:
@@ -34872,7 +34946,7 @@ async def v21_cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if gid in V21_RUNTIME["quiz_rounds"]:
             r = V21_RUNTIME["quiz_rounds"][gid]
             await update.effective_message.reply_text(
-                f"⚔️ یک مسابقه فعال است! سریع‌تر باش:\n<code>{r['question']} = ؟</code>",
+                f"⚔️ یک مسابقه فعال است! سریع‌تر باش:\n<code>\u200e{r['question']} = ?\u200e</code>",
                 parse_mode=ParseMode.HTML,
             )
             return
@@ -34894,10 +34968,13 @@ async def v21_cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         }
         task = asyncio.create_task(v21_quiz_timeout(gid, chat.id, int(answer), question))
         V21_RUNTIME["quiz_tasks"][gid] = task
+        # [V24-FIX 4] نمایش ریاضی چپ‌به‌راست: عبارت داخل <code> با ارقام
+        # لاتین، علامت سوال انگلیسی و نشانه‌های LRM — دیگر به‌هم‌ریخته نمی‌شود.
+        ltr_expr = "\u200e" + str(question) + " = ?\u200e"
         await update.effective_message.reply_text(
             f"⚔️ <b>مسابقه‌ی سرعتی!</b>\n{V21_DIV}\n"
-            f"اولین نفری که جواب درست را بنویس برنده است:\n\n"
-            f"🧮  <b>{question} = ؟</b>\n\n"
+            f"اولین نفری که جواب درست را بنویسد برنده است:\n\n"
+            f"🧮 <code>{ltr_expr}</code>\n\n"
             f"⏳ فقط <b>{V21_QUIZ_TTL} ثانیه</b> فرصت دارید!\n"
             f"🏆 جایزه: <b>+۸ XP</b> و <b>+۵ سکه</b>",
             parse_mode=ParseMode.HTML,
@@ -35928,6 +36005,4550 @@ main_apexrival_15 = main_apexrival_23
 main = main_apexrival_23
 
 v23_self_check()
+
+
+# ================================================================
+# ▼▼▼ [V24] لایه‌ی نهایی «نسخه‌ی 1.0.0 — فول امکانات» ▼▼▼
+# ----------------------------------------------------------------
+#  این لایه هیچ سؤالی از بانک‌های محتوا تغییر نمی‌دهد؛ فقط:
+#   ۱) دکترِ داده: دیتای قدیمی/خراب را خودکار ترمیم می‌کند تا هیچ
+#      پنلی دیگر به‌خاطر دیتای ناقص «بی‌جواب» نشود
+#   ۲) نجات‌دهنده‌ی دکمه‌ها: هیچ کلیکی دیگر بی‌پاسخ نمی‌ماند
+#   ۳) پیام فعال‌سازی هنگام ادمین‌شدن ربات در گروه + تریگر متنی
+#      «جرئت و حقیقت» در گروه‌ها
+#   ۴) سیستم مجازات هوشمند (ریپلای → حکم → قفل تا انجام → بخشش)
+#   ۵) بازی دو نفره در چت خصوصی با لینک دعوت + دعوت با تگ در گروه
+#   ۶) بازی‌های گروهی جدید: بطری، یا این یا اون، هیچوقت نگفتم،
+#      محتمل‌ترین شخص
+#   ۷) عشق‌سنج حرفه‌ای چندبعدی + حالت دوطرفه با لینک
+#   ۸) فروشگاه چنددسته‌ای + دستاوردهای جدید + پروفایل خفن
+#   ۹) ارتقای پنل مدیریت: کاربران، تبلیغات، ارسال همگانی حرفه‌ای
+#  ۱۰) مرکز بانک سوالات: خروجی/ورودی فایل JSON + شمارش یکجا
+#  ۱۱) تنظیمات گروه + راهنمای کامل + منوی دستورات طبقه‌بندی‌شده
+#  ۱۲) برچسب نسخه‌ی 1.0.0 در همه‌جا
+# ================================================================
+
+import telegram as _v24_tg
+
+V24_VERSION = "1.0.0"
+BOT_VERSION = "1.0.0"          # برچسب جهانی نسخه
+BOT_NAME = "ApexRival"
+
+V24_DIV = "━━━━━━━━━━━━━━━━━━"
+
+# دستورات جدید V24 — از گیت گروهی رد می‌شوند (در بخش سیم‌کشی به لیست‌ها اضافه می‌شوند)
+V24_NEW_UNIQUE = (
+    "apexduel", "apexpunish", "apexforgive", "apexpunishments",
+    "apexspin", "apexwyr", "apexnhie", "apexlikely", "apexsettings",
+    "apexlove2", "apexabout",
+)
+
+
+def v24_store() -> dict:
+    """مخزن اصلی V24 — همه‌ی ساختارهای جدید اینجا ذخیره می‌شوند."""
+    d = DATA.setdefault("v24", {})
+    d.setdefault("duels", {})
+    d.setdefault("punish", {})
+    d.setdefault("love2", {})
+    d.setdefault("ads", [])
+    d.setdefault("ads_cfg", {"every": 10, "on_question": True, "on_party": True})
+    d.setdefault("bc_log", [])
+    d.setdefault("stats", {"duels": 0, "punishments": 0, "party_games": 0, "love2": 0,
+                            "shop_buys": 0, "imports": 0, "exports": 0})
+    d.setdefault("group_cfg", {})
+    d.setdefault("next_code", 1000)
+    return d
+
+
+def v24_new_code() -> str:
+    st = v24_store()
+    code = int(st.get("next_code", 1000) or 1000)
+    st["next_code"] = code + 1
+    save_data(force=True)
+    return f"c{code}"
+
+
+def v24_gcfg(gid: int) -> dict:
+    """تنظیمات هر گروه: خوشامد، اعلان سطح، تبلیغ."""
+    st = v24_store()
+    cfg = st["group_cfg"].setdefault(str(int(gid)), {})
+    cfg.setdefault("welcome", True)
+    cfg.setdefault("levelup", True)
+    cfg.setdefault("ads", True)
+    return cfg
+
+
+# ----------------------------------------------------------------
+# [V24-DOCTOR] دکتر داده — ترمیم خودکار دیتای قدیمی/ناقص
+#  خیلی از «دکمه‌های بی‌جواب» به‌خاطر ساختارهای ناقصِ به‌جامانده از
+#  نسخه‌های قبلی بود؛ این دکتر موقع راه‌اندازی همه را سالم می‌کند.
+# ----------------------------------------------------------------
+def v24_data_doctor() -> list:
+    fixes = []
+    try:
+        # ۱) ساختارهای پایه
+        for key, default in (
+            ("users", {}), ("groups", {}), ("games", {}), ("broadcast_log", []),
+            ("v18_custom_prompts", {}), ("v16_custom_prompts", {}),
+        ):
+            if key not in DATA or not isinstance(DATA[key], (dict, list)):
+                DATA[key] = default
+                fixes.append(f"reset:{key}")
+        # ۲) کاربران: فیلدهای گمشده و مقادیر خراب
+        for uid, u in list(DATA.get("users", {}).items()):
+            try:
+                if not isinstance(u, dict):
+                    DATA["users"][uid] = {}
+                    fixes.append(f"user-reset:{uid}")
+                    continue
+                for fld, dv in (("xp", 0), ("coins", 0), ("level", 1), ("wins", 0),
+                                ("losses", 0), ("games", 0), ("missions", 0),
+                                ("streak", 0), ("best_streak", 0), ("achievements", []),
+                                ("inventory", {}), ("name", "بازیکن")):
+                    if fld not in u:
+                        u[fld] = dv
+                if not isinstance(u.get("inventory", None), dict):
+                    u["inventory"] = {}
+                    fixes.append(f"user-inv:{uid}")
+                if not isinstance(u.get("achievements", None), list):
+                    u["achievements"] = []
+                    fixes.append(f"user-ach:{uid}")
+                try:
+                    u["xp"] = max(0, int(u.get("xp", 0) or 0))
+                    u["coins"] = max(0, int(u.get("coins", 0) or 0))
+                    u["level"] = max(1, int(u.get("level", 1) or 1))
+                except Exception:
+                    u["xp"], u["coins"], u["level"] = 0, 0, 1
+                    fixes.append(f"user-nums:{uid}")
+            except Exception:
+                continue
+        # ۳) بازی‌های زنده‌ی خراب
+        for gid, g in list(DATA.get("games", {}).items()):
+            try:
+                if not isinstance(g, dict):
+                    DATA["games"].pop(gid, None)
+                    fixes.append(f"game-drop:{gid}")
+                    continue
+                if not isinstance(g.get("players", None), list):
+                    g["players"] = []
+                    fixes.append(f"game-players:{gid}")
+                if g.get("status") == "active" and not g.get("players"):
+                    g["status"] = "ended"
+                    fixes.append(f"game-end-empty:{gid}")
+            except Exception:
+                continue
+        # ۴) مخزن V19 — پنل «تنظیمات ضد اذیت» به این ساختار وابسته است
+        try:
+            v19_store()
+        except Exception as exc:
+            fixes.append(f"v19-store-error:{exc!r}"[:80])
+        # ۵) موضوعات خاموش: باید لیست معتبر باشد
+        try:
+            off = v18_topics_off()
+            if not isinstance(off, list):
+                DATA["v18"]["topics_off"] = []
+                fixes.append("topics_off-reset")
+        except Exception:
+            pass
+        # ۶) بانک‌ها: هیچ بانکی None یا پر از موارد خالی نباشد
+        for key, bank in list(V7_BANKS_FINAL.items()):
+            if not isinstance(bank, list):
+                V7_BANKS_FINAL[key] = []
+                fixes.append(f"bank-reset:{key}")
+            else:
+                before = len(bank)
+                bank[:] = [x for x in bank if isinstance(x, str) and x.strip()]
+                if len(bank) != before:
+                    fixes.append(f"bank-clean:{key}:{before}->{len(bank)}")
+        if fixes:
+            save_data(force=True)
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 doctor warning: {exc!r}")
+        except Exception:
+            pass
+    return fixes
+
+
+# ----------------------------------------------------------------
+# [V24-ANSWERED] ردیاب پاسخ‌ها — هیچ کلیکی بی‌جواب نمی‌ماند
+# ----------------------------------------------------------------
+_V24_ANSWERED: set = set()
+_V24_EDITED: set = set()
+
+try:
+    _V24_ORIG_CB_ANSWER = _v24_tg.CallbackQuery.answer
+
+    async def _v24_patched_cb_answer(self, *args, **kwargs):
+        try:
+            _V24_ANSWERED.add(str(self.id))
+        except Exception:
+            pass
+        return await _V24_ORIG_CB_ANSWER(self, *args, **kwargs)
+
+    _v24_tg.CallbackQuery.answer = _v24_patched_cb_answer
+except Exception:
+    pass
+
+try:
+    _V24_ORIG_EDIT_TEXT = _v24_tg.Bot.edit_message_text
+
+    async def _v24_patched_edit_text(self, *args, **kwargs):
+        try:
+            mid = kwargs.get("message_id") or (args[2] if len(args) > 2 else None)
+            cid = kwargs.get("chat_id") or (args[1] if len(args) > 1 else None)
+            if mid is not None and cid is not None:
+                _V24_EDITED.add((str(cid), str(mid)))
+        except Exception:
+            pass
+        return await _V24_ORIG_EDIT_TEXT(self, *args, **kwargs)
+
+    _v24_tg.Bot.edit_message_text = _v24_patched_edit_text
+except Exception:
+    pass
+
+_V24_SENT: dict = {}
+
+try:
+    _V24_ORIG_SEND_MSG = _v24_tg.Bot.send_message
+
+    async def _v24_patched_send_msg(self, *args, **kwargs):
+        try:
+            cid = kwargs.get("chat_id") or (args[0] if args else None)
+            if cid is not None:
+                _V24_SENT[str(cid)] = time.time()
+        except Exception:
+            pass
+        return await _V24_ORIG_SEND_MSG(self, *args, **kwargs)
+
+    _v24_tg.Bot.send_message = _v24_patched_send_msg
+except Exception:
+    pass
+
+try:
+    _V24_ORIG_SEND_PHOTO = _v24_tg.Bot.send_photo
+
+    async def _v24_patched_send_photo(self, *args, **kwargs):
+        try:
+            cid = kwargs.get("chat_id") or (args[0] if args else None)
+            if cid is not None:
+                _V24_SENT[str(cid)] = time.time()
+        except Exception:
+            pass
+        return await _V24_ORIG_SEND_PHOTO(self, *args, **kwargs)
+
+    _v24_tg.Bot.send_photo = _v24_patched_send_photo
+except Exception:
+    pass
+
+
+async def v24_catchall_callback(update, context):
+    """[V24-FIX] آخرین حلقه‌ی زنجیره: اگر هیچ لایه‌ای به کلیک جواب
+    نداد، اینجا جواب محترمانه می‌دهیم — «دکمه‌ی مرده» دیگر وجود ندارد."""
+    try:
+        query = getattr(update, "callback_query", None)
+        if query is None or not query.data:
+            return
+        qid = str(query.id)
+        msg = getattr(query, "message", None)
+        mid = str(getattr(msg, "message_id", 0) or 0)
+        cid = str(getattr(getattr(msg, "chat", None), "id", 0) or 0)
+        if qid in _V24_ANSWERED or (cid, mid) in _V24_EDITED:
+            return
+        # اگر در ۴ ثانیه‌ی اخیر پیامی به همین چت فرستاده شده، یعنی جواب داده شده
+        try:
+            if cid and time.time() - float(_V24_SENT.get(cid, 0) or 0) < 4.0:
+                return
+        except Exception:
+            pass
+        try:
+            await query.answer("⚠️ این گزینه الان در دسترس نیست — /apexhelp راهنماست.")
+        except Exception:
+            pass
+        try:
+            audit("v24_dead_button", int(query.from_user.id), int(cid) or None,
+                  str(query.data)[:60])
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V24-GROUP-ACTIVE] پیام فعال‌سازی هنگام اضافه/ادمین‌شدن ربات
+# ----------------------------------------------------------------
+async def v24_my_chat_member(update, context):
+    """وقتی ربات به گروه اضافه یا ادمین می‌شود، پیام فعال‌سازی می‌فرستد."""
+    try:
+        cm = getattr(update, "my_chat_member", None)
+        if cm is None:
+            return
+        chat = getattr(update, "effective_chat", None)
+        if chat is None or str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            return
+        new_status = str(getattr(getattr(cm, "new_chat_member", None), "status", "") or "")
+        old_status = str(getattr(getattr(cm, "old_chat_member", None), "status", "") or "")
+        if new_status in ("member", "administrator") and old_status in ("left", "kicked"):
+            await v24_send_activation(context, chat, promoted=(new_status == "administrator"))
+        elif new_status == "administrator" and old_status == "member":
+            await v24_send_activation(context, chat, promoted=True)
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 my_chat_member warning: {exc!r}")
+        except Exception:
+            pass
+
+
+async def v24_send_activation(context, chat, promoted: bool = False) -> None:
+    try:
+        title = str(getattr(chat, "title", "") or "گروه")
+        rows = [
+            [v5_button("🎮 ساخت بازی جدید", "V24|GRP|NEW")],
+            [v5_button("🎪 بازی‌های گروهی", "V24|GRP|FUN"),
+             v5_button("⚙️ تنظیمات گروه", "V24|GRP|SET")],
+            [v5_button("📖 راهنمای کامل", "V24|GRP|HELP")],
+        ]
+        admin_line = (
+            "🛡 ربات <b>ادمین</b> است: همه‌ی امکانات (خوشامد اعضا، مدیریت اسپم،"
+            " مجازات هوشمند و…) فعال است."
+            if promoted else
+            "💡 برای فعال‌شدن امکانات کامل (خوشامد اعضا، مدیریت اسپم و مجازات‌ها)،"
+            " ربات را <b>ادمین</b> گروه کن."
+        )
+        text = (
+            "✅ <b>ربات فعال شد!</b>\n"
+            f"{V24_DIV}\n"
+            f"🎪 سلام به همه‌ی بچه‌های «{escape(title)}» 👋\n"
+            "من <b>ApexRival</b> هستم — میزبانِ بازی <b>جرئت و حقیقت</b> و ده‌ها سرگرمی دیگر!\n"
+            f"{V24_DIV}\n"
+            "🎮 شروع بازی: <code>/apex</code>\n"
+            "🍾 چرخش بطری: <code>/apexspin</code>\n"
+            "⚖️ مجازات (ریپلای روی پیام): <code>/apexpunish</code>\n"
+            "🧮 مسابقه ریاضی: <code>/apexquiz</code>\n"
+            "❓ راهنمای کامل: <code>/apexhelp</code>\n"
+            f"{V24_DIV}\n"
+            f"{admin_line}\n"
+            "⭐ ApexRival · نسخه‌ی <b>1.0.0</b>"
+        )
+        await context.bot.send_message(
+            chat_id=int(chat.id), text=text,
+            parse_mode=ParseMode.HTML, reply_markup=v5_markup(rows),
+        )
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V24-TRIGGER] تریگر متنی «جرئت و حقیقت» در گروه
+# ----------------------------------------------------------------
+V24_TRIGGERS = {
+    "جرئت و حقیقت", "جرئت و حقیقت!", "جرت و حقیقت", "حقیقت و جرئت",
+    "حقیقت و جرت", "جرئت یا حقیقت", "حقیقت یا جرئت", "جرئت وحقیقت",
+    "جرئت و حقیقت؟",
+}
+
+
+async def v24_group_text_trigger(update, context):
+    try:
+        chat = getattr(update, "effective_chat", None)
+        if chat is None or str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            return
+        msg = getattr(update, "message", None)
+        text = str(getattr(msg, "text", "") or "").strip()
+        if not text or len(text) > 40:
+            return
+        norm = (text.replace("!", "").replace("؟", "").replace("?", "")
+                    .replace("\u200c", " ").replace("  ", " ").strip())
+        # ⚖️ تریگر متنی «مجازات» — فقط با ریپلای روی پیام فرد
+        if norm in ("مجازات", "مجازات!", "حکم", "حکم!"):
+            replied = getattr(msg, "reply_to_message", None)
+            target = getattr(getattr(replied, "from_user", None), "id", None) if replied else None
+            if target is not None:
+                user = getattr(update, "effective_user", None)
+                if user is not None and await v24_is_group_admin(update, int(user.id)):
+                    if int(target) != int(user.id):
+                        try:
+                            if not getattr(replied.from_user, "is_bot", False):
+                                await v24_issue_punishment(update, int(user.id), int(target))
+                        except Exception:
+                            pass
+                    else:
+                        await msg.reply_text("😅 خودت را نمی‌توانی مجازات کنی!")
+                else:
+                    await msg.reply_text("🔒 فقط سرگروه بازی و ادمین‌های گروه می‌توانند مجازات صادر کنند.")
+                if _V17_AHS is not None:
+                    raise _V17_AHS
+                return
+        if norm not in V24_TRIGGERS:
+            return
+        await v24_show_group_panel(update, context)
+        if _V17_AHS is not None:
+            raise _V17_AHS
+    except Exception as exc:
+        if _V17_AHS is not None and isinstance(exc, _V17_AHS):
+            raise
+        return
+
+
+def v24_group_panel_text_and_rows(uid: int, game):
+    if game is not None and game.get("status") == "active":
+        game["_viewer_id"] = int(uid)
+        text = v5_game_home_text(game) + f"\n\n⭐ ApexRival · نسخه‌ی <b>1.0.0</b>"
+        mk = v5_game_home_markup(game)
+        rows = getattr(mk, "inline_keyboard", [])
+        return text, rows
+    text = (
+        "🎪 <b>منوی گروه — ApexRival</b>\n"
+        f"{V24_DIV}\n"
+        "🎮 بازی <b>جرئت و حقیقت</b> گروهی: <code>/apex</code>\n"
+        "👥 بازی دو نفره با دوستت: <code>/apexduel</code> (ریپلای روی پیامش)\n"
+        f"{V24_DIV}\n"
+        "🍾 چرخش بطری: <code>/apexspin</code>\n"
+        "🤔 یا این یا اون: <code>/apexwyr</code>\n"
+        "🙈 هیچوقت نگفتم: <code>/apexnhie</code>\n"
+        "👀 محتمل‌ترین شخص: <code>/apexlikely</code>\n"
+        "🧮 مسابقه ریاضی سرعتی: <code>/apexquiz</code>\n"
+        "⚖️ مجازات (ریپلای): <code>/apexpunish</code>\n"
+        f"{V24_DIV}\n"
+        "👤 پروفایل، 🛒 فروشگاه، 🏆 رتبه‌بندی و 💘 عشق‌سنج دوطرفه در"
+        " <b>چت خصوصی</b> من منتظرت هستند.\n"
+        "⭐ ApexRival · نسخه‌ی <b>1.0.0</b>"
+    )
+    rows = [
+        [v5_button("🎮 بازی جدید", "V24|GRP|NEW"),
+         v5_button("🎪 بازی‌های گروهی", "V24|GRP|FUN")],
+        [v5_button("⚖️ مجازات‌ها", "V24|GRP|PUN"),
+         v5_button("⚙️ تنظیمات گروه", "V24|GRP|SET")],
+        [v5_button("👤 باز کردن چت خصوصی", "V24|GRP|PV"),
+         v5_button("📖 راهنما", "V24|GRP|HELP")],
+    ]
+    return text, rows
+
+
+async def v24_show_group_panel(update, context):
+    """پنل اصلی گروه: بازی فعال باشد → کارت بازی؛ نباشد → منوی گروه."""
+    try:
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        if chat is None or user is None:
+            return
+        cid = int(chat.id)
+        uid = int(user.id)
+        try:
+            game = active_game(cid)
+        except Exception:
+            game = None
+        text, rows = v24_group_panel_text_and_rows(uid, game)
+        msg = getattr(update, "message", None)
+        if msg is not None:
+            await msg.reply_text(text, parse_mode=ParseMode.HTML,
+                                 reply_markup=v5_markup(rows))
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 group panel warning: {exc!r}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V24-GRP] روتر دکمه‌های منوی گروه
+# ----------------------------------------------------------------
+async def v24_grp_callback(update, context, query, parts):
+    action = parts[2] if len(parts) > 2 else ""
+    if action == "NEW":
+        # همان مسیر /apex — از طریق هندلر رسمی (updateِ callback هم
+        # effective_message/effective_chat/effective_user واقعی دارد)
+        try:
+            await query.answer("🎮 در حال ساخت بازی…")
+        except Exception:
+            pass
+        await v17_cmd_apex(update, context)
+        return
+    if action == "FUN":
+        await safe_answer_query(query)
+        rows = [
+            [v5_button("🍾 چرخش بطری", "V24|FUN|SPIN")],
+            [v5_button("🤔 یا این یا اون", "V24|FUN|WYR"),
+             v5_button("🙈 هیچوقت نگفتم", "V24|FUN|NHIE")],
+            [v5_button("👀 محتمل‌ترین شخص", "V24|FUN|LIKELY"),
+             v5_button("🧮 ریاضی سرعتی", "V24|FUN|QUIZ")],
+            [v5_button("🔙 منوی گروه", "V24|GRP|BACK")],
+        ]
+        await safe_edit_query(
+            query,
+            "🎪 <b>بازی‌های گروهی</b>\n"
+            f"{V24_DIV}\n"
+            "🍾 <b>چرخش بطری</b> — بطری می‌چرخد و یک نفر را انتخاب می‌کند: حقیقت یا جرئت!\n"
+            "🤔 <b>یا این یا اون</b> — سؤال دوجانبه‌ی جذاب؛ همه رأی می‌دهند.\n"
+            "🙈 <b>هیچوقت نگفتم</b> — اعتراف جمعی با رأی‌گیری!\n"
+            "👀 <b>محتمل‌ترین شخص</b> — به نظر بچه‌ها کی…؟\n"
+            "🧮 <b>ریاضی سرعتی</b> — اولین جواب درست برنده است.\n"
+            f"{V24_DIV}\n"
+            "یکی را انتخاب کن 👇",
+            v5_markup(rows),
+        )
+        return
+    if action == "PUN":
+        await safe_answer_query(query)
+        await v24_render_punish_list(query)
+        return
+    if action == "SET":
+        await safe_answer_query(query)
+        await v24_render_group_settings(query)
+        return
+    if action == "HELP":
+        await safe_answer_query(query)
+        await safe_edit_query(query, v24_help_text(), v24_help_markup())
+        return
+    if action == "ID":
+        await safe_answer_query(query)
+        uid = int(query.from_user.id)
+        chat = getattr(query, "message", None) and query.message.chat
+        await safe_edit_query(
+            query,
+            "🆔 <b>آیدی شما</b>\n"
+            f"{V24_DIV}\n"
+            f"👤 User ID: <code>{uid}</code>\n"
+            f"💬 Chat ID: <code>{getattr(chat, 'id', '?')}</code>\n"
+            f"👥 عنوان گروه: <b>{escape(str(getattr(chat, 'title', '')) or '—')}</b>",
+            v5_markup([[v5_button("🔙 منوی گروه", "V24|GRP|BACK")]]),
+        )
+        return
+    if action == "PV":
+        try:
+            await query.answer("👤 لینک چت خصوصی ارسال شد…")
+        except Exception:
+            pass
+        username = None
+        try:
+            username = await ar11_bot_username(getattr(context, "bot", None))
+        except Exception:
+            username = None
+        if not username:
+            try:
+                me = await context.bot.get_me()
+                username = getattr(me, "username", None)
+            except Exception:
+                username = None
+        try:
+            if username:
+                await query.message.reply_text(
+                    "👤 <b>چت خصوصی من:</b>\n"
+                    f"➡️ https://t.me/{username}",
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                await query.message.reply_text(
+                    "👤 از دکمه‌ی نام ربات در بالای گروه، چت خصوصی را باز کن."
+                )
+        except Exception:
+            pass
+        return
+    if action == "BACK":
+        await safe_answer_query(query)
+        chat = getattr(query, "message", None) and query.message.chat
+        try:
+            game = active_game(int(chat.id)) if chat else None
+        except Exception:
+            game = None
+        text, rows = v24_group_panel_text_and_rows(int(query.from_user.id), game)
+        await safe_edit_query(query, text, v5_markup(rows))
+        return
+    await safe_answer_query(query, "⚠️ گزینه ناشناخته.", True)
+
+
+# ----------------------------------------------------------------
+# [V24-PUNISH] سیستم مجازات هوشمند
+#  سرگروه/ادمین روی پیام کسی ریپلای می‌کند و /apexpunish یا «مجازات»
+#  می‌نویسد → یک حکم تصادفی از بانک حکم‌ها برایش صادر می‌شود، تگ
+#  می‌شود و تا وقتی انجامش نداده (و ادمین تأیید نکرده) نمی‌تواند
+#  وارد بازی شود یا نوبت بگیرد — مگر اینکه سرگروه بخششش کند.
+# ----------------------------------------------------------------
+V24_PUNISH_TTL = 24 * 3600  # انقضای خودکار بعد از ۲۴ ساعت
+
+
+def v24_punish_store(gid) -> dict:
+    st = v24_store()
+    store = st["punish"].setdefault(str(int(gid)), {})
+    # پاک‌سازی تنبلِ موارد منقضی
+    now = time.time()
+    for uid in list(store.keys()):
+        try:
+            p = store[uid]
+            if now - float(p.get("at", 0) or 0) > V24_PUNISH_TTL:
+                store.pop(uid, None)
+        except Exception:
+            store.pop(uid, None)
+    return store
+
+
+def v24_punished(gid, uid) -> dict:
+    """حکم فعالِ این کاربر در این گروه (یا None)."""
+    try:
+        p = v24_punish_store(gid).get(str(int(uid)))
+        if p and p.get("state") in ("active", "pending"):
+            return p
+    except Exception:
+        pass
+    return None
+
+
+def v24_punish_stats(uid) -> dict:
+    u = get_user(int(uid))
+    s = u.setdefault("v24_stats", {})
+    s.setdefault("punishments", 0)
+    s.setdefault("pun_done", 0)
+    s.setdefault("duels", 0)
+    s.setdefault("duel_wins", 0)
+    s.setdefault("party", 0)
+    s.setdefault("love2", 0)
+    s.setdefault("shop_buys", 0)
+    return s
+
+
+async def v24_is_group_admin(update_or_chat, uid, bot=None) -> bool:
+    """ادمینِ گروه یا سرگروهِ بازی یا ادمینِ ربات؟"""
+    try:
+        if is_admin(int(uid)):
+            return True
+        chat = None
+        if hasattr(update_or_chat, "id"):
+            chat = update_or_chat
+        else:
+            chat = getattr(update_or_chat, "effective_chat", None)
+        if chat is None:
+            return False
+        game = active_game(int(chat.id))
+        if game and leader_of(game, int(uid)):
+            return True
+        member = await chat.get_member(int(uid))
+        return str(getattr(member, "status", "")) in ("administrator", "creator")
+    except Exception:
+        return False
+
+
+async def v24_cmd_punish(update, context):
+    """⚖️ /apexpunish — ریپلای روی پیام فرد + صدور حکم"""
+    try:
+        msg = getattr(update, "message", None)
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        if not (msg and chat and user):
+            return
+        if str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            await msg.reply_text("⚖️ مجازات فقط داخل گروه معنا دارد — روی پیام فرد ریپلای کن و /apexpunish بزن.")
+            return
+        replied = getattr(msg, "reply_to_message", None)
+        target = getattr(getattr(replied, "from_user", None), "id", None) if replied else None
+        if target is None:
+            await msg.reply_text(
+                "⚖️ <b>نحوه‌ی استفاده:</b>\n"
+                "روی پیامِ کسی که باید مجازات شود <b>ریپلای</b> کن و <code>/apexpunish</code> بزن "
+                "(یا فقط بنویس «مجازات»).\n"
+                "حکم تصادفی صادر می‌شود و تا انجامش، آن شخص نمی‌تواند بازی کند.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        if int(target) == int(user.id):
+            await msg.reply_text("😅 خودت را نمی‌توانی مجازات کنی!")
+            return
+        try:
+            if getattr(replied.from_user, "is_bot", False):
+                await msg.reply_text("🤖 ربات‌ها جریمه نمی‌شوند!")
+                return
+        except Exception:
+            pass
+        if not await v24_is_group_admin(update, int(user.id)):
+            await msg.reply_text("🔒 فقط سرگروه بازی و ادمین‌های گروه می‌توانند مجازات صادر کنند.")
+            return
+        await v24_issue_punishment(update, int(user.id), int(target))
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ خطای مجازات: {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+async def v24_issue_punishment(update, by_uid: int, target_uid: int):
+    msg = update.effective_message
+    chat = update.effective_chat
+    gid = int(chat.id)
+    store = v24_punish_store(gid)
+    if v24_punished(gid, target_uid):
+        await msg.reply_text(
+            f"⚖️ {v19_mention(target_uid)} از قبل یک حکم فعال دارد!\n"
+            "اول باید همان را تمام کند یا با /apexforgive بخشیده شود.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    bank = [x for x in V7_BANKS_FINAL.get("penalty", []) if isinstance(x, str) and x.strip()]
+    if not bank:
+        await msg.reply_text("⚠️ بانک حکم‌ها خالی است؛ از مدیریت سوالات حکم اضافه کن.")
+        return
+    text = random.choice(bank)
+    store[str(target_uid)] = {
+        "text": text,
+        "by": int(by_uid),
+        "at": time.time(),
+        "state": "active",
+    }
+    v24_punish_stats(target_uid)["punishments"] += 1
+    v24_store()["stats"]["punishments"] += 1
+    save_data(force=True)
+    audit("v24_punish", int(by_uid), gid, str(target_uid))
+    await msg.reply_text(
+        "⚖️ <b>حکم صادر شد!</b>\n"
+        f"{V24_DIV}\n"
+        f"{user_gender_icon(target_uid)} {v19_mention(target_uid)} محکم شد به:\n"
+        f"🎯 <b>{escape(text)}</b>\n"
+        f"{V24_DIV}\n"
+        "🔒 تا وقتی این حکم را انجام نداده، <b>نمی‌تواند وارد بازی شود یا نوبت بگیرد</b>.\n"
+        "💚 سرگروه هر لحظه می‌تواند با <code>/apexforgive</code> (ریپلای) او را ببخشد.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=v5_markup([
+            [v5_button("✅ انجامش دادم", f"V24|PU|DONE|{chat.id}|{target_uid}")],
+            [v5_button("💚 بخشش", f"V24|PU|FORGIVE|{chat.id}|{target_uid}"),
+             v5_button("📋 همه‌ی حکم‌ها", "V24|GRP|PUN")],
+        ]),
+    )
+
+
+async def v24_cmd_forgive(update, context):
+    """💚 /apexforgive — ریپلای → بخشش حکم"""
+    try:
+        msg = getattr(update, "message", None)
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        if not (msg and chat and user):
+            return
+        replied = getattr(msg, "reply_to_message", None)
+        target = getattr(getattr(replied, "from_user", None), "id", None) if replied else None
+        if target is None:
+            await msg.reply_text("💚 روی پیام فرد ریپلای کن و /apexforgive بزن تا حکمش بخشیده شود.")
+            return
+        if not await v24_is_group_admin(update, int(user.id)):
+            await msg.reply_text("🔒 فقط سرگروه و ادمین‌ها می‌توانند حکم را ببخشند.")
+            return
+        store = v24_punish_store(int(chat.id))
+        p = store.pop(str(int(target)), None)
+        if p is None:
+            await msg.reply_text(f"💚 {v19_mention(int(target))} حکم فعالی ندارد.", parse_mode=ParseMode.HTML)
+            return
+        save_data(force=True)
+        audit("v24_forgive", int(user.id), int(chat.id), str(target))
+        await msg.reply_text(
+            f"💚 <b>بخیده شد!</b>\n"
+            f"{v19_mention(int(target))} آزاد است — می‌تواند بازی کند.\n"
+            f"⚖️ حکم بخشیده‌شده: <i>{escape(str(p.get('text', ''))[:120])}</i>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+async def v24_cmd_punishments(update, context):
+    """📋 /apexpunishments — فهرست حکم‌های فعال گروه"""
+    try:
+        msg = getattr(update, "message", None)
+        chat = getattr(update, "effective_chat", None)
+        if not (msg and chat):
+            return
+        store = v24_punish_store(int(chat.id))
+        if not store:
+            await msg.reply_text("📋 هیچ حکم فعالی در این گروه نیست — همه آزاد و خوشحال هستند! 🎉")
+            return
+        lines = []
+        rows = []
+        for uid, p in list(store.items()):
+            mins = int((time.time() - float(p.get("at", 0) or 0)) / 60)
+            state_txt = {"active": "🔴 در انتظار انجام", "pending": "🟡 در انتظار تأیید"}.get(p.get("state"), "❔")
+            lines.append(
+                f"{user_gender_icon(int(uid))} {v19_mention(int(uid))}\n"
+                f"   ⚖️ {escape(str(p.get('text', ''))[:90])}\n"
+                f"   {state_txt} · ⏱ {fmt_num(max(0, mins))} دقیقه پیش"
+            )
+            rows.append([
+                v5_button(f"✅ تأیید {str(p.get('text', ''))[:14]}", f"V24|PU|CONFIRM|{chat.id}|{uid}"),
+                v5_button("💚 بخشش", f"V24|PU|FORGIVE|{chat.id}|{uid}"),
+            ])
+        await msg.reply_text(
+            "📋 <b>حکم‌های فعال این گروه</b>\n"
+            f"{V24_DIV}\n" + "\n\n".join(lines) +
+            f"\n{V24_DIV}\n💚 بخشش فوری: /apexforgive (ریپلای)",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup(rows),
+        )
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+async def v24_punish_callback(update, context, query, parts):
+    """دکمه‌های حکم: انجام / تأیید / بخشش / رد تأیید"""
+    try:
+        action = parts[2] if len(parts) > 2 else ""
+        gid = int(parts[3]) if len(parts) > 3 else 0
+        target = int(parts[4]) if len(parts) > 4 else 0
+        uid = int(query.from_user.id)
+        if not (gid and target):
+            await safe_answer_query(query, "⚠️ داده نامعتبر.", True)
+            return
+        store = v24_punish_store(gid)
+        p = store.get(str(target))
+        if p is None and action != "FORGIVE":
+            await safe_answer_query(query, "✅ این حکم دیگر فعال نیست.", True)
+            return
+        if action == "DONE":
+            if uid != target:
+                await safe_answer_query(query, "🔒 فقط خودِ محکوم می‌تواند اعلام انجام کند.", True)
+                return
+            if p.get("state") == "pending":
+                await safe_answer_query(query, "🟡 اعلام کرده‌ای؛ منتظر تأیید ادمین باش.", True)
+                return
+            p["state"] = "pending"
+            p["claimed"] = time.time()
+            save_data(force=True)
+            await safe_answer_query(query, "🟡 ثبت شد! ادمین‌های گروه باید تأیید کنند.")
+            try:
+                await query.edit_message_text(
+                    "⚖️ <b>حکم صادر شد!</b>\n"
+                    f"{V24_DIV}\n"
+                    f"{user_gender_icon(target)} {v19_mention(target)} محکم است به:\n"
+                    f"🎯 <b>{escape(str(p.get('text', '')))[:200]}</b>\n"
+                    f"{V24_DIV}\n"
+                    "🟡 انجامش اعلام کرده — منتظر تأیید ادمین…",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=v5_markup([
+                        [v5_button("✅ تأیید انجام", f"V24|PU|CONFIRM|{gid}|{target}"),
+                         v5_button("❌ هنوز نه", f"V24|PU|REJECT|{gid}|{target}")],
+                        [v5_button("💚 بخشش", f"V24|PU|FORGIVE|{gid}|{target}")],
+                    ]),
+                )
+            except Exception:
+                pass
+            return
+        if action in ("CONFIRM", "REJECT", "FORGIVE"):
+            # فقط ادمین گروه/سرگروه/ادمین ربات
+            chat = None
+            try:
+                chat = await context.bot.get_chat(gid)
+            except Exception:
+                chat = None
+            allowed = is_admin(uid)
+            if not allowed:
+                game = None
+                try:
+                    game = active_game(gid)
+                except Exception:
+                    game = None
+                if game and leader_of(game, uid):
+                    allowed = True
+                elif chat is not None:
+                    try:
+                        member = await chat.get_member(uid)
+                        allowed = str(getattr(member, "status", "")) in ("administrator", "creator")
+                    except Exception:
+                        allowed = False
+            if not allowed:
+                await safe_answer_query(query, "🔒 فقط ادمین‌ها و سرگروه.", True)
+                return
+            if action == "FORGIVE":
+                store.pop(str(target), None)
+                save_data(force=True)
+                await safe_answer_query(query, "💚 بخشیده شد!")
+                await v24_announce(gid, context,
+                                   f"💚 {v19_mention(target)} توسط ادمین بخشیده شد — آزاد است!")
+                return
+            if action == "CONFIRM":
+                store.pop(str(target), None)
+                v24_punish_stats(target)["pun_done"] += 1
+                save_data(force=True)
+                add_xp(target, 10, name_of(target, {"names": {}}))
+                add_coins(target, 6, name_of(target, {"names": {}}))
+                v24_award_achievement(target, "v24_pun_survivor")
+                await safe_answer_query(query, "✅ حکم تأیید شد!")
+                await v24_announce(gid, context,
+                                   f"🎉 {v19_mention(target)} حکمش را کامل انجام داد و آزاد شد!\n"
+                                   f"🏆 +۱۰ XP و +۶ سکه پاداش.")
+                return
+            if action == "REJECT":
+                p["state"] = "active"
+                p["declines"] = int(p.get("declines", 0)) + 1
+                save_data(force=True)
+                await safe_answer_query(query, "❌ اعلام انجام رد شد.")
+                await v24_announce(gid, context,
+                                   f"⚖️ ادمین اعلامِ انجامِ {v19_mention(target)} را رد کرد — حکم همچنان فعال است.")
+                return
+        await safe_answer_query(query, "⚠️ عملیات ناشناخته.", True)
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+async def v24_announce(gid: int, context, text: str):
+    try:
+        await v19_send_group(int(gid), text)
+    except Exception:
+        pass
+
+
+async def v24_render_punish_list(query):
+    store = v24_punish_store(int(query.message.chat_id)) if query.message else {}
+    if not store:
+        await safe_edit_query(
+            query,
+            "📋 <b>حکم‌های فعال</b>\n"
+            f"{V24_DIV}\n"
+            "هیچ حکم فعالی نیست — همه آزادند! 🎉\n"
+            f"{V24_DIV}\n"
+            "⚖️ صدور حکم: روی پیام فرد ریپلای کن و <code>/apexpunish</code> بزن"
+            " (یا فقط بنویس «مجازات»).",
+            v5_markup([[v5_button("🔙 منوی گروه", "V24|GRP|BACK")]]),
+        )
+        return
+    lines = []
+    rows = []
+    for uid, p in list(store.items()):
+        state_txt = {"active": "🔴 در انتظار انجام", "pending": "🟡 در انتظار تأیید"} .get(p.get("state"), "❔")
+        lines.append(f"{user_gender_icon(int(uid))} {v19_mention(int(uid))} — {state_txt}\n   ⚖️ {escape(str(p.get('text', ''))[:80])}")
+        rows.append([v5_button("✅ تأیید", f"V24|PU|CONFIRM|{query.message.chat_id}|{uid}"),
+                     v5_button("💚 بخشش", f"V24|PU|FORGIVE|{query.message.chat_id}|{uid}")])
+    rows.append([v5_button("🔙 منوی گروه", "V24|GRP|BACK")])
+    await safe_edit_query(
+        query,
+        "📋 <b>حکم‌های فعال این گروه</b>\n"
+        f"{V24_DIV}\n" + "\n".join(lines),
+        v5_markup(rows),
+    )
+
+
+# ----------------------------------------------------------------
+# [V24-GATE] قفلِ بازی برای محکوم‌ها — روی سه نقطه‌ی ورود بازی
+# ----------------------------------------------------------------
+_V24_OLD_V5_LOBBY_ACTION = None  # بعداً در سیم‌کشی پر می‌شود
+
+
+async def v24_punish_block_check(query, gid) -> bool:
+    """اگر کاربر محکوم است، True برگردان (بازی ممنوع)."""
+    try:
+        uid = int(query.from_user.id)
+        p = v24_punished(gid, uid)
+        if p:
+            await safe_answer_query(
+                query,
+                f"⚖️ اول حکمت را انجام بده: «{str(p.get('text', ''))[:60]}…» — بعد از تأیید ادمین برمی‌گردی.",
+                True,
+            )
+            return True
+    except Exception:
+        pass
+    return False
+
+
+# ----------------------------------------------------------------
+# [V24-GROUP-SETTINGS] پنل تنظیمات گروه (ادمین‌های گروه)
+# ----------------------------------------------------------------
+async def v24_cmd_settings(update, context):
+    try:
+        msg = getattr(update, "message", None)
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        if not (msg and chat and user):
+            return
+        if str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            await msg.reply_text("⚙️ تنظیمات گروه را داخل خودِ گروه با /apexsettings باز کن.")
+            return
+        if not await v24_is_group_admin(update, int(user.id)):
+            await msg.reply_text("🔒 فقط ادمین‌های گروه می‌توانند تنظیمات را باز کنند.")
+            return
+        text, rows = v24_group_settings_view(int(chat.id))
+        await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=v5_markup(rows))
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+def v24_group_settings_view(gid: int):
+    cfg = v24_gcfg(gid)
+    topics_off = v18_topics_off()
+    mode_keys = [k for k, _lbl in V16_MODE_ORDER if k not in ("truth", "dare")]
+    off_count = sum(1 for k in mode_keys if k in topics_off)
+    ads_on = v17_ads_enabled()
+    text = (
+        "⚙️ <b>تنظیمات گروه — ApexRival</b>\n"
+        f"{V24_DIV}\n"
+        f"👋 خوشامدِ اعضای جدید: {'🟢 روشن' if cfg.get('welcome') else '🔴 خاموش'}\n"
+        f"🚀 اعلان سطح‌بالا: {'🟢 روشن' if cfg.get('levelup') else '🔴 خاموش'}\n"
+        f"📣 بنر تبلیغات: {'🟢 روشن' if cfg.get('ads') else '🔴 خاموش'}\n"
+        f"{V24_DIV}\n"
+        f"📚 موضوعات خاموشِ سراسری: <b>{fmt_num(off_count)}</b> از {fmt_num(len(mode_keys))}\n"
+        f"📣 موتور تبلیغات سراسری: {'🟢 روشن' if ads_on else '🔴 خاموش'} (پنل مدیریت)\n"
+        f"{V24_DIV}\n"
+        "💡 تنظیمات ضد اذیت (ضد اسپم، سکوت شبانه، …) در «🌿 تنظیمات ضد اذیت»"
+        " — مخصوص ادمین‌ها همین‌جا کار می‌کند."
+    )
+    rows = [
+        [v5_button("👋 خوشامد: روشن/خاموش", f"V24|GS|WELCOME|{gid}"),
+         v5_button("🚀 اعلان سطح: روشن/خاموش", f"V24|GS|LEVELUP|{gid}")],
+        [v5_button("📣 بنر تبلیغ: روشن/خاموش", f"V24|GS|ADS|{gid}")],
+        [v5_button("📚 مدیریت موضوعات", f"V24|GS|TOPICS|{gid}|0")],
+        [v5_button("🌿 تنظیمات ضد اذیت", "V19|SET|HOME")],
+        [v5_button("🔙 منوی گروه", "V24|GRP|BACK")],
+    ]
+    return text, rows
+
+
+async def v24_render_group_settings(query):
+    gid = int(query.message.chat_id) if query.message else 0
+    text, rows = v24_group_settings_view(gid)
+    await safe_edit_query(query, text, v5_markup(rows))
+
+
+async def v24_gs_callback(update, context, query, parts):
+    """دکمه‌های تنظیمات گروه."""
+    try:
+        uid = int(query.from_user.id)
+        action = parts[2] if len(parts) > 2 else ""
+        gid = int(parts[3]) if len(parts) > 3 else (int(query.message.chat_id) if query.message else 0)
+        if not gid:
+            await safe_answer_query(query, "⚠️ گروه نامعتبر.", True)
+            return
+        # فقط ادمین‌ها
+        allowed = is_admin(uid)
+        if not allowed:
+            game = None
+            try:
+                game = active_game(gid)
+            except Exception:
+                pass
+            if game and leader_of(game, uid):
+                allowed = True
+            else:
+                try:
+                    chat = await context.bot.get_chat(gid)
+                    member = await chat.get_member(uid)
+                    allowed = str(getattr(member, "status", "")) in ("administrator", "creator")
+                except Exception:
+                    allowed = False
+        if not allowed:
+            await safe_answer_query(query, "🔒 فقط ادمین‌های گروه.", True)
+            return
+        if action in ("WELCOME", "LEVELUP", "ADS"):
+            cfg = v24_gcfg(gid)
+            key = {"WELCOME": "welcome", "LEVELUP": "levelup", "ADS": "ads"}[action]
+            cfg[key] = not bool(cfg.get(key, True))
+            save_data(force=True)
+            await safe_answer_query(query, "🟢 روشن شد." if cfg[key] else "🔴 خاموش شد.")
+            await v24_render_group_settings(query)
+            return
+        if action == "TOPICS":
+            await safe_answer_query(query)
+            page = int(parts[4]) if len(parts) > 4 else 0
+            await v24_render_group_topics(query, page)
+            return
+        if action == "TOGGLE":
+            key = str(parts[4]) if len(parts) > 4 else ""
+            if key in ("truth", "dare"):
+                await safe_answer_query(query, "⚠️ اعتراف و جرئت پایه‌ی بازی‌اند و خاموش نمی‌شوند.", True)
+                return
+            turned_on = v18_toggle_topic(key)
+            await safe_answer_query(query, "🟢 موضوع فعال شد." if turned_on else "🚫 موضوع خاموش شد.")
+            page = int(parts[5]) if len(parts) > 5 else 0
+            await v24_render_group_topics(query, page)
+            return
+        await safe_answer_query(query, "⚠️ عملیات ناشناخته.", True)
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+async def v24_render_group_topics(query, page: int = 0):
+    topics = [("truth", "🕵️ اعتراف"), ("dare", "🔥 جرئت")] + \
+             [(k, lbl) for k, lbl in V16_MODE_ORDER if k not in ("truth", "dare")]
+    off = v18_topics_off()
+    per_page = 8
+    total_pages = max(1, (len(topics) + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+    chunk = topics[page * per_page:(page + 1) * per_page]
+    gid = int(query.message.chat_id) if query.message else 0
+    rows = []
+    pair = []
+    for key, label in chunk:
+        is_off = key in off
+        mark = "🚫" if is_off else "🟢"
+        pair.append(v5_button(f"{mark} {label}", f"V24|GS|TOGGLE|{gid}|{key}|{page}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    nav = []
+    if page > 0:
+        nav.append(v5_button("◀️ قبلی", f"V24|GS|TOPICS|{gid}|{page - 1}"))
+    nav.append(v5_button(f"📄 {fmt_num(page + 1)}/{fmt_num(total_pages)}", "V24|NONE"))
+    if page + 1 < total_pages:
+        nav.append(v5_button("بعدی ▶️", f"V24|GS|TOPICS|{gid}|{page + 1}"))
+    rows.append(nav)
+    rows.append([v5_button("🔙 تنظیمات گروه", f"V24|GS|BACK|{gid}")])
+    await safe_edit_query(
+        query,
+        "📚 <b>مدیریت موضوعات بازی</b>\n"
+        f"{V24_DIV}\n"
+        "روشن/خاموش‌کردن هر موضوع، سراسری است و از پنل «مدیریت سوالات»"
+        " هم قابل انجام است. موضوع خاموش از گریدِ انتخابِ نوبت حذف می‌شود.\n"
+        "⚠️ «اعتراف» و «جرئت» پایه‌ی بازی‌اند و خاموش نمی‌شوند.",
+        v5_markup(rows),
+    )
+
+
+# ----------------------------------------------------------------
+# [V24-DUEL] بازی دو نفره در چت خصوصی + دعوت با تگ در گروه
+# ----------------------------------------------------------------
+V24_DUEL_MAX_ROUNDS = 10
+
+
+def v24_duels() -> dict:
+    return v24_store()["duels"]
+
+
+def v24_duel_name(uid) -> str:
+    try:
+        return str(get_user(int(uid)).get("name") or "بازیکن")
+    except Exception:
+        return "بازیکن"
+
+
+def v24_duel_mode_buttons(code: str) -> list:
+    rows = []
+    pair = []
+    off = v18_topics_off()
+    for key, label in V16_MODE_ORDER:
+        if key in off or key == "adult":
+            continue
+        pair.append(v5_button(label, f"V24|DU|TOPIC|{code}|{key}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([v5_button("🎲 موضوع تصادفی", f"V24|DU|TOPIC|{code}|random")])
+    return rows
+
+
+def v24_duel_card(code: str, viewer: int) -> tuple:
+    d = v24_duels().get(code)
+    if not d:
+        return "⚠️ این بازی دو نفره دیگر فعال نیست.", v5_markup([[v5_button("🏠 منوی اصلی", "V5|HOME")]])
+    a, b = int(d.get("a", 0)), int(d.get("b", 0) or 0)
+    sa, sb = int(d.get("scores", {}).get("a", 0)), int(d.get("scores", {}).get("b", 0))
+    rnd = int(d.get("round", 0))
+    names = d.setdefault("names", {})
+    names.setdefault(str(a), v24_duel_name(a))
+    if b:
+        names.setdefault(str(b), v24_duel_name(b))
+    an, bn = names.get(str(a), "بازیکن ۱"), names.get(str(b), "بازیکن ۲") if b else "…"
+    if d.get("phase") == "invite":
+        if viewer == a:
+            text = (
+                "👥 <b>بازی دو نفره — دعوت</b>\n"
+                f"{V24_DIV}\n"
+                f"🔗 لینک دعوت مخصوص تو ساخته شد:\n"
+                f"<code>https://t.me/BOTUSERNAME?start=duel-{code}</code>\n"
+                "(نام کاربری ربات به‌صورت خودکار جایگزین می‌شود)\n"
+                f"{V24_DIV}\n"
+                "📤 لینک را برای دوستت بفرست؛ با باز کردنش، بازی شروع می‌شود!"
+            )
+            rows = [[v5_button("❌ لغو دعوت", f"V24|DU|CANCEL|{code}")]]
+        else:
+            text = (
+                "👥 <b>بازی دو نفره</b>\n"
+                f"{V24_DIV}\n"
+                f"⏳ در انتظار پیوستن دوستِ {escape(an)}…"
+            )
+            rows = []
+        return text, v5_markup(rows)
+    if d.get("phase") == "done":
+        winner = "a" if sa >= sb else "b"
+        wname = an if winner == "a" else bn
+        text = (
+            "🏁 <b>پایان بازی دو نفره</b>\n"
+            f"{V24_DIV}\n"
+            f"🥇 برنده: <b>{escape(wname)}</b>\n"
+            f"📊 {escape(an)}: <b>{sa}</b> — {escape(bn)}: <b>{sb}</b>\n"
+            f"{V24_DIV}\n"
+            "🔁 دوباره بازی کنید: /apexduel"
+        )
+        return text, v5_markup([[v5_button("🔁 بازی جدید", "V24|DU|NEW")]])
+    # phase == playing
+    answerer = a if d.get("turn") == "a" else b
+    q = d.get("current") or {}
+    mode_label = V7_MODE_LABELS.get(str(q.get("mode", "")), str(q.get("mode", "—")))
+    turn_line = (
+        f"🎤 نوبتِ پاسخ‌گویی: <b>{escape(v24_duel_name(answerer))}</b>"
+        if viewer != answerer else
+        "🎤 <b>نوبت توست!</b>"
+    )
+    rows = []
+    if viewer == answerer and q:
+        rows.append([
+            v5_button("✅ انجامش دادم", f"V24|DU|DONE|{code}"),
+            v5_button("⏭ رد کردم", f"V24|DU|SKIP|{code}"),
+        ])
+    rows.append([v5_button("🏁 پایان بازی", f"V24|DU|END|{code}")])
+    text = (
+        "👥 <b>بازی دو نفره — جرئت و حقیقت</b>\n"
+        f"{V24_DIV}\n"
+        f"🎭 موضوع: <b>{escape(str(mode_label))}</b>\n"
+        f"🔢 دور: <b>{fmt_num(rnd + 1)}</b> از {fmt_num(V24_DUEL_MAX_ROUNDS)}\n"
+        f"{turn_line}\n"
+        f"{V24_DIV}\n"
+        f"📊 {escape(an)}: <b>{sa}</b> — {escape(bn)}: <b>{sb}</b>\n"
+        f"{V24_DIV}\n"
+        f"❓ سؤال فعلی:\n🎯 <b>{escape(str(q.get('q', '—'))[:400])}</b>"
+    )
+    return text, v5_markup(rows)
+
+
+def v24_duel_question(d: dict) -> dict:
+    a, b = int(d.get("a", 0)), int(d.get("b", 0) or 0)
+    answerer = a if d.get("turn") == "a" else b
+    mode = str(d.get("topic", "truth"))
+    if mode == "random":
+        off = v18_topics_off()
+        pool = [k for k, _l in V16_MODE_ORDER if k not in off and k != "adult"]
+        mode = random.choice(pool) if pool else "truth"
+        d["topic"] = mode
+    fake_game = {
+        "players": [a, b],
+        "turn_number": int(d.get("round", 0)) + 1,
+        "round": int(d.get("round", 0)),
+        "round_scores": {},
+    }
+    q = v7_pick_question(fake_game, mode, answerer)
+    return {"mode": mode, "q": q, "for": answerer}
+
+
+async def v24_duel_send_both(context, code: str, note: str = ""):
+    d = v24_duels().get(code)
+    if not d:
+        return
+    a, b = int(d.get("a", 0)), int(d.get("b", 0) or 0)
+    for uid in (a, b):
+        if not uid:
+            continue
+        text, mk = v24_duel_card(code, int(uid))
+        full = (note + "\n" + text) if note else text
+        try:
+            await context.bot.send_message(
+                chat_id=int(uid), text=full,
+                parse_mode=ParseMode.HTML, reply_markup=mk,
+            )
+        except Exception:
+            pass
+
+
+async def v24_cmd_duel(update, context):
+    """👥 /apexduel — بازی دو نفره (در PV لینک می‌سازد؛ در گروه با ریپلای/تگ دعوت می‌کند)"""
+    try:
+        msg = getattr(update, "message", None)
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        if not (msg and chat and user):
+            return
+        uid = int(user.id)
+        if str(getattr(chat, "type", "")) in ("group", "supergroup"):
+            # دعوت در گروه: ریپلای یا تگ
+            target = None
+            replied = getattr(msg, "reply_to_message", None)
+            if replied and getattr(replied, "from_user", None) and not replied.from_user.is_bot:
+                target = int(replied.from_user.id)
+            else:
+                for ent in (msg.entities or []):
+                    if ent.type == "text_mention" and ent.user and not ent.user.is_bot:
+                        target = int(ent.user.id)
+                        break
+            if target is None:
+                await msg.reply_text(
+                    "👥 <b>دعوت به بازی دو نفره</b>\n"
+                    f"{V24_DIV}\n"
+                    "روی پیام دوستت <b>ریپلای</b> کن و <code>/apexduel</code> بزن\n"
+                    "یا نامش را تگ کن: <code>/apexduel @نام‌کاربری</code>\n"
+                    "آنوقت یک کارت دعوت با دکمه‌ی پیوستن برایش می‌فرستم!",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            if target == uid:
+                await msg.reply_text("😅 نمی‌توانی با خودت دو نفره بازی کنی!")
+                return
+            code = v24_new_code()
+            v24_duels()[code] = {
+                "a": uid, "b": None, "topic": None, "turn": "a", "round": 0,
+                "scores": {"a": 0, "b": 0}, "phase": "invite", "created": time.time(),
+                "names": {str(uid): v24_duel_name(uid), str(target): v24_duel_name(target)},
+            }
+            v24_store()["stats"]["duels"] += 1
+            save_data(force=True)
+            username = None
+            try:
+                username = await ar11_bot_username(getattr(context, "bot", None))
+            except Exception:
+                pass
+            if not username:
+                try:
+                    me = await context.bot.get_me()
+                    username = getattr(me, "username", None)
+                except Exception:
+                    username = None
+            link = f"https://t.me/{username}?start=duel-{code}" if username else "چت خصوصی ربات → /start"
+            await msg.reply_text(
+                "👥 <b>دعوت به بازی دو نفره!</b>\n"
+                f"{V24_DIV}\n"
+                f"{user_gender_icon(target)} {v19_mention(target)}، {v19_mention(uid)} تو را به"
+                " یک بازی دو نفره‌ی «جرئت و حقیقت» دعوت کرده! 🎮\n"
+                "💋 ۱۰ دور، سؤال‌های جذاب و رقابت‌آمیز — فقط شما دو نفر.\n"
+                f"{V24_DIV}\n"
+                "برای پیوستن، دکمه‌ی زیر را بزن 👇",
+                parse_mode=ParseMode.HTML,
+                reply_markup=v5_markup([
+                    [InlineKeyboardButton("🎮 پیوستن به بازی", url=link)],
+                    [v5_button("❌ رد کردن دعوت", f"V24|DU|DECLINE|{code}")],
+                ]),
+            )
+            return
+        # چت خصوصی
+        code = v24_new_code()
+        v24_duels()[code] = {
+            "a": uid, "b": None, "topic": None, "turn": "a", "round": 0,
+            "scores": {"a": 0, "b": 0}, "phase": "invite", "created": time.time(),
+            "names": {str(uid): v24_duel_name(uid)},
+        }
+        v24_store()["stats"]["duels"] += 1
+        save_data(force=True)
+        text, mk = v24_duel_card(code, uid)
+        # لینک واقعی با نام کاربری ربات
+        username = None
+        try:
+            username = await ar11_bot_username(getattr(context, "bot", None))
+        except Exception:
+            pass
+        if not username:
+            try:
+                me = await context.bot.get_me()
+                username = getattr(me, "username", None)
+            except Exception:
+                username = None
+        if username:
+            link = f"https://t.me/{username}?start=duel-{code}"
+            text = text.replace("https://t.me/BOTUSERNAME?start=duel-" + code, link)
+            share = f"https://t.me/share/url?url={link}"
+            mk = v5_markup([
+                [InlineKeyboardButton("📤 ارسال لینک برای دوستم", url=share)],
+                [InlineKeyboardButton("📋 کپی لینک", url=link)],
+                [v5_button("❌ لغو دعوت", f"V24|DU|CANCEL|{code}")],
+            ])
+        await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=mk)
+        audit("v24_duel_create", uid, None, code)
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+async def v24_duel_start_payload(update, context, code: str) -> bool:
+    """ورود از deep-link: /start duel-<code>"""
+    try:
+        d = v24_duels().get(code)
+        user = getattr(update, "effective_user", None)
+        msg = getattr(update, "message", None)
+        if not (d and user and msg):
+            return False
+        uid = int(user.id)
+        if d.get("phase") != "invite":
+            return False
+        if uid == int(d.get("a", 0)):
+            await msg.reply_text("⏳ این دعوتِ خود توست! منتظر دوستت بمان.")
+            return True
+        if d.get("b"):
+            await msg.reply_text("😕 این دعوت قبلاً پذیرفته شده است.")
+            return True
+        if time.time() - float(d.get("created", 0) or 0) > 24 * 3600:
+            v24_duels().pop(code, None)
+            await msg.reply_text("⌛ این دعوت منقضی شده — از دوستت بخواه دوباره دعوت کند: /apexduel")
+            return True
+        d["b"] = uid
+        d["names"][str(uid)] = v24_duel_name(uid)
+        d["phase"] = "topic"
+        save_data(force=True)
+        v24_punish_stats(uid)["duels"] += 1
+        v24_punish_stats(int(d["a"]))["duels"] += 1
+        await msg.reply_text(
+            "🎉 <b>به بازی دو نفره پیوست!</b>\n"
+            f"{V24_DIV}\n"
+            f"🎮 تو و {escape(str(d['names'].get(str(d['a']), 'دوستت')))} در یک بازی"
+            " «جرئت و حقیقت» خصوصی هستید.\n"
+            f"{V24_DIV}\n"
+            "🎭 حالا موضوع بازی را انتخاب کن 👇",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup(v24_duel_mode_buttons(code)),
+        )
+        # به طرف اول هم خبر بده
+        try:
+            await context.bot.send_message(
+                chat_id=int(d["a"]),
+                text=f"🎉 {v19_mention(uid)} به بازی دو نفره پیوست!\n"
+                     f"⏳ در حال انتخاب موضوع…",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+async def v24_duel_callback(update, context, query, parts):
+    try:
+        action = parts[2] if len(parts) > 2 else ""
+        code = parts[3] if len(parts) > 3 else ""
+        uid = int(query.from_user.id)
+        if action == "NEW":
+            await safe_answer_query(query)
+            await v24_cmd_duel(update, context)
+            return
+        d = v24_duels().get(code)
+        if not d:
+            await safe_answer_query(query, "⚠️ این بازی دیگر فعال نیست.", True)
+            return
+        a, b = int(d.get("a", 0)), int(d.get("b", 0) or 0)
+        if uid not in (a, b) and action not in ("DECLINE",):
+            await safe_answer_query(query, "🔒 این بازی خصوصی بین دو نفر است.", True)
+            return
+        if action == "CANCEL":
+            if uid != a:
+                await safe_answer_query(query, "🔒 فقط سازنده می‌تواند لغو کند.", True)
+                return
+            v24_duels().pop(code, None)
+            save_data(force=True)
+            await safe_answer_query(query, "❌ دعوت لغو شد.")
+            try:
+                await query.edit_message_text("❌ <b>دعوت لغو شد.</b>", parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            return
+        if action == "DECLINE":
+            if d.get("phase") != "invite":
+                await safe_answer_query(query, "⚠️ دیگر قابل رد کردن نیست.", True)
+                return
+            v24_duels().pop(code, None)
+            save_data(force=True)
+            await safe_answer_query(query, "🙏 دعوت رد شد.")
+            try:
+                await query.edit_message_text("🙏 <b>دعوت رد شد.</b>", parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            try:
+                await context.bot.send_message(chat_id=a, text="😕 دعوت بازی دو نفره‌ات رد شد.")
+            except Exception:
+                pass
+            return
+        if action == "TOPIC":
+            if d.get("phase") != "topic":
+                await safe_answer_query(query, "⚠️ موضوع قبلاً انتخاب شده.", True)
+                return
+            if uid != a:
+                await safe_answer_query(query, "⏳ صبر کن سازنده موضوع را انتخاب کند…", True)
+                return
+            mode = parts[4] if len(parts) > 4 else "truth"
+            d["topic"] = "random" if mode == "random" else mode
+            d["phase"] = "playing"
+            d["turn"] = "a"
+            d["current"] = v24_duel_question(d)
+            save_data(force=True)
+            await safe_answer_query(query, "✅ موضوع ثبت شد — بازی شروع!")
+            await v24_duel_send_both(context, code)
+            return
+        if action in ("DONE", "SKIP"):
+            if d.get("phase") != "playing":
+                await safe_answer_query(query, "⚠️ بازی فعال نیست.", True)
+                return
+            answerer = a if d.get("turn") == "a" else b
+            if uid != answerer:
+                await safe_answer_query(query, "🎤 فقط نفرِ پاسخ‌گو می‌تواند جواب بدهد.", True)
+                return
+            did = (action == "DONE")
+            side = d.get("turn")
+            if did:
+                d["scores"][side] = int(d["scores"].get(side, 0)) + 10
+                add_xp(uid, 6, v24_duel_name(uid))
+                add_coins(uid, 4, v24_duel_name(uid))
+            else:
+                add_xp(uid, 1, v24_duel_name(uid))
+            d["round"] = int(d.get("round", 0)) + 1
+            note = ""
+            if did:
+                note = "✅ انجام شد! +۱۰ امتیاز · +۶ XP"
+            else:
+                note = "⏭ رد شد!"
+            if d["round"] >= V24_DUEL_MAX_ROUNDS:
+                d["phase"] = "done"
+                d.pop("current", None)
+                winner = "a" if d["scores"]["a"] >= d["scores"]["b"] else "b"
+                wuid = a if winner == "a" else b
+                add_xp(wuid, 25, v24_duel_name(wuid))
+                add_coins(wuid, 15, v24_duel_name(wuid))
+                v24_punish_stats(wuid)["duel_wins"] += 1
+                v24_award_achievement(wuid, "v24_duel_win")
+                note += "\n🏁 بازی تمام شد!"
+            else:
+                d["turn"] = "b" if d.get("turn") == "a" else "a"
+                d["current"] = v24_duel_question(d)
+            save_data(force=True)
+            await safe_answer_query(query, "ثبت شد ✅")
+            await v24_duel_send_both(context, code, note)
+            return
+        if action == "END":
+            d["phase"] = "done"
+            d.pop("current", None)
+            save_data(force=True)
+            await safe_answer_query(query, "🏁 بازی پایان یافت.")
+            await v24_duel_send_both(context, code, "🏁 بازی توسط یکی از بازیکن‌ها پایان یافت.")
+            return
+        await safe_answer_query(query, "⚠️ عملیات ناشناخته.", True)
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V24-PARTY] بازی‌های گروهی جدید
+# ----------------------------------------------------------------
+V24_EITHER_OR = [
+    ("یک سال بدون گوشی", "یک سال بدون دوست‌هایت"),
+    ("همیشه صادق باشی", "همیشه مؤدب باشی"),
+    ("پول بی‌نهایت", "زندگی بی‌نهایت"),
+    ("مسافرت به گذشته", "مسافرت به آینده"),
+    ("هر روز تعطیل با حوصله", "کار کم با حقوق سه برابر"),
+    ("مشهور بودن", "آرام و آزاد بودن"),
+    ("توانایی خواندن افکار همه", "توانایی نامرئی شدن"),
+    ("یک رفیقِ فوق‌العاده وفادار", "صد آشنای خوش‌گذرون"),
+    ("هرگز خسته نشدن", "هرگز گرسنه نشدن"),
+    ("زندگی در شهر بزرگ", "زندگی در طبیعت آرام"),
+    ("همیشه خنده‌دار بودن", "همیشه خوش‌تیپ بودن"),
+    ("فراموش کردن همه‌ی خاطرات بد", "به یاد آوردن همه‌ی خاطرات خوب گم‌شده"),
+    ("توانایی پرواز", "توانایی تله‌پورت"),
+    ("یک حرفه رویایی با حقوق معمولی", "کار معمولی با حقوق رویایی"),
+    ("شب‌بیدار ماندن بدون خستگی", "خواب شیرین همیشه‌ای"),
+    ("صادق بودن حتی وقتی سخته", "سکوت کردن وقتی سخته"),
+    ("باران همیشگی با آهنگ خوب", "آفتاب همیشگی با نسیم"),
+    ("دوستی که همیشه در دسترس است", "دوستی که همیشه حقیقت را می‌گوید"),
+    ("قهرمان یک ورزش باشی", "استاد یک هنر باشی"),
+    ("همه‌جا بلیت VIP داری", "همه‌جا دوست داری"),
+    ("از دست دادن گوشی", "از دست دادن عکس‌های قدیمی"),
+    ("یک هفته سفر رویایی تنهایی", "یک روز جشن فوق‌العاده با همه‌ی دوستان"),
+    ("بدون انترنت زندگی کردن یک ماه", "بدون خنده زندگی کردن یک هفته"),
+    ("همیشه ۱۰ دقیقه زودتر", "همیشه ۱۰ دقیقه دیرتر ولی خوش‌حال"),
+    ("خوش‌صدا خواندن", "خوش‌قلم نوشتن"),
+    ("حافظه‌ی فوق‌العاده", "خلاقیت بی‌نظیر"),
+    ("یک بار سفر دور دنیا", "هر سال یک سفر کوچک جدید"),
+    ("رو در رو بودن با ترس‌هایت", "راه رفتن روی آرزوهایت"),
+    ("جشن تولد هر هفته", "هدیه‌ی بزرگ سالی یک بار"),
+    ("دانستن همه‌ی زبان‌ها", "توانایی ارتباط با همه‌ی حیوانات"),
+    ("یک قهوه‌خانه‌ی همیشگی رایگان", "یک رستوران همیشگی رایگان"),
+    ("تنها با یک آهنگ زندگی کردن", "هر روز موسیقی جدید ولی با تبلیغات"),
+    ("شناختن تاریخ تولد همه", "به یاد آوردن اسم همه"),
+    ("یک دوست خیالی بامزه", "یک ربات دستیار شیطنت‌پیشه"),
+    ("همیشه اول بودن در خبرها", "هیچ‌وقت خبرساز نشدن ولی خوشبخت بودن"),
+    ("سفر به فضا", "غواصی در اعماق اقیانوس"),
+    ("یک استعدادی که همه می‌ستایند", "ده استعداد متوسط"),
+    ("زندگی بدون آینه", "زندگی بدون ساعت"),
+    ("یک فیلمِ همه‌ی عمرتان تماشا کنید با هم", "یک سریال بی‌پایان با گروه"),
+    ("بخشنده بودنِ بی‌حد", "قاطع بودنِ محترمانه"),
+]
+
+V24_NHIE = [
+    "هیچوقت پیام کسی را دیده و عمداً جواب نداده‌ام",
+    "هیچوقت برای خندیدن لبخند زده‌ام (ناراحتی را پنهان کرده‌ام)",
+    "هیچوقت سر کار/مدرس خوابم برده",
+    "هیچوقت غذای کسی را بدون اجازه خورده‌ام",
+    "هیچوقت جلوی آینه برای خودم نمایش گذاشته‌ام",
+    "هیچوقت آهنگ غمگین گوش داده و غرق دلتنگی شده‌ام",
+    "هیچوقت قولی داده‌ام و نخوابانده‌ام",
+    "هیچوقت دروغ کوچک گفته‌ام که دردسر بزرگ بسازد",
+    "هیچوقت دیر جواب داده‌ام تا مهم‌تر به نظر برسم",
+    "هیچوقت سر یه نفر پشت گوشی غیبتش را کرده‌ام",
+    "هیچوقت وانمود کرده‌ام خوابم است تا کسی مزاحمم نشود",
+    "هیچوقت سریال را تنهایی دیده و به بقیه گفته‌ام ندیده‌ام",
+    "هیچوقت از خجالت ادای کسی را درآورده‌ام",
+    "هیچوقت خریدی کرده‌ام و پشیمان شده و برگردانده‌ام",
+    "هیچوقت برای فرار از یک جمع بهانه ساخته‌ام",
+    "هیچوقت حسادت را به شوخی تبدیل کرده‌ام",
+    "هیچوقت نصفه‌شب چک‌کردن گوشی کارِم شده",
+    "هیچوقت رازی را که نگفته‌ام، به کسی گفته‌ام",
+    "هیچوقت عمداً بامزه‌تر از حد عادتم رفتار کرده‌ام",
+    "هیچوقت آرزو کرده‌ام جای کس دیگری باشم",
+    "هیچوقت برای خودم قهرمانِ داستانی ساخته‌ام",
+    "هیچوقت خواب دیده‌ام و برای کسی تعریفش نکرده‌ام چون خجالت‌آور بود",
+    "هیچوقت آشپزی‌ام را تعریف کرده‌ام در حالی که خودم می‌دانستم…",
+    "هیچوقت با حیوان خانگی‌مان مثل آدم حرف زده‌ام",
+    "هیچوقت با خودم در آینه بحث کرده‌ام",
+    "هیچوقت بعد از دعوا، خودم را در ذهنم تبرئه کرده‌ام",
+    "هیچوقت با تماشای فیلم گریه‌ام گرفته",
+    "هیچوقت آدم‌ها را از روی گوشی‌شان قضاوت کرده‌ام",
+    "هیچوقت برای جلب توجه اغراق کرده‌ام",
+    "هیچوقت یک دروغ سفید برای نجات یک مهمانی گفته‌ام",
+    "هیچوقت آرزو کرده‌ام که شنبه‌ها هرگز نیاید",
+    "هیچوقت از ترس قضاوت، سؤالم را نپرسیده‌ام",
+    "هیچوقت روی لیست خوشمزه‌ترین خوراکی‌ها فکر و خیال کرده‌ام سر کار",
+    "هیچوقت برنامه‌ریزی بزرگ ساخته‌ام و همان هفته رها کرده‌ام",
+    "هیچوقت حس کرده‌ام این جمع، خانواده‌ی دوم من است",
+]
+
+V24_LIKELY = [
+    "به نظرتون کی از بچه‌های گروه بیشتر از همه دیر می‌خوابه؟",
+    "به نظرتون کی بیشتر از همه گوشی‌ش رو چک می‌کنه؟",
+    "به نظرتون کی احتمالاً یه راز بزرگ داره؟",
+    "به نظرتون کی بیشتر از همه سر آشپزی دست و پا می‌شکنه؟",
+    "به نظرتون کی اولین نفریه که مهمونی ترتیب می‌ده؟",
+    "به نظرتون کی بیشتر از همه فیلم و سریال می‌بینه؟",
+    "به نظرتون کی احتمالاً مخفیانه شاعره؟",
+    "به نظرتون کی در سفر بیشتر از همه عکس می‌گیره؟",
+    "به نظرتون کی دیرتر از همه بیدار می‌شه؟",
+    "به نظرتون کی اگر یه روز صندلی رییس بشه، سخت‌ترین اخراجی می‌شه؟",
+    "به نظرتون کی بیشتر از همه خنده‌ش توی خاطره‌ها می‌مونه؟",
+    "به نظرتون کی احتمالاً با حیوانات حرف می‌زنه؟",
+    "به نظرتون کی شیرین‌ترین دل‌نوشته‌ها رو داره؟",
+    "به نظرتون کی بیشتر از همه از عنکبوت می‌ترسه؟",
+    "به نظرتون کی یک روز معروف می‌شه؟",
+    "به نظرتون کی بیشتر از همه سر بازی‌ها گرم می‌گیره؟",
+    "به نظرتون کی احتمالاً یه روز کتاب می‌نویسه؟",
+    "به نظرتون کی بی‌خوابی‌های فکری داره؟",
+    "به نظرتون کی عاشق‌پیشه‌ترین آدم این جمعیه؟",
+    "به نظرتون کی دلاورترین نفرِ جمع ماست؟",
+    "به نظرتون کی بیشتر از همه دنبال دلیلِ خوشحالی‌هاست؟",
+    "به نظرتون کی خوش‌شانس‌ترینِ ماست؟",
+    "به نظرتون کی اگر گم بشه، اول از همه آشپزخونه رو چک می‌کنه؟",
+    "به نظرتون کی نیمه‌شب‌ها فکرهای عجیب می‌کنه؟",
+    "به نظرتون کی بیشتر از همه لیست خواسته‌هایش رو از زندگی داره؟",
+]
+
+V24_PARTY_RUNTIME: dict = {}
+
+
+def v24_party_stats_inc(uid):
+    v24_punish_stats(uid)["party"] += 1
+    v24_store()["stats"]["party_games"] += 1
+    if v24_punish_stats(uid)["party"] >= 3:
+        v24_award_achievement(uid, "v24_party_animal")
+    save_data(force=True)
+
+
+def v24_party_ad_footer() -> str:
+    """بنر تبلیغ V24 زیر پیام‌های بازی‌های گروهی (اختیاری)."""
+    try:
+        st = v24_store()
+        if not st.get("ads_cfg", {}).get("on_party", True):
+            return ""
+        ads = [a for a in st.get("ads", []) if a.get("on")]
+        if not ads:
+            return ""
+        ad = random.choice(ads)
+        ad["imp"] = int(ad.get("imp", 0)) + 1
+        save_data()
+        return (f"\n{V24_DIV}\n📣 <b>تبلیغ:</b> {escape(str(ad.get('text', ''))[:180])}"
+                + (f"\n🌐 {escape(str(ad.get('url', ''))[:80])}" if ad.get("url") else ""))
+    except Exception:
+        return ""
+
+
+async def v24_cmd_spin(update, context):
+    """🍾 /apexspin — چرخش بطری"""
+    try:
+        msg = getattr(update, "message", None)
+        chat = getattr(update, "effective_chat", None)
+        if not (msg and chat) or str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            await msg.reply_text("🍾 چرخش بطری فقط داخل گروه جواب می‌دهد!")
+            return
+        game = active_game(int(chat.id))
+        players = []
+        if game and game.get("players"):
+            players = [int(p) for p in game["players"]]
+        if len(players) < 2:
+            await msg.reply_text(
+                "🍾 <b>چرخش بطری</b>\n"
+                "برای چرخاندن بطری حداقل ۲ بازیکن لازم است!\n"
+                "🎮 اول با <code>/apex</code> بازی بسازید تا بازیکن‌ها مشخص شوند.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        spin_msg = await msg.reply_text("🍾 بطری دارد می‌چرخد…\n🌀 🌀 🌀")
+        await asyncio.sleep(2.5)
+        target = random.choice(players)
+        v24_party_stats_inc(target)
+        audit("v24_spin", int(update.effective_user.id), int(chat.id), str(target))
+        rows = [
+            [v5_button("🕵️ حقیقت بخواه", f"V24|SPIN|T|{target}"),
+             v5_button("🔥 جرئت بخواه", f"V24|SPIN|D|{target}")],
+            [v5_button("🔁 چرخش دوباره", "V24|SPIN|AGAIN")],
+        ]
+        await spin_msg.edit_text(
+            f"🍾 <b>بطری متوقف شد!</b>\n"
+            f"{V24_DIV}\n"
+            f"🎯 به سمتِ {v19_mention(target)} چرخید!\n"
+            f"حالا از او <b>حقیقت</b> بخواه یا <b>جرئت</b>! 👀"
+            + v24_party_ad_footer(),
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup(rows),
+        )
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+async def v24_spin_callback(update, context, query, parts):
+    try:
+        action = parts[2] if len(parts) > 2 else ""
+        target = int(parts[3]) if len(parts) > 3 else 0
+        if action == "AGAIN":
+            await safe_answer_query(query, "🍾 دوباره!")
+            await v24_cmd_spin(update, context)
+            return
+        chat = getattr(update, "effective_chat", None)
+        if not chat or not target:
+            await safe_answer_query(query, "⚠️ نامعتبر.", True)
+            return
+        category = "truth" if action == "T" else "dare"
+        fake_game = {"players": [target], "turn_number": 1, "round": 0, "round_scores": {}}
+        q = v7_pick_question(fake_game, category, target)
+        v24_party_stats_inc(target)
+        add_xp(int(query.from_user.id), 2, v24_duel_name(query.from_user.id))
+        await safe_answer_query(query, "🎯 سؤال صادر شد!")
+        await query.message.reply_text(
+            f"🎯 {v19_mention(target)} — {'🕵️ <b>حقیقت:</b>' if category == 'truth' else '🔥 <b>جرئت:</b>'}\n"
+            f"<b>{escape(q)}</b>\n"
+            f"{V24_DIV}\n"
+            "✅ جواب که دادی، «انجام شد» بزن تا امتیاز بگیری!",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup([
+                [v5_button("✅ انجام شد", f"V24|SPIN|OK|{target}")],
+            ]),
+        )
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+async def v24_cmd_wyr(update, context):
+    """🤔 /apexwyr — یا این یا اون (رأی‌گیری زنده)"""
+    try:
+        msg = getattr(update, "message", None)
+        chat = getattr(update, "effective_chat", None)
+        if not (msg and chat) or str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            await msg.reply_text("🤔 «یا این یا اون» فقط داخل گروه جواب می‌دهد!")
+            return
+        gid = str(chat.id)
+        if gid in V24_PARTY_RUNTIME.get("wyr", {}):
+            await msg.reply_text("🤔 یک دور «یا این یا اون» فعال است! اول همان تمام شود.")
+            return
+        opt_a, opt_b = random.choice(V24_EITHER_OR)
+        poll = {"a": opt_a, "b": opt_b, "votes": {}, "msg": None, "chat": int(chat.id)}
+        V24_PARTY_RUNTIME.setdefault("wyr", {})[gid] = poll
+        m = await msg.reply_text(
+            "🤔 <b>یا این یا اون؟</b>\n"
+            f"{V24_DIV}\n"
+            f"🅰️ <b>{escape(opt_a)}</b>\n"
+            f"🅱️ <b>{escape(opt_b)}</b>\n"
+            f"{V24_DIV}\n"
+            "رأی بده! (۶۰ ثانیه — قابل تغییر تا بسته‌شدن)",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup([
+                [v5_button("🅰️ این!", f"V24|WYR|A"), v5_button("🅱️ اون!", f"V24|WYR|B")],
+                [v5_button("🔒 بستن رأی‌گیری", "V24|WYR|CLOSE")],
+            ]),
+        )
+        poll["msg"] = m.message_id
+        audit("v24_wyr", int(update.effective_user.id), int(chat.id), opt_a[:30])
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+def v24_wyr_view_text(poll: dict) -> str:
+    va = sum(1 for v in poll["votes"].values() if v == "A")
+    vb = sum(1 for v in poll["votes"].values() if v == "B")
+    total = max(1, va + vb)
+    pa = int(va * 100 / total)
+    pb = 100 - pa
+    bar_a = "█" * int(pa / 10) + "░" * (10 - int(pa / 10))
+    bar_b = "█" * int(pb / 10) + "░" * (10 - int(pb / 10))
+    return (
+        "🤔 <b>یا این یا اون؟</b>\n"
+        f"{V24_DIV}\n"
+        f"🅰️ <b>{escape(poll['a'])}</b>\n[{bar_a}] {pa}٪ ({va})\n\n"
+        f"🅱️ <b>{escape(poll['b'])}</b>\n[{bar_b}] {pb}٪ ({vb})\n"
+        f"{V24_DIV}\n"
+        "رأی بده!"
+    )
+
+
+async def v24_wyr_callback(update, context, query, parts):
+    try:
+        action = parts[2] if len(parts) > 2 else ""
+        chat = getattr(update, "effective_chat", None)
+        gid = str(chat.id) if chat else ""
+        poll = V24_PARTY_RUNTIME.get("wyr", {}).get(gid)
+        if not poll:
+            await safe_answer_query(query, "⌛ این رأی‌گیری بسته شده — /apexwyr بزن!", True)
+            return
+        uid = int(query.from_user.id)
+        if action in ("A", "B"):
+            old = poll["votes"].get(str(uid))
+            poll["votes"][str(uid)] = action
+            if old != action:
+                v24_party_stats_inc(uid)
+            await safe_answer_query(query, "🅰️ ثبت شد!" if action == "A" else "🅱️ ثبت شد!")
+            try:
+                await query.edit_message_text(
+                    v24_wyr_view_text(poll),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=v5_markup([
+                        [v5_button("🅰️ این!", "V24|WYR|A"), v5_button("🅱️ اون!", "V24|WYR|B")],
+                        [v5_button("🔒 بستن رأی‌گیری", "V24|WYR|CLOSE")],
+                    ]),
+                )
+            except Exception:
+                pass
+            return
+        if action == "CLOSE":
+            V24_PARTY_RUNTIME.get("wyr", {}).pop(gid, None)
+            await safe_answer_query(query, "🔒 رأی‌گیری بسته شد.")
+            await query.edit_message_text(
+                v24_wyr_view_text(poll).replace("رأی بده!", "🔒 رأی‌گیری بسته شد — نتیجه نهایی!"),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+async def v24_cmd_nhie(update, context):
+    """🙈 /apexnhie — هیچوقت نگفتم"""
+    try:
+        msg = getattr(update, "message", None)
+        chat = getattr(update, "effective_chat", None)
+        if not (msg and chat) or str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            await msg.reply_text("🙈 «هیچوقت نگفتم» فقط داخل گروه جواب می‌دهد!")
+            return
+        statement = random.choice(V24_NHIE)
+        poll = {"s": statement, "yes": [], "no": [], "votes": {}, "msg": None}
+        gid = str(chat.id)
+        V24_PARTY_RUNTIME.setdefault("nhie", {})[gid] = poll
+        m = await msg.reply_text(
+            "🙈 <b>هیچوقت نگفتم…</b>\n"
+            f"{V24_DIV}\n"
+            f"💬 «{escape(statement)}»\n"
+            f"{V24_DIV}\n"
+            "راستش را بگو! 😏",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup([
+                [v5_button("🙈 وای… کرده‌ام!", "V24|NHIE|Y"),
+                 v5_button("😇 هیچوقت!", "V24|NHIE|N")],
+                [v5_button("🔒 بستن", "V24|NHIE|CLOSE")],
+            ]),
+        )
+        poll["msg"] = m.message_id
+        audit("v24_nhie", int(update.effective_user.id), int(chat.id), statement[:30])
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+def v24_nhie_view_text(poll: dict) -> str:
+    vy = [u for u, v in poll["votes"].items() if v == "Y"]
+    vn = [u for u, v in poll["votes"].items() if v == "N"]
+    def names(us):
+        return " · ".join(v19_mention(int(u)) for u in us[:12]) if us else "—"
+    return (
+        "🙈 <b>هیچوقت نگفتم…</b>\n"
+        f"{V24_DIV}\n"
+        f"💬 «{escape(poll['s'])}»\n"
+        f"{V24_DIV}\n"
+        f"😏 <b>کرده‌اند ({len(vy)}):</b> {names(vy)}\n"
+        f"😇 <b>هیچوقت ({len(vn)}):</b> {names(vn)}\n"
+        f"{V24_DIV}\n"
+        "راستش را بگو!"
+    )
+
+
+async def v24_nhie_callback(update, context, query, parts):
+    try:
+        action = parts[2] if len(parts) > 2 else ""
+        chat = getattr(update, "effective_chat", None)
+        gid = str(chat.id) if chat else ""
+        poll = V24_PARTY_RUNTIME.get("nhie", {}).get(gid)
+        if not poll:
+            await safe_answer_query(query, "⌛ این دور بسته شده — /apexnhie بزن!", True)
+            return
+        uid = int(query.from_user.id)
+        if action in ("Y", "N"):
+            old = poll["votes"].get(str(uid))
+            poll["votes"][str(uid)] = action
+            if old != action:
+                v24_party_stats_inc(uid)
+            await safe_answer_query(query, "😏 ثبت شد!" if action == "Y" else "😇 ثبت شد!")
+            try:
+                await query.edit_message_text(
+                    v24_nhie_view_text(poll),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=v5_markup([
+                        [v5_button("🙈 وای… کرده‌ام!", "V24|NHIE|Y"),
+                         v5_button("😇 هیچوقت!", "V24|NHIE|N")],
+                        [v5_button("🔒 بستن", "V24|NHIE|CLOSE")],
+                    ]),
+                )
+            except Exception:
+                pass
+            return
+        if action == "CLOSE":
+            V24_PARTY_RUNTIME.get("nhie", {}).pop(gid, None)
+            await safe_answer_query(query, "🔒 بسته شد.")
+            await query.edit_message_text(
+                v24_nhie_view_text(poll).replace("راستش را بگو!", "🔒 نتیجه نهایی!"),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+async def v24_cmd_likely(update, context):
+    """👀 /apexlikely — محتمل‌ترین شخص"""
+    try:
+        msg = getattr(update, "message", None)
+        chat = getattr(update, "effective_chat", None)
+        if not (msg and chat) or str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            await msg.reply_text("👀 «محتمل‌ترین شخص» فقط داخل گروه جواب می‌دهد!")
+            return
+        game = active_game(int(chat.id))
+        players = [int(p) for p in game["players"]] if game and game.get("players") else []
+        prompt = random.choice(V24_LIKELY)
+        if len(players) < 2:
+            await msg.reply_text(
+                f"👀 <b>محتمل‌ترین شخص</b>\n{V24_DIV}\n💬 {escape(prompt)}\n{V24_DIV}\n"
+                "🎭 برای رأی‌گیریِ سراغ افراد، اول با <code>/apex</code> بازی بسازید؛"
+                " فعلاً همین‌جا گفت‌وگو کنید!",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        poll = {"q": prompt, "votes": {}, "players": players}
+        gid = str(chat.id)
+        V24_PARTY_RUNTIME.setdefault("likely", {})[gid] = poll
+        rows = []
+        for p in players[:12]:
+            rows.append([v5_button(f"🙋 {v24_duel_name(p)[:20]}", f"V24|LK|V|{p}")])
+        rows.append([v5_button("🔒 بستن", "V24|LK|CLOSE")])
+        await msg.reply_text(
+            "👀 <b>محتمل‌ترین شخص!</b>\n"
+            f"{V24_DIV}\n"
+            f"💬 {escape(prompt)}\n"
+            f"{V24_DIV}\n"
+            "روی نام نفرِ محتمل بزنید! 🙋",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup(rows),
+        )
+        audit("v24_likely", int(update.effective_user.id), int(chat.id), prompt[:30])
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+def v24_likely_view_text(poll: dict) -> str:
+    counts = {}
+    for v in poll["votes"].values():
+        counts[str(v)] = counts.get(str(v), 0) + 1
+    lines = []
+    for p in poll.get("players", [])[:12]:
+        c = counts.get(str(p), 0)
+        bar = "█" * c + "░" * max(0, 8 - c)
+        lines.append(f"🙋 {v19_mention(int(p))} [{bar}] {c}")
+    return (
+        "👀 <b>محتمل‌ترین شخص!</b>\n"
+        f"{V24_DIV}\n"
+        f"💬 {escape(poll['q'])}\n"
+        f"{V24_DIV}\n" + "\n".join(lines)
+    )
+
+
+async def v24_likely_callback(update, context, query, parts):
+    try:
+        action = parts[2] if len(parts) > 2 else ""
+        chat = getattr(update, "effective_chat", None)
+        gid = str(chat.id) if chat else ""
+        poll = V24_PARTY_RUNTIME.get("likely", {}).get(gid)
+        if not poll:
+            await safe_answer_query(query, "⌛ این دور بسته شده — /apexlikely بزن!", True)
+            return
+        if action == "V":
+            target = int(parts[3]) if len(parts) > 3 else 0
+            uid = int(query.from_user.id)
+            poll["votes"][str(uid)] = target
+            v24_party_stats_inc(uid)
+            await safe_answer_query(query, "🙋 رأیت ثبت شد!")
+            rows = []
+            for p in poll.get("players", [])[:12]:
+                rows.append([v5_button(f"🙋 {v24_duel_name(p)[:20]}", f"V24|LK|V|{p}")])
+            rows.append([v5_button("🔒 بستن", "V24|LK|CLOSE")])
+            try:
+                await query.edit_message_text(
+                    v24_likely_view_text(poll),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=v5_markup(rows),
+                )
+            except Exception:
+                pass
+            return
+        if action == "CLOSE":
+            V24_PARTY_RUNTIME.get("likely", {}).pop(gid, None)
+            await safe_answer_query(query, "🔒 بسته شد.")
+            counts = {}
+            for v in poll["votes"].values():
+                counts[str(v)] = counts.get(str(v), 0) + 1
+            winner = max(counts.items(), key=lambda kv: kv[1])[0] if counts else None
+            extra = f"\n👑 <b>محتمل‌ترین:</b> {v19_mention(int(winner))}" if winner else ""
+            await query.edit_message_text(
+                v24_likely_view_text(poll) + extra + "\n🔒 نتیجه نهایی!",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V24-BANK] مرکز بانک سوالات — خروجی/ورودی فایل + شمارش یکجا
+#  📚 همه‌ی سوالات ربات در «یک بخش یکپارچه» جمع و مدیریت می‌شوند؛
+#  متن هیچ سوالی تغییر نمی‌کند، فقط ابزار جابه‌جا/کپی/بازیابی است.
+# ----------------------------------------------------------------
+V24_BANK_FLOW: dict[int, dict] = {}
+
+
+def v24_all_bank_keys() -> list:
+    # [V24] همه‌ی بانک‌ها — شامل بانک‌های جدید V19/V20 که در فهرست قدیمی V16 نیستند
+    keys = list(V16_BANK_KEYS_ORDER)
+    for k in V7_BANKS_FINAL.keys():
+        if k not in keys:
+            keys.append(k)
+    return keys
+
+
+def v24_bank_totals() -> tuple:
+    total = 0
+    per = []
+    for key in v24_all_bank_keys():
+        n = len(V7_BANKS_FINAL.get(key, []))
+        total += n
+        per.append((key, n))
+    return total, per
+
+
+async def v24_render_bank_center(query):
+    total, per = v24_bank_totals()
+    st = v24_store()
+    text = (
+        "📚 <b>مرکز بانک سوالات — نسخه‌ی 1.0.0</b>\n"
+        f"{V24_DIV}\n"
+        f"📦 مجموع کل: <b>{fmt_num(total)}</b> سؤال/جرئت/حکم در <b>{len(per)}</b> بانک\n"
+        f"✏️ سفارشی‌های تو: <b>{fmt_num(sum(len(v) for v in DATA.get('v18_custom_prompts', {}).values()) + sum(len(v) for v in DATA.get('v16_custom_prompts', {}).values()))}</b>\n"
+        f"📤 خروجی‌های گرفته‌شده: <b>{fmt_num(int(st['stats'].get('exports', 0)))}</b> · "
+        f"📥 ورودی‌ها: <b>{fmt_num(int(st['stats'].get('imports', 0)))}</b>\n"
+        f"{V24_DIV}\n"
+        "📥 <b>ورودی از فایل:</b> فایل JSON خروجی را همین‌جا بفرست (ریپلای لازم نیست)\n"
+        "📤 <b>خروجی کامل:</b> همه‌ی بانک‌ها در یک فایل JSON\n"
+        "🔎 ویرایش تک‌تک سؤال‌ها: از «🛠 مدیریت سوالات» (همان ابزار کامل)"
+    )
+    rows = [
+        [v5_button("📤 خروجی کامل (فایل JSON)", "V24|QB|EXPORT")],
+        [v5_button("📥 ورودی از فایل JSON", "V24|QB|IMPORT")],
+        [v5_button("📖 راهنمای موضوعات", "A18|GUIDE")],
+        [v5_button("🛠 مدیریت سوالات", "A18|HOME")],
+        [v5_button("🔙 خانه مدیریت", "A16|HOME")],
+    ]
+    await safe_edit_query(query, text, v5_markup(rows))
+
+
+async def v24_qb_callback(update, context, query, parts):
+    try:
+        uid = int(query.from_user.id)
+        if not is_admin(uid):
+            await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+            return
+        action = parts[2] if len(parts) > 2 else ""
+        if action == "HOME":
+            await safe_answer_query(query)
+            await v24_render_bank_center(query)
+            return
+        if action == "EXPORT":
+            await safe_answer_query(query, "📤 در حال ساخت فایل کامل…")
+            payload = {}
+            for key in v24_all_bank_keys():
+                payload[key] = list(V7_BANKS_FINAL.get(key, []))
+            raw = json.dumps(payload, ensure_ascii=False, indent=1).encode("utf-8")
+            fname = f"apexrival_banks_{v18_today()}.json"
+            try:
+                await context.bot.send_document(
+                    chat_id=int(query.message.chat_id),
+                    document=_v24_bytes_io(raw),
+                    filename=fname,
+                    caption=(
+                        "📤 <b>خروجی کامل بانک سوالات</b>\n"
+                        f"📦 {fmt_num(sum(len(v) for v in payload.values()))} سؤال در {len(payload)} بانک\n"
+                        "📥 برای بازگرداندن، همین فایل را بفرست و «ورودی از فایل» را بزن."
+                    ),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                await context.bot.send_document(
+                    chat_id=int(query.message.chat_id),
+                    document=_v24_bytes_io(raw),
+                    filename=fname,
+                )
+            v24_store()["stats"]["exports"] = int(v24_store()["stats"].get("exports", 0)) + 1
+            audit("v24_bank_export_all", uid, None, str(len(payload)))
+            return
+        if action == "IMPORT":
+            V24_BANK_FLOW[uid] = {"type": "bank_import"}
+            await safe_edit_query(
+                query,
+                "📥 <b>ورودی از فایل JSON</b>\n"
+                f"{V24_DIV}\n"
+                "حالا فایل JSON (خروجی همین ربات یا دست‌ساز) را <b>همین‌جا بفرست</b>.\n"
+                "ساختار: <code>{\"truth\": [\"سؤال…\"], \"dare\": [\"جرئت…\"]}</code>\n"
+                f"{V24_DIV}\n"
+                "➕ سؤال‌های تکراری وارد نمی‌شوند (ادغام امن).\n"
+                "❌ لغو: دکمه‌ی زیر یا ارسال «لغو»",
+                v5_markup([[v5_button("❌ لغو", "V24|QB|CANCEL")]]),
+            )
+            return
+        if action == "CANCEL":
+            V24_BANK_FLOW.pop(uid, None)
+            await safe_answer_query(query, "❌ لغو شد.")
+            await v24_render_bank_center(query)
+            return
+        await safe_answer_query(query, "⚠️ عملیات ناشناخته.", True)
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+def _v24_bytes_io(data: bytes):
+    import io as _io
+    buf = _io.BytesIO(data)
+    return buf
+
+
+async def v24_handle_bank_import(update, context) -> bool:
+    """دریافت فایل JSON از ادمین و ادغام در بانک‌ها."""
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if not (msg and user):
+            return False
+        uid = int(user.id)
+        flow = V24_BANK_FLOW.get(uid)
+        if not flow or flow.get("type") != "bank_import":
+            return False
+        doc = getattr(msg, "document", None)
+        if doc is None:
+            await msg.reply_text("⚠️ فقط فایل JSON قبول است. دوباره بفرست یا «لغو» بنویس.")
+            return True
+        if int(getattr(doc, "file_size", 0) or 0) > 20 * 1024 * 1024:
+            await msg.reply_text("⚠️ فایل خیلی بزرگ است (حداکثر ۲۰ مگابایت).")
+            return True
+        try:
+            fh = await doc.get_file()
+            raw = await fh.download_as_bytearray()
+            payload = json.loads(bytes(raw).decode("utf-8"))
+        except Exception as exc:
+            await msg.reply_text(
+                f"⚠️ فایل خوانده نشد: {escape(repr(exc))[:80]}\n"
+                "مطمئن شو JSON معتبر است."
+            )
+            return True
+        if not isinstance(payload, dict):
+            await msg.reply_text("⚠️ ساختار فایل باید یک شیء JSON باشد: {\"bank\": [\"سؤال…\"]}")
+            return True
+        valid_keys = set(v24_all_bank_keys())
+        added = skipped = bad_keys = 0
+        report = []
+        for key, items in payload.items():
+            if key not in valid_keys:
+                bad_keys += 1
+                continue
+            if not isinstance(items, list):
+                bad_keys += 1
+                continue
+            bank_add = 0
+            for it in items:
+                text = str(it).strip()
+                if not text or text in V7_BANKS_FINAL.get(key, []):
+                    skipped += 1
+                    continue
+                ok = v18_add_custom(key, text)
+                if ok:
+                    added += 1
+                    bank_add += 1
+            if bank_add:
+                report.append(f"✅ {v18_bank_label(key)}: +{fmt_num(bank_add)}")
+        v24_store()["stats"]["imports"] = int(v24_store()["stats"].get("imports", 0)) + 1
+        V24_BANK_FLOW.pop(uid, None)
+        save_data(force=True)
+        audit("v24_bank_import", uid, None, f"add={added};skip={skipped}")
+        await msg.reply_text(
+            "📥 <b>ورودی انجام شد!</b>\n"
+            f"{V24_DIV}\n"
+            + ("\n".join(report) if report else "هیچ سؤال جدیدی اضافه نشد.") +
+            f"\n{V24_DIV}\n"
+            f"➕ اضافه‌شده: <b>{fmt_num(added)}</b> · ⏭ تکراری/ردشده: <b>{fmt_num(skipped)}</b>"
+            + (f" · ⚠️ بانک ناشناخته: <b>{bad_keys}</b>" if bad_keys else ""),
+            parse_mode=ParseMode.HTML,
+        )
+        return True
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+        return True
+
+
+# ----------------------------------------------------------------
+# [V24-LOVE] عشق‌سنج حرفه‌ای 💘 — گزارش چندبعدی + حالت دوطرفه
+# ----------------------------------------------------------------
+V24_LOVE_DIMS = [("romance", "عاشقانه 💗"), ("friend", "دوستانه 🤝"),
+                 ("trust", "اعتماد 🛡"), ("fun", "سرگرمی 🎉")]
+
+V24_LOVE_QUESTIONS = [
+    ("اگر طرف مقابل یک روز کامل غمگین بود، اولین کاری که می‌کنی چیست؟",
+     ["در گوشیم پیام قشنگ می‌فرستم", "پیشش می‌روم/زنگ می‌زنم", "فضا را با شوخی عوض می‌کنم"]),
+    ("به نظرت رابطه‌ی خوب بیشتر به چی نیاز دارد؟",
+     ["گفت‌وگوی راحت", "خنده و سرگرمی", "اعتماد بی‌قید"]),
+    ("در یک سفر دو نفره، کدام نقش مال توست؟",
+     ["برنامه‌ریز دقیق", "ماجراجوی بی‌برنامه", "هماهنگ‌کننده‌ی وسط"]),
+    ("وقتی اختلاف نظر پیش می‌آید معمولاً…",
+     ["آرام بحث می‌کنم تا حل شود", "کمی ساکت می‌شوم و بعد می‌گویم", "با شوخی خنثی می‌کنم"]),
+    ("بهترین تعریف برای «حس خوب» کنار یک نفر چیست؟",
+     ["آرامش", "هیجان", "خندیدن از ته دل"]),
+    ("هدیه‌ی رویایی‌ات از طرف مقابل چیست؟",
+     ["چیزی که یادگاری بماند", "یک تجربه‌ی مشترک", "یک نامه/پیام صمیمی"]),
+    ("اگر فقط یک شب فرصت بود، کدام برنامه؟",
+     ["گفت‌وگوی عمیق زیر آسمون", "شام و فیلم", "یک بازی دو نفره تا دیروقت"]),
+    ("بزرگ‌ترین نقطه‌ی قوتت در رابطه‌ها چیست؟",
+     ["صبوری", "صراحت و صداقت", "حواس‌جمعی و توجه"]),
+]
+
+
+def v24_love_seed(a: str, b: str) -> int:
+    h = 2166136261
+    for ch in (a + "♥" + b):
+        h = ((h ^ ord(ch)) * 16777619) & 0xFFFFFFFF
+    return h
+
+
+def v24_love_dims(a: str, b: str) -> dict:
+    seed = v24_love_seed(a, b)
+    dims = {}
+    for i, (key, _label) in enumerate(V24_LOVE_DIMS):
+        v = 40 + ((seed >> (i * 5)) % 61)  # 40..100
+        dims[key] = v
+    return dims
+
+
+def v24_love_report_text(name_a: str, name_b: str, dims: dict, mutual: bool = False,
+                         agreement: int | None = None) -> str:
+    overall = sum(dims.values()) // len(dims)
+    bars = []
+    for key, label in V24_LOVE_DIMS:
+        v = int(dims.get(key, 50))
+        bar = "█" * (v // 10) + "░" * (10 - v // 10)
+        bars.append(f"{label}: [{bar}] <b>{v}٪</b>")
+    hearts = "❤️" * (overall // 10) + "🖤" * (10 - overall // 10)
+    if overall >= 85:
+        verdict = "🌍 <b>جفتِ کیهانی!</b> این هماهنگی کمیاب است — قدرش را بدانید."
+    elif overall >= 70:
+        verdict = "✨ <b>هماهنگی عالی!</b> کنار هم خیلی خوب می‌درخشید."
+    elif overall >= 55:
+        verdict = "🌤 <b>پتانسیل خوب.</b> با کمی گفت‌وگو و گذران وقت، هرچیزی ممکن است."
+    elif overall >= 40:
+        verdict = "⛅ <b>معمولی ولی امیدوارکننده.</b> تفاوت‌ها می‌تواند جذاب باشد."
+    else:
+        verdict = "🌪 <b>قطب‌های متضاد!</b> یا آتش می‌گیرد یا… خوبی از فاصله!"
+    mutual_line = ""
+    if mutual and agreement is not None:
+        pct = int(agreement * 100 / 8) if agreement <= 8 else agreement
+        mutual_line = (f"{V24_DIV}\n"
+                       f"🧩 <b>هم‌نوایی پاسخ‌ها:</b> {pct}٪ "
+                       f"({'عالی! یک ذهن در دو بدن 🧠' if pct >= 70 else 'خوب — شبکه‌های فکری نزدیک' if pct >= 40 else 'متفاوت — و همین جالب است'})\n")
+    advice_pool = [
+        "💡 پیشنهاد: یک «شب بدون گوشی» فقط با گفت‌وگو بگذارید.",
+        "💡 پیشنهاد: یک بازی جرئت و حقیقت دو نفره (/apexduel) را امتحان کنید!",
+        "💡 پیشنهاد: هر هفته یک «خاطره‌سازی» کوچک جدید — حتی یک بستنی غیرعادی.",
+        "💡 پیشنهاد: لیست مشترک آرزوها بسازید و تیک بزنید.",
+        "💡 پیشنهاد: درباره‌ی «مرزها» و «انتظارها» رک گفت‌وگو کنید.",
+    ]
+    advice = advice_pool[v24_love_seed(name_a, name_b) % len(advice_pool)]
+    return (
+        "💘 <b>عشق‌سنج حرفه‌ای ApexRival</b>\n"
+        f"{V24_DIV}\n"
+        f"{escape(name_a)}  ×  {escape(name_b)}\n"
+        f"[{hearts}]  <b>{overall}٪</b>\n"
+        f"{V24_DIV}\n"
+        + "\n".join(bars) + "\n"
+        f"{mutual_line}"
+        f"{V24_DIV}\n"
+        f"🔮 تحلیل: {verdict}\n"
+        f"{advice}"
+    )
+
+
+async def v24_cmd_love(update, context):
+    """💘 /apexlove — عشق‌سنج حرفه‌ای (نسخه 1.0.0)"""
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        chat = getattr(update, "effective_chat", None)
+        if not (msg and user and chat):
+            return
+        target = None
+        if msg.reply_to_message and msg.reply_to_message.from_user:
+            target = msg.reply_to_message.from_user
+        else:
+            for ent in (msg.entities or []):
+                if ent.type == "text_mention" and ent.user:
+                    target = ent.user
+                    break
+        if target is not None:
+            if int(target.id) == int(user.id):
+                await msg.reply_text("😅 عشق‌سنج خودت با خودت؟! بهتر است با یک دوست امتحان کنی — /apexlove @نام")
+                return
+            dims = v24_love_dims(f"id:{user.id}", f"id:{target.id}")
+            v24_party_stats_inc(int(user.id))
+            await msg.reply_text(
+                v24_love_report_text(
+                    str(user.first_name or "کاربر"),
+                    str(target.first_name or "کاربر"),
+                    dims,
+                ),
+                parse_mode=ParseMode.HTML,
+                reply_markup=v5_markup([
+                    [v5_button("💘 سنجش دوطرفه (هر دو نفر)", "V24|LV|START")],
+                    [v5_button("🔁 دوباره", "V24|LV|AGAIN")],
+                ]),
+            )
+            return
+        args = (context.args or [])
+        raw = (args[0] if args else "").strip().lstrip("@")
+        if not raw:
+            await msg.reply_text(
+                "💘 <b>عشق‌سنج حرفه‌ای</b>\n"
+                f"{V24_DIV}\n"
+                "🔹 روی پیام طرف <b>ریپلای</b> کن و <code>/apexlove</code> بزن\n"
+                "🔹 یا: <code>/apexlove @نام‌کاربری</code>\n"
+                "🔹 یا: <code>/apexlove علی سارا</code> (دو اسم آزاد)\n"
+                f"{V24_DIV}\n"
+                "💞 <b>سنجش دوطرفه:</b> <code>/apexlove2</code> — هر دو نفر به ۴ سؤال"
+                " جواب می‌دهید و گزارش کامل هم‌نوایی می‌گیرید!",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        name_a = args[0] if len(args) >= 2 else (str(user.first_name or "من"))
+        name_b = args[1] if len(args) >= 2 else raw
+        dims = v24_love_dims(name_a, name_b)
+        v24_party_stats_inc(int(user.id))
+        await msg.reply_text(
+            v24_love_report_text(name_a, name_b, dims),
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup([
+                [v5_button("💘 سنجش دوطرفه (هر دو نفر)", "V24|LV|START")],
+                [v5_button("🔁 دوباره", "V24|LV|AGAIN")],
+            ]),
+        )
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+async def v24_love_callback(update, context, query, parts):
+    try:
+        action = parts[2] if len(parts) > 2 else ""
+        if action == "AGAIN":
+            await safe_answer_query(query, "💘 دوباره!")
+            await v24_cmd_love(update, context)
+            return
+        if action == "START":
+            await safe_answer_query(query, "💞 سنجش دوطرفه ساخته می‌شود…")
+            await v24_cmd_love2(update, context)
+            return
+        await safe_answer_query(query, "⚠️ عملیات ناشناخته.", True)
+    except Exception:
+        pass
+
+
+async def v24_cmd_love2(update, context):
+    """💞 /apexlove2 — عشق‌سنج دوطرفه با لینک دعوت"""
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if not (msg and user):
+            return
+        uid = int(user.id)
+        code = v24_new_code()
+        questions = random.sample(V24_LOVE_QUESTIONS, 4)
+        v24_store()["love2"][code] = {
+            "a": uid, "b": None,
+            "names": {"a": str(user.first_name or "کاربر"), "b": ""},
+            "qs": questions, "qa": [], "qb": [],
+            "step_a": 0, "step_b": 0, "created": time.time(), "done": False,
+        }
+        v24_store()["stats"]["love2"] += 1
+        save_data(force=True)
+        username = None
+        try:
+            username = await ar11_bot_username(getattr(context, "bot", None))
+        except Exception:
+            pass
+        if not username:
+            try:
+                me = await context.bot.get_me()
+                username = getattr(me, "username", None)
+            except Exception:
+                username = None
+        link = f"https://t.me/{username}?start=love2-{code}" if username else "چت خصوصی ربات → /start"
+        share = f"https://t.me/share/url?url={link}"
+        await msg.reply_text(
+            "💞 <b>عشق‌سنج دوطرفه</b>\n"
+            f"{V24_DIV}\n"
+            "هر دو نفر به ۴ سؤال صمیمی جواب می‌دهید و در پایان،\n"
+            "گزارش کاملِ هم‌نوایی + درصد عاشقانه/دوستانه/اعتماد/سرگرمی می‌گیرید!\n"
+            f"{V24_DIV}\n"
+            "۱) لینک را برای آن نفر خاص بفرست 💌\n"
+            "۲) خودت هم همین‌حا جواب‌هایت را بده\n"
+            f"{V24_DIV}\n"
+            "پاسخ‌ها کاملاً بین شما دو نفر می‌ماند. 🤫",
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup([
+                [v5_button("❓ شروع جواب‌های من", f"V24|L2|A|{code}|0")],
+                [InlineKeyboardButton("📤 ارسال لینک دعوت", url=share)] if username else [],
+            ]),
+        )
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+def v24_love2_q_text(sess: dict, side: str, step: int) -> tuple:
+    q, opts = sess["qs"][step]
+    return (
+        f"💞 <b>عشق‌سنج دوطرفه</b> — سؤال {fmt_num(step + 1)} از ۴\n"
+        f"{V24_DIV}\n"
+        f"❓ {q}",
+        opts,
+    )
+
+
+async def v24_love2_ask(context, code: str, side: str):
+    sess = v24_store()["love2"].get(code)
+    if not sess:
+        return
+    step = int(sess.get(f"step_{side}", 0))
+    if step >= 4:
+        await v24_love2_maybe_finish(context, code)
+        return
+    q, opts = sess["qs"][step]
+    uid = int(sess.get("a" if side == "a" else "b", 0) or 0)
+    if not uid:
+        return
+    rows = []
+    for i, opt in enumerate(opts[:3]):
+        rows.append([v5_button(f"{i + 1}️⃣ {str(opt)[:40]}",
+                               f"V24|L2|{side.upper()}|{code}|{step}|{i}")])
+    try:
+        await context.bot.send_message(
+            chat_id=int(uid),
+            text=(
+                f"💞 <b>عشق‌سنج دوطرفه</b> — سؤال {fmt_num(step + 1)} از ۴\n"
+                f"{V24_DIV}\n"
+                f"❓ {q}"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup(rows),
+        )
+    except Exception:
+        pass
+
+
+async def v24_love2_start_payload(update, context, code: str) -> bool:
+    sess = v24_store()["love2"].get(code)
+    user = getattr(update, "effective_user", None)
+    msg = getattr(update, "message", None)
+    if not (sess and user and msg):
+        return False
+    uid = int(user.id)
+    if sess.get("b") or uid == int(sess.get("a", 0)):
+        return False
+    if time.time() - float(sess.get("created", 0) or 0) > 48 * 3600:
+        v24_store()["love2"].pop(code, None)
+        await msg.reply_text("⌛ این دعوت منقضی شده — /apexlove2 را دوباره بزنید.")
+        return True
+    sess["b"] = uid
+    sess["names"]["b"] = str(user.first_name or "کاربر")
+    v24_punish_stats(uid)["love2"] += 1
+    save_data(force=True)
+    await msg.reply_text(
+        "💞 <b>به سنجش دوطرفه خوش آمدی!</b>\n"
+        "۴ سؤال کوتاه — بعد از جواب هر دو نفر، گزارش کامل برایتان می‌آید.",
+        parse_mode=ParseMode.HTML,
+    )
+    await v24_love2_ask(context, code, "b")
+    return True
+
+
+async def v24_love2_maybe_finish(context, code: str):
+    sess = v24_store()["love2"].get(code)
+    if not sess or sess.get("done"):
+        return
+    if len(sess.get("qa", [])) < 4 or len(sess.get("qb", [])) < 4:
+        return
+    sess["done"] = True
+    a, b = int(sess["a"]), int(sess.get("b") or 0)
+    agreement = sum(1 for x, y in zip(sess["qa"], sess["qb"]) if x == y) * 2  # 0..8
+    dims = v24_love_dims(sess["names"]["a"], sess["names"]["b"])
+    report = v24_love_report_text(sess["names"]["a"], sess["names"]["b"], dims,
+                                  mutual=True, agreement=agreement)
+    save_data(force=True)
+    for uid in (a, b):
+        if uid:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(uid),
+                    text="🎉 هر دو نفر جواب دادید — گزارش کامل:\n" + report,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=v5_markup([[v5_button("🔁 دوباره", "V24|LV|AGAIN")]]),
+                )
+            except Exception:
+                pass
+
+
+async def v24_love2_callback(update, context, query, parts):
+    try:
+        side = parts[2] if len(parts) > 2 else ""          # A یا B
+        code = parts[3] if len(parts) > 3 else ""
+        step = int(parts[4]) if len(parts) > 4 else 0
+        choice = int(parts[5]) if len(parts) > 5 else 0
+        uid = int(query.from_user.id)
+        sess = v24_store()["love2"].get(code)
+        if not sess:
+            await safe_answer_query(query, "⌛ این سنجش منقضی/بسته شده.", True)
+            return
+        s = side.lower()
+        owner = int(sess.get("a" if s == "a" else "b", 0) or 0)
+        if uid != owner:
+            await safe_answer_query(query, "🔒 این سؤال مخصوص نفر دیگر است.", True)
+            return
+        if int(sess.get(f"step_{s}", 0)) != step:
+            await safe_answer_query(query, "⏳ به سؤال بعد رفته‌ای.", True)
+            return
+        answers = sess.setdefault(f"q{s}", [])
+        answers.append(choice)
+        sess[f"step_{s}"] = step + 1
+        save_data(force=True)
+        await safe_answer_query(query, "✅ ثبت شد!")
+        await v24_love2_ask(context, code, s)
+        await v24_love2_maybe_finish(context, code)
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V24-SHOP] فروشگاه چنددسته‌ای 🛒
+# ----------------------------------------------------------------
+V24_SHOP_CATALOG = {
+    "titles": {
+        "label": "🏅 عناوین ویژه",
+        "items": [
+            ("t_egg", "🐣 تازه‌وارد", 80),
+            ("t_funny", "🤡 بامزه‌ی جمع", 150),
+            ("t_cool", "😎 خفن", 220),
+            ("t_fire", "🔥 مشتعل", 300),
+            ("t_ghost", "👻 روحِ جمع", 400),
+            ("t_ninja", "🥷 نینجا", 500),
+            ("t_star", "⭐ ستاره", 350),
+            ("t_dragon", "🐉 اژدها", 600),
+            ("t_kingq", "🔍 شاه حقیقت", 750),
+            ("t_kingd", "⚔️ شاه جرئت", 750),
+            ("t_gem", "💎 جواهر", 800),
+            ("t_legend", "👑 افسانه", 900),
+        ],
+    },
+    "themes": {
+        "label": "🎨 رنگ و قاب پروفایل",
+        "items": [
+            ("th_rose", "🌹 رز", 200),
+            ("th_ocean", "🌊 اقیانوس", 250),
+            ("th_purple", "🟣 بنفش", 250),
+            ("th_matrix", "🟩 ماتریکس", 350),
+            ("th_neon", "💫 نئون", 500),
+            ("th_gold", "🌟 طلایی", 400),
+        ],
+    },
+    "boxes": {
+        "label": "📦 جعبه‌های شانس",
+        "items": [
+            ("box_b", "📦 جعبه معمولی", 120),
+            ("box_r", "🎁 جعبه نادر", 350),
+            ("box_l", "🏆 جعبه افسانه‌ای", 900),
+        ],
+    },
+    "utils": {
+        "label": "🧰 ابزارهای کاربردی",
+        "items": [
+            ("u_shield3", "🛡 بسته‌ی ۳ سپر (مقاومت در برابر حکم)", 200),
+            ("u_xpboost", "⚡ XP دوبرابر — ۲۴ ساعت", 300),
+            ("u_luck", "🍀 سکه‌ی دوبرابر — ۲۴ ساعت", 300),
+            ("u_rename", "✏️ تغییر نام نمایشی", 100),
+            ("u_clearloss", "🧹 پاک‌کردن آمار باخت", 150),
+            ("u_title_frame", "🖼 قاب ویژه‌ی عنوان", 250),
+        ],
+    },
+}
+
+V24_THEME_FRAMES = {
+    "th_rose": ("🌹", "🌸"),
+    "th_ocean": ("🌊", "🐚"),
+    "th_purple": ("🟣", "🔮"),
+    "th_matrix": ("🟩", "💾"),
+    "th_neon": ("💫", "⚡"),
+    "th_gold": ("🌟", "✨"),
+    None: ("⭐", "✨"),
+}
+
+
+def v24_shop_flow() -> dict:
+    return DATA.setdefault("v24", {}).setdefault("shop_flow", {})
+
+
+def v24_apply_purchase(uid: int, item_id: str) -> str:
+    """اعمال خرید — خروجی: توضیح اثر"""
+    u = get_user(uid)
+    for cat, cfg in V24_SHOP_CATALOG.items():
+        for iid, name, price in cfg["items"]:
+            if iid == item_id:
+                if cat == "titles":
+                    u["v24_title"] = name
+                    return f"🏅 عنوان تو الان «{name}» است!"
+                if cat == "themes":
+                    u["v24_theme"] = iid
+                    return f"🎨 قاب پروفایلت به «{name}» تغییر کرد!"
+                if cat == "boxes":
+                    lo, hi = {"box_b": (60, 300), "box_r": (200, 800), "box_l": (600, 2200)}[iid]
+                    coins = random.randint(lo, hi)
+                    add_coins(uid, coins, u.get("name", "بازیکن"))
+                    bonus = ""
+                    if iid == "box_r" and random.random() < 0.3:
+                        inv = u.setdefault("inventory", {})
+                        inv["shield"] = int(inv.get("shield", 0)) + 1
+                        bonus = "\n🛡 یک سپر هم داخلش بود!"
+                    if iid == "box_l":
+                        u["v24_title"] = "👑 افسانه"
+                        bonus = "\n👑 عنوان «افسانه» هم داخلش بود!"
+                    return f"📦 جعبه باز شد… 🎉 <b>{fmt_num(coins)} سکه</b> بیرون اومد!{bonus}"
+                if cat == "utils":
+                    if item_id == "u_shield3":
+                        inv = u.setdefault("inventory", {})
+                        inv["shield"] = int(inv.get("shield", 0)) + 3
+                        return "🛡 سه سپر به موجودیت اضافه شد — جلوی حکم‌ها را می‌گیرند!"
+                    if item_id == "u_xpboost":
+                        u["v24_xp_until"] = time.time() + 24 * 3600
+                        return "⚡ تا ۲۴ ساعت آینده XP تو دوبرابر می‌شود!"
+                    if item_id == "u_luck":
+                        u["v24_luck_until"] = time.time() + 24 * 3600
+                        return "🍀 تا ۲۴ ساعت آینده سکه‌های بازی برایت دوبرابر می‌شوند!"
+                    if item_id == "u_rename":
+                        v24_shop_flow()[str(uid)] = {"type": "rename"}
+                        return "✏️ حالا نام جدیدت را بفرست:"
+                    if item_id == "u_clearloss":
+                        u["losses"] = 0
+                        return "🧹 آمار باخت‌هایت پاک شد — شروعی تازه!"
+                    if item_id == "u_title_frame":
+                        u["v24_title_frame"] = True
+                        return "🖼 عنوانت از الان با قاب ویژه در پروفایل می‌درخشد!"
+    return "✅ خرید انجام شد."
+
+
+async def v24_send_shop(message, uid: int, section: str = "home", page: int = 0):
+    """پنل فروشگاه 1.0.0 — چنددسته‌ای؛ آیتم‌های قدیمی هم حفظ شده‌اند."""
+    try:
+        u = get_user(int(uid))
+        coins = int(u.get("coins", 0))
+        if section == "home":
+            text = (
+                "🛒 <b>فروشگاه ApexRival</b> — نسخه‌ی 1.0.0\n"
+                f"{V24_DIV}\n"
+                f"💰 موجودی تو: <b>{fmt_num(coins)}</b> سکه\n"
+                f"{V24_DIV}\n"
+                "📦 چهار دسته‌ی پر از آیتم کاربردی — همه واقعاً اثر دارند!"
+            )
+            rows = []
+            for cat, cfg in V24_SHOP_CATALOG.items():
+                rows.append([v5_button(cfg["label"], f"V24|SH|CAT|{cat}|0")])
+            rows.append([v5_button("🧺 آیتم‌های پایه (سپر/تاس/پاس…)", "V24|SH|OLD")])
+            rows.append([v5_button("🎒 کیف من", "V24|SH|BAG")])
+            rows.append(*v5_nav("V5|HOME"))
+            mk = v5_markup(rows)
+        elif section == "old":
+            lines = [f"💰 موجودی: <b>{fmt_num(coins)} سکه</b>"]
+            rows = []
+            for key, item in SHOP.items():
+                inv_n = int(u.get("inventory", {}).get(key, 0))
+                lines.append(f"{item['name']} — {fmt_num(item['price'])} سکه\n{item['desc']}")
+                rows.append([v5_button(f"🛒 خرید {item['name']} ({fmt_num(item['price'])})",
+                                       f"buy|{key}")])
+            text = ("🧺 <b>آیتم‌های پایه</b> (همیشه سبز)\n" + V24_DIV + "\n"
+                    + "\n\n".join(lines))
+            rows.append([v5_button("🔙 فروشگاه اصلی", "V24|SH|HOME")])
+            mk = v5_markup(rows)
+        elif section == "bag":
+            inv = u.get("inventory", {})
+            title = u.get("v24_title", "—")
+            theme = u.get("v24_theme", None)
+            theme_name = next((n for iid, n, _p in V24_SHOP_CATALOG["themes"]["items"] if iid == theme), "پیش‌فرض")
+            xp_b = "🟢 فعال" if u.get("v24_xp_until", 0) and time.time() < u["v24_xp_until"] else "—"
+            lk_b = "🟢 فعال" if u.get("v24_luck_until", 0) and time.time() < u["v24_luck_until"] else "—"
+            text = (
+                "🎒 <b>کیف من</b>\n"
+                f"{V24_DIV}\n"
+                f"🏅 عنوان فعلی: <b>{escape(str(title))}</b>\n"
+                f"🎨 قاب پروفایل: <b>{escape(str(theme_name))}</b>\n"
+                f"⚡ بوست XP: {xp_b} · 🍀 طلسم شانس: {lk_b}\n"
+                f"{V24_DIV}\n"
+                f"🛡 سپر: {fmt_num(int(inv.get('shield', 0)))} · 🎲 تاس: {fmt_num(int(inv.get('reroll', 0)))}\n"
+                f"⚡ دابل XP: {fmt_num(int(inv.get('double_xp', 0)))} · 🎫 پاس: {fmt_num(int(inv.get('pass', 0)))}\n"
+                f"🍀 شانس: {fmt_num(int(inv.get('lucky', 0)))}"
+            )
+            mk = v5_markup([[v5_button("🔙 فروشگاه", "V24|SH|HOME")]])
+        else:  # category
+            cfg = V24_SHOP_CATALOG.get(section)
+            if not cfg:
+                mk = v5_markup([[v5_button("🔙 فروشگاه", "V24|SH|HOME")]])
+                text = "⚠️ دسته پیدا نشد."
+            else:
+                per = 6
+                items = cfg["items"]
+                total_pages = max(1, (len(items) + per - 1) // per)
+                page = max(0, min(page, total_pages - 1))
+                chunk = items[page * per:(page + 1) * per]
+                text = (
+                    f"{cfg['label']}\n"
+                    f"{V24_DIV}\n"
+                    f"💰 موجودی: <b>{fmt_num(coins)}</b> سکه\n"
+                    f"{V24_DIV}\n"
+                    "هر آیتم بلافاصله بعد از خرید فعال می‌شود ✨"
+                )
+                rows = []
+                for iid, name, price in chunk:
+                    rows.append([v5_button(f"🛒 {name} — {fmt_num(price)} سکه",
+                                           f"V24|SH|BUY|{iid}")])
+                nav = []
+                if page > 0:
+                    nav.append(v5_button("◀️ قبلی", f"V24|SH|CAT|{section}|{page - 1}"))
+                nav.append(v5_button(f"📄 {fmt_num(page + 1)}/{fmt_num(total_pages)}", "V24|NONE"))
+                if page + 1 < total_pages:
+                    nav.append(v5_button("بعدی ▶️", f"V24|SH|CAT|{section}|{page + 1}"))
+                rows.append(nav)
+                rows.append([v5_button("🔙 فروشگاه", "V24|SH|HOME")])
+                mk = v5_markup(rows)
+        await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=mk)
+    except Exception as exc:
+        try:
+            await message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+async def v24_shop_callback(update, context, query, parts):
+    try:
+        action = parts[2] if len(parts) > 2 else ""
+        uid = int(query.from_user.id)
+        u = get_user(uid)
+        if action == "HOME":
+            await safe_answer_query(query)
+            await v24_send_shop(query.message, uid, "home")
+            return
+        if action == "OLD":
+            await safe_answer_query(query)
+            await v24_send_shop(query.message, uid, "old")
+            return
+        if action == "BAG":
+            await safe_answer_query(query)
+            await v24_send_shop(query.message, uid, "bag")
+            return
+        if action == "CAT":
+            await safe_answer_query(query)
+            cat = parts[3] if len(parts) > 3 else "titles"
+            page = int(parts[4]) if len(parts) > 4 else 0
+            await v24_send_shop(query.message, uid, cat, page)
+            return
+        if action == "BUY":
+            item_id = parts[3] if len(parts) > 3 else ""
+            price = None
+            for cat, cfg in V24_SHOP_CATALOG.items():
+                for iid, name, p in cfg["items"]:
+                    if iid == item_id:
+                        price = int(p)
+                        item_name = name
+                        break
+            if price is None:
+                await safe_answer_query(query, "⚠️ آیتم پیدا نشد.", True)
+                return
+            if int(u.get("coins", 0)) < price:
+                await safe_answer_query(query, f"💸 سکه کافی نداری! لازم: {fmt_num(price)} — موجودی: {fmt_num(int(u.get('coins', 0)))}", True)
+                return
+            u["coins"] = int(u.get("coins", 0)) - price
+            result = v24_apply_purchase(uid, item_id)
+            v24_punish_stats(uid)["shop_buys"] += 1
+            v24_store()["stats"]["shop_buys"] += 1
+            if v24_punish_stats(uid)["shop_buys"] >= 3:
+                v24_award_achievement(uid, "v24_shopper")
+            if int(u.get("coins", 0)) >= 1000:
+                v24_award_achievement(uid, "v24_rich")
+            save_data(force=True)
+            audit("v24_shop_buy", uid, None, f"{item_id}:{price}")
+            await safe_answer_query(query, "🎉 خرید انجام شد!")
+            await query.message.reply_text(
+                f"✅ <b>خرید موفق:</b> {item_name}\n{result}\n\n💰 موجودی جدید: <b>{fmt_num(int(u.get('coins', 0)))}</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=v5_markup([[v5_button("🛒 فروشگاه", "V24|SH|HOME")]]),
+            )
+            return
+        await safe_answer_query(query, "⚠️ عملیات ناشناخته.", True)
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V24-ACH] دستاوردهای جدید + پنل دستاوردهای خفن
+# ----------------------------------------------------------------
+V24_ACHIEVEMENTS = {
+    "v24_duel_win": ("🥇 قهرمان دو نفره", "در یک بازی دو نفره برنده شو", 30),
+    "v24_pun_survivor": ("⚖️ بازمانده‌ی حکم", "یک مجازات را کامل انجام بده و تأیید بگیر", 20),
+    "v24_party_animal": ("🎪 روحِ مهمانی", "در ۳ بازی گروهی شرکت کن", 15),
+    "v24_shopper": ("🛍 خرده‌پرتبه", "۳ خرید از فروشگاه 1.0.0 انجام بده", 15),
+    "v24_rich": ("💰 ثروتمند", "به ۱۰۰۰ سکه برس", 25),
+    "v24_love_master": ("💘 استاد عشق‌سنج", "یک سنجش دوطرفه کامل کن", 20),
+    "v24_duel_starter": ("👥 دونفره‌باز", "اولین بازی دو نفره‌ات را شروع کن", 10),
+    "v24_devoted": ("🔥 سه‌روزه", "۳ روز پشت‌سرهم فعال باش", 15),
+}
+
+
+def v24_award_achievement(uid: int, key: str) -> bool:
+    """دستاورد V24 را می‌دهد (اگر نگرفته باشد) — پاداش سکه."""
+    try:
+        if key not in V24_ACHIEVEMENTS:
+            return False
+        u = get_user(int(uid))
+        owned = u.setdefault("achievements", [])
+        if key in owned:
+            return False
+        owned.append(key)
+        _t, _d, reward = V24_ACHIEVEMENTS[key]
+        add_coins(int(uid), reward, u.get("name", "بازیکن"))
+        save_data(force=True)
+        audit("v24_ach", int(uid), None, key)
+        return True
+    except Exception:
+        return False
+
+
+async def v24_achievements_cmd(update, context):
+    """پنل دستاوردها — کامل، دسته‌بندی‌شده با پیشرفت."""
+    try:
+        if not await ensure_allowed(update):
+            return
+        user = getattr(update, "effective_user", None)
+        if user is None:
+            return
+        uid = int(user.id)
+        u = get_user(uid)
+        owned = set(u.get("achievements", []))
+        lines_core = []
+        for key, val in ACHIEVEMENTS.items():
+            title, desc = val[0], val[1]
+            mark = "✅" if key in owned else "🔒"
+            lines_core.append(f"{mark} {title} — {desc}")
+        v24_stats = v24_punish_stats(uid)
+        lines_v24 = []
+        for key, (title, desc, reward) in V24_ACHIEVEMENTS.items():
+            mark = "✅" if key in owned else "🔒"
+            lines_v24.append(f"{mark} {title} — {desc} <i>(+{fmt_num(reward)} سکه)</i>")
+        total_all = len(ACHIEVEMENTS) + len(V24_ACHIEVEMENTS)
+        got_all = len(owned & set(ACHIEVEMENTS.keys())) + len(owned & set(V24_ACHIEVEMENTS.keys()))
+        pct = int(got_all * 100 / max(1, total_all))
+        bar = v5_progress(got_all, total_all, 14)
+        text = (
+            "🏅 <b>دستاوردها — ApexRival 1.0.0</b>\n"
+            f"{V24_DIV}\n"
+            f"[{bar}] <b>{fmt_num(got_all)}</b> از <b>{fmt_num(total_all)}</b> ({pct}٪)\n"
+            f"{V24_DIV}\n"
+            "⭐ <b>دستاوردهای اصلی</b>\n" + "\n".join(lines_core) +
+            f"\n\n🚀 <b>دستاوردهای 1.0.0</b>\n" + "\n".join(lines_v24) +
+            f"\n{V24_DIV}\n"
+            "💡 پاداش دستاوردهای جدید به‌صورت خودکار به سکه‌هایت اضافه می‌شود."
+        )
+        mk = v5_markup([
+            [v5_button("🎮 بازی و برو بالا!", "V5|GAME"), v5_button("🛒 فروشگاه", "V24|SH|HOME")],
+            *v5_nav("V5|HOME"),
+        ])
+        if update.callback_query is not None:
+            await safe_edit_query(update.callback_query, text, mk)
+        else:
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=mk)
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V24-PROFILE] پروفایل خفن — قاب رنگی، عنوان، آمار کامل
+# ----------------------------------------------------------------
+async def v24_cmd_profile(update, context):
+    try:
+        if not await ensure_allowed(update):
+            return
+        user = getattr(update, "effective_user", None)
+        if user is None:
+            return
+        uid = int(user.id)
+        u = get_user(uid, user.first_name or "بازیکن")
+        v17_touch_username(user)
+        xp = int(u.get("xp", 0))
+        level = int(u.get("level", 1))
+        coins = int(u.get("coins", 0))
+        title = u.get("v24_title") or title_for(xp)
+        theme = u.get("v24_theme")
+        frame_l, frame_r = V24_THEME_FRAMES.get(theme, V24_THEME_FRAMES[None])
+        inv = u.get("inventory", {})
+        s = v24_punish_stats(uid)
+        owned_ach = len(u.get("achievements", []))
+        total_ach = len(ACHIEVEMENTS) + len(V24_ACHIEVEMENTS)
+        xp_in_level = xp % 100
+        gender_line = f"{user_gender_icon(uid)} {user_gender_label(uid)}" if user_gender(uid) else "—"
+        age_line = ("🔞 بالای ۱۸" if u.get("adult_ok") else "🧒 زیر ۱۸") if v17_age_declared(u) else "ثبت نشده"
+        text = (
+            f"{frame_l} <b>پروفایل ApexRival</b> {frame_r}\n"
+            f"{V24_DIV}\n"
+            f"👤 <b>{escape(str(u.get('name', 'بازیکن')))}</b> {user_gender_icon(uid)}\n"
+            f"🚻 {gender_line} · {age_line}\n"
+            f"{v17_verified_icon(uid)} اعتبارسنجی: <b>{'کامل ✅' if v17_verified(uid) else 'ناقص'}</b>\n"
+            f"{V24_DIV}\n"
+            f"🏅 عنوان: <b>{escape(str(title))}</b>\n"
+            f"⭐ سطح <b>{fmt_num(level)}</b> · ✨ XP <b>{fmt_num(xp)}</b>\n"
+            f"[{v5_progress(xp_in_level, 100, 14)}] تا سطح بعد\n"
+            f"💰 سکه: <b>{fmt_num(coins)}</b> · 🔥 استریک: <b>{fmt_num(int(u.get('streak', 0)))}</b>\n"
+            f"{V24_DIV}\n"
+            f"🎮 بازی‌ها: <b>{fmt_num(int(u.get('games', 0)))}</b> · 🏆 برد: <b>{fmt_num(int(u.get('wins', 0)))}</b> · 😅 باخت: <b>{fmt_num(int(u.get('losses', 0)))}</b>\n"
+            f"👥 دو نفره: <b>{fmt_num(int(s.get('duels', 0)))}</b> · 🥇 برد دو نفره: <b>{fmt_num(int(s.get('duel_wins', 0)))}</b>\n"
+            f"🎪 بازی‌های گروهی: <b>{fmt_num(int(s.get('party', 0)))}</b> · 💘 عشق‌سنج دوطرفه: <b>{fmt_num(int(s.get('love2', 0)))}</b>\n"
+            f"⚖️ حکم‌ها: <b>{fmt_num(int(s.get('punishments', 0)))}</b> · ✅ انجام‌شده: <b>{fmt_num(int(s.get('pun_done', 0)))}</b>\n"
+            f"🏅 دستاوردها: <b>{fmt_num(owned_ach)}</b> از <b>{fmt_num(total_ach)}</b>\n"
+            f"{V24_DIV}\n"
+            f"🎒 🛡{fmt_num(int(inv.get('shield', 0)))} · 🎲{fmt_num(int(inv.get('reroll', 0)))} · "
+            f"⚡{fmt_num(int(inv.get('double_xp', 0)))} · 🎫{fmt_num(int(inv.get('pass', 0)))} · 🍀{fmt_num(int(inv.get('lucky', 0)))}\n"
+            f"{V24_DIV}\n"
+            "⭐ ApexRival · نسخه‌ی <b>1.0.0</b>"
+        )
+        mk = v5_markup([
+            [v5_button("🏅 دستاوردها", "V5|ACH"), v5_button("🛒 فروشگاه", "V24|SH|HOME")],
+            [v5_button("👥 بازی دو نفره", "V24|DU|NEW")],
+            *v5_nav("V5|HOME"),
+        ])
+        if update.callback_query is not None:
+            await safe_edit_query(update.callback_query, text, mk)
+        else:
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=mk)
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V24-ADMIN-U] بخش کاربران پیشرفته 👥
+# ----------------------------------------------------------------
+V24_UF_FLOW: dict[int, dict] = {}
+V24_USERS_PER_PAGE = 8
+
+
+def v24_users_sorted(sort: str = "xp"):
+    users = [(int(uid), u) for uid, u in DATA.get("users", {}).items()
+             if isinstance(u, dict)]
+    if sort == "coins":
+        users.sort(key=lambda x: int(x[1].get("coins", 0)), reverse=True)
+    elif sort == "new":
+        users.sort(key=lambda x: int(x[1].get("joined", 0) or 0), reverse=True)
+    elif sort == "games":
+        users.sort(key=lambda x: int(x[1].get("games", 0)), reverse=True)
+    else:
+        users.sort(key=lambda x: int(x[1].get("xp", 0)), reverse=True)
+    return users
+
+
+async def v24_render_users(query, page: int = 0, sort: str = "xp", q: str = ""):
+    users = v24_users_sorted(sort)
+    if q:
+        ql = q.lower()
+        users = [(uid, u) for uid, u in users
+                 if ql in str(u.get("name", "")).lower()
+                 or ql in str(u.get("username", "")).lower()
+                 or ql in str(uid)]
+    total_pages = max(1, (len(users) + V24_USERS_PER_PAGE - 1) // V24_USERS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    chunk = users[page * V24_USERS_PER_PAGE:(page + 1) * V24_USERS_PER_PAGE]
+    lines = []
+    rows = []
+    for uid, u in chunk:
+        banned = "🚫" if u.get("v24_banned") else ""
+        lines.append(
+            f"{user_gender_icon(uid)} {escape(str(u.get('name', 'بازیکن')))} {banned}\n"
+            f"   🆔 <code>{uid}</code> · ⭐ {fmt_num(int(u.get('xp', 0)))} · "
+            f"💰 {fmt_num(int(u.get('coins', 0)))} · 🎮 {fmt_num(int(u.get('games', 0)))}"
+        )
+        rows.append([v5_button(f"👤 {str(u.get('name', 'بازیکن'))[:18]}", f"V24|AU|VIEW|{uid}")])
+    nav = []
+    if page > 0:
+        nav.append(v5_button("◀️", f"V24|AU|PG|{page - 1}|{sort}|{q[:16]}"))
+    nav.append(v5_button(f"📄 {fmt_num(page + 1)}/{fmt_num(total_pages)}", "V24|NONE"))
+    if page + 1 < total_pages:
+        nav.append(v5_button("▶️", f"V24|AU|PG|{page + 1}|{sort}|{q[:16]}"))
+    rows.append(nav)
+    sort_labels = [("xp", "⭐ XP"), ("coins", "💰 سکه"), ("new", "🆕 جدید"), ("games", "🎮 بازی")]
+    rows.append([v5_button(lbl, f"V24|AU|SORT|{s}|{q[:16]}") for s, lbl in sort_labels])
+    rows.append([v5_button("🔍 جست‌وجو", "V24|AU|SEARCH")])
+    rows.append([v5_button("🔙 خانه مدیریت", "A16|HOME")])
+    sort_names = {"xp": "بر اساس XP", "coins": "بر اساس سکه", "new": "جدیدترین", "games": "بیشترین بازی"}
+    await safe_edit_query(
+        query,
+        "👥 <b>مدیریت کاربران — نسخه‌ی 1.0.0</b>\n"
+        f"{V24_DIV}\n"
+        f"📦 کل کاربران: <b>{fmt_num(len(DATA.get('users', {})))}</b>"
+        + (f" · 🔎 نتیجه‌ی «{escape(q)}»: <b>{fmt_num(len(users))}</b>" if q else "") +
+        f"\nمرتب‌سازی: <b>{sort_names.get(sort, sort)}</b>\n"
+        f"{V24_DIV}\n"
+        + ("\n".join(lines) if lines else "کاربری پیدا نشد."),
+        v5_markup(rows),
+    )
+
+
+async def v24_render_user_detail(query, target: int):
+    u = get_user(int(target))
+    if not u:
+        await safe_answer_query(query, "⛔ کاربر پیدا نشد.", True)
+        return
+    s = v24_punish_stats(int(target))
+    banned = bool(u.get("v24_banned"))
+    text = (
+        f"👤 <b>کارت کاربر</b>\n"
+        f"{V24_DIV}\n"
+        f"🏷 نام: <b>{escape(str(u.get('name', 'بازیکن')))}</b>"
+        + (f" (@{escape(str(u.get('username', '')))})" if u.get("username") else "") + "\n"
+        f"🆔 <code>{int(target)}</code> {'🚫 مسدود' if banned else '🟢 فعال'}\n"
+        f"🚻 {user_gender_icon(int(target))} {user_gender_label(int(target))} · "
+        f"{'🔞 ۱۸+' if u.get('adult_ok') else '🧒 زیر ۱۸'}\n"
+        f"{V24_DIV}\n"
+        f"⭐ سطح {fmt_num(int(u.get('level', 1)))} · ✨ {fmt_num(int(u.get('xp', 0)))} XP\n"
+        f"💰 {fmt_num(int(u.get('coins', 0)))} سکه · 🎮 {fmt_num(int(u.get('games', 0)))} بازی\n"
+        f"🏆 {fmt_num(int(u.get('wins', 0)))} برد · 😅 {fmt_num(int(u.get('losses', 0)))} باخت\n"
+        f"👥 دو نفره {fmt_num(int(s.get('duels', 0)))} · 🥇 {fmt_num(int(s.get('duel_wins', 0)))}\n"
+        f"⚖️ حکم: {fmt_num(int(s.get('punishments', 0)))} (✅ {fmt_num(int(s.get('pun_done', 0)))})\n"
+        f"🏅 {fmt_num(len(u.get('achievements', [])))} دستاورد"
+    )
+    rows = [
+        [v5_button("💰 +۱۰۰ سکه", f"V24|AU|COIN|{target}|100"),
+         v5_button("💸 −۱۰۰ سکه", f"V24|AU|COIN|{target}|-100")],
+        [v5_button("✨ +۵۰ XP", f"V24|AU|XP|{target}|50")],
+        [v5_button("🚫 مسدود کن" if not banned else "🟢 آزاد کن", f"V24|AU|BAN|{target}")],
+        [v5_button("📨 پیام خصوصی بفرست", f"V24|AU|DM|{target}")],
+        [v5_button("🔙 کاربران", "V24|AU|HOME")],
+    ]
+    await safe_edit_query(query, text, v5_markup(rows))
+
+
+async def v24_au_callback(update, context, query, parts):
+    try:
+        uid = int(query.from_user.id)
+        if not is_admin(uid):
+            await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+            return
+        action = parts[2] if len(parts) > 2 else ""
+        if action == "HOME":
+            await safe_answer_query(query)
+            await v24_render_users(query, 0, "xp", "")
+            return
+        if action == "PG":
+            await safe_answer_query(query)
+            page = int(parts[3]) if len(parts) > 3 else 0
+            sort = parts[4] if len(parts) > 4 else "xp"
+            q = parts[5] if len(parts) > 5 else ""
+            await v24_render_users(query, page, sort, q)
+            return
+        if action == "SORT":
+            await safe_answer_query(query)
+            sort = parts[3] if len(parts) > 3 else "xp"
+            q = parts[4] if len(parts) > 4 else ""
+            await v24_render_users(query, 0, sort, q)
+            return
+        if action == "SEARCH":
+            V24_UF_FLOW[uid] = {"type": "user_search"}
+            await safe_edit_query(
+                query,
+                "🔍 <b>جست‌وجوی کاربر</b>\n\nبخشی از نام، @نام‌کاربری یا آیدی عددی را بفرست:",
+                v5_markup([[v5_button("❌ لغو", "V24|AU|HOME")]]),
+            )
+            return
+        if action == "VIEW":
+            await safe_answer_query(query)
+            target = int(parts[3]) if len(parts) > 3 else 0
+            await v24_render_user_detail(query, target)
+            return
+        if action == "COIN":
+            target = int(parts[3]) if len(parts) > 3 else 0
+            delta = int(parts[4]) if len(parts) > 4 else 0
+            u = get_user(target)
+            u["coins"] = max(0, int(u.get("coins", 0)) + delta)
+            save_data(force=True)
+            audit("v24_admin_coin", uid, None, f"{target}:{delta}")
+            await safe_answer_query(query, f"💰 سکه‌ی {fmt_num(target)} → {fmt_num(int(u['coins']))}")
+            await v24_render_user_detail(query, target)
+            return
+        if action == "XP":
+            target = int(parts[3]) if len(parts) > 3 else 0
+            delta = int(parts[4]) if len(parts) > 4 else 0
+            add_xp(target, delta, get_user(target).get("name", "بازیکن"))
+            save_data(force=True)
+            audit("v24_admin_xp", uid, None, f"{target}:{delta}")
+            await safe_answer_query(query, "✨ XP اضافه شد.")
+            await v24_render_user_detail(query, target)
+            return
+        if action == "BAN":
+            target = int(parts[3]) if len(parts) > 3 else 0
+            u = get_user(target)
+            u["v24_banned"] = not bool(u.get("v24_banned"))
+            save_data(force=True)
+            audit("v24_admin_ban", uid, None, f"{target}:{u['v24_banned']}")
+            await safe_answer_query(query, "🚫 مسدود شد." if u["v24_banned"] else "🟢 آزاد شد.")
+            await v24_render_user_detail(query, target)
+            return
+        if action == "DM":
+            target = int(parts[3]) if len(parts) > 3 else 0
+            V24_UF_FLOW[uid] = {"type": "admin_dm", "target": target}
+            await safe_edit_query(
+                query,
+                f"📨 <b>پیام خصوصی به کاربر</b> <code>{target}</code>\n\nمتن پیام را بفرست:",
+                v5_markup([[v5_button("❌ لغو", "V24|AU|HOME")]]),
+            )
+            return
+        await safe_answer_query(query, "⚠️ عملیات ناشناخته.", True)
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+async def v24_uf_text(update, context) -> bool:
+    """جست‌وجوی کاربر و پیام خصوصی ادمین."""
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if not (msg and user and msg.text):
+            return False
+        uid = int(user.id)
+        if not is_admin(uid):
+            return False
+        flow = V24_UF_FLOW.get(uid)
+        if not flow:
+            return False
+        text = str(msg.text).strip()
+        if text in ("لغو", "❌ لغو"):
+            V24_UF_FLOW.pop(uid, None)
+            await msg.reply_text("✅ لغو شد.")
+            return True
+        if flow.get("type") == "user_search":
+            V24_UF_FLOW.pop(uid, None)
+            await msg.reply_text(f"🔍 نتیجه‌ی «{escape(text)}»: در پنل کاربران…")
+            # نمایش مستقیم نتایج
+            users = v24_users_sorted("xp")
+            ql = text.lower()
+            users = [(u2, d) for u2, d in users
+                     if ql in str(d.get("name", "")).lower()
+                     or ql in str(d.get("username", "")).lower()
+                     or ql in str(u2)][:20]
+            if not users:
+                await msg.reply_text("😕 چیزی پیدا نشد.")
+                return True
+            lines = [f"👤 {escape(str(d.get('name', '')))} — 🆔 <code>{u2}</code> · ⭐ {fmt_num(int(d.get('xp', 0)))}" for u2, d in users]
+            await msg.reply_text("🔍 <b>نتایج:</b>\n" + "\n".join(lines), parse_mode=ParseMode.HTML)
+            return True
+        if flow.get("type") == "admin_dm":
+            target = int(flow.get("target", 0))
+            V24_UF_FLOW.pop(uid, None)
+            try:
+                await context.bot.send_message(
+                    chat_id=target,
+                    text="📨 <b>پیام از پشتیبانی ApexRival:</b>\n"
+                    "━━━━━━━━━━━━━━━━━━\n" + escape(text[:3500]),
+                    parse_mode=ParseMode.HTML,
+                )
+                await msg.reply_text("✅ پیام ارسال شد.")
+            except Exception:
+                await msg.reply_text("❌ ارسال نشد (شاید ربات را بلاک کرده).")
+            return True
+        if flow.get("type") == "rename":
+            V24_UF_FLOW.pop(uid, None)
+            u = get_user(uid)
+            u["name"] = text[:40]
+            save_data(force=True)
+            await msg.reply_text(f"✅ نام تو الان «{escape(text[:40])}» است.")
+            return True
+    except Exception:
+        pass
+    return False
+
+
+# ----------------------------------------------------------------
+# [V24-ADMIN-AD] بخش تبلیغات پیشرفته 📣
+# ----------------------------------------------------------------
+V24_AD_FLOW: dict[int, dict] = {}
+
+
+async def v24_render_ads(query):
+    st = v24_store()
+    ads = st.get("ads", [])
+    cfg = st.get("ads_cfg", {})
+    if ads:
+        lines = []
+        for i, ad in enumerate(ads):
+            state = "🟢" if ad.get("on") else "🔴"
+            lines.append(
+                f"{state} <b>تبلیغ {fmt_num(i + 1)}</b> — 👁 {fmt_num(int(ad.get('imp', 0)))} نمایش\n"
+                f"   📝 {escape(str(ad.get('text', ''))[:70])}"
+                + (f"\n   🌐 {escape(str(ad.get('url', ''))[:60])}" if ad.get("url") else "")
+            )
+    else:
+        lines = ["هیچ تبلیغی ثبت نشده — با «➕ تبلیغ جدید» اضافه کن."]
+    text = (
+        "📣 <b>مدیریت تبلیغات — نسخه‌ی 1.0.0</b>\n"
+        f"{V24_DIV}\n"
+        + "\n".join(lines) +
+        f"\n{V24_DIV}\n"
+        f"⚙️ تناوب نمایش: هر <b>{fmt_num(int(cfg.get('every', 10)))}</b> پیامِ بازی‌های گروهی\n"
+        f"📌 زیر بازی‌های گروهی: {'🟢' if cfg.get('on_party', True) else '🔴'}\n"
+        f"👥 تبلیغ سراسری قدیمی (A17): از همان پنل هم قابل مدیریت است"
+    )
+    rows = [[v5_button("➕ تبلیغ جدید", "V24|AD|ADD")]]
+    for i in range(len(ads)):
+        rows.append([
+            v5_button(f"{'🔴 خاموش' if ads[i].get('on') else '🟢 روشن'} {fmt_num(i + 1)}", f"V24|AD|TOG|{i}"),
+            v5_button("🗑", f"V24|AD|DEL|{i}"),
+        ])
+    freq_row = [v5_button("⏱ هر ۵", "V24|AD|FREQ|5"),
+                v5_button("⏱ هر ۱۰", "V24|AD|FREQ|10"),
+                v5_button("⏱ هر ۲۰", "V24|AD|FREQ|20"),
+                v5_button("⏱ خاموش", "V24|AD|FREQ|0")]
+    rows.append(freq_row)
+    rows.append([v5_button("📌 زیر بازی‌های گروهی: روشن/خاموش", "V24|AD|PLACE")])
+    rows.append([v5_button("🔙 خانه مدیریت", "A16|HOME")])
+    await safe_edit_query(query, text, v5_markup(rows))
+
+
+async def v24_ad_callback(update, context, query, parts):
+    try:
+        uid = int(query.from_user.id)
+        if not is_admin(uid):
+            await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+            return
+        action = parts[2] if len(parts) > 2 else ""
+        st = v24_store()
+        if action == "HOME":
+            await safe_answer_query(query)
+            await v24_render_ads(query)
+            return
+        if action == "ADD":
+            V24_AD_FLOW[uid] = {"type": "ad_text"}
+            await safe_edit_query(
+                query,
+                "➕ <b>تبلیغ جدید — قدم ۱ از ۲</b>\n\nمتن تبلیغ را بفرست (HTML آزاد):",
+                v5_markup([[v5_button("❌ لغو", "V24|AD|HOME")]]),
+            )
+            return
+        if action == "TOG":
+            i = int(parts[3]) if len(parts) > 3 else -1
+            ads = st.get("ads", [])
+            if 0 <= i < len(ads):
+                ads[i]["on"] = not bool(ads[i].get("on"))
+                save_data(force=True)
+                await safe_answer_query(query, "🟢 روشن شد." if ads[i]["on"] else "🔴 خاموش شد.")
+            await v24_render_ads(query)
+            return
+        if action == "DEL":
+            i = int(parts[3]) if len(parts) > 3 else -1
+            ads = st.get("ads", [])
+            if 0 <= i < len(ads):
+                ads.pop(i)
+                save_data(force=True)
+                await safe_answer_query(query, "🗑 حذف شد.")
+            await v24_render_ads(query)
+            return
+        if action == "FREQ":
+            n = int(parts[3]) if len(parts) > 3 else 10
+            st["ads_cfg"]["every"] = n
+            st["ads_cfg"]["on_party"] = n > 0
+            save_data(force=True)
+            await safe_answer_query(query, "⏱ ذخیره شد.")
+            await v24_render_ads(query)
+            return
+        if action == "PLACE":
+            cfg = st["ads_cfg"]
+            cfg["on_party"] = not bool(cfg.get("on_party", True))
+            save_data(force=True)
+            await safe_answer_query(query, "📌 ذخیره شد.")
+            await v24_render_ads(query)
+            return
+        await safe_answer_query(query, "⚠️ عملیات ناشناخته.", True)
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+async def v24_ad_flow_text(update, context) -> bool:
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if not (msg and user and msg.text):
+            return False
+        uid = int(user.id)
+        if not is_admin(uid):
+            return False
+        flow = V24_AD_FLOW.get(uid)
+        if not flow:
+            return False
+        text = str(msg.text).strip()
+        if text in ("لغو", "❌ لغو"):
+            V24_AD_FLOW.pop(uid, None)
+            await msg.reply_text("✅ لغو شد.")
+            return True
+        if flow.get("type") == "ad_text":
+            V24_AD_FLOW[uid] = {"type": "ad_url", "text": text[:600]}
+            await msg.reply_text(
+                "➕ <b>قدم ۲ از ۲ — لینک (اختیاری)</b>\n\nلینک تبلیغ را بفرست، یا «بدون» بنویس:",
+                parse_mode=ParseMode.HTML,
+            )
+            return True
+        if flow.get("type") == "ad_url":
+            url = "" if text.lower() in ("بدون", "-", "no") else text[:200]
+            ad = {"text": flow.get("text", ""), "url": url, "on": True,
+                  "imp": 0, "created": time.time()}
+            v24_store()["ads"].append(ad)
+            save_data(force=True)
+            V24_AD_FLOW.pop(uid, None)
+            await msg.reply_text(
+                "✅ <b>تبلیغ ثبت و روشن شد!</b>\n"
+                "زیر پیام‌های بازی‌های گروهی (با تناوب تنظیم‌شده) نمایش داده می‌شود.\n"
+                "📊 آمار نمایش از همان پنل قابل مشاهده است.",
+                parse_mode=ParseMode.HTML,
+            )
+            return True
+    except Exception:
+        pass
+    return False
+
+
+# ----------------------------------------------------------------
+# [V24-ADMIN-BC] ارسال همگانی حرفه‌ای 📨
+# ----------------------------------------------------------------
+V24_BC_FLOW: dict[int, dict] = {}
+V24_BC_TARGETS = {
+    "users": "👥 همه‌ی کاربران",
+    "groups": "🌐 همه‌ی گروه‌ها",
+    "all": "🌍 کاربران + گروه‌ها",
+    "active": "🔥 کاربران فعال (۷ روز)",
+}
+
+
+def v24_bc_targets_list(kind: str) -> list:
+    if kind == "groups":
+        return [int(g) for g in DATA.get("groups", {}) if str(g).lstrip("-").isdigit()]
+    if kind == "active":
+        week = time.time() - 7 * 24 * 3600
+        return [int(uid) for uid, u in DATA.get("users", {}).items()
+                if isinstance(u, dict) and int(u.get("last_seen", 0) or 0) >= week]
+    if kind == "all":
+        out = [int(uid) for uid in DATA.get("users", {})]
+        out += [int(g) for g in DATA.get("groups", {}) if str(g).lstrip("-").isdigit()]
+        return out
+    return [int(uid) for uid in DATA.get("users", {})]
+
+
+async def v24_render_bc(query):
+    st = v24_store()
+    logs = st.get("bc_log", [])[-5:][::-1]
+    lines = []
+    for lg in logs:
+        lines.append(f"📤 {time.strftime('%m-%d %H:%M', time.localtime(lg.get('ts', 0)))} — "
+                     f"✅ {fmt_num(lg.get('ok', 0))} · ❌ {fmt_num(lg.get('fail', 0))}"
+                     f" ({V24_BC_TARGETS.get(lg.get('target', 'users'), '—')})")
+    text = (
+        "📨 <b>ارسال همگانی حرفه‌ای — نسخه‌ی 1.0.0</b>\n"
+        f"{V24_DIV}\n"
+        "🧩 هدف‌بندی، عکس، دکمه‌ی لینک، پیش‌نمایش، گزارش کامل و ثبت تاریخچه!\n"
+        f"{V24_DIV}\n"
+        "📊 <b>آخرین ارسال‌ها:</b>\n" + ("\n".join(lines) if lines else "— هنوز ارسالی ثبت نشده")
+    )
+    rows = [[v5_button("🚀 ارسال جدید", "V24|BC|NEW")]]
+    rows.append([v5_button("🔙 خانه مدیریت", "A16|HOME")])
+    await safe_edit_query(query, text, v5_markup(rows))
+
+
+async def v24_bc_callback(update, context, query, parts):
+    try:
+        uid = int(query.from_user.id)
+        if not is_admin(uid):
+            await safe_answer_query(query, "🚫 فقط Super Admin.", True)
+            return
+        action = parts[2] if len(parts) > 2 else ""
+        if action == "HOME":
+            await safe_answer_query(query)
+            await v24_render_bc(query)
+            return
+        if action == "NEW":
+            rows = [[v5_button(lbl, f"V24|BC|TARGET|{k}")] for k, lbl in V24_BC_TARGETS.items()]
+            rows.append([v5_button("❌ لغو", "V24|BC|HOME")])
+            await safe_edit_query(
+                query,
+                "🚀 <b>ارسال جدید — قدم ۱: هدف</b>\n\nپیام برای چه کسانی فرستاده شود؟",
+                v5_markup(rows),
+            )
+            return
+        if action == "TARGET":
+            kind = parts[3] if len(parts) > 3 else "users"
+            V24_BC_FLOW[uid] = {"type": "bc_text", "target": kind}
+            await safe_edit_query(
+                query,
+                f"🚀 <b>قدم ۲: متن پیام</b>\nهدف: <b>{V24_BC_TARGETS.get(kind, kind)}</b>\n\n"
+                "متن پیام را بفرست (HTML آزاد):\n"
+                "💡 بعداً می‌توانی عکس هم اضافه کنی.",
+                v5_markup([[v5_button("❌ لغو", "V24|BC|HOME")]]),
+            )
+            return
+        if action == "PHOTO":
+            V24_BC_FLOW[uid] = {"type": "bc_photo", **V24_BC_FLOW.get(uid, {})}
+            await safe_edit_query(
+                query,
+                "🖼 <b>قدم ۳: عکس (اختیاری)</b>\n\nیک عکس بفرست، یا «بدون» بنویس تا فقط متن ارسال شود.",
+                v5_markup([[v5_button("❌ لغو", "V24|BC|HOME")]]),
+            )
+            return
+        if action == "BTN":
+            V24_BC_FLOW[uid] = {"type": "bc_btn", **V24_BC_FLOW.get(uid, {})}
+            await safe_edit_query(
+                query,
+                "🔘 <b>قدم ۴: دکمه‌ی لینک (اختیاری)</b>\n\nبه این شکل بفرست: <code>متن دکمه | https://link</code>\n"
+                "یا «بدون» بنویس.",
+                v5_markup([[v5_button("❌ لغو", "V24|BC|HOME")]]),
+            )
+            return
+        if action == "PREVIEW":
+            flow = V24_BC_FLOW.get(uid, {})
+            await safe_answer_query(query, "👁 پیش‌نمایش:")
+            await v24_bc_send_one(context, int(query.message.chat_id), flow, preview=True)
+            rows = [
+                [v5_button("✅ ارسال نهایی", "V24|BC|GO")],
+                [v5_button("✏️ از اول", "V24|BC|NEW")],
+                [v5_button("❌ لغو", "V24|BC|HOME")],
+            ]
+            await context.bot.send_message(
+                chat_id=int(query.message.chat_id),
+                text="👆 پیش‌نمایش بالا — ارسال نهایی انجام شود؟",
+                reply_markup=v5_markup(rows),
+            )
+            return
+        if action == "GO":
+            flow = V24_BC_FLOW.pop(uid, {}) or {}
+            await safe_answer_query(query, "📡 ارسال آغاز شد…")
+            await v24_bc_run(update, context, flow)
+            return
+        await safe_answer_query(query, "⚠️ عملیات ناشناخته.", True)
+    except Exception as exc:
+        try:
+            await safe_answer_query(query, f"⚠️ {repr(exc)[:60]}", True)
+        except Exception:
+            pass
+
+
+async def v24_bc_send_one(context, chat_id: int, flow: dict, preview: bool = False):
+    text = str(flow.get("text") or "📣 ApexRival")
+    photo = flow.get("photo")
+    btn = flow.get("btn")
+    mk = None
+    if btn and isinstance(btn, (list, tuple)) and len(btn) == 2:
+        mk = v5_markup([[InlineKeyboardButton(str(btn[0])[:60], url=str(btn[1]))]])
+    try:
+        if preview:
+            header = "👁 <b>پیش‌نمایش پیام همگانی:</b>\n" + "━" * 10 + "\n"
+            text = header + text
+        if photo:
+            await context.bot.send_photo(chat_id=chat_id, photo=photo, caption=text[:1000],
+                                         parse_mode=ParseMode.HTML, reply_markup=mk)
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=text[:4000],
+                                           parse_mode=ParseMode.HTML, reply_markup=mk,
+                                           disable_web_page_preview=True)
+        return True
+    except Exception:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=str(text)[:4000])
+            return True
+        except Exception:
+            return False
+
+
+async def v24_bc_run(update, context, flow: dict):
+    try:
+        kind = flow.get("target", "users")
+        targets = v24_bc_targets_list(kind)
+        status = None
+        try:
+            status = await update.effective_message.reply_text(
+                f"📡 ارسال به {fmt_num(len(targets))} مقصد… (۰٪)"
+            )
+        except Exception:
+            status = None
+        ok = fail = 0
+        for i, tid in enumerate(targets):
+            sent = await v24_bc_send_one(context, int(tid), flow)
+            if sent:
+                ok += 1
+            else:
+                fail += 1
+            await asyncio.sleep(0.09)
+            if status is not None and i > 0 and i % 25 == 0:
+                try:
+                    await status.edit_text(
+                        f"📡 ارسال… ✅ {fmt_num(ok)} · ❌ {fmt_num(fail)}"
+                        f" ({int(i * 100 / max(1, len(targets)))}٪)"
+                    )
+                except Exception:
+                    pass
+        v24_store()["bc_log"].append({
+            "ts": time.time(), "target": kind, "ok": ok, "fail": fail,
+            "text": str(flow.get("text", ""))[:80],
+        })
+        v24_store()["bc_log"] = v24_store()["bc_log"][-50:]
+        save_data(force=True)
+        audit("v24_broadcast", int(update.effective_user.id), None, f"{kind}:{ok}/{len(targets)}")
+        if status is not None:
+            try:
+                await status.edit_text(
+                    "✅ <b>ارسال همگانی تمام شد</b>\n"
+                    f"{V24_DIV}\n"
+                    f"✅ موفق: <b>{fmt_num(ok)}</b>\n"
+                    f"❌ ناموفق (بلاک/خطا): <b>{fmt_num(fail)}</b>\n"
+                    f"🎯 هدف: {V24_BC_TARGETS.get(kind, kind)}",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+async def v24_bc_flow_text(update, context) -> bool:
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if not (msg and user and msg.text):
+            return False
+        uid = int(user.id)
+        if not is_admin(uid):
+            return False
+        flow = V24_BC_FLOW.get(uid)
+        if not flow:
+            return False
+        text = str(msg.text).strip()
+        if text in ("لغو", "❌ لغو"):
+            V24_BC_FLOW.pop(uid, None)
+            await msg.reply_text("✅ لغو شد.")
+            return True
+        t = flow.get("type")
+        if t == "bc_text":
+            flow["text"] = text[:3800]
+            flow["type"] = "bc_photo_stage"
+            await msg.reply_text(
+                "✅ متن ثبت شد!\n🖼 حالا یک عکس بفرست یا «بدون» بنویس:",
+                parse_mode=ParseMode.HTML,
+            )
+            return True
+        if t == "bc_photo_stage":
+            if text.lower() not in ("بدون", "-", "no", "next"):
+                await msg.reply_text("🖼 لطفاً عکس بفرست یا «بدون» بنویس.")
+                return True
+            flow["photo"] = None
+            flow["type"] = "bc_btn"
+            await msg.reply_text("🔘 حالا دکمه‌ی لینک: <code>متن | لینک</code> یا «بدون»:", parse_mode=ParseMode.HTML)
+            return True
+        if t == "bc_btn":
+            if text.lower() in ("بدون", "-", "no"):
+                flow["btn"] = None
+            else:
+                parts = text.split("|", 1)
+                if len(parts) == 2 and parts[1].strip().startswith("http"):
+                    flow["btn"] = (parts[0].strip()[:60], parts[1].strip()[:200])
+                else:
+                    await msg.reply_text("⚠️ فرمت درست: <code>متن دکمه | https://link</code> — یا «بدون»")
+                    return True
+            # پیش‌نمایش
+            await v24_bc_send_one(context, uid, flow, preview=True)
+            await msg.reply_text(
+                "👆 پیش‌نمایش بالا — ارسال نهایی انجام شود؟",
+                reply_markup=v5_markup([
+                    [v5_button("✅ ارسال نهایی", "V24|BC|GO")],
+                    [v5_button("✏️ از اول", "V24|BC|NEW")],
+                    [v5_button("❌ لغو", "V24|BC|HOME")],
+                ]),
+            )
+            return True
+    except Exception:
+        pass
+    return False
+
+
+async def v24_bc_flow_photo(update, context) -> bool:
+    try:
+        msg = getattr(update, "message", None)
+        user = getattr(update, "effective_user", None)
+        if msg is None or msg.photo is None or user is None:
+            return False
+        uid = int(user.id)
+        if not is_admin(uid):
+            return False
+        flow = V24_BC_FLOW.get(uid)
+        if not flow or flow.get("type") != "bc_photo_stage":
+            return False
+        flow["photo"] = msg.photo[-1].file_id
+        flow["type"] = "bc_btn"
+        await msg.reply_text("✅ عکس ثبت شد!\n🔘 حالا دکمه‌ی لینک: <code>متن | لینک</code> یا «بدون»:", parse_mode=ParseMode.HTML)
+        return True
+    except Exception:
+        return False
+
+
+# ----------------------------------------------------------------
+# [V24-OVERRIDES] اورراید نهایی توابع قدیمی → نسخه‌ی 1.0.0
+#  (هیچ امکاناتی حذف نمی‌شود؛ فقط ارتقا و اتصال)
+# ----------------------------------------------------------------
+
+# ۱) دستورات جدید از گیت گروهی رد می‌شوند + منوی اسنیفر
+try:
+    _v24_seen = set(V17_UNIQUE_COMMANDS)
+    V17_UNIQUE_COMMANDS = V17_UNIQUE_COMMANDS + tuple(
+        c for c in V24_NEW_UNIQUE if c not in _v24_seen
+    )
+except Exception:
+    pass
+try:
+    if isinstance(V20_GROUP_MENU_CMDS, (set, list, tuple)):
+        _v24_gm = set(V20_GROUP_MENU_CMDS) | set(V24_NEW_UNIQUE)
+        if isinstance(V20_GROUP_MENU_CMDS, set):
+            V20_GROUP_MENU_CMDS = _v24_gm
+        else:
+            V20_GROUP_MENU_CMDS = list(_v24_gm)
+except Exception:
+    pass
+
+# ۲) فروشگاه جدید — همه‌ی مسیرهای قدیمی (V5|SHOP، /shop، متن دکمه) به پنل 1.0.0 می‌روند
+_V24_OLD_SEND_SHOP = send_shop
+
+
+async def send_shop(message, uid: int) -> None:
+    try:
+        await v24_send_shop(message, int(uid), "home")
+    except Exception:
+        await _V24_OLD_SEND_SHOP(message, uid)
+
+
+# ۳) پنل دستاوردها — نسخه‌ی کامل با پیشرفت و پاداش
+_V24_OLD_ACHIEVEMENTS_CMD = achievements_cmd
+
+
+async def achievements_cmd(update, context) -> None:
+    try:
+        await v24_achievements_cmd(update, context)
+    except Exception:
+        await _V24_OLD_ACHIEVEMENTS_CMD(update, context)
+
+
+# ۴) پروفایل خفن — /apexprofile
+_V24_OLD_V19_PROFILE = v19_cmd_profile
+
+
+async def v19_cmd_profile(update, context):
+    try:
+        await v24_cmd_profile(update, context)
+    except Exception:
+        await _V24_OLD_V19_PROFILE(update, context)
+
+
+# ۵) عشق‌سنج حرفه‌ای — /apexlove
+_V24_OLD_V21_LOVE = v21_cmd_love
+
+
+async def v21_cmd_love(update, context):
+    try:
+        await v24_cmd_love(update, context)
+    except Exception:
+        await _V24_OLD_V21_LOVE(update, context)
+
+
+# ۶) درباره — /apexabout با نسخه‌ی 1.0.0
+_V24_OLD_V23_ABOUT = v23_cmd_about
+
+
+async def v23_cmd_about(update, context):
+    try:
+        await v24_cmd_about(update, context)
+    except Exception:
+        await _V24_OLD_V23_ABOUT(update, context)
+
+
+# ۷) راهنمای کامل — /apexhelp
+_V24_OLD_V17_HELP = v17_cmd_apexhelp
+
+
+async def v17_cmd_apexhelp(update, context):
+    try:
+        await v24_cmd_apexhelp(update, context)
+    except Exception:
+        await _V24_OLD_V17_HELP(update, context)
+
+
+# ۸) پنل مدیریت — دکمه‌های بخش‌های 1.0.0
+_V24_OLD_ADMIN_HOME_MK = v16_admin_home_markup
+
+
+def v16_admin_home_markup():
+    mk = _V24_OLD_ADMIN_HOME_MK()
+    try:
+        rows_24 = [
+            [v5_button("👥 کاربران 1.0.0", "V24|AU|HOME"),
+             v5_button("📨 ارسال حرفه‌ای 1.0.0", "V24|BC|HOME")],
+            [v5_button("📣 تبلیغات 1.0.0", "V24|AD|HOME"),
+             v5_button("📚 بانک سوالات 1.0.0", "V24|QB|HOME")],
+        ]
+        existing = getattr(mk, "inline_keyboard", None)
+        if existing:
+            rows_24 = list(existing) + rows_24
+        return v5_markup(rows_24)
+    except Exception:
+        return mk
+
+
+# ۹) مرکز مدیریت سوالات A18 — دکمه‌ی مرکز بانک 1.0.0
+_V24_OLD_A18_HOME_MK = v18_editor_home_markup
+
+
+def v18_editor_home_markup():
+    mk = _V24_OLD_A18_HOME_MK()
+    try:
+        rows_24 = [[v5_button("📚 مرکز بانک 1.0.0 (خروجی/ورودی فایل)", "V24|QB|HOME")]]
+        existing = getattr(mk, "inline_keyboard", None)
+        if existing:
+            rows_24 = list(existing) + rows_24
+        return v5_markup(rows_24)
+    except Exception:
+        return mk
+
+
+# ۹-ب) لایه‌ی V16 مسیر V5|L|J را زودتر از v5_lobby_action می‌بندد (ar16_smart_join)؛
+#  بنابراین همان تابع هم قفل محکوم‌ها را رعایت می‌کند.
+_V24_OLD_AR16_SMART_JOIN = ar16_smart_join
+
+
+async def ar16_smart_join(query, game):
+    try:
+        msg = getattr(query, "message", None)
+        if msg is not None:
+            uid = int(query.from_user.id)
+            if v24_punished(int(msg.chat_id), uid):
+                await safe_answer_query(
+                    query,
+                    "⚖️ اول حکمت را انجام بده و ادمین تأیید کند؛ بعد برمی‌گردی.",
+                    True,
+                )
+                return
+    except Exception:
+        pass
+    return await _V24_OLD_AR16_SMART_JOIN(query, game)
+
+
+# ۱۰) قفل لابی برای محکوم‌ها — V5|L|J
+_V24_OLD_V5_LOBBY_ACTION = v5_lobby_action
+
+
+async def v5_lobby_action(query, context, parts=None):
+    try:
+        data = str(getattr(query, "data", "") or "")
+        if data.startswith("V5|L|J"):
+            msg = getattr(query, "message", None)
+            if msg is not None and await v24_punish_block_check(query, int(msg.chat_id)):
+                return
+    except Exception:
+        pass
+    if parts is None:
+        return await _V24_OLD_V5_LOBBY_ACTION(query, context)
+    return await _V24_OLD_V5_LOBBY_ACTION(query, context, parts)
+
+
+# ۱۱) پایان آنبوردینگ → اتصال دعوت‌های در انتظار (duel / love2)
+_V24_OLD_FINISH_ONBOARDING = v17_finish_onboarding
+
+
+async def v17_finish_onboarding(query, context, uid: int) -> None:
+    await _V24_OLD_FINISH_ONBOARDING(query, context, uid)
+    try:
+        u = get_user(int(uid))
+        pending_duel = u.pop("v24_pending_duel", None)
+        pending_love2 = u.pop("v24_pending_love2", None)
+        if pending_duel or pending_love2:
+            save_data(force=True)
+        if pending_duel:
+            d = v24_duels().get(str(pending_duel))
+            if d and d.get("phase") == "invite" and not d.get("b"):
+                d["b"] = int(uid)
+                d.setdefault("names", {})[str(uid)] = v24_duel_name(uid)
+                d["phase"] = "topic"
+                save_data(force=True)
+                try:
+                    await query.message.reply_text(
+                        "👥 <b>به بازی دو نفره پیوست!</b>\n🎭 موضوع را انتخاب کن:",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=v5_markup(v24_duel_mode_buttons(str(pending_duel))),
+                    )
+                    await context.bot.send_message(
+                        chat_id=int(d["a"]),
+                        text=f"🎉 دوستت به بازی دو نفره پیوست — در حال انتخاب موضوع…",
+                    )
+                except Exception:
+                    pass
+        if pending_love2:
+            sess = v24_store()["love2"].get(str(pending_love2))
+            if sess and not sess.get("b"):
+                sess["b"] = int(uid)
+                sess["names"]["b"] = str(get_user(int(uid)).get("name") or "کاربر")
+                save_data(force=True)
+                try:
+                    await query.message.reply_text(
+                        "💞 <b>به سنجش دوطرفه خوش آمدی!</b>\n۴ سؤال کوتاه جواب بده:",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    await v24_love2_ask(context, str(pending_love2), "b")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+# ۱۲) هشدار تداخل دو پروسه (getUpdates conflict) + زنجیرهٔ خطای مقاوم
+_V24_OLD_AR9_ERROR = ar9_error_handler
+
+
+async def ar9_error_handler(update, context) -> None:
+    try:
+        err = getattr(context, "error", None)
+        if err is not None and "Conflict" in repr(err):
+            print(
+                "\n" + "=" * 62 +
+                "\n  ⚠️  هشدار مهم: یک پروسهٔ دیگر هم با همین توکن فعال است!"
+                "\n  اگر دو نسخه از ربات همزمان روشن باشند، نصف دکمه‌ها"
+                "\n  «بی‌جواب» می‌شوند. پروسهٔ قدیمی را ببند و فقط همین"
+                "\n  فایل 1.0.0 را اجرا کن." +
+                "\n" + "=" * 62 + "\n"
+            )
+            return
+    except Exception:
+        pass
+    return await _V24_OLD_AR9_ERROR(update, context)
+
+
+# ----------------------------------------------------------------
+# [V24-HELP] راهنمای کامل + درباره + ورودی‌های متنی PV
+# ----------------------------------------------------------------
+def v24_help_text() -> str:
+    return (
+        "📖 <b>راهنمای کامل ApexRival — نسخه‌ی 1.0.0</b>\n"
+        f"{V24_DIV}\n"
+        "🎮 <b>بازی اصلی (گروه)</b>\n"
+        "• <code>/apex</code> — ساخت بازی جرئت و حقیقت\n"
+        "• /join از طریق دکمه‌ی لابی · «▶️ شروع بازی» فقط سرگروه\n"
+        "• پرسشگر موضوع را می‌گزیند، پاسخ‌دهنده را انتخاب می‌کند، سؤال می‌آید\n"
+        "• 🌡 گرما: سؤال‌ها دور به دور داغ‌تر می‌شوند\n"
+        f"{V24_DIV}\n"
+        "👥 <b>بازی دو نفره (چت خصوصی)</b>\n"
+        "• <code>/apexduel</code> — لینک دعوت بساز و برای دوستت بفرست\n"
+        "• در گروه: ریپلای روی پیام دوستت + <code>/apexduel</code> → کارت دعوت با دکمه‌ی پیوستن\n"
+        "• ۱۰ دور، امتیاز، سکه و XP\n"
+        f"{V24_DIV}\n"
+        "🎪 <b>بازی‌های گروهی</b>\n"
+        "• <code>/apexspin</code> — 🍾 چرخش بطری؛ بطری یک نفر را انتخاب می‌کند: حقیقت یا جرئت!\n"
+        "• <code>/apexwyr</code> — 🤔 یا این یا اون؛ رأی‌گیری زنده با نمودار\n"
+        "• <code>/apexnhie</code> — 🙈 هیچوقت نگفتم؛ اعتراف جمعی!\n"
+        "• <code>/apexlikely</code> — 👀 محتمل‌ترین شخص؛ رأی بین بازیکنان\n"
+        f"{V24_DIV}\n"
+        "⚖️ <b>مجازات هوشمند</b>\n"
+        "• روی پیام فرد ریپلای کن: <code>/apexpunish</code> یا فقط «مجازات»\n"
+        "• حکم تصادفی صادر می‌شود؛ تا انجامش + تأیید ادمین، بازی ممنوع\n"
+        "• <code>/apexforgive</code> (ریپلای) — بخشش · <code>/apexpunishments</code> — فهرست\n"
+        f"{V24_DIV}\n"
+        "🕹 <b>سرگرمی‌های سریع</b>\n"
+        "• <code>/apexquiz</code> — 🧮 مسابقه ریاضی سرعتی (اولین جواب درست!)\n"
+        "• <code>/apexluck</code> — 🎡 گردونه‌ی شانس روزانه با جکپات\n"
+        "• <code>/apexlove</code> — 💘 عشق‌سنج حرفه‌ای چندبعدی\n"
+        "• <code>/apexlove2</code> — 💞 عشق‌سنج دوطرفه (هر دو نفر جواب می‌دهند)\n"
+        "• <code>/apex8ball</code> — 🔮 گوی جادویی (۲۰ پاسخ)\n"
+        "• <code>/apexdice</code> — 🎲 تاس با ربات\n"
+        "• <code>/apexcoin</code> — 🪙 شیر یا خط\n"
+        "• <code>/apexgift</code> — 🎁 هدیه‌ی سکه به دوست (ریپلای)\n"
+        f"{V24_DIV}\n"
+        "👤 <b>حساب من</b>\n"
+        "• <code>/apexprofile</code> — پروفایل کامل با قاب رنگی و عنوان\n"
+        "• <code>/apextop</code> — 🏆 قهرمانان هفته و همیشه\n"
+        "• <code>/shop</code> — 🛒 فروشگاه (عنوان، قاب، جعبه شانس، ابزار)\n"
+        "• دستاوردها: از منوی اصلی · هدیه‌ی روزانه: <code>/apexdaily</code>\n"
+        f"{V24_DIV}\n"
+        "🛡 <b>آرامش و امنیت</b>\n"
+        "• <code>/apexmute</code> / <code>/apexunmute</code> — تگ‌شدن خاموش/روشن\n"
+        "• <code>/apexbrb</code> / <code>/apexback</code> — موقتاً نیستم / برگشتم\n"
+        "• 🌿 «تنظیمات ضد اذیت» — پنل ادمین‌ها: ضد اسپم، سکوت شبانه، محافظ نوبت\n"
+        "• <code>/apexsettings</code> — ⚙️ تنظیمات گروه (خوشامد، اعلان سطح، موضوعات)\n"
+        f"{V24_DIV}\n"
+        "👑 <b>سرگروه و ادمین‌ها</b>\n"
+        "• <code>/apexend</code> — پایان بازی · <code>/apexpanel</code> — پنل مدیریت\n"
+        "• <code>/apexrecap</code> — گزارش هفتگی · <code>/apexteams</code> — تیم‌ها\n"
+        f"{V24_DIV}\n"
+        "⭐ ApexRival · نسخه‌ی <b>1.0.0</b> · ساخته‌شده با ♥ برای جمع‌های گرم"
+    )
+
+
+def v24_help_markup():
+    return v5_markup([
+        [v5_button("🎮 ساخت بازی", "V24|GRP|NEW"), v5_button("🎪 بازی‌های گروهی", "V24|GRP|FUN")],
+        [v5_button("🛒 فروشگاه", "V24|SH|HOME"), v5_button("👥 بازی دو نفره", "V24|DU|NEW")],
+        [v5_button("✖️ بستن", "V5|CLOSE")],
+    ])
+
+
+async def v24_cmd_apexhelp(update, context):
+    try:
+        text = v24_help_text()
+        mk = v24_help_markup()
+        if update.callback_query is not None:
+            await safe_edit_query(update.callback_query, text, mk)
+        else:
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=mk)
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+async def v24_cmd_about(update, context):
+    try:
+        st = v24_store()
+        text = (
+            f"⭐ <b>ApexRival</b> — نسخه‌ی <b>1.0.0</b>\n"
+            f"{V24_DIV}\n"
+            "🎉 اولین نسخه‌ی رسمی و کامل!\n"
+            f"{V24_DIV}\n"
+            "🎮 موتور بازی جرئت و حقیقت با ۱۵+ موضوع و گرمای تدریجی\n"
+            "👥 بازی دو نفره‌ی خصوصی با دعوت لینکی\n"
+            "🍾 بطری، 🤔 یا این یا اون، 🙈 هیچوقت نگفتم، 👀 محتمل‌ترین\n"
+            "⚖️ سیستم مجازات هوشمند با قفل و بخشش\n"
+            "💘 عشق‌سنج حرفه‌ای + دوطرفه\n"
+            "🧮 ریاضی سرعتی، 🔮 گوی جادویی، 🎲 تاس، 🪙 شیر یا خط، 🎡 گردونه\n"
+            "🛒 فروشگاه چهار دسته‌ای + 🏅 دستاوردهای پاداش‌دار\n"
+            "🛡 ضد اذیت کامل + 🌙 سکوت شبانه\n"
+            "👑 پنل مدیریت نسل جدید (کاربران/تبلیغات/ارسال حرفه‌ای/بانک سوالات)\n"
+            f"{V24_DIV}\n"
+            f"📚 بانک سوالات: <b>{fmt_num(sum(len(v) for v in V7_BANKS_FINAL.values()))}</b> سؤال\n"
+            f"👥 کاربران: <b>{fmt_num(len(DATA.get('users', {})))}</b> · "
+            f"🌐 گروه‌ها: <b>{fmt_num(len(DATA.get('groups', {})))}</b>\n"
+            f"🎮 بازی‌های دو نفره: <b>{fmt_num(int(st['stats'].get('duels', 0)))}</b> · "
+            f"⚖️ حکم‌ها: <b>{fmt_num(int(st['stats'].get('punishments', 0)))}</b>\n"
+            f"{V24_DIV}\n"
+            "💡 اگر این متن را نمی‌بینید، یعنی هنوز نسخه‌ی قدیمی روی سرورت اجراست!\n"
+            "ℹ️ /apexhelp — راهنمای کامل"
+        )
+        mk = v5_markup([
+            [v5_button("📖 راهنما", "V24|GRP|HELP"), v5_button("ℹ️ درباره", "V24|NONE")],
+            [v5_button("✖️ بستن", "V5|CLOSE")],
+        ])
+        if update.callback_query is not None:
+            await safe_edit_query(update.callback_query, text, mk)
+        else:
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=mk)
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ {escape(repr(exc))[:100]}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V24-ROUTER] روتر مرکزی دکمه‌های V24|
+# ----------------------------------------------------------------
+async def v24_callback_router(update, context):
+    """dispatch دکمه‌های V24| — قبل از زنجیره‌های اصلی (گروه -۹۶)."""
+    try:
+        query = getattr(update, "callback_query", None)
+        if query is None:
+            return
+        data = str(getattr(query, "data", "") or "")
+        if not data.startswith("V24|"):
+            return
+        parts = data.split("|")
+        section = parts[1] if len(parts) > 1 else ""
+        if section == "NONE":
+            try:
+                await query.answer("ℹ️ این دکمه فقط نمایشی است.")
+            except Exception:
+                pass
+        elif section == "GRP":
+            await v24_grp_callback(update, context, query, parts)
+        elif section == "PU":
+            await v24_punish_callback(update, context, query, parts)
+        elif section == "DU":
+            await v24_duel_callback(update, context, query, parts)
+        elif section == "SPIN":
+            await v24_spin_callback(update, context, query, parts)
+        elif section == "WYR":
+            await v24_wyr_callback(update, context, query, parts)
+        elif section == "NHIE":
+            await v24_nhie_callback(update, context, query, parts)
+        elif section == "LK":
+            await v24_likely_callback(update, context, query, parts)
+        elif section == "QB":
+            await v24_qb_callback(update, context, query, parts)
+        elif section == "LV":
+            await v24_love_callback(update, context, query, parts)
+        elif section == "L2":
+            await v24_love2_callback(update, context, query, parts)
+        elif section == "SH":
+            await v24_shop_callback(update, context, query, parts)
+        elif section == "AU":
+            await v24_au_callback(update, context, query, parts)
+        elif section == "AD":
+            await v24_ad_callback(update, context, query, parts)
+        elif section == "BC":
+            await v24_bc_callback(update, context, query, parts)
+        elif section == "GS":
+            await v24_gs_callback(update, context, query, parts)
+        else:
+            try:
+                await query.answer("⚠️ گزینه ناشناخته.", show_alert=True)
+            except Exception:
+                pass
+    except Exception as exc:
+        try:
+            audit("v24_router_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+        try:
+            q = getattr(update, "callback_query", None)
+            if q is not None:
+                await q.answer("⚠️ یک خطای کوچک پیش آمد؛ دوباره امتحان کن.", show_alert=True)
+        except Exception:
+            pass
+    finally:
+        if _V17_AHS is not None:
+            raise _V17_AHS
+
+
+# ----------------------------------------------------------------
+# [V24-START] پوش /start برای deep-link های جدید (duel / love2)
+# ----------------------------------------------------------------
+_V24_OLD_AR15_START = ar15_start
+
+
+async def ar15_start(update, context):
+    """[V24] /start با پشتیبانی از duel- و love2-"""
+    try:
+        msg = getattr(update, "message", None)
+        args = list(getattr(context, "args", None) or [])
+        if msg is not None and args:
+            payload = str(args[0]).strip()
+            if payload.startswith("duel-"):
+                code = payload[5:]
+                # اگر کاربر تازه است، اول انبوردینگ عادی؛ لابی بعداً وصل می‌شود
+                user = getattr(update, "effective_user", None)
+                if user is not None and v7_has_started(int(user.id)):
+                    if await v24_duel_start_payload(update, context, code):
+                        return
+                else:
+                    get_user(int(user.id))["v24_pending_duel"] = code if user else ""
+                    save_data(force=True)
+            elif payload.startswith("love2-"):
+                code = payload[6:]
+                user = getattr(update, "effective_user", None)
+                if user is not None and v7_has_started(int(user.id)):
+                    if await v24_love2_start_payload(update, context, code):
+                        return
+                else:
+                    get_user(int(user.id))["v24_pending_love2"] = code if user else ""
+                    save_data(force=True)
+    except Exception:
+        pass
+    return await _V24_OLD_AR15_START(update, context)
+
+
+# ----------------------------------------------------------------
+# [V24-TEXT] روتر متنی چت خصوصی برای فلوهای V24
+# ----------------------------------------------------------------
+async def v24_private_text_router(update, context) -> bool:
+    """فلوهای متنی V24: جست‌وجوی کاربر، DM، تبلیغ، ارسال همگانی، تغییر نام.
+    اگر پیام مصرف شد، زنجیره را کامل متوقف می‌کنیم (بدون دوبار-پردازش)."""
+    consumed = False
+    try:
+        consumed = await v24_uf_text(update, context)
+        if not consumed:
+            consumed = await v24_ad_flow_text(update, context)
+        if not consumed:
+            consumed = await v24_bc_flow_text(update, context)
+        if not consumed:
+            consumed = await v24_handle_bank_import(update, context)
+    except Exception:
+        consumed = False
+    if not consumed:
+        # تغییر نام فروشگاه
+        try:
+            msg = getattr(update, "message", None)
+            user = getattr(update, "effective_user", None)
+            if msg is not None and user is not None and msg.text:
+                uid = int(user.id)
+                flow = v24_shop_flow().get(str(uid))
+                if flow and flow.get("type") == "rename":
+                    v24_shop_flow().pop(str(uid), None)
+                    get_user(uid)["name"] = str(msg.text).strip()[:40]
+                    save_data(force=True)
+                    await msg.reply_text("✅ نامت عوض شد!")
+                    consumed = True
+        except Exception:
+            pass
+    if consumed and _V17_AHS is not None:
+        raise _V17_AHS
+    return consumed
+
+
+# ----------------------------------------------------------------
+# [V24-GATES] قفل بازی برای محکوم‌ها + بن کاربر + بوست‌ها
+# ----------------------------------------------------------------
+_V24_OLD_SHOW_TARGETS = v7_show_targets
+
+
+async def v7_show_targets(query, game, mode: str):
+    """[V24] محکوم‌ها نمی‌توانند موضوع/هدف انتخاب کنند."""
+    try:
+        chat = getattr(query, "message", None)
+        if chat is not None:
+            if await v24_punish_block_check(query, int(chat.chat_id)):
+                return
+    except Exception:
+        pass
+    return await _V24_OLD_SHOW_TARGETS(query, game, mode)
+
+
+_V24_OLD_V5_LOBBY_ACTION = None
+
+
+async def v24_lobby_action_gate(update, context):
+    """[V24] ورود به لابی برای محکوم‌ها ممنوع (پیش-چک V5|L|J)."""
+    try:
+        query = getattr(update, "callback_query", None)
+        if query is None:
+            return False
+        data = str(getattr(query, "data", "") or "")
+        if not data.startswith("V5|L|J"):
+            return False
+        msg = getattr(query, "message", None)
+        if msg is None:
+            return False
+        return await v24_punish_block_check(query, int(msg.chat_id))
+    except Exception:
+        return False
+
+
+_V24_OLD_ENSURE_ALLOWED = ensure_allowed
+
+
+async def ensure_allowed(update):
+    """[V24] کاربران مسدودشده پیام محترمانه می‌گیرند."""
+    try:
+        user = getattr(update, "effective_user", None)
+        if user is not None:
+            u = get_user(int(user.id))
+            if u.get("v24_banned"):
+                msg = getattr(update, "effective_message", None)
+                if msg is not None:
+                    try:
+                        await msg.reply_text("🚫 دسترسی شما به این ربات محدود شده است.")
+                    except Exception:
+                        pass
+                return False
+    except Exception:
+        pass
+    return await _V24_OLD_ENSURE_ALLOWED(update)
+
+
+_V24_OLD_ADD_XP = add_xp
+
+
+def add_xp(uid, amount, *args, **kwargs):
+    """[V24] بوست XP دوبرابر (آیتم فروشگاه) — امضای کامل پاس‌داده می‌شود."""
+    try:
+        u = get_user(int(uid))
+        if u.get("v24_xp_until", 0) and time.time() < float(u.get("v24_xp_until", 0)):
+            amount = int(amount) * 2
+    except Exception:
+        pass
+    return _V24_OLD_ADD_XP(uid, amount, *args, **kwargs)
+
+
+_V24_OLD_ADD_COINS = add_coins
+
+
+def add_coins(uid, amount, *args, **kwargs):
+    """[V24] طلسم شانس: سکه‌ی دوبرابر (فقط افزایشی) — امضای کامل پاس‌داده می‌شود."""
+    try:
+        if int(amount) > 0:
+            u = get_user(int(uid))
+            if u.get("v24_luck_until", 0) and time.time() < float(u.get("v24_luck_until", 0)):
+                amount = int(amount) * 2
+    except Exception:
+        pass
+    return _V24_OLD_ADD_COINS(uid, amount, *args, **kwargs)
+
+
+# ----------------------------------------------------------------
+# [V24-MENUS] منوی دستورات طبقه‌بندی‌شده‌ی 1.0.0
+# ----------------------------------------------------------------
+V24_COMMAND_MENU_PRIVATE = [
+    BotCommand("start", "⚡ شروع و فعال‌سازی حساب"),
+    BotCommand("apexduel", "👥 بازی دو نفره با دوستت (لینک دعوت)"),
+    BotCommand("apexprofile", "🪪 پروفایل کامل با قاب و عنوان"),
+    BotCommand("apextop", "🏆 قهرمانان هفته و همیشه"),
+    BotCommand("shop", "🛒 فروشگاه چهار دسته‌ای"),
+    BotCommand("apexlove", "💘 عشق‌سنج حرفه‌ای چندبعدی"),
+    BotCommand("apexlove2", "💞 عشق‌سنج دوطرفه (هر دو نفر)"),
+    BotCommand("apexquiz", "🧮 مسابقه سرعتی ریاضی"),
+    BotCommand("apexluck", "🎡 گردونه‌ی شانس روزانه"),
+    BotCommand("apex8ball", "🔮 گوی جادویی"),
+    BotCommand("apexdice", "🎲 تاس با ربات"),
+    BotCommand("apexcoin", "🪙 شیر یا خط"),
+    BotCommand("apexgift", "🎁 هدیه‌ی سکه به دوست"),
+    BotCommand("apexhelp", "📖 راهنمای کامل همه‌ی امکانات"),
+    BotCommand("apexabout", "⭐ درباره‌ی نسخه‌ی 1.0.0"),
+]
+
+V24_COMMAND_MENU_GROUP = [
+    BotCommand("start", "⚡ معرفی ربات"),
+    BotCommand("apex", "🎮 ساخت بازی جرئت و حقیقت"),
+    BotCommand("apexspin", "🍾 چرخش بطری"),
+    BotCommand("apexwyr", "🤔 یا این یا اون"),
+    BotCommand("apexnhie", "🙈 هیچوقت نگفتم"),
+    BotCommand("apexlikely", "👀 محتمل‌ترین شخص"),
+    BotCommand("apexpunish", "⚖️ مجازات (روی پیام ریپلای)"),
+    BotCommand("apexforgive", "💚 بخشش مجازات (ریپلای)"),
+    BotCommand("apexpunishments", "📋 مجازات‌های فعال"),
+    BotCommand("apexduel", "👥 دعوت به بازی دو نفره (ریپلای)"),
+    BotCommand("apexquiz", "🧮 مسابقه سرعتی ریاضی"),
+    BotCommand("apexteams", "⚔️ تیم‌های رقابتی"),
+    BotCommand("apexdaily", "🎯 چالش روزانه‌ی گروه"),
+    BotCommand("apexheart", "❤️ قلب محبت (ریپلای)"),
+    BotCommand("apexbrb", "🌙 موقتاً نیستم"),
+    BotCommand("apexback", "🌞 برگشتم"),
+    BotCommand("apexrecap", "📊 گزارش هفتگی گروه"),
+    BotCommand("apexprofile", "🪪 پروفایل کامل من"),
+    BotCommand("apextop", "🏆 قهرمانان"),
+    BotCommand("apexsettings", "⚙️ تنظیمات گروه (ادمین‌ها)"),
+    BotCommand("apexmute", "🔇 تگ‌شدن من خاموش شود"),
+    BotCommand("apexunmute", "🔔 تگ‌شدن من روشن شود"),
+    BotCommand("apexend", "🛑 پایان بازی (سرگروه)"),
+    BotCommand("apexhelp", "📖 راهنمای کامل"),
+]
+
+# (V24_NEW_UNIQUE در ابتدای لایه تعریف شده است)
+
+
+# ----------------------------------------------------------------
+# [V24-REGISTER] سیم‌کشی نهایی — همه‌ی هندلرهای جدید
+# ----------------------------------------------------------------
+_AR23_OLD_REGISTER_FINAL = ar15_register_handlers
+
+
+def ar15_register_handlers(app) -> None:
+    _AR23_OLD_REGISTER_FINAL(app)
+    try:
+        from telegram.ext import ChatMemberHandler as _CMH
+        # فعال‌سازی گروه (اضافه/ادمین شدن ربات)
+        app.add_handler(_CMH(v24_my_chat_member, _CMH.MY_CHAT_MEMBER), group=-90)
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 CMH warning: {exc!r}")
+        except Exception:
+            pass
+    try:
+        # تریگر متنی «جرئت و حقیقت» در گروه‌ها
+        app.add_handler(
+            MessageHandler(
+                (filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND)),
+                v24_group_text_trigger,
+            ),
+            group=-89,
+        )
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 trigger warning: {exc!r}")
+        except Exception:
+            pass
+    try:
+        # روتر دکمه‌های V24| — قبل از زنجیره‌های اصلی
+        app.add_handler(CallbackQueryHandler(v24_callback_router, pattern=r"^V24\|"), group=-96)
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 router warning: {exc!r}")
+        except Exception:
+            pass
+    try:
+        # نجات‌دهنده‌ی دکمه‌های بی‌جواب — بعد از همه
+        app.add_handler(CallbackQueryHandler(v24_catchall_callback, pattern=None), group=3)
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 catchall warning: {exc!r}")
+        except Exception:
+            pass
+    for name, fn in (
+        ("apexpunish", v24_cmd_punish),
+        ("apexforgive", v24_cmd_forgive),
+        ("apexpunishments", v24_cmd_punishments),
+        ("apexduel", v24_cmd_duel),
+        ("apexspin", v24_cmd_spin),
+        ("apexwyr", v24_cmd_wyr),
+        ("apexnhie", v24_cmd_nhie),
+        ("apexlikely", v24_cmd_likely),
+        ("apexsettings", v24_cmd_settings),
+        ("apexlove2", v24_cmd_love2),
+    ):
+        try:
+            app.add_handler(CommandHandler(name, fn))
+        except Exception:
+            pass
+    try:
+        # فلوهای متنی/عکس/فایل V24 در چت خصوصی
+        app.add_handler(
+            MessageHandler((filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND)),
+                           v24_private_text_router), group=-1,
+        )
+        app.add_handler(
+            MessageHandler((filters.ChatType.PRIVATE & filters.Document.ALL),
+                           v24_doc_handler), group=-1,
+        )
+        app.add_handler(
+            MessageHandler((filters.ChatType.PRIVATE & filters.PHOTO),
+                           v24_private_photo_router), group=-1,
+        )
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 flows warning: {exc!r}")
+        except Exception:
+            pass
+
+
+async def v24_doc_handler(update, context):
+    try:
+        consumed = await v24_handle_bank_import(update, context)
+        if consumed and _V17_AHS is not None:
+            raise _V17_AHS
+    except Exception:
+        pass
+
+
+async def v24_private_photo_router(update, context):
+    """عکس‌های فلوهای V24 (ارسال همگانی)."""
+    try:
+        consumed = await v24_bc_flow_photo(update, context)
+        if consumed and _V17_AHS is not None:
+            raise _V17_AHS
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V24-WELCOME] احترام به تنظیمات گروه در خوشامد و اعلان سطح
+# ----------------------------------------------------------------
+_V24_OLD_WELCOME = v19_welcome_new_member
+
+
+async def v19_welcome_new_member(update, context):
+    """[V24] خوشامد اعضای جدید — با احترام به تنظیمات گروه."""
+    try:
+        chat = getattr(update, "effective_chat", None)
+        if chat is not None and not v24_gcfg(int(chat.id)).get("welcome", True):
+            return
+    except Exception:
+        pass
+    return await _V24_OLD_WELCOME(update, context)
+
+
+# ----------------------------------------------------------------
+# [V24-MENU-PUSH] به‌روزرسانی منوی دستورات تلگرام با نسخه‌ی 1.0.0
+# ----------------------------------------------------------------
+_V24_OLD_POST_INIT = ar15_post_init
+
+
+async def ar15_post_init(application):
+    await _V24_OLD_POST_INIT(application)
+    try:
+        await application.bot.set_my_commands(
+            V24_COMMAND_MENU_GROUP, scope=BotCommandScopeAllGroupChats())
+        await application.bot.set_my_commands(
+            V24_COMMAND_MENU_PRIVATE, scope=BotCommandScopeAllPrivateChats())
+        print("ApexRival V24 menus pushed (1.0.0)")
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 menu push warning: {exc!r}")
+        except Exception:
+            pass
+    try:
+        # گزارش دکتر داده
+        fixes = v24_data_doctor()
+        if fixes:
+            print(f"ApexRival V24 data doctor: {len(fixes)} repairs -> {fixes[:5]}")
+    except Exception as exc:
+        try:
+            print(f"ApexRival V24 doctor warning: {exc!r}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V24-CHECK] سلف‌چک لایه — سلامت کامل قبل از استارت
+# ----------------------------------------------------------------
+def v24_self_check() -> None:
+    total, per = v24_bank_totals()
+    assert total >= 8281, f"question banks shrank: {total}"
+    # دستورات جدید در لیست‌های مجاز
+    for c in V24_NEW_UNIQUE:
+        assert c in V17_UNIQUE_COMMANDS, f"V24 command not allowed in groups: {c}"
+    # منوها: شروع با start، بدون تکرار، ascii
+    for menu in (V24_COMMAND_MENU_PRIVATE, V24_COMMAND_MENU_GROUP):
+        names = [c.command for c in menu]
+        assert names[0] in ("start",), "menu must begin with start"
+        assert len(set(names)) == len(names), "duplicate command"
+        assert all(n.isascii() and n.islower() for n in names), "bad name"
+        assert all(1 <= len(c.description) <= 256 for c in menu)
+    assert "apex" in [c.command for c in V24_COMMAND_MENU_GROUP]
+    # الگوی دکمه‌ها کوتاه
+    for sample in ("V24|PU|DONE|-100123|456", "V24|DU|TOPIC|c1000|truth",
+                   "V24|SH|BUY|t_legend", "V24|AU|VIEW|123456789",
+                   "V24|AD|TOG|3", "V24|BC|GO", "V24|GS|WELCOME|-100123",
+                   "V24|L2|A|c1000|0|1"):
+        assert 1 <= len(sample.encode("utf-8")) <= 64, sample
+    # بانک‌های V24
+    assert len(V24_EITHER_OR) >= 30 and len(V24_NHIE) >= 30 and len(V24_LIKELY) >= 20
+    assert len(V24_LOVE_QUESTIONS) == 8
+    # کاتالوگ فروشگاه
+    total_items = sum(len(c["items"]) for c in V24_SHOP_CATALOG.values())
+    assert total_items >= 25, f"shop too small: {total_items}"
+    print(
+        f"ApexRival V24 FINAL self-check OK | version=1.0.0 | banks={total} | "
+        f"shop={total_items} | punishments=smart | duel=on | party=4 | "
+        "love-pro=on | admin-pro=on | bank-center=on | dead-button-rescue=on"
+    )
+
+
+def main_apexrival_24():
+    """لانچر نهایی 1.0.0"""
+    print(
+        f"{BOT_NAME} 1.0.0 RELEASE | smart-punishments | 2p-duel | party-games | "
+        "pro-love | pro-shop | pro-admin | bank-center | group-activation | "
+        "dead-button-rescue | data-doctor"
+    )
+    return main_apexrival_23()
+
+
+main_apexrival_15 = main_apexrival_24
+main = main_apexrival_24
+
+v24_self_check()
 
 
 if __name__ == "__main__":
