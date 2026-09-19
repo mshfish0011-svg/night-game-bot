@@ -28073,6 +28073,2603 @@ def v18_self_check() -> None:
 v18_self_check()
 
 
+
+
+# ================================================================
+# ================================================================
+#  APEXRIVAL V19 «ULTRA SOCIAL LAYER» — بزرگ‌ترین ارتقای تجربه کاربری:
+#  · موتور منشن هوشمند: هر کاربر خودش می‌تواند تگ‌شدن را خاموش/روشن کند
+#    (/apexmute و /apexunmute) — دیگر هیچ‌کس بابت نوتیفیکیشن اذیت نمی‌شود
+#  · محافظ ضد اسپم: هر کاربر که دکمه‌ها یا دستورات را بیش از حد فشار دهد،
+#    به‌جای خطا و کرش، یک پیام مؤدبانه و آرام می‌گیرد
+#  · نگهبان نوبت (Stall Guard): اگر نوبت کسی طولانی بی‌جواب بماند، اول یک
+#    یادآوری محترمانه با تگ می‌رسد، بعد نوبت خودکار می‌رود بعدی تا بازی
+#    هیچ‌وقت وسط گروه گیر نکند
+#  · ساعات سکوت (Quiet Hours): در بازه‌ی شبانه هیچ یادآوری فعالی ارسال
+#    نمی‌شود تا کسی ساعت خوابش خراب نشود
+#  · خوش‌آمدگویی هوشمند به اعضای جدید گروه با آموزش ۳۰ ثانیه‌ای
+#  · رتبه‌بندی هفتگی و همه‌ی زمان‌ها با مدال و تگ (/apextop)
+#  · پروفایل نسل جدید با نوار پیشرفت سطح و کوئست‌ها (/apexprofile)
+#  · راهنمای تعاملی صفحه‌به‌صفحه (/apexguide)
+#  · پنل تنظیمات ضد اذیت برای ادمین‌های گروه
+#  · جشن ارتقای سطح با تگ وقتی کسی لول می‌شود
+#  · صدها سؤال جدید دست‌نویس برای همه‌ی ۱۵ موضوع
+#  · همه‌چیز ذخیره می‌شود و بعد از ری‌استارت هم می‌ماند
+# ================================================================
+# ================================================================
+
+# [V19-IMPORT] ایمپورت‌های دفاعی — اگر نسخه‌ی کتابخانه فرق کند کرش نمی‌کند
+try:
+    from telegram.ext import ApplicationHandlerStop as _V19_AHS
+except Exception:  # pragma: no cover
+    _V19_AHS = None
+
+V19_LAYER_TAG = "V19"
+V19_DIV = "━━━━━━━━━━━━━━━━━━"
+V19_VERSION = "19.0-ultra"
+
+# [V19-STATE] وضعیت لحظه‌ای لایه (در ری‌استارت خالی شروع می‌شود)
+V19_BOOT: dict = {"app": None, "bot": None, "boot_ts": 0}
+V19_STALL_TASKS: dict = {}   # {game_gid: asyncio.Task}
+V19_RATE_WINDOW: dict = {}   # {uid: [timestamps]}
+V19_NAG_TS: dict = {}        # {(uid, kind): ts} — ضد تکرار پیام آروم‌باش
+V19_WELCOME_CACHE: dict = {} # {(uid, chat_id): ts}
+
+# ----------------------------------------------------------------
+# [V19-CFG] تنظیمات هر گروه — همه با مقادیر امن پیش‌فرض
+# ----------------------------------------------------------------
+V19_CFG_DEFAULTS = {
+    "stall": True,        # نگهبان نوبت فعال باشد؟
+    "rmin": 3,            # دقیقه تا یادآوری نوبت
+    "smin": 12,           # دقیقه تا رد شدن خودکار نوبت
+    "welcome": True,      # خوش‌آمدگویی به عضو جدید
+    "quiet_on": False,    # ساعات سکوت فعال؟
+    "qfrom": 23,          # از ساعت
+    "qto": 8,             # تا ساعت
+    "rlvl": 1,            # سطح محافظ ضد اسپم: 0=سخت‌گیر 1=عادی 2=آسان
+}
+
+V19_RATE_LIMITS = {
+    # سطح: (حداکثر دکمه در ۱۵ ثانیه، حداکثر دستور در ۱۲ ثانیه)
+    0: (6, 4),
+    1: (10, 8),
+    2: (18, 14),
+}
+
+
+def v19_store() -> dict:
+    """دسترسی امن به مخزن پایدار V19 داخل DATA (همیشه dict برمی‌گرداند)."""
+    try:
+        s = DATA.setdefault("v19", {})
+    except Exception:
+        return {}
+    s.setdefault("cfg", {})
+    s.setdefault("prefs", {})
+    s.setdefault("weekly", {})
+    s.setdefault("welcomed", {})
+    s.setdefault("lvl_pending", {})
+    s.setdefault("stats", {"reminders_sent": 0, "autoskips_done": 0,
+                            "welcomes_sent": 0, "guards_tripped": 0,
+                            "levelups_celebrated": 0})
+    return s
+
+
+def v19_cfg(chat_id: int) -> dict:
+    """تنظیمات گروه با merge روی پیش‌فرض‌ها — هر تغییر ناهماهنگ درمان می‌شود."""
+    try:
+        cfg_all = v19_store()["cfg"]
+        key = group_key(int(chat_id)) if int(chat_id) else "global"
+        cfg = cfg_all.setdefault(key, {})
+        merged = dict(V19_CFG_DEFAULTS)
+        merged.update({k: v for k, v in cfg.items() if k in V19_CFG_DEFAULTS})
+        # گیرهای امنیت مقادیر
+        merged["stall"] = bool(merged["stall"])
+        merged["welcome"] = bool(merged["welcome"])
+        merged["quiet_on"] = bool(merged["quiet_on"])
+        merged["rmin"] = max(1, min(15, int(merged["rmin"])))
+        merged["smin"] = max(3, min(60, int(merged["smin"])))
+        if merged["smin"] <= merged["rmin"]:
+            merged["smin"] = merged["rmin"] + 3
+        merged["qfrom"] = max(0, min(23, int(merged["qfrom"])))
+        merged["qto"] = max(0, min(23, int(merged["qto"])))
+        try:
+            merged["rlvl"] = max(0, min(2, int(merged["rlvl"])))
+        except Exception:
+            merged["rlvl"] = 1
+        cfg.clear()
+        cfg.update(merged)
+        return merged
+    except Exception:
+        return dict(V19_CFG_DEFAULTS)
+
+
+def v19_prefs(uid: int) -> dict:
+    """تنظیمات شخصی کاربر — فقط مال خودش."""
+    try:
+        prefs_all = v19_store()["prefs"]
+        prefs = prefs_all.setdefault(user_key(int(uid)), {})
+        prefs.setdefault("mentions", True)      # تگ‌شدن با لینک؟
+        prefs.setdefault("quest_remind", False) # یادآور کوئست روزانه (opt-in)
+        prefs["mentions"] = bool(prefs["mentions"])
+        prefs["quest_remind"] = bool(prefs["quest_remind"])
+        return prefs
+    except Exception:
+        return {"mentions": True, "quest_remind": False}
+
+
+# ----------------------------------------------------------------
+# [V19-MENTION] موتور منشن هوشمند — قلب «کاربر اذیت نشه»
+# ----------------------------------------------------------------
+def v19_wants_mentions(uid: int) -> bool:
+    """کاربر تگ‌شدن را خاموش کرده یا نه؟ (پیش‌فرض: روشن)"""
+    try:
+        return bool(v19_prefs(int(uid)).get("mentions", True))
+    except Exception:
+        return True
+
+
+_AR19_OLD_MENTION = mention_user
+
+
+def mention_user(uid: int, name: str) -> str:
+    """نسخه‌ی ارتقایافته: اگر کاربر /apexmute زده باشد، به‌جای لینکِ
+    نوتیفیکیشن‌دار، فقط اسمِ بولد نمایش داده می‌شود — همه‌ی صدها نقطه‌ی
+    موجودِ ربات به‌طور خودکار از این قانون پیروی می‌کنند."""
+    try:
+        uid_i = int(uid)
+        if uid_i and not v19_wants_mentions(uid_i):
+            return f"<b>{escape(str(name or 'بازیکن'))}</b>"
+    except Exception:
+        pass
+    return _AR19_OLD_MENTION(uid, name)
+
+
+def v19_mention(uid: int, name: str | None = None) -> str:
+    """منشن امن با نامِ در دسترس — برای همه‌ی بخش‌های V19."""
+    try:
+        uid_i = int(uid)
+        nm = str(name or "")
+        if not nm:
+            try:
+                nm = str(get_user(uid_i).get("name") or "بازیکن")
+            except Exception:
+                nm = "بازیکن"
+        return mention_user(uid_i, nm)
+    except Exception:
+        return "<b>بازیکن</b>"
+
+# ----------------------------------------------------------------
+# [V19-GUARD] محافظ ضد اسپم — به‌جای خطا، آرامش
+# ----------------------------------------------------------------
+def v19_rate_hit(uid: int, kind: str, chat_id: int = 0) -> bool:
+    """پنجره‌ی لغزان: True یعنی «این یکی زیاد شد». ادمین‌های ربات و
+    ادمین‌های گروه هرگز بلاک نمی‌شوند تا مدیریت گروه درگیر چیزی نشود."""
+    try:
+        uid_i = int(uid)
+        if not uid_i:
+            return False
+        if is_admin(uid_i):
+            return False
+        lvl = 1
+        if int(chat_id) < 0:
+            try:
+                lvl = int(v19_cfg(int(chat_id)).get("rlvl", 1))
+            except Exception:
+                lvl = 1
+        max_c, max_m = V19_RATE_LIMITS.get(lvl, V19_RATE_LIMITS[1])
+        limit, window = (max_c, 15.0) if kind == "callback" else (max_m, 12.0)
+        now = time.time()
+        bucket = V19_RATE_WINDOW.setdefault(uid_i, [])
+        bucket[:] = [t for t in bucket if (now - t) < window]
+        if len(bucket) >= limit:
+            # ثبت آمار بدون کرش
+            try:
+                v19_store()["stats"]["guards_tripped"] = int(v19_store()["stats"].get("guards_tripped", 0)) + 1
+            except Exception:
+                pass
+            return True
+        bucket.append(now)
+        return False
+    except Exception:
+        return False
+
+
+def v19_nag_allowed(uid: int, kind: str) -> bool:
+    """پیامِ «آروم‌تر» حداکثر هر ۸ ثانیه یک‌بار برای هر کاربر — خودِ
+    محافظ نباید تبدیل به منبع اذیت شود."""
+    try:
+        key = (int(uid), str(kind))
+        now = time.time()
+        last = V19_NAG_TS.get(key, 0.0)
+        if (now - last) < 8.0:
+            return False
+        V19_NAG_TS[key] = now
+        return True
+    except Exception:
+        return True
+
+
+async def v19_rate_guard_callback(update, context):
+    """هندلر گروهِ -۹۷: قبل از همه‌ی دکمه‌ها اجرا می‌شود. اسپمِ دکمه را
+    با یک پیام آرام می‌گیرد و زنجیره‌ی هندلرها را متوقف می‌کند تا
+    دیتای بازی خراب نشود."""
+    try:
+        query = getattr(update, "callback_query", None)
+        user = getattr(query, "from_user", None) if query is not None else None
+        if user is None or getattr(user, "is_bot", False):
+            return
+        chat = getattr(update, "effective_chat", None)
+        ctype = str(getattr(chat, "type", "") or "")
+        if ctype not in ("group", "supergroup"):
+            return
+        if not v19_rate_hit(int(user.id), "callback", int(chat.id)):
+            return
+        if v19_nag_allowed(int(user.id), "nag"):
+            try:
+                await safe_answer_query(
+                    query,
+                    "🌿 آروم‌تر قربان! چند لحظه صبر کن و دوباره بزن.",
+                    False,
+                )
+            except Exception:
+                pass
+        if _V19_AHS is not None:
+            raise _V19_AHS
+    except Exception as exc:
+        if _V19_AHS is not None and isinstance(exc, _V19_AHS):
+            raise
+        return
+
+
+async def v19_rate_guard_command(update, context):
+    """هندلر گروهِ -۹۷ برای دستورات: فقط اسپمِ واقعی (مثل ۸ دستور در ۱۲
+    ثانیه) را می‌گیرد؛ استفاده‌ی عادی هرگز لمس نمی‌شود."""
+    try:
+        chat = getattr(update, "effective_chat", None)
+        ctype = str(getattr(chat, "type", "") or "")
+        if ctype not in ("group", "supergroup"):
+            return
+        user = getattr(update, "effective_user", None)
+        if user is None or getattr(user, "is_bot", False):
+            return
+        if not v19_rate_hit(int(user.id), "command", int(chat.id)):
+            return
+        msg = getattr(update, "message", None) or getattr(update, "edited_message", None)
+        if msg is not None and v19_nag_allowed(int(user.id), "nag"):
+            try:
+                await msg.reply_text("🌿 داری خیلی سریع دستور می‌زنی! چند ثانیه بین‌شان فاصله بگذار 🙏")
+            except Exception:
+                pass
+        if _V19_AHS is not None:
+            raise _V19_AHS
+    except Exception as exc:
+        if _V19_AHS is not None and isinstance(exc, _V19_AHS):
+            raise
+        return
+
+
+# ----------------------------------------------------------------
+# [V19-QUIET] ساعات سکوت — ربات شب‌ها بیدار نمی‌شود
+# ----------------------------------------------------------------
+def v19_quiet_now(chat_id: int) -> bool:
+    """الان ساعت سکوت است؟ فقط یادآوری‌های فعال را خاموش می‌کند؛
+    بازی و دکمه‌ها همیشه آزادند."""
+    try:
+        if not int(chat_id):
+            return False
+        cfg = v19_cfg(int(chat_id))
+        if not cfg.get("quiet_on", False):
+            return False
+        # ساعت محلی کاربر قابل تشخیص نیست؛ ساعت سرور + ۳:۳۰ (تهران) منطقی‌ترین
+        # تقریب برای کاربران فارسی‌زبان است.
+        tehran_hour = (datetime.now(timezone.utc).hour + 3) % 24
+        qf, qt = int(cfg.get("qfrom", 23)), int(cfg.get("qto", 8))
+        if qf == qt:
+            return False
+        if qf < qt:
+            return qf <= tehran_hour < qt
+        return tehran_hour >= qf or tehran_hour < qt
+    except Exception:
+        return False
+
+
+def v19_quiet_label(chat_id: int) -> str:
+    try:
+        cfg = v19_cfg(int(chat_id))
+        return f"{int(cfg.get('qfrom', 23)):02d}:00 تا {int(cfg.get('qto', 8)):02d}:00"
+    except Exception:
+        return "23:00 تا 08:00"
+
+# ----------------------------------------------------------------
+# [V19-STALL] نگهبان نوبت — بازی هیچ‌وقت وسط گروه گیر نمی‌کند
+# ----------------------------------------------------------------
+def v19_stall_cancel(gid) -> None:
+    """لغو تایمر نگهبانِ یک بازی (وقتی نوبت عوض می‌شود یا بازی تمام).
+    اگر خودِ تایمرِ در حال اجرا بخواهد جای خودش تایمر جدید بگذارد،
+    خودش را cancel نمی‌کند تا فرستادنِ اعلامِ نوبتِ جدید نصفه نماند."""
+    try:
+        gid_s = str(gid or "")
+        if not gid_s:
+            return
+        task = V19_STALL_TASKS.pop(gid_s, None)
+        if task is not None:
+            try:
+                current = asyncio.current_task()
+            except Exception:
+                current = None
+            if task is not current:
+                try:
+                    task.cancel()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def v19_stall_arm(game: dict, questioner: int) -> None:
+    """زیرِ هر «نوبت بعدی» یک تایمر نامرئی می‌نشیند: اول یادآوری محترمانه،
+    بعد رد شدن خودکار. اگر فاز بازی عوض شده باشد تایمر بی‌صدا می‌خوابد."""
+    try:
+        if not isinstance(game, dict):
+            return
+        gid = str(game.get("id") or "")
+        if not gid or gid not in DATA.get("games", {}):
+            return  # بازی واقعی و ثبت‌شده نیست (مثل پروب‌های سلف-چک)
+        chat_id = int(game.get("chat_id", 0) or 0)
+        if chat_id >= 0:
+            return
+        cfg = v19_cfg(chat_id)
+        if not cfg.get("stall", True):
+            return
+        uid = int(questioner or 0)
+        if not uid:
+            return
+        v19_stall_cancel(gid)
+        turn_no = int(game.get("turn_number", 0) or 0)
+        loop = asyncio.get_running_loop() if _v19_loop_alive() else None
+        if loop is None:
+            return
+        V19_STALL_TASKS[gid] = loop.create_task(
+            v19_stall_watch(gid, chat_id, uid, turn_no)
+        )
+    except Exception:
+        pass
+
+
+def _v19_loop_alive() -> bool:
+    try:
+        asyncio.get_running_loop()
+        return True
+    except Exception:
+        return False
+
+
+def v19_still_waiting(gid: str, uid: int, turn_no: int) -> dict | None:
+    """اگر هنوز همان نفر در همان نوبت منتظر است، خودِ بازی را برمی‌گرداند."""
+    try:
+        game = DATA.get("games", {}).get(str(gid))
+        if not isinstance(game, dict):
+            return None
+        if str(game.get("id") or str(gid)) != str(gid):
+            return None
+        if game.get("phase") != "turn_waiting":
+            return None
+        if int(game.get("current_questioner", 0) or 0) != int(uid):
+            return None
+        if int(game.get("turn_number", 0) or 0) != int(turn_no):
+            return None
+        return game
+    except Exception:
+        return None
+
+
+async def v19_send_group(chat_id: int, text: str, markup=None) -> bool:
+    """ارسال امن پیام به گروه — هر خطایی فقط لاگ می‌شود، نه کرش."""
+    bot = V19_BOOT.get("bot")
+    if bot is None:
+        return False
+    try:
+        await bot.send_message(
+            chat_id=int(chat_id),
+            text=str(text),
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup,
+        )
+        return True
+    except Exception as exc:
+        try:
+            audit("v19_send_error", 0, int(chat_id), repr(exc)[:200])
+        except Exception:
+            pass
+        return False
+
+
+async def v19_stall_watch(gid: str, chat_id: int, uid: int, turn_no: int) -> None:
+    """قلب نگهبان نوبت: یادآوریِ یکی + رد شدن خودکار بعدی.
+    هر مرحله قبل از ارسال دوباره چک می‌شود که هنوز همان نوبت است."""
+    try:
+        game = v19_still_waiting(gid, uid, turn_no)
+        if game is None:
+            return
+        cfg = v19_cfg(chat_id)
+        rmin = int(cfg.get("rmin", 3))
+        smin = int(cfg.get("smin", 12))
+        await asyncio.sleep(max(60, rmin * 60))
+        game = v19_still_waiting(gid, uid, turn_no)
+        if game is None:
+            return
+        # --- مرحله ۱: یادآوری محترمانه (اگر سکوت نباشد و تگ خاموش نباشد)
+        if not v19_quiet_now(chat_id) and v19_wants_mentions(uid):
+            name = name_of(uid, game)
+            try:
+                await v19_send_group(
+                    chat_id,
+                    f"🔔 <b>یادآوری نوبت</b>\n{V19_DIV}\n"
+                    f"{user_gender_icon(uid)} {mention_user(uid, name)}، "
+                    f"نوبتِ سؤال‌پرسیدن با توئه! موضوع را از دکمه‌ها انتخاب کن 🎯\n"
+                    f"⏳ اگر تا {smin - rmin} دقیقه‌ی دیگر انتخاب نکنی، نوبت خودکار می‌رود بعدی.",
+                    None,
+                )
+                try:
+                    v19_store()["stats"]["reminders_sent"] = int(v19_store()["stats"].get("reminders_sent", 0)) + 1
+                except Exception:
+                    pass
+                audit("v19_stall_reminder", uid, chat_id, f"turn={turn_no}")
+            except Exception:
+                pass
+        # --- مرحله ۲: صبر تا مهلت رد شدن خودکار
+        await asyncio.sleep(max(60, (smin - rmin) * 60))
+        game = v19_still_waiting(gid, uid, turn_no)
+        if game is None:
+            return
+        await v19_auto_skip(gid, uid, turn_no, chat_id)
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        try:
+            audit("v19_stall_error", uid, chat_id, repr(exc)[:200])
+        except Exception:
+            pass
+
+
+async def v19_auto_skip(gid: str, uid: int, turn_no: int, chat_id: int) -> None:
+    """رد شدن خودکارِ نوبتِ بی‌جواب — دقیقاً همان مسیر امن دکمه‌ی
+    «🎲 تغییر نوبت»، بدون نیاز به کلیک کسی. بازی هیچ‌وقت قفل نمی‌شود."""
+    try:
+        game = v19_still_waiting(gid, uid, turn_no)
+        if game is None:
+            return
+        name = name_of(uid, game)
+        game.pop("reply_prompt", None)
+        nxt = v7_advance_turn(game)
+        save_data(force=True)
+        try:
+            v19_store()["stats"]["autoskips_done"] = int(v19_store()["stats"].get("autoskips_done", 0)) + 1
+        except Exception:
+            pass
+        audit("v19_stall_autoskip", uid, chat_id, f"turn={turn_no} next={nxt}")
+        if nxt is None:
+            await v19_send_group(
+                chat_id,
+                f"⏭ <b>نوبت رد شد (خودکار)</b>\n{V19_DIV}\n"
+                f"{user_gender_icon(uid)} {mention_user(uid, name)} در دسترس نبود.\n"
+                "⚠️ بازیکن دیگری برای ادامه وجود ندارد — بازی همین‌جا تمام شد.\n"
+                "🎮 برای شروع دوباره: <code>/apex</code>",
+                None,
+            )
+            return
+        await v19_send_group(
+            chat_id,
+            f"⏭ <b>نوبت رد شد (خودکار)</b>\n{V19_DIV}\n"
+            f"{user_gender_icon(uid)} {mention_user(uid, name)} جواب نداد؛ رفتیم سراغ نفر بعد 🔄",
+            None,
+        )
+        # اعلام نوبت جدید با کیبورد زنده (مثل مسیر دستی) — تایمر جدید هم
+        # خودش زده می‌شود چون v7_turn_announcement رپ می‌شود.
+        try:
+            await v19_send_group(chat_id, v7_turn_announcement(game, int(nxt)), v7_turn_markup(game, int(nxt)))
+        except Exception as exc:
+            try:
+                audit("v19_autoskip_announce_error", uid, chat_id, repr(exc)[:200])
+            except Exception:
+                pass
+    except Exception as exc:
+        try:
+            audit("v19_autoskip_error", uid, chat_id, repr(exc)[:200])
+        except Exception:
+            pass
+
+
+def v19_rearm_stalls() -> int:
+    """بعد از ری‌استارت: برای بازی‌های فعالِ منتظرِ نوبت، تایمرها را
+    دوباره بندان — ساعتی که ری‌استارت خورده، بازی‌ها بلاتکلیف نمی‌مانند."""
+    armed = 0
+    try:
+        loop_ok = _v19_loop_alive()
+        if not loop_ok:
+            return 0
+        for gid, game in list(DATA.get("games", {}).items()):
+            try:
+                if not isinstance(game, dict):
+                    continue
+                if game.get("phase") != "turn_waiting":
+                    continue
+                q = int(game.get("current_questioner", 0) or 0)
+                if not q:
+                    continue
+                v19_stall_arm(game, q)
+                armed += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return armed
+
+# ----------------------------------------------------------------
+# [V19-WEEKLY] موتور آمار هفتگی — سوختِ رتبه‌بندی هفتگی
+# ----------------------------------------------------------------
+def v19_week_key() -> str:
+    """کلید هفته (UTC) — دوشنبه اولِ هفته استاندارد ISO."""
+    try:
+        now = datetime.now(timezone.utc)
+        return f"{now.isocalendar()[0]}-W{now.isocalendar()[1]:02d}"
+    except Exception:
+        return "W0"
+
+
+def v19_week_label() -> str:
+    try:
+        now = datetime.now(timezone.utc)
+        return now.strftime("%d %b")
+    except Exception:
+        return ""
+
+
+def v19_track_weekly(uid: int, amount: int, name: str = "") -> None:
+    """ثبت XP در دفتر هفتگی — هر XP که از هر مسیری بگیرید ثبت می‌شود."""
+    try:
+        amount = int(amount)
+        if amount <= 0:
+            return
+        uid_i = int(uid)
+        weekly = v19_store()["weekly"]
+        week = weekly.setdefault(v19_week_key(), {})
+        entry = week.setdefault(user_key(uid_i), {"xp": 0, "name": str(name or "")})
+        entry["xp"] = int(entry.get("xp", 0)) + amount
+        if name:
+            entry["name"] = str(name)
+    except Exception:
+        pass
+
+
+def v19_week_top(limit: int = 10) -> list:
+    """[(xp, uid, name), ...] برترِ این هفته."""
+    try:
+        week = v19_store()["weekly"].get(v19_week_key(), {})
+        rows = []
+        for key, entry in week.items():
+            try:
+                uid = int(str(key).replace("u", "", 1) or 0)
+            except Exception:
+                continue
+            if uid <= 0:
+                continue
+            rows.append((int(entry.get("xp", 0)), uid, str(entry.get("name") or "")))
+        rows.sort(key=lambda r: r[0], reverse=True)
+        return rows[: int(limit)]
+    except Exception:
+        return []
+
+
+def v19_alltime_top(limit: int = 10) -> list:
+    """برترین‌های همه‌ی زمان‌ها از دیتای اصلی کاربران."""
+    try:
+        rows = []
+        for key, u in DATA.get("users", {}).items():
+            try:
+                uid = int(str(key).replace("u", "", 1) or 0)
+            except Exception:
+                continue
+            if uid <= 0 or u.get("banned"):
+                continue
+            rows.append((int(u.get("xp", 0)), uid, str(u.get("name") or "بازیکن")))
+        rows.sort(key=lambda r: r[0], reverse=True)
+        return rows[: int(limit)]
+    except Exception:
+        return []
+
+
+def v19_board_text(rows: list, scope: str) -> str:
+    """رندر برد با مدال و منشن — مدال هم‌امتیازها هم‌مدال می‌شوند."""
+    try:
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        title = "🏆 <b>قهرمانان این هفته</b>" if scope == "W" else "👑 <b>قهرمانان همه‌ی زمان‌ها</b>"
+        if scope == "W":
+            sub = f"📅 هفته‌ی جاری — جمع XP از {escape(v19_week_label())} تا الان"
+        else:
+            sub = "🔥 از روز اول تا الان — افسانه‌های همیشگی ApexRival"
+        lines = []
+        last_xp = None
+        last_medal = ""
+        for i, (xp, uid, name) in enumerate(rows, start=1):
+            base = medals.get(i, "")
+            if last_xp == xp and last_medal:
+                # هم‌امتیاز → همان مدالِ رتبه‌ی قبل
+                medal = last_medal
+            elif base:
+                medal = base
+            else:
+                medal = f"<b>{i}.</b>"
+            last_xp = xp
+            last_medal = medal
+            u = get_user(uid, name or None)
+            icon = user_gender_icon(uid)
+            level = int(u.get("level", 1))
+            lines.append(
+                f"{medal} {icon} {mention_user(uid, name or str(u.get('name') or 'بازیکن'))} "
+                f"— <b>{xp:,}</b> XP · سطح {level}"
+            )
+        body = "\n".join(lines) if lines else "هنوز این دوره کسی XP نگرفته — اولین قهرمان تو باش! 🚀"
+        return (
+            f"{title}\n{V19_DIV}\n{sub}\n{V19_DIV}\n{body}\n{V19_DIV}\n"
+            "🎮 با /apex بازی کن و اسمت رو ببری بالا!"
+        )
+    except Exception:
+        return "🏆 رتبه‌بندی در دسترس نیست."
+
+
+# ----------------------------------------------------------------
+# [V19-LEVELUP] جشن ارتقای سطح — لحظه‌های شیرین، تگ‌شده و بی‌مزاحمت
+# ----------------------------------------------------------------
+def v19_note_levelup(uid: int, delta: int) -> None:
+    """ثبتِ «فلان کسی لول شد» برای جشن گرفتن در اولین فرصتِ داخل بازی."""
+    try:
+        uid_i = int(uid)
+        if uid_i <= 0 or int(delta) <= 0:
+            return
+        u = get_user(uid_i)
+        v19_store()["lvl_pending"][user_key(uid_i)] = int(u.get("level", 1))
+    except Exception:
+        pass
+
+
+def v19_take_levelup(uid: int):
+    """برداشتن لولِ در انتظار (اگر باشد) — بعد از جشن پاک می‌شود."""
+    try:
+        return v19_store()["lvl_pending"].pop(user_key(int(uid)), None)
+    except Exception:
+        return None
+
+
+async def v19_celebrate_levelup(update, uid: int) -> None:
+    """ارسال کارت جشن فقط وقتی پیام در گروه باشد و لولِ پندینگ داشته باشیم.
+    در ساعات سکوت جشن به پیام بعدی موکول می‌شود (همان کاربر اذیت نشه)."""
+    try:
+        chat = getattr(update, "effective_chat", None)
+        if chat is None or str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            return
+        if v19_quiet_now(int(chat.id)):
+            return
+        uid_i = int(uid)
+        lvl = v19_take_levelup(uid_i)
+        if lvl is None:
+            return
+        u = get_user(uid_i)
+        xp = int(u.get("xp", 0))
+        name = str(u.get("name") or "بازیکن")
+        await v19_send_group(
+            int(chat.id),
+            f"🎉 <b>ارتقای سطح!</b>\n{V19_DIV}\n"
+            f"{user_gender_icon(uid_i)} {mention_user(uid_i, name)} به "
+            f"<b>سطح {int(lvl)}</b> رسید!\n"
+            f"⭐ مجموع XP: <b>{xp:,}</b>\n"
+            f"🏅 لقب فعلی: <b>{title_for(xp)}</b>\n"
+            f"{V19_DIV}\nادامه بده، افسانه‌ی بعدی همین گروهی‌ها 🚀",
+            None,
+        )
+        try:
+            v19_store()["stats"]["levelups_celebrated"] = int(v19_store()["stats"].get("levelups_celebrated", 0)) + 1
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V19-PROFILE] پروفایل نسل جدید — همه‌چیز درباره‌ی تو در یک کارت
+# ----------------------------------------------------------------
+def v19_xp_bar(xp: int, width: int = 10) -> str:
+    """نوار پیشرفت تا سطح بعد — ▓▓▓░░░ ۴۰٪"""
+    try:
+        into = int(xp) % 100
+        filled = int(round((into / 100.0) * width))
+        filled = max(0, min(width, filled))
+        return "▓" * filled + "░" * (width - filled)
+    except Exception:
+        return "░" * int(width)
+
+
+V19_TOPIC_LABELS_FALLBACK = {
+    "truth": "🕵️ اعتراف", "dare": "🔥 جرئت", "secret": "🤫 راز",
+    "drama": "😈 جنجال", "flirty": "💘 فلرت", "scenario": "🎭 سناریو",
+    "mind": "🧠 ذهنی", "wouldyou": "🤔 می‌کردی؟", "memory": "📖 خاطره",
+    "relation": "💔 عشق", "cringe": "😳 خجالت", "adult": "🔞 ۱۸+",
+    "dream": "💭 خواب", "regret": "😔 حسرت", "future": "🚀 آینده",
+}
+
+
+def v19_topic_label(key: str) -> str:
+    try:
+        labels = V7_MODE_LABELS
+        got = labels.get(str(key))
+        if got:
+            return str(got)
+    except Exception:
+        pass
+    return V19_TOPIC_LABELS_FALLBACK.get(str(key), str(key))
+
+
+def v19_profile_text(uid: int) -> str:
+    """کارت پروفایل ULTRA — سطح، نوار، لقب، سکه، استریک، کوئست،
+    دستاوردها، موضوعات محبوب و سابقه."""
+    try:
+        uid_i = int(uid)
+        u = get_user(uid_i)
+        name = str(u.get("name") or "بازیکن")
+        xp = int(u.get("xp", 0))
+        level = int(u.get("level", 1))
+        into = xp % 100
+        pct = int(round(into / 100.0 * 100))
+        icon = user_gender_icon(uid_i)
+        muted = not v19_wants_mentions(uid_i)
+        stats = u.get("stats", {}) if isinstance(u.get("stats"), dict) else {}
+        top_topics = sorted(
+            ((int(v or 0), str(k)) for k, v in stats.items()),
+            reverse=True,
+        )[:3]
+        topic_lines = []
+        for cnt, k in top_topics:
+            if int(cnt) <= 0:
+                continue
+            topic_lines.append(f"   {v19_topic_label(k)}: <b>{int(cnt)}</b>")
+        ach_ids = list(u.get("achievements", []) or [])
+        ach_names = []
+        for aid in ach_ids[:6]:
+            try:
+                nm = ACHIEVEMENTS.get(str(aid), ACHIEVEMENTS.get(aid, None))
+                if nm:
+                    ach_names.append(str(nm[0]))
+            except Exception:
+                pass
+        if len(ach_ids) > 6:
+            ach_names.append(f"+{len(ach_ids) - 6} دیگر")
+        quest_line = ""
+        try:
+            qc = v18_quest_card(uid_i)
+            if qc:
+                quest_line = qc
+        except Exception:
+            quest_line = ""
+        created = int(u.get("created_at", 0) or 0)
+        member_since = ""
+        if created:
+            try:
+                member_since = datetime.fromtimestamp(created, tz=timezone.utc).strftime("%Y/%m/%d")
+            except Exception:
+                member_since = ""
+        muted_badge = "🔕 (تگ خاموش — /apexunmute برای روشن‌کردن)" if muted else ""
+        return (
+            f"🪪 <b>پروفایل ApexRival</b>\n{V19_DIV}\n"
+            f"{icon} {mention_user(uid_i, name)} {muted_badge}\n"
+            f"🏅 لقب: <b>{title_for(xp)}</b>\n"
+            f"⭐ سطح <b>{level}</b> · XP <b>{xp:,}</b>\n"
+            f"[{v19_xp_bar(xp)}] {pct}% تا سطح {level + 1}\n"
+            f"{V19_DIV}\n"
+            f"💰 سکه: <b>{int(u.get('coins', 0)):,}</b> · "
+            f"🎮 بازی‌ها: <b>{int(u.get('games', 0))}</b> · "
+            f"🏆 برد: <b>{int(u.get('wins', 0))}</b>\n"
+            f"🔥 استریک فعلی: <b>{int(u.get('streak', 0))}</b> · "
+            f"⚡ رکورد: <b>{int(u.get('best_streak', 0))}</b>\n"
+            + (f"📅 عضو از: <b>{member_since}</b>\n" if member_since else "")
+            + f"{V19_DIV}\n"
+            + ("📊 <b>موضوعات محبوب:</b>\n" + "\n".join(topic_lines) + "\n" if topic_lines else "")
+            + (f"🎖 <b>دستاوردها ({len(ach_ids)}):</b> " + " · ".join(ach_names) + "\n" if ach_names else "")
+            + (f"{V19_DIV}\n{quest_line}\n" if quest_line else "")
+            + f"{V19_DIV}\n"
+            "🏆 /apextop · 🎓 /apexguide · 🎮 /apex"
+        )
+    except Exception as exc:
+        try:
+            audit("v19_profile_error", int(uid), 0, repr(exc)[:200])
+        except Exception:
+            pass
+        return "🪪 پروفایل موقتاً در دسترس نیست."
+
+
+# ----------------------------------------------------------------
+# [V19-GUIDE] راهنمای تعاملی — ۸ صفحه‌ی کوتاه و تصویری
+# ----------------------------------------------------------------
+V19_GUIDE_PAGES = [
+    (
+        "🚀 شروع سریع",
+        "🎮 در گروه دستور <code>/apex</code> را بزن تا Lobby ساخته شود.\n"
+        "👥 همه با دکمه‌ی «پیوستن» وارد می‌شوند.\n"
+        "👑 سرگروه (سازنده‌ی بازی) دکمه‌ی شروع را می‌زند.\n"
+        "🎯 هر نوبت: پرسشگر یک «موضوع» و بعد یک «پاسخ‌دهنده» انتخاب می‌کند؛"
+        " سؤال ساخته می‌شود و جواب‌ها ثبت می‌شوند.\n\n"
+        "💡 هیچ چیزی لازم نیست حفظ کنی — همه‌چیز با دکمه انجام می‌شود."
+    ),
+    (
+        "🎯 موضوعات بازی",
+        "۱۵ موضوع متنوع داری:\n"
+        "🕵️ اعتراف · 🔥 جرئت · 🤫 راز · 😈 جنجال · 💘 فلرت\n"
+        "🎭 سناریو · 🧠 ذهنی · 🤔 می‌کردی؟ · 📖 خاطره · 💔 عشق\n"
+        "😳 خجالت · 🔞 ۱۸+ (با رضایت) · 💭 خواب · 😔 حسرت · 🚀 آینده\n\n"
+        "🌡 <b>گرما:</b> سؤال‌ها آرام شروع می‌شوند و دورهای بعدی داغ‌تر"
+        " و جسورانه‌تر می‌شوند! سرعتش را خودت انتخاب می‌کنی."
+    ),
+    (
+        "🔔 نوبت و یادآوری",
+        "وقتی نوبتِ تو شود، <b>تگ می‌شوی</b> تا خبر شوی 🎯\n"
+        "اگر ۳ دقیقه بی‌جواب بمانی یک یادآوریِ مؤدبانه می‌گیری.\n"
+        "اگر ۱۲ دقیقه غایب باشی، نوبتِ خودکار می‌رود نفر بعد تا بازی"
+        " هیچ‌وقت وسط گروه گیر نکند.\n\n"
+        "🔕 اگر تگ‌شدن دوست نداری: <code>/apexmute</code>"
+    ),
+    (
+        "⭐ XP، سکه و فروشگاه",
+        "هر جواب ثبت‌شده XP و سکه دارد؛ پرسشگر هم امتیاز می‌گیرد.\n"
+        "💰 سکه‌ها در فروشگاه خرج می‌شوند: آیتم‌های ویژه مثل سپر جریمه،"
+        " تغییر نوبت و بوم‌های جالب.\n"
+        "🏅 XP بیشتر = سطح و لقب بالاتر — از «تازه‌وارد» تا «👑 Apex Legend»."
+    ),
+    (
+        "📋 کوئست روزانه",
+        "هر روز ۳ کوئست شخصی می‌گیری (مثل «به ۵ سؤال جواب بده»).\n"
+        "کاملشان کن و جایزه‌ی XP و سکه بگیر!\n"
+        "پیشرفتت را در پروفایلت می‌بینی: <code>/apexprofile</code>\n"
+        "کوئست‌ها هر ۲۴ ساعت نو می‌شوند — استریک روزانه هم پاداش دارد."
+    ),
+    (
+        "🔕 تنظیمات ضد اذیت",
+        "ربات برای راحتی طراحی شده:\n"
+        "🔇 <code>/apexmute</code> — دیگر هیچ‌وقت تگ نمی‌شوی\n"
+        "🔔 <code>/apexunmute</code> — برگشتن به حالت تگ\n"
+        "🌿 اسپمِ دکمه و دستور خودکار آروم گرفته می‌شود\n"
+        "🌙 ساعات سکوت شبانه برای یادآوری‌ها (تنظیم ادمین)\n\n"
+        "همه‌چیز اختیاری است؛ پیش‌فرض‌ها بی‌صدا و مؤدبانه‌اند."
+    ),
+    (
+        "🕹 دستورات سریع",
+        "<b>مخصوص ما:</b>\n"
+        "🎮 /apex — ساخت بازی\n"
+        "🛑 /apexend — پایان بازی (سرگروه)\n"
+        "❓ /apexhelp — راهنمای کامل\n"
+        "📊 /apexstats — آمار من\n"
+        "🪪 /apexprofile — پروفایل ULTRA\n"
+        "🏆 /apextop — رتبه‌بندی هفتگی و کلی\n"
+        "🎓 /apexguide — همین راهنما\n"
+        "🔇 /apexmute · 🔔 /apexunmute — تگ روشن/خاموش\n"
+        "🆔 /apexid — آی‌دی من\n"
+        "<b>کلاسیک:</b> /start · /profile · /rank · /shop · /help"
+    ),
+    (
+        "👑 ادمین‌ها",
+        "از پنل مدیریت می‌توانی: سؤال‌ها را ویرایش/حذف/اضافه کنی،"
+        " موضوعات را خاموش/روشن کنی، ضریب XP و سکه را تنظیم کنی،"
+        " پنل «تنظیمات ضد اذیت» را باز کنی (یادآوری نوبت، ساعات سکوت،"
+        " خوش‌آمد، محافظ اسپم) و آمار کلی ببینی.\n\n"
+        "🎯 هدف نهایی: گروهی که خودش بازی را زنده نگه دارد!"
+    ),
+]
+
+
+def v19_guide_text(page: int) -> str:
+    try:
+        idx = int(page) % len(V19_GUIDE_PAGES)
+        title, body = V19_GUIDE_PAGES[idx]
+        total = len(V19_GUIDE_PAGES)
+        return (
+            f"🎓 <b>راهنمای ApexRival</b> — {title}\n{V19_DIV}\n"
+            f"{body}\n{V19_DIV}\n📄 صفحه {idx + 1} از {total}"
+        )
+    except Exception:
+        return "🎓 راهنما موقتاً در دسترس نیست."
+
+
+def v19_guide_markup(page: int):
+    try:
+        idx = int(page) % len(V19_GUIDE_PAGES)
+        total = len(V19_GUIDE_PAGES)
+        rows = []
+        nav = []
+        if idx > 0:
+            nav.append(v5_button("◀️ قبلی", f"V19|GUI|{idx - 1}"))
+        nav.append(v5_button("⏬ شروع", "V19|GUI|0"))
+        if idx < total - 1:
+            nav.append(v5_button("بعدی ▶️", f"V19|GUI|{idx + 1}"))
+        rows.append(nav)
+        rows.append([v5_button("🏁 تمام شد، بریم بازی /apex", "V19|GUI|DONE")])
+        return v5_markup(rows)
+    except Exception:
+        return v5_markup([[v5_button("⏬ شروع", "V19|GUI|0")]])
+
+
+def v19_save_cfg(chat_id: int, cfg: dict) -> None:
+    """نوشتن امن تنظیمات گروه در مخزن پایدار + ذخیره."""
+    try:
+        cfg_all = v19_store()["cfg"]
+        cfg_all[group_key(int(chat_id))] = dict(cfg)
+        save_data(force=True)
+    except Exception:
+        pass
+
+
+def v19_bump_cfg(chat_id: int, field: str, delta: int, lo: int, hi: int) -> int:
+    """تغییر امنِ یک فیلد عددی تنظیمات گروه + ذخیره؛ مقدار جدید را برمی‌گرداند."""
+    try:
+        cfg = v19_cfg(int(chat_id))
+        cur = int(cfg.get(field, 0))
+        new = cur + int(delta)
+        new = max(int(lo), min(int(hi), new))
+        cfg[str(field)] = new
+        v19_save_cfg(int(chat_id), cfg)
+        return new
+    except Exception:
+        return int(v19_cfg(int(chat_id)).get(field, 0))
+
+# ----------------------------------------------------------------
+# [V19-WELCOME] خوش‌آمدگویی هوشمند — عضو جدید ۳۰ ثانیه‌ای یاد می‌گیرد
+# ----------------------------------------------------------------
+async def v19_welcome_new_member(update, context):
+    """به اعضای جدیدِ گروه، یک‌بار در ۲۴ ساعت، کارتِ خوش‌آمد کوتاه
+    با تگِ اختیاری می‌رسد. اگر ربات خودش اضافه شده باشد، معرفی کامل
+    می‌دهد. همه‌چیز خاموش‌شدنی است تا هیچ‌کس اذیت نشود."""
+    try:
+        msg = getattr(update, "message", None)
+        if msg is None:
+            return
+        chat = getattr(update, "effective_chat", None)
+        if chat is None or str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            return
+        cfg = v19_cfg(int(chat.id))
+        members = list(getattr(msg, "new_chat_members", []) or [])
+        if not members:
+            return
+        bot_id = 0
+        try:
+            bot_id = int(context.bot.id)
+        except Exception:
+            bot_id = 0
+        # --- ربات خودمان تازه اضافه شده؟
+        for u in members:
+            try:
+                if int(getattr(u, "id", 0)) == bot_id:
+                    await v19_send_group(
+                        int(chat.id),
+                        f"👋 <b>سلام! من ApexRival هستم</b>\n{V19_DIV}\n"
+                        "🎮 بازی اجتماعی گروهی: اعتراف، جرئت، معما و ۱۵ موضوعِ داغ\n"
+                        "🎯 فقط کافیست یکی بزند: <code>/apex</code>\n"
+                        "🏆 رتبه‌بندی، سکه و کوئست روزانه هم داریم\n"
+                        "🎓 راهنمای سریع: <code>/apexguide</code>\n"
+                        "🔕 اگه تگ‌شدن دوست نداری: <code>/apexmute</code>\n"
+                        f"{V19_DIV}\nآماده‌ی شروع هستیم! 🚀",
+                        None,
+                    )
+                    return
+            except Exception:
+                continue
+        if not cfg.get("welcome", True):
+            return
+        # --- اعضای انسانی جدید
+        now = time.time()
+        greeted = []
+        for u in members:
+            try:
+                uid = int(getattr(u, "id", 0))
+                if uid <= 0 or getattr(u, "is_bot", False):
+                    continue
+                if is_banned(uid):
+                    continue
+                cache_key = (uid, int(chat.id))
+                if (now - float(V19_WELCOME_CACHE.get(cache_key, 0.0))) < 86400.0:
+                    continue
+                # مخزن پایدار هم چک می‌شود (ری‌استارتِ حافظه را خنثی می‌کند)
+                wk = v19_store()["welcomed"]
+                pk = f"{int(chat.id)}:{uid}"
+                if (now - float(wk.get(pk, 0.0) or 0.0)) < 86400.0:
+                    continue
+                V19_WELCOME_CACHE[cache_key] = now
+                wk[pk] = int(now)
+                try:
+                    v17_touch_username(u)
+                except Exception:
+                    pass
+                greeted.append(u)
+            except Exception:
+                continue
+        if not greeted:
+            return
+        save_data(force=True)
+        names = []
+        for u in greeted[:5]:
+            try:
+                nm = str(getattr(u, "first_name", "") or "دوست جدید")
+                names.append(mention_user(int(u.id), nm))
+            except Exception:
+                continue
+        await v19_send_group(
+            int(chat.id),
+            f"👋 <b>خوش اومدید به جمع بازی‌بازها!</b>\n{V19_DIV}\n"
+            + " · ".join(names)
+            + "\n🎯 این‌جا با یک دستور همه با هم بازی می‌کنیم:\n"
+            "🎮 <code>/apex</code> — ساخت بازی جدید\n"
+            "🎓 <code>/apexguide</code> — آموزش ۳۰ ثانیه‌ای\n"
+            "🔇 <code>/apexmute</code> — اگه نمی‌خوای تگ شی\n"
+            f"{V19_DIV}\nخوش بگذره! 🎉",
+            None,
+        )
+        try:
+            v19_store()["stats"]["welcomes_sent"] = int(v19_store()["stats"].get("welcomes_sent", 0)) + 1
+        except Exception:
+            pass
+    except Exception as exc:
+        try:
+            audit("v19_welcome_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V19-CMD] دستورات جدید — همه با گیت‌های امن
+# ----------------------------------------------------------------
+async def v19_cmd_profile(update, context):
+    """🪪 /apexprofile — کارت پروفایل ULTRA با نوار سطح و کوئست."""
+    try:
+        user = getattr(update, "effective_user", None)
+        msg = getattr(update, "message", None)
+        if user is None or msg is None:
+            return
+        if is_banned(int(user.id)):
+            await msg.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+            return
+        try:
+            v17_touch_username(user)
+        except Exception:
+            pass
+        # جشنِ لولِ پندینگ را همین‌جا هم می‌توان دید (اگر در گروه باشد)
+        await v19_celebrate_levelup(update, int(user.id))
+        await msg.reply_text(
+            v19_profile_text(int(user.id)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup([
+                [v5_button("🏆 رتبه‌بندی", "V19|TOP|W"), v5_button("🎓 راهنما", "V19|GUI|0")],
+                [v5_button("🔇/🔔 تگ", "V19|MUTE|TO")],
+            ]),
+        )
+    except Exception as exc:
+        try:
+            audit("v19_cmd_profile_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+
+
+async def v19_cmd_top(update, context):
+    """🏆 /apextop — قهرمانان هفته و همه‌ی زمان‌ها با مدال و تگ."""
+    try:
+        user = getattr(update, "effective_user", None)
+        msg = getattr(update, "message", None)
+        if user is None or msg is None:
+            return
+        if is_banned(int(user.id)):
+            await msg.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+            return
+        try:
+            v17_touch_username(user)
+        except Exception:
+            pass
+        rows = v19_week_top(10)
+        await msg.reply_text(
+            v19_board_text(rows, "W"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=v5_markup([
+                [v5_button("📅 هفته", "V19|TOP|W"), v5_button("👑 همه‌ی زمان‌ها", "V19|TOP|A")],
+            ]),
+        )
+    except Exception as exc:
+        try:
+            audit("v19_cmd_top_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+
+
+async def v19_cmd_guide(update, context):
+    """🎓 /apexguide — راهنمای تعاملی صفحه‌به‌صفحه."""
+    try:
+        user = getattr(update, "effective_user", None)
+        msg = getattr(update, "message", None)
+        if user is None or msg is None:
+            return
+        if is_banned(int(user.id)):
+            await msg.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+            return
+        try:
+            v17_touch_username(user)
+        except Exception:
+            pass
+        await msg.reply_text(
+            v19_guide_text(0),
+            parse_mode=ParseMode.HTML,
+            reply_markup=v19_guide_markup(0),
+        )
+    except Exception as exc:
+        try:
+            audit("v19_cmd_guide_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+
+
+async def v19_cmd_mute(update, context):
+    """🔇 /apexmute — دیگر هیچ‌وقت تگ نمی‌شوی (اسم ساده دیده می‌شود)."""
+    try:
+        user = getattr(update, "effective_user", None)
+        msg = getattr(update, "message", None)
+        if user is None or msg is None:
+            return
+        if is_banned(int(user.id)):
+            await msg.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+            return
+        prefs = v19_prefs(int(user.id))
+        prefs["mentions"] = False
+        save_data(force=True)
+        await msg.reply_text(
+            "🔕 <b>تگ خاموش شد!</b>\n━━━━━━━━━━━━━━━━━━\n"
+            f"{user_gender_icon(int(user.id))} {v19_mention(int(user.id))} از این به بعد"
+            " <b>تگ نمی‌شوی</b> — اسمت بدون لینکِ نوتیفیکیشن دیده می‌شود.\n"
+            "🎯 نوبت‌هات مثل قبل کار می‌کنند؛ فقط خبردار نمی‌شی.\n"
+            "🔔 هر وقت پشیمون شدی: <code>/apexunmute</code>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as exc:
+        try:
+            audit("v19_cmd_mute_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+
+
+async def v19_cmd_unmute(update, context):
+    """🔔 /apexunmute — برگشتن به حالت تگ‌شدن."""
+    try:
+        user = getattr(update, "effective_user", None)
+        msg = getattr(update, "message", None)
+        if user is None or msg is None:
+            return
+        if is_banned(int(user.id)):
+            await msg.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+            return
+        prefs = v19_prefs(int(user.id))
+        prefs["mentions"] = True
+        save_data(force=True)
+        await msg.reply_text(
+            "🔔 <b>تگ روشن شد!</b>\n━━━━━━━━━━━━━━━━━━\n"
+            f"{user_gender_icon(int(user.id))} {v19_mention(int(user.id))} دوباره"
+            " <b>تگ می‌شوی</b> — وقتی نوبتت برسه خبردار می‌شی 🎯\n"
+            "🔇 خاموش‌کردن دوباره: <code>/apexmute</code>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as exc:
+        try:
+            audit("v19_cmd_unmute_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V19-SETPANEL] پنل تنظیمات ضد اذیت — مخصوص ادمین‌های گروه
+# ----------------------------------------------------------------
+async def v19_is_chat_admin(update, context) -> bool:
+    """ادمینِ ربات یا ادمینِ همین چت؟ (با fallback امن)"""
+    try:
+        user = getattr(update, "effective_user", None)
+        if user is None:
+            return False
+        if is_admin(int(user.id)):
+            return True
+        chat = getattr(update, "effective_chat", None)
+        if chat is None or str(getattr(chat, "type", "")) not in ("group", "supergroup"):
+            return False
+        try:
+            member = await context.bot.get_chat_member(int(chat.id), int(user.id))
+            status = str(getattr(member, "status", "") or "")
+            if status in ("administrator", "creator"):
+                return True
+        except Exception:
+            return False
+        return False
+    except Exception:
+        return False
+
+
+def v19_set_text(chat_id: int) -> str:
+    """متن پنل تنظیمات — وضعیت فعلی همه‌ی گزینه‌ها."""
+    try:
+        cfg = v19_cfg(int(chat_id))
+        rlvl_name = {0: "سخت‌گیر 🛡", 1: "عادی ⚖", 2: "آسان 🌿"}.get(int(cfg["rlvl"]), "عادی ⚖")
+        return (
+            "🌿 <b>تنظیمات ضد اذیت</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"⏳ نگهبان نوبت: <b>{'✅ فعال' if cfg['stall'] else '❌ خاموش'}</b>\n"
+            f"   🔔 یادآوری بعد از: <b>{cfg['rmin']} دقیقه</b>\n"
+            f"   ⏭ رد خودکار بعد از: <b>{cfg['smin']} دقیقه</b>\n"
+            f"👋 خوش‌آمد عضو جدید: <b>{'✅ فعال' if cfg['welcome'] else '❌ خاموش'}</b>\n"
+            f"🌙 ساعات سکوت: <b>{'✅ فعال' if cfg['quiet_on'] else '❌ خاموش'}</b> "
+            f"({v19_quiet_label(chat_id)})\n"
+            f"🛡 محافظ اسپم: <b>{rlvl_name}</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "💡 این تنظیمات فقط روی «پیام‌های فعالِ» ربات اثر دارند؛"
+            " بازی و دکمه‌ها همیشه آزادند."
+        )
+    except Exception:
+        return "🌿 تنظیمات موقتاً در دسترس نیست."
+
+
+def v19_set_markup(chat_id: int):
+    try:
+        cfg = v19_cfg(int(chat_id))
+        rl = int(cfg["rlvl"])
+        rows = [
+            [v5_button(
+                "⏳ نگهبان نوبت: " + ("✅" if cfg["stall"] else "❌"), "V19|SET|ST"
+            )],
+            [v5_button("−", "V19|SET|RMIN|B"), v5_button(f"🔔 یادآوری: {cfg['rmin']}د", "V19|SET|NOP"), v5_button("＋", "V19|SET|RMIN|P")],
+            [v5_button("−", "V19|SET|SMIN|B"), v5_button(f"⏭ رد خودکار: {cfg['smin']}د", "V19|SET|NOP"), v5_button("＋", "V19|SET|SMIN|P")],
+            [v5_button("👋 خوش‌آمد: " + ("✅" if cfg["welcome"] else "❌"), "V19|SET|WL")],
+            [v5_button("🌙 سکوت: " + ("✅" if cfg["quiet_on"] else "❌"), "V19|SET|QH")],
+            [v5_button("−", "V19|SET|QF|B"), v5_button(f"از {cfg['qfrom']:02d}:۰۰", "V19|SET|NOP"), v5_button("＋", "V19|SET|QF|P")],
+            [v5_button("−", "V19|SET|QT|B"), v5_button(f"تا {cfg['qto']:02d}:۰۰", "V19|SET|NOP"), v5_button("＋", "V19|SET|QT|P")],
+            [v5_button("🛡 محافظ اسپم: " + {0: "سخت‌گیر", 1: "عادی", 2: "آسان"}.get(rl, "عادی"), "V19|SET|RL")],
+        ]
+        return v5_markup(rows)
+    except Exception:
+        return v5_markup([[v5_button("🌿 بروزرسانی", "V19|SET|HOME")]])
+
+
+async def v19_set_home(update, context, chat_id: int):
+    try:
+        msg = getattr(update, "callback_query", None)
+        if msg is not None:
+            try:
+                await msg.answer()
+            except Exception:
+                pass
+            await safe_edit_query(msg, v19_set_text(chat_id), v19_set_markup(chat_id))
+            return
+        m = getattr(update, "message", None)
+        if m is not None:
+            await m.reply_text(v19_set_text(chat_id), parse_mode=ParseMode.HTML, reply_markup=v19_set_markup(chat_id))
+    except Exception:
+        pass
+
+
+def v19_set_open_markup(chat_id: int):
+    """دکمه‌ی ورود به پنل — زیرِ منوی ادمین قرار می‌گیرد."""
+    try:
+        return v5_markup([[v5_button("🌿 تنظیمات ضد اذیت", "V19|SET|HOME")]])
+    except Exception:
+        return None
+
+
+# ----------------------------------------------------------------
+# [V19-CALLBACK] روتر دکمه‌های V19| — همه با try/except زره‌پوش
+# ----------------------------------------------------------------
+async def v19_callback_router(update, context):
+    """مرکز dispatch دکمه‌های V19 — الگوی داده همیشه کوتاه (≤ ۶۴ بایت)."""
+    try:
+        query = getattr(update, "callback_query", None)
+        if query is None:
+            return
+        data = str(getattr(query, "data", "") or "")
+        if not data.startswith("V19|"):
+            return
+        chat = getattr(update, "effective_chat", None)
+        chat_id = int(getattr(chat, "id", 0) or 0)
+        user = getattr(query, "from_user", None)
+        uid = int(getattr(user, "id", 0) or 0)
+        try:
+            await query.answer()
+        except Exception:
+            pass
+        parts = data.split("|")
+        action = parts[1] if len(parts) > 1 else ""
+
+        # ---------- راهنمای تعاملی ----------
+        if action == "GUI":
+            arg = parts[2] if len(parts) > 2 else "0"
+            if arg == "DONE":
+                try:
+                    await safe_edit_query(
+                        query,
+                        "🎉 <b>مدرسه تمام شد!</b>\n━━━━━━━━━━━━━━━━━━\n"
+                        "حالا که حرفه‌ای شدی، بریم تمرین واقعی:\n"
+                        "🎮 ساخت بازی: <code>/apex</code>\n"
+                        "🏆 رتبه‌بندی: <code>/apextop</code> · 🪪 پروفایل: <code>/apexprofile</code>",
+                        v5_markup([[v5_button("🎮 ساخت بازی", "V19|GUI|0")]]),
+                    )
+                except Exception:
+                    pass
+                return
+            try:
+                page = max(0, int(arg)) if str(arg).isdigit() else 0
+            except Exception:
+                page = 0
+            try:
+                await safe_edit_query(query, v19_guide_text(page), v19_guide_markup(page))
+            except Exception:
+                pass
+            return
+
+        # ---------- رتبه‌بندی ----------
+        if action == "TOP":
+            scope = parts[2] if len(parts) > 2 else "W"
+            rows = v19_week_top(10) if scope != "A" else v19_alltime_top(10)
+            try:
+                await safe_edit_query(
+                    query,
+                    v19_board_text(rows, "W" if scope != "A" else "A"),
+                    v5_markup([
+                        [v5_button("📅 هفته", "V19|TOP|W"), v5_button("👑 همه‌ی زمان‌ها", "V19|TOP|A")],
+                    ]),
+                )
+            except Exception:
+                pass
+            return
+
+        # ---------- تگ روشن/خاموش (فقط خودِ کاربر) ----------
+        if action == "MUTE":
+            if uid <= 0:
+                return
+            prefs = v19_prefs(uid)
+            prefs["mentions"] = not bool(prefs.get("mentions", True))
+            save_data(force=True)
+            now_on = bool(prefs["mentions"])
+            body = (
+                "🔔 <b>تگ روشن شد!</b>\n━━━━━━━━━━━━━━━━━━\n"
+                f"{user_gender_icon(uid)} {v19_mention(uid)} دوباره تگ می‌شوی —"
+                " وقتی نوبتت برسه خبردار می‌شی 🎯"
+                if now_on
+                else "🔕 <b>تگ خاموش شد!</b>\n━━━━━━━━━━━━━━━━━━\n"
+                f"{user_gender_icon(uid)} {v19_mention(uid)} دیگر تگ نمی‌شوی —"
+                " بازی مثل قبل کار می‌کند، فقط خبردار نمی‌شی."
+            )
+            try:
+                await safe_edit_query(
+                    query,
+                    body,
+                    v5_markup([[v5_button("🔔/🔕 تغییر دوباره", "V19|MUTE|TO")]]),
+                )
+            except Exception:
+                pass
+            return
+
+        # ---------- پنل تنظیمات (ادمین) ----------
+        if action == "SET":
+            arg = parts[2] if len(parts) > 2 else "HOME"
+            if chat_id >= 0:
+                try:
+                    await safe_answer_query(query, "⚙️ این پنل مخصوص گروه‌هاست.", True)
+                except Exception:
+                    pass
+                return
+            if not await v19_is_chat_admin(update, context):
+                try:
+                    await safe_answer_query(query, "👑 فقط ادمین‌های گروه می‌توانند تنظیمات را عوض کنند.", True)
+                except Exception:
+                    pass
+                return
+            cfg = v19_cfg(chat_id)
+            if arg == "HOME":
+                await v19_set_home(update, context, chat_id)
+            elif arg == "ST":
+                cfg["stall"] = not bool(cfg.get("stall", True))
+                v19_save_cfg(chat_id, cfg)
+                await v19_set_home(update, context, chat_id)
+            elif arg == "WL":
+                cfg["welcome"] = not bool(cfg.get("welcome", True))
+                v19_save_cfg(chat_id, cfg)
+                await v19_set_home(update, context, chat_id)
+            elif arg == "QH":
+                cfg["quiet_on"] = not bool(cfg.get("quiet_on", False))
+                v19_save_cfg(chat_id, cfg)
+                await v19_set_home(update, context, chat_id)
+            elif arg == "RL":
+                cfg["rlvl"] = (int(cfg.get("rlvl", 1)) + 1) % 3
+                v19_save_cfg(chat_id, cfg)
+                await v19_set_home(update, context, chat_id)
+            elif arg in ("RMIN", "SMIN"):
+                delta = 1 if (len(parts) > 3 and parts[3] == "P") else -1
+                field = arg.lower()  # کلیدهای cfg حروف کوچک‌اند
+                v19_bump_cfg(chat_id, field, delta, 1 if arg == "RMIN" else 3, 15 if arg == "RMIN" else 60)
+                # بعد از تغییر، سینک دوباره (smin > rmin تضمین می‌شود)
+                await v19_set_home(update, context, chat_id)
+            elif arg in ("QF", "QT"):
+                delta = 1 if (len(parts) > 3 and parts[3] == "P") else -1
+                v19_bump_cfg(chat_id, arg.lower(), delta, 0, 23)
+                await v19_set_home(update, context, chat_id)
+            else:
+                await v19_set_home(update, context, chat_id)
+            return
+
+        # ---------- عمل ناشناخته: بی‌صدا ----------
+        return
+    except Exception as exc:
+        try:
+            audit("v19_callback_error", 0, 0, repr(exc)[:200])
+        except Exception:
+            pass
+
+# ================================================================
+# [V19-BANKS-A] گنجینه‌ی جدید V19 — سؤال‌های دست‌نویس، محاوره‌ای و تازه
+# (نیمی از گسترش بزرگ محتوا؛ نیمه‌ی دوم در V19_BANK_ADDITIONS_B)
+# ================================================================
+V19_BANK_ADDITIONS = {
+"truth": [
+    '🕵️ اگه الان بتونی فقط یک پیامِ نیمه‌کاره رو کامل کنی، مال کیه؟',
+    '🕵️ آخرین باری که با خودت گفتی «دیگه بسه» و ۲۴ ساعت بعد برگشتی، چی بود؟',
+    '🕵️ یه چیزی که از بچگی بهش حسودی ولی الان بهش می‌خندی چیه؟',
+    '🕵️ بدترین نصیحتی که توی زندگی گرفتی و واقعاً عمل کردی بهش چی بود؟',
+    '🕵️ تا حالا به کسی گفتی «حوصله ندارم» در حالی که منظورت «دلم برات تنگ شده» بود؟',
+    '🕵️ کدوم آهنگی رو وقتی تنها هستی بلند می‌زنی ولی جلوی بقیه تکراری‌ش می‌دونی؟',
+    '🕵️ اگه گوشی‌ت الان قفلش بشه برای همیشه، چی اول از همه دلت می‌تَره؟',
+    '🕵️ یه عادت کوچیک داری که بدونش یه روزت به‌هم می‌ریزه؟',
+    '🕵️ تا حالا یه تعریفِ غیرواقعی از خودت به کسی دادی که خودت هم باورش کردی؟',
+    '🕵️ چیزی که همیشه می‌گی «برام مهم نیست» ولی راهِ حرف زدنت ازش همه‌چیز رو لو می‌ده؟',
+    '🕵️ آخرین باری که دلت خواست گریه کنی ولی خندیدی، سرِ چی بود؟',
+    '🕵️ اگه مجبور باشی یکی از رفیق‌هات رو برای یه سفر یک‌ماهه انتخاب کنی، کیه و بقیه چرا نه؟',
+    '🕵️ تا حالا شده حرفی بزنی فقط برای اینکه بحث تموم شه، در حالی که حرفت نبود؟',
+    '🕵️ یه افکارِ تاریکی داری که هیچ‌وقت با کسی شریک نشدی؟ (بدون جزئیات، فقط بگو هست)',
+    '🕵️ کدوم «نه»ی زندگی‌ت سخت‌ترین بود؟',
+    '🕵️ چیزی که مردم همیشه درباره‌ت می‌پرسن و خسته شدی چیه؟',
+    '🕵️ تا حالا یه سوال رو عمداً اشتباه جواب دادی که بقیه فکر کنن بلد نیستی؟ چرا؟',
+    '🕵️ اگه امشب فقط یک نفر بتونی رو راست‌قفسه کنی، کیه؟',
+    '🕵️ یه چیزی هست که همه فکر می‌کنن ازش خوشت نمیاد، ولی دلت می‌خواد امتحانش کنی؟',
+    '🕵️ آخرین باری که از خودت متنفر بودی و بعد به خودت دلدادی دادی، سر چی بود؟',
+    '🕵️ کدوم خاطره رو اگه بتونی، از مغزت پاک می‌کنی؟',
+    '🕵️ تا حالا شده پیش یه نفر احساس کنی باید «نسخه‌ی بهترِ» خودت باشی؟ برای کی؟',
+    '🕵️ یه حقیقت ساده درباره خودت که هنوز بهش اعتقاد داری چیه؟',
+    '🕵️ چیزی که بیشترین چیز رو ازش یاد گرفتی ولی هیچ‌وقت کسی رو نصیحت نمی‌کنی باهاش؟',
+    '🕵️ اگه اسمِ واقعی احساسِ الانت یه کلمه بود، چیه؟',
+    '🕵️ تا حالا یه آدم رو فقط چون شبیه کسی بود که دوستش نداری، بدت اومده؟',
+    '🕵️ آخرین بار که یه چیزی رو «کاش زودتر شروع کرده بودم» به خودت گفتی چی بود؟',
+    '🕵️ کدوم کارِ کوچیکِ روزانه‌ت بدون اینکه بفهمی، همه‌ی روزت رو تعیین می‌کنه؟',
+    '🕵️ اگه یک نفر از این جمع همین الان دروغ‌ترین طرفِ تو رو بگه، کیه؟',
+    '🕵️ یه رازی داری که اگه همین‌جا بگی، فردا همه چیزش عادی می‌شه ولی امشب سخت‌ترین جمله‌ی دنیاست؟',
+    '🕵️ تا حالا شده حس کنی بیشتر از آدم‌های اطرافت می‌فهمی و مجبور شی خودت کوچیک کنی؟',
+    '🕵️ چیزی که وقتی آدم‌ها می‌کننش، بلافاصله اعتمادت بهشون صفر می‌شه؟',
+    '🕵️ آخرین باری که خوشحال بودی ولی به کسی چیزی نگفتی چون نگران بودی حسادتش کنه؟',
+    '🕵️ اگه فقط یک ترسِت رو می‌شد امشب دور انداخت، کدوم؟',
+    '🕵️ یه چیزی که الان بلدی و کاش ۱۸ سالگی می‌دونستی؟',
+    '🕵️ تا حالا به این فکر کردی اگه یکی از جمعِ الان، فردا دیگه نباشه چی می‌گی بهش؟',
+    '🕵️ کدوم جمله رو از یه نفر شنیدی و شب‌ها هنوز با خودت تکرارش می‌کنی؟',
+    '🕵️ چقدر از چیزی که مردم فکر می‌کنن تو هستی، واقعیه؟ (درصد بگو)',
+    '🕵️ اگه همین الان بتونی یه سوالی رو که همیشه ازش فرار می‌کنی از خودت بپرسی، چیه؟',
+],
+"dare": [
+    '🔥 با لحنِ معلمی که داره نمره می‌ده، رفتار سه نفرِ این جمع رو «نمره‌گذاری» کن.',
+    '🔥 یه وویس ۲۰ ثانیه‌ای ضبط کن که توش یه خبر مهمِ ساختگی درباره خودت اعلام می‌کنی.',
+    '🔥 تا پایان این نوبت، هر پیامت باید با یه ضرب‌المثل شروع بشه.',
+    '🔥 یه آهنگِ غمگین رو با صدای شاد بخون (فقط دو خط، بدون ترس).',
+    '🔥 به آخرین کسی که براش استوری گذاشتی بگو «ممنون که هستی» — همین الان، نه بعداً.',
+    '🔥 تا سه پیام بعدی، آخرِ هر جمله‌ت یه «یادم باشه...» بذار.',
+    '🔥 با لحنِ ربات، سه دقیقه جواب بده.',
+    '🔥 یه عکس از آخرین چیزی که خوردی بفرست (بدون فیلتر، بدون شرم).',
+    '🔥 نقطه‌ضعفِ بازی‌کردنت رو همین الان به همه اعلام کن.',
+    '🔥 تا نوبت بعدی، به جای «نه» بگو «ان‌کار می‌کنم».',
+    '🔥 سه نفر رو با یه جمله‌ی مکملِ واقعی سورپرایز کن.',
+    '🔥 یه حلقه از آهنگی که الان گوش می‌دی بفرست و بگو چرا همین.',
+    '🔥 مثل گوینده‌ی مستقیمِ ورزشی، همین بازی رو برای ۱۵ ثانیه گزارش کن.',
+    '🔥 با لحنِ خیلی جدی، خداحافظی‌ات با این گروه رو اعلام کن (و بعد ادامه بده).',
+    '🔥 یه چیزی که امروز برات سخته رو بلند بگو — مثل «امروز واقعاً خسته‌ام».',
+    '🔥 تا دو دقیقه فقط با سوال جواب بده؛ هیچ جمله‌ی خبره‌ای مجاز نیست.',
+    '🔥 به نفر سمت راستت (اگه توی چته) یه نگاه‌کردنی قول بده که هیچ‌وقت نگفتی.',
+    '🔥 یه بومِ «آخرین بار که گریه کردم» بفرست — فقط یک جمله.',
+    '🔥 با لحنِ آدمِ عصبانی، یه جمله‌ی بامزه درباره‌ی آدرس بده.',
+    '🔥 دعوتِ رد‌شده‌ی امروز رو تکرار کن؛ این‌بار با کلاس.',
+    '🔥 یه پیام به خودِ آینده‌ات بنویس و همین‌جا بفرست.',
+    '🔥 تا نوبت بعدی هر جوابی می‌دی باید تایپِ «خارجکی» باشه.',
+    '🔥 سه تا ستایشِ ریز درباره‌ی نفری که کمتر باهاش حرف می‌زنی بگو.',
+    '🔥 یه وویس ۱۰ ثانیه‌ای بفرست که فقط صدای نفس‌کشیدنت باشه.',
+    '🔥 با لحنِ مستندِ حیات وحش، کاری که فردا قراره بکنی توصیف کن.',
+    '🔥 یه جمله‌ی محرمانه به کسیِ همین جمع بنویس که فقط خودت و اون می‌فهمید (بقیه حدس بزنن).',
+    '🔥 تا پایان نوبت، اسمِ همه رو با یه آهنگ ترکیب کن.',
+    '🔥 سختی‌ترین جمله‌ی امروزت رو با یه لبخند بگو.',
+    '🔥 با لحنِ آدمِ خیلی خسته، یه برنامه‌ی فوق‌العاده هیجان‌انگیز پیشنهاد بده.',
+    '🔥 یه شعرِ چهار مصراعی درباره‌ی همین لحظه بساز و بخون.',
+    '🔥 نگرانی‌های دلت رو مثل اخبارِ ساعت ۹ بخون.',
+    '🔥 تا سه پیام بعدی، در هر جوابت یه عددِ آماری ساختگی بذار.',
+    '🔥 یه عادتِ بدِ کوچیکت رو اعلام کن و قولِ ۲۴ ساعته بده که نمی‌کنیش.',
+    '🔥 با لحنِ معلمِ ادبیات، جوابِ سوالِ قبل رو «تصحیح» کن.',
+    '🔥 یه وعده‌ی واقعی به یکی از همین جمع بده (قابل پیگیری باشه!).',
+    '🔥 اسمت رو از آخر به اول بنویس و تا نوبت بعدی با همون امضا کن.',
+    '🔥 یه دلیلِ مخفی برای اینکه چرا همین الان آنلاین‌ای بگو.',
+    '🔥 با لحنِ بچه‌ی ۵ ساله، خسته‌ترین موضوعِ روزت رو تعریف کن.',
+    '🔥 یه چیزی که از شکل ظاهریش می‌خندی، بلند توضیح بده.',
+    '🔥 تا نوبت بعدی، هر جوابت باید «خلاصه‌ی ۵ کلمه‌ای» باشه.',
+],
+"secret": [
+    '🤫 یه چیزی که روی گوشی‌ت هست و اگه فردا لیک بشه، اول از همه به کی توضیح می‌دی؟',
+    '🤫 تا حالا یه حقیقت رو از کسی حفظ کردی چون فکر می‌کردی نابودش می‌کنه؟',
+    '🤫 یه چیزی هست که هیچ‌کس نمی‌دونه دوستش داری؟',
+    '🤫 آخرین باری که یه چیزی رو «برای خودت» نگه داشتی و بعد حس کردی سنگین شده؟',
+    '🤫 یه نفر هست که رابطه‌تون رو از همه مخفی می‌کنی (حتی بدون دلیل)؟',
+    '🤫 تا حالا گریه‌ی خوشحالی داشتی که کسی ندید؟',
+    '🤫 یه آرزویی داری که بهش می‌گی «بچه‌گانه» ولی هنوز زنده‌ست؟',
+    '🤫 یه چیزی که در بچگی از ترس قایم کردی و هنوز پیدا نشده؟',
+    '🤫 تا حالا یه اتفاقِ کوچیک رو بزرگ‌تر از اونچه بود تعریف کردی؟',
+    '🤫 یه نفر از همین جمع هست که یه وقتایی بهش فکر می‌کنی بیشتر از حد معمول؟ (چرا لازم نیست بگی)',
+    '🤫 یه تصمیمی گرفتی که هنوز به هیچ‌کس نگفتی؟',
+    '🤫 تا حالا شده برای اینکه دردت کمتر دیده بشه، خندیدن رو انتخاب کنی؟',
+    '🤫 یه چیزی هست که پشت سرش داری می‌سازی و همه فکر می‌کنن اتفاقیه؟',
+    '🤫 تا حالا از روی کنجکاوی چیزی خوندی که حق نداشتی؟',
+    '🤫 یه نفر رو بلاک کردی که هنوز نمی‌دونه چرا؟',
+    '🤫 یه عذرخواهی تو دلت مونده که هنوز نفرستادی؟',
+    '🤫 تا حالا یه چیزی رو از روی خجالت خرج کردی که بهش نگفتی؟',
+    '🤫 یه فکری هست که فقط وقتی تنها هستی بهش می‌رسی؟',
+    '🤫 تا حالا از این می‌ترسیدی که اگه یه روز ساکت شی، کسی متوجه نشه؟',
+    '🤫 یه چیزی که از آینده می‌دونی (فقط یه حس، نه پیشگویی) و به کسی نگفتی؟',
+    '🤫 یه نفر هست که هنوز داری بهش امید داری ولی به هیچ‌کس اعتراف نمی‌کنی؟',
+    '🤫 تا حالا یه مسیرِ اشتباه رو آگاهانه انتخاب کردی فقط برای تجربه‌ش؟',
+    '🤫 یه چیزی هست که یادش می‌خوای ولی ازش فرار می‌کنی؟',
+    '🤫 تا حالا یه حقیقتِ ساده رو آن‌قدر به تأخیر انداختی که خودش بزرگ شد؟',
+    '🤫 یه چیز کوچیک هست که وقتی اتفاق می‌افته، روزت نجات پیدا می‌کنه؟',
+    '🤫 تا حالا پیش کسی حس کردی لازم نیست هیچ‌چیز از خودت ثابت کنی؟',
+    '🤫 یه رؤیای تکراری داری که هنوز رمزگشایی نکردی؟',
+    '🤫 یه آدم از گذشته هست که یه قسمتِ از تو هنوز پیششه؟',
+    '🤫 تا حالا یه حسِ خوب رو نابود کردی چون باورش نداشتی؟',
+    '🤫 یه چیزی که به نظرت «معجزه» بود و هنوز به هیچ‌کس کامل تعریف نکردی؟',
+    '🤫 تا حالا شده یه نفر از حرف‌هات الگو بسازه و تو خودت نجات هنوز نساختی؟',
+    '🤫 یه قولی به خودت دادی که امسال نمی‌شکنیش؟',
+    '🤫 یه چیزی هست که ترسی‌ات رو قوی‌تر نشان می‌ده (نه ضعیف‌تر)؟',
+    '🤫 تا حالا پیش کسی غریبه بودی و پیش خودت هم غریبه بودی؟',
+    '🤫 یه جایی هست که وقتی اونجا هستی، حقت کامل با خودتت؟',
+    '🤫 یه چیزی که دوستش داری ولی فکر می‌کنی «مردم» نمی‌پسندند؟',
+    '🤫 تا حالا یه روز «نمی‌خوام با کسی حرف بزنم» رو به کسی نگفتی و فقط غیبت شدی؟',
+    '🤫 یه نفر هست که فقط چون حسودیش رو نمی‌خوای نشون بدی، کمتر باهاش حرف می‌زنی؟',
+    '🤫 یه چیزی هست که می‌خوای بگی ولی هنوز جوابت رو نگه داشته؟',
+    '🤫 تا حالا شده کسی رازت رو بگه و تو با لبخند ازش دفاع کنی؟',
+],
+"drama": [
+    '😈 اگه همین الان بخوای به همه ثابت کنی «برنده‌ی» این جمعی، چی رو نشون می‌دی؟',
+    '😈 یه جمله‌ی جنجالی درباره‌ی «عشقِ این روزا» بگو که نصف جمع مخالفت کنه.',
+    '😈 کدوم تصمیمِ مشترکِ این جمع رو فقط از روی ادب قبول کردی؟',
+    '😈 اگه قرار باشه یکی از این جمع امشب «رک‌ترین» آدم باشه، کیه و چرا هنوز نیست؟',
+    '😈 یه چیزی که همه‌ی جمع می‌دونن ولی هیچ‌کس نمی‌گه؟ (بدون اسم، فقط موضوع)',
+    '😈 تا حالا به حرفِ کسیِ این جمع «گرفتی» ولی خندیدی و رد شدی؟',
+    '😈 اگه یه نوارِ مرورِ ذهن‌هات اینجا پخش بشه، کدوم بخشش رو دلت می‌خواد سانسور بشه؟',
+    '😈 کدوم مُد/ترند رو مخفیانه دوست داری ولی جلوی جمع مسخره‌ش می‌کنی؟',
+    '😈 یه موضوعی هست که تا مطرح می‌شه، همه‌ی جمع یه‌دفعه ساکت می‌شه؟',
+    '😈 اگه قرار باشه «آدمِ سختِ» این جمع انتخاب بشه، به نظرت کیه و سختیِ واقعی‌ش چی هست؟',
+    '😈 تا حالا پیش این جمع یه نقش بازی کردی و بعد ازش خسته شدی؟',
+    '😈 کی در این جمع بیشتر از همه می‌تونه با یه کلمه، حرف همه رو قطع کنه؟',
+    '😈 یه حقیقتی درباره‌ی «رفیق‌بازی» بگو که هیچ‌کس نمی‌خواد قبولش کنه.',
+    '😈 اگه امشب قانون باشه که هر کی دروغ بگه، بقیه یک امتیاز بگیرن — خودت رو چقدر باخته می‌دونی؟',
+    '😈 کدوم آدم (بدون اسم، با شغل توصیف کن) توی زندگی‌ت بیشتر از همه حق باهاش داشتی؟',
+    '😈 یه چیزی که مردم از روی «مهربونی» بهت می‌گن ولی در واقع ضربه‌ست؟',
+    '😈 اگه قرار باشه یکی از این جمع مدیرِ زندگی‌ات بشه، کی بهترین و کی بدترین انتخابه؟',
+    '😈 تا حالا یه جمعِ دوستانه رو برای «فرصت» ترک کردی؟',
+    '😈 اگه همه‌ی چت‌های امروزت عمومی بشه، کدومش بیشترین جنجال رو می‌سازه؟',
+    '😈 یه بار به کسی گفتی «اتفاقی نبود» در حالی که کاملاً اتفاقی بود؟',
+    '😈 کدوم شخصیتِ این جمع رو وقتی خسته‌ست، از همه بهتر می‌شناسی؟',
+    '😈 اگه قرار باشه یک نفر از این جمع امشب قهرمانِ داستان باشه، داستانش رو کی شروع می‌کنه؟',
+    '😈 یه چیزی هست که همه در این جمع بهش «عادی» می‌گن ولی به نظرت عجیب‌ست؟',
+    '😈 تا حالا از ترسِ «بامزه‌تر» دیده شدن، یه اتفاق رو بزرگ‌تر کردی؟',
+    '😈 اگه امشب بخوای یه گروهِ خیالی از این جمع بسازی برای «ماموریتِ نجات دنیا»، کی رهبره؟',
+    '😈 کدوم آدم رو اگه یه روز صبح ببینی که بغض کرده، بیشتر از همه جای شوکه می‌شی؟',
+    '😈 یه سوتیِ تاریخیِ این جمع هست که هر بار یادش میاد همه می‌خندن؟ (تعریفش کن)',
+    '😈 اگه یه دوربین مخفی این جمع رو یه ماه ضبط کرده باشه، کدوم لحظه‌ش پرتکرارترینه؟',
+    '😈 تا حالا پیش این جمع حس کردی «باید» چیزی بگی، ولی نگفتی؟',
+    '😈 یه نظری داری که می‌دونی اگه بگی، نصف جمع ضدت می‌شه؟',
+    '😈 اگه قرار باشه همین امشب «گرگ‌موش» بازی کنن، به نظرت کی اول لو می‌ره؟',
+    '😈 کدوم «قانونِ نوشته‌نشده»ی این جمع رو دوست نداری؟',
+    '😈 تا حالا یه آدم رو قبل از حرف زدنش قضاوت کردی و بعد پشیمون شدی؟',
+    '😈 اگه امشب فقط «خاطره‌های سخت» رو می‌شد تعریف کرد، کی شروع می‌کرد؟',
+    '😈 یه چیزی هست که وقتی کسی توی جمع می‌گه، در غیبتش هم همونو می‌گی؟',
+    '😈 تا حالا یه جمع رو خالی کردی که فقط یکی‌شون باشه؟',
+    '😈 اگه بخوای به کسیِ این جمع بگویی «وقتشه یه قدم جلوتر بیای»، با یه جمله چطور می‌گی؟',
+    '😈 یه موضوع هست که در این جمع همیشه «تموم» می‌شه ولی هیچ‌وقت تموم نمی‌شه؟',
+    '😈 تا حالا شده ببینی یکی از جمع فقط دنبال تأییده و هیچ‌چیز نگفتی؟',
+    '😈 اگه همه‌ی رؤیاهای این جمع یه‌شبه واقعی بشه، کدوم رؤیا اول جنجال می‌سازه؟',
+],
+"flirty": [
+    '💘 اگه عشق یه «تکنیک» بود، امضای خاصِ تو چیه؟',
+    '💘 به نظرت بهترین «رد» کردنِ محترمانه چه شکلیه؟',
+    '💘 اگه همین الان فقط یه جمله حق داری به کسی بگویی که دوستش داری، چی می‌گویی؟',
+    '💘 تا حالا پیش کسی احساس کردی «برنده‌ی ساکتِ» قلبی؟',
+    '💘 یه چیزی که در یه نفر «غیرعمدی» اذیتت می‌کنه ولی جذابیتش همینه؟',
+    '💘 اگه قرار باشه فردا به همه بگن کی به کی حس خاصی داره، از چی می‌ترسی بیشتر؟',
+    '💘 عاشقِ «ابر» باشی یا «بارون»؟ (جوابت رو با یه دلیل عاشقانه بگو)',
+    '💘 تا حالا یه پیام نوشتی و ردی، و کسی که قبولش کرد پیامت رو؟',
+    '💘 به نظرت «سخت‌گیر» بودن در رابطه از مهربونی نشونه‌ست یا از ترس؟',
+    '💘 اگه یه نفر فقط با یه کلمه بتونه روزت رو بسازه، اون کلمه چی بود؟',
+    '💘 تا حالا کسی برات «آهنگ» فرستاده و تو هنوز به آدم فکر می‌کنی؟',
+    '💘 اگه امشب قرار بود «اعترافِ نصفه» بسازی، نصفه‌ش رو همین‌جا بگو.',
+    '💘 عشق رو بیشتر شبیه «سفر» می‌دونی یا «خونه»؟ چرا؟',
+    '💘 یه حرکتِ کوچیک هست که اگه یکی برات بکنه، قلبت یه لحظه ایست می‌کنه؟',
+    '💘 تا حالا شده کسی صادقانه «خوشت نمیاد» رو بهت گفته و بعد ازش خوشت اومده؟',
+    '💘 اگه قرار باشه یکی از این جمع «هم‌سفرِ» یه سفرِ کوتاهت باشه، چه چیزی درش دوست می‌داری؟',
+    '💘 یه جمله هست که به نظرت هر رابطه‌ای رو نجات می‌ده؟',
+    '💘 تا حالا از کسی «نشونه» گرفتی که دوستت داره و خودت رو به نفهمی زدی؟',
+    '💘 اگه عشق یه بازی باشه، قانون اولش رو تو چه می‌ذاری؟',
+    '💘 به نظرت «دلتنگ» شدن یه انتخابِ پنهانه یا یه اتفاقِ بی‌اجازه؟',
+    '💘 تا حالا پیش کسی احساس کردی «حالا وقتش نیست» ولی بعد پشیمون شدی؟',
+    '💘 اگه فردا فقط برای یه نفر بتونی یه نگاه بذاری، اون نگاه چه شکلیه؟',
+    '💘 یه چیزی که در رابطه‌ها «کم» دیدی و دلت می‌خواد بیشتر ببینی؟',
+    '💘 تا حالا یه نفر رو برای «آینده‌اش» دوست داشتی نه برای «الانِ»ش؟',
+    '💘 اگه قرار باشه یکی از این جمع یه روز حق داشته باشه سوالِ دلش رو ازت بپرسه، به کی می‌دی این حق رو؟',
+    '💘 به نظرت قشنگ‌ترین «شروعِ» یه رابطه با چه جمله‌ایه؟',
+    '💘 تا حالا شد یه نفر برای خودش قصه‌ای از تو بسازه و تو هم بذاری بسازه؟',
+    '💘 اگه عشق یه «مکان» بود، تو کجا خونه‌ت بود؟',
+    '💘 یه چیزی که مردم در عشق «زود» می‌فهمن ولی تو دیر فهمیدی؟',
+    '💘 تا حالا پیش کسی احساس کردی «خوب می‌بینیَت» ولی نگفتی؟',
+    '💘 اگه قرار باشه همین امشب به عشقِ قدیمی‌ت یه جمله بنویسی، شروعش چی بود؟',
+    '💘 به نظرت «صبور» بودن در عشق فضیلته یا ترس از بستن در؟',
+    '💘 یه آدم که «صادقانه عاشقه» رو چطور از ده متر تشخیص می‌دی؟',
+    '💘 تا حالا شده عشقی رو «بچگانه» بگی و بعد بفهمی واقعی‌ترین عشق عمرت بود؟',
+    '💘 اگه قرار باشه کسی فقط با «حضورش» عاشقت کنه، چه حاضری داشته باشی؟',
+    '💘 یه چیزی که در فلرت واقعی «خیلی خفنه» ولی کمتر کسی می‌کنه؟',
+    '💘 تا حالا یه حس رو برای «وقتِ مناسب» نگه دادی و وقت مناسب هیچ‌وقت نیومد؟',
+    '💘 اگه امشب قرار باشه یه جمله‌ی «خیلی ریسکی» بگی به کسی، جملت با «اینجا فقط من و تو...» شروع می‌شه — ادامه‌ش چی بود؟',
+    '💘 به نظرت قشنگ‌ترین اتفاقِ ممکن برای یه رابطه‌ی این جمعی چیه؟',
+    '💘 یه سوالِ عاشقانه هست که هیچ‌وقت کسی ازت نپرسیده و دوست داری بپرسن؟ خودت جوابش رو بگو.',
+],
+"scenario": [
+    '🎭 سناریو: فردا صبح بیدار می‌شی و همه‌ی آدم‌ها فقط با شعر حرف می‌زنن — روزت رو تعریف کن.',
+    '🎭 سناریو: یه کلید پیدا می‌کنی که هر دری رو باز می‌کنه به جز یه در — اون در کجاست؟',
+    '🎭 سناریو: قراره یه سال با سه نفر از این جمع روی یه جزیره باشی — کی غذا می‌پزه، کی دعوا می‌کنه، کی راه نجات پیدا می‌کنه؟',
+    '🎭 سناریو: از فردا همه‌ی حرف‌هات ۵ ثانیه با تأخیر شنیده می‌شن — اولین چیزی که پشیمون می‌شی چی بود؟',
+    '🎭 سناریو: یه نسخه از تو در دنیای موازی دقیقاً برعکسِ توست — سرِ کدوم تصمیمت باهاش جنگ داری؟',
+    '🎭 سناریو: امشب خواب می‌بینی فردا فقط با «نه» می‌تونی جواب بدی تا شب — کدوم نه سخت‌ترینه؟',
+    '🎭 سناریو: یه ماشینِ زمان داری ولی فقط ۱۰ دقیقه — کجا می‌ری؟',
+    '🎭 سناریو: از فردا احساسات آدم‌ها مثل امتیاز بالای سرشون دیده می‌شن — عددِ نفر اول این جمع چند بود؟',
+    '🎭 سناریو: یه دفترچه پیدا می‌کنی که هر چی توش بنویسی فردا اتفاق می‌افته ولی فقط یک بار در ماه — این ماه چی می‌نویسی؟',
+    '🎭 سناریو: همه‌ی خاطراتت از فردا فقط با موسیقی قابل یادآوری‌ان — کدوم خاطره‌ت رو با چه آهنگی نگه می‌داری؟',
+    '🎭 سناریو: برای یه هفته تبدیل به آخرین کسی می‌شی که باهاش حرف زدی — چه حرفی رو از زبونش می‌شنوی؟',
+    '🎭 سناریو: یه جعبه هست که فقط سه بار در عمر باز می‌شه — بارِ سومش رو برای چی نگه می‌داری؟',
+    '🎭 سناریو: از فردا هر دروغی که بگی واقعیت می‌شه و هر حقیقتت عوض می‌شه — با همین قانون چطور از رفیقت جواب می‌گیری؟',
+    '🎭 سناریو: نصف جمع امشب تبدیل به بچه‌ی ۷ ساله می‌شن — کدوم نصف؟ (انتخاب کن و دلیل بیار)',
+    '🎭 سناریو: یه آینه فقط یه بار در عمر بهت حقیقتِ کامل نشون می‌ده — این‌بار رو نگه می‌داری یا همین حالا نگاه می‌کنی؟',
+    '🎭 سناریو: از فردا فقط ۷ جمله در روز داری — کدوم جمله‌ها رو نگه می‌داری؟',
+    '🎭 سناریو: یه نفر از این جمع قراره از فردا فقط حرف‌های خوبت رو تکرار کنه — کی رو انتخاب می‌کنی؟',
+    '🎭 سناریو: در بدرِ عجیب بهت می‌گه «یه آرزو، دو شرط» — شرط‌هاش رو قبول می‌کنی؟ آرزو چیه؟',
+    '🎭 سناریو: از فردا آدم‌ها فقط ۲۴ ساعت یادشون می‌مونه — برای اینکه یادت بمونی با کی چیکار می‌کنی؟',
+    '🎭 سناریو: یه شهر که درش هر کی وارد شه، تنها نیست — چه چیزی رو از خودش می‌اره با خودش؟',
+    '🎭 سناریو: قراره یه فیلم از «سالِ پیشِ» تو ساخته بشه — کدوم صحنه‌ش تریلر می‌شه؟',
+    '🎭 سناریو: از فردا خواب‌های همه‌ی جمع توی یه اتاق مشترک پخش می‌شن — اتاق رو چطور ترتیب می‌دی؟',
+    '🎭 سناریو: یه نفر قراره تمام تصمیم‌های فردات رو بگیرد — فقط یکی از این جمع — کی؟',
+    '🎭 سناریو: به همه‌ی آدم‌ها فقط با یه جمله می‌تونی بگی «ممنونم که هستی» — جملت چیه؟',
+    '🎭 سناریو: از فردا هر چی به کسی بدی، یه نسخه‌ش به خودت برمی‌گرده — چی می‌دی؟',
+    '🎭 سناریو: درِ شماره ۱ تا ۱۰۰ داری؛ فقط یه در امنه، فقط یه بار می‌تونی انتخاب کنی — شماره چند رو می‌زنی؟',
+    '🎭 سناریو: یه دستکش پیدا می‌کنی که هر کاری بکنی، بهترین نسخه‌ش انجام می‌شه — برای چیکارش می‌پوشی؟',
+    '🎭 سناریو: قراره فقط با «نگاه» یه بازی با یکی از این جمع بازی کنی — اولین نگاهت رو کجا می‌ذاری؟',
+    '🎭 سناریو: از فردا هر لحظه‌ی خوشحالی یه قیمت داره — کدوم لحظه‌ت رو می‌خری؟',
+    '🎭 سناریو: یه کتاب هست که آخرِ داستانش هرچی باشی، فردا صبح باهاش بیدار می‌شی — می‌خونی؟ عنوانش چیه؟',
+    '🎭 سناریو: قراره برای ۱۰ نفر از این جمع یه «ماموریتِ مخفیِ خوبی» تعریف کنی — خودت کدوم ماموریت رو می‌گیری؟',
+    '🎭 سناریو: از فردا تنها چیزی که از دیشب به یادت می‌مونه، یه آهنگه — آهنگ فردا چیه؟',
+    '🎭 سناریو: یه چراغ جادو فقط یه آرزوی «کوچیک» برآورده می‌کنه — آرزوی کوچیکِ امروزت چیه؟',
+    '🎭 سناریو: قراره همه‌ی ترس‌های این جمع امشب روی پرده سینما اکران بشه — عنوان فیلم چی بود؟',
+    '🎭 سناریو: از فردا وقتی کسی به کسی فکر کنه، اون یکی یه «شیطونِ کوچیک» روی شونه‌ش حس می‌کنه — الان شیطونت داره می‌خنده؟',
+    '🎭 سناریو: یه دنیا که اونجا فقط از عشقِ «امروز» حرف می‌زنن — چه چیزی از این دنیا می‌بری اونجا؟',
+    '🎭 سناریو: قراره یکی از این جمع رو برای یه «مصاحبه‌ی شغلیِ خنده‌دار» بفرستن — رزومه‌ش رو چی می‌نویسی؟',
+    '🎭 سناریو: از فردا هر «کاش» که بگی، عمل می‌شه ولی فقط کاش‌های کوچیک — اولین کاشت چی بود؟',
+    '🎭 سناریو: یه جنگلِ سؤال‌ها داری و فقط سه تا رو می‌تونی جواب بدی — کدوما؟',
+    '🎭 سناریو: آخرین شبِ دنیا هست و فقط با همین جمعی — بازیِ آخرِ شب چی بود؟',
+],
+"mind": [
+    '🧠 اگه هیچ‌وقت نمی‌شد مطمئن بودی کسی دوستت داره، همچنان دوست داشتن می‌ارزید؟',
+    '🧠 یه چیزی که «همه» بهش معتقدن ولی تو هیچ‌وقت باورش نکردی؟',
+    '🧠 به نظرت «خوشبختی» یه مهارته یا یه شانس؟',
+    '🧠 اگه قرار بود فقط یک سوالِ بدون‌جواب بمونه در دنیا، اون سوال چی باشه؟',
+    '🧠 فرقِ «تنهایی» و «سختی» دقیقاً کجاست؟',
+    '🧠 یه چیزی که یادش «آسون» ولی عملش سخت‌ترین کارِ دنیاست؟',
+    '🧠 اگه مغزِ آدم‌ها مثل گوشی شارژ می‌شد، باتریِ تو رو چه چیزی خالی می‌کرد؟',
+    '🧠 به نظرت آدم‌ها بیشتر از «ترسِ شکست» فرار می‌کنن یا از «ترسِ موفقیت»؟',
+    '🧠 یه جایی از ذهنت هست که هنوز نرفتی؟ چیه؟',
+    '🧠 اگه یه نفر فقط با «سکوت‌هات» توت رو بشناسه، چقدر درست حدس زده؟',
+    '🧠 به نظرت «عادی» بودن یه موفقیته یا یه جرم؟',
+    '🧠 آخرین باری که یه نظرت رو عوض کردی، چه چیزی باعثش شد؟',
+    '🧠 اگه قرار بود یه قسمتِ از ذهنت رو برای همیشه خاموش کنی، کدوم؟',
+    '🧠 یه چیزی که همه‌ی عمر بهش «بعداً» می‌گی و «بعداً» هیچ‌وقت نمی‌رسه؟',
+    '🧠 به نظرت آدم‌ها وقتی «خیلی خوب» می‌شن، از چی می‌ترسن؟',
+    '🧠 اگه از فردا فقط «حقیقت‌های نیمه» وجود داشت، کدوم نیمه رو انتخاب می‌کردی؟',
+    '🧠 فرقِ «قوی بودن» و «خسته بودن ولی ادامه دادن» چیه؟',
+    '🧠 یه فکری که از بچگی تا الان فقط «چرخیده» ولی هیچ‌وقت نگفتی؟',
+    '🧠 اگه قرار باشه فقط یک کلمه روی سنگِ قبرت باشه، اون کلمه چی بود؟',
+    '🧠 به نظرت «زمان» درس می‌ده یا فقط می‌گذره؟',
+    '🧠 یه چیزی که در هر آدمی هست ولی اسم نداره؟',
+    '🧠 اگه همه‌ی آدم‌ها فقط با یه «سوالِ درونی» بیدار می‌شدن، سوالِ تو چی بود؟',
+    '🧠 به نظرت «جسور» کسیه که می‌ترسه و می‌ره، یا کسیه که اصلاً نمی‌ترسه؟',
+    '🧠 یه خطِ قرمز داری که هیچ‌وقت ازش رد نشدی؟ چیه؟',
+    '🧠 اگه ذهنت یه خانه بود، کدوم اتاقش قفل بود؟',
+    '🧠 به نظرت «بخشش» ضعفه یا نیرو؟',
+    '🧠 یه سوال که جوابش رو می‌دونی ولی هر بار که بهش فکر می‌کنی جواب عوض می‌شه؟',
+    '🧠 اگه یه نفر باشه که فقط با نگاه کردن به چهره‌ت بگه امروز چطور بیدار شدی، چه چیزی درباره‌ی امروزت می‌گه؟',
+    '🧠 به نظرت آدم‌ها «از دست دادن» رو بیشتر از «پیدا کردن» یادشون می‌مونه؟ چرا؟',
+    '🧠 یه چیزی که فقط وقتی «گم» می‌شه، آدم‌ها قدرش رو می‌فهمن؟',
+    '🧠 اگه قرار بود یه روزِ کامل فقط «تصمیم‌های قلب» بگیری، روزت چه فرقی می‌کرد؟',
+    '🧠 به نظرت «آرامش» یه حالته یا یه انتخابِ تکراری؟',
+    '🧠 یه چیزی که فکر می‌کردی «پایانِ دنیاست» و بعدها فقط یه فصل شد؟',
+    '🧠 اگه امشب فقط با «خودِ آینده‌ات» حرف بزنی، چی ازت می‌پرسه؟',
+    '🧠 به نظرت آدم‌ها بیشتر از «دنیا» می‌ترسن یا از «خودشون»؟',
+    '🧠 یه چیزی که هیچ معلمی یادت نداد ولی زندگی یادت داد؟',
+    '🧠 اگه تنها راهِ «راست» بودن، تنها شدن بود، بازم راست بودی؟',
+    '🧠 به نظرت «قسمت» یه بهانه‌ست یا یه نقشه؟',
+    '🧠 یه چیزی که همیشه «کم» داری و هیچ‌وقت «زیاد» نمی‌شه؟',
+    '🧠 اگه قرار باشه فقط یه جمله از این شب یادت بمونه، دوست داری اون جمله چی باشه؟',
+],
+"wouldyou": [
+    '🤔 یه سال فقط با «آدم‌های جدید» یا یه سال فقط با «همین جمع»؟',
+    '🤔 حقیقتِ تلخِ یه نفر رو بشنوی یا تطمینِ غلطِ خودت رو بشنوی؟',
+    '🤔 قدرتِ خوندنِ افکارِ دیگران ولی فقط ۱ ساعت، یا قدرتِ سکوتِ همیشگیِ ذهنِ خودت؟',
+    '🤔 ۱۰۰ میلیون با شرطِ «دیگه هیچ وقت غریبه‌ای رو نبینی» یا زندگیِ الان؟',
+    '🤔 فقط «چهارشنبه‌سوری» در سال یا فقط «شب یلدا»؟',
+    '🤔 هر روز ۳ ساعت بیشتر خواب یا هر روز ۳ ساعت بیشتر انرژی؟',
+    '🤔 یه بار «بهترین اتفاقِ زندگی» رو تجربه کنی و یادت بمونه، یا هر روز «کوچیکِ خوب» و یادت نره؟',
+    '🤔 بدونی دقیقاً کِی سخت‌ترین روزِ زندگیت می‌شه، یا بدونی دقیقاً کِی قشنگ‌ترینش؟',
+    '🤔 همیشه بفهمی کی دروغ می‌گه، یا هیچ‌وقت نتونی دروغ بگی؟',
+    '🤔 یه رفیقِ خیلی صمیمی در یه قاره، یا ۱۰ آشنای معمولی در همین شهر؟',
+    '🤔 ثروتمند ولی بی‌خواب، یا آرام ولی حسابی؟',
+    '🤔 فقط با آهنگ‌های غمگین زندگی کنی، یا فقط با آهنگ‌های شادِ «بچه‌گونه»؟',
+    '🤔 هر کاری بکنی «موفق» بشه ولی تنهایی، یا هر کاری نصفه‌کاره باشه ولی با این جمع؟',
+    '🤔 ۱۰ سال به عقب برگردی با همین ذهن، یا ۱۰ سال جلو بروی با همین دل؟',
+    '🤔 حافظه‌ی «عکس‌ها» یا حافظه‌ی «صداها»؟',
+    '🤔 یه نفر باشه که همیشه صدات رو بشنوه، یا یه نفر باشه که همیشه سکوتت رو بفهمه؟',
+    '🤔 همیشه «اولین» باشی، یا همیشه «بهترین»؟',
+    '🤔 در تمام عمر فقط یک بار عاشق شی ولی عمیق، یا بارها ولی سطحی؟',
+    '🤔 ترجیح می‌دی کسانی که دوستشون داری همیشه سالم باشن، یا همیشه خوشحال؟',
+    '🤔 فقط با آدم‌هایی معاشرت کنی که باهات موافقن، یا فقط با مخالف‌ها؟',
+    '🤔 ۳ آرزوی بزرگ، یا ۳۰۰ آرزوی کوچیک؟',
+    '🤔 همه‌ی دردهات رو یادت بمونه ولی قشنگی‌هاتو دوبرابر، یا همه‌اش نصف؟',
+    '🤔 یه عمر «جوابِ همه‌ی سوال‌ها» رو داشته باشی، یا همیشه «سوالِ خوب»؟',
+    '🤔 زندگی کنی در شهری که دوست داری با کسایی که نمی‌شناسی، یا شهری که دوست نداری با همین جمع؟',
+    '🤔 صدات همیشه شنیده بشه، یا حرفت همیشه درست باشه؟',
+    '🤔 اگه فقط یکی؛ «مثلتی» محبوب باشه یا «مقلبی» راست؟',
+    '🤔 ۲۴ ساعت بدون گوشی در یه جایی قشنگ، یا ۲۴ ساعت با گوشی در جایی معمولی؟',
+    '🤔 همیشه بتوانی بگویی «نه»، یا هیچ‌وقت مجبور نباشی بگویی؟',
+    '🤔 بهترین سالِ عمرت ۱۰ بار تکرار بشه، یا ۱۰ سالِ متفاوتِ خوب؟',
+    '🤔 یه شبِ کامل «کاش» رو زندگی کنی، یا ۱۰ شبِ سالِ آینده رو از قبل بدونی؟',
+    '🤔 قلبت همیشه «خیلی خوشحال» باشه ولی ذهنت «خیلی پر»، یا برعکس؟',
+    '🤔 گلی که فقط یه شب می‌شکه یا علفی که همیشه سبزه؟',
+    '🤔 ترجیح می‌دی مردم بگن «خیلی باهوشه» یا «خیلی قشنگِ؟»',
+    '🤔 عاشقی که فقط تو رو دوست داشته باشه، یا عاشقی که همه رو دوست داره و تو بیشتر؟',
+    '🤔 بدون «موزیک» زندگی کنی، یا بدون «خوابِ عمیق»؟',
+    '🤔 همیشه ۲۰ دقیقه دیر برسی، یا همیشه ۲۰ دقیقه زود و منتظر بمونی؟',
+    '🤔 کاری که «خیلی عاشقش» هستی ولی درآمدش کم، یا کاری که «تحملش» می‌کنی ولی درآمدش بالا؟',
+    '🤔 تنها سختیِ بزرگت رو با همه رد کنی، یا کوچیک‌ترین شادی‌هات رو فقط با خودت؟',
+    '🤔 ۱۰۰ روزِ «غیرقابل‌فراموش» یا ۱۰۰۰ روزِ «قابل‌تحمل»؟',
+    '🤔 آخر جمله‌هات همیشه یه سوال باشه، یا هیچ‌وقت نتونی سوال بپرسی؟',
+],
+"memory": [
+    '📖 یه خاطره از بچگی که هر بار تعریفش می‌کنی، یه جزئیات جدیدش یادت میاد؟',
+    '📖 قشنگ‌ترین «صدای» خاطره‌هات چیه؟',
+    '📖 یه خاطره که کامل یادت نیست ولی «حسش» یادته؟',
+    '📖 اولین باری که حسابی خندیدی تا گریه کنی، سرِ چی بود؟',
+    '📖 یه خاطره از مدرسه که هنوز با خنده تعریفش می‌کنی؟',
+    '📖 خاطره‌ای که فقط با یکی از این جمع دارید و هیچ‌کس نمی‌دونه؟',
+    '📖 یه خاطره‌ی «تابستونی» که هر تابستان یادت می‌افته؟',
+    '📖 اولین چیزی که خریدی با پولِ خودت چی بود؟',
+    '📖 یه خاطره که متأسفانه هرگز عکسش وجود نداره؟',
+    '📖 خاطره‌ی یه «باران» خاص چی بود؟',
+    '📖 بامزه‌ترین سوتیِ مادر یا پدرت که هنوز می‌خندن بهش؟',
+    '📖 یه خاطره از فامیلی که همیشه در جمع‌ها تعریف می‌شه؟',
+    '📖 قشنگ‌ترین هدیه‌ی دوران بچگیت چی بود و از کی؟',
+    '📖 یه خاطره که وقتی بهش فکر می‌کنی، هنوز بوی چیزی حس می‌کنی؟',
+    '📖 اولین باری که از چیزی واقعاً ترسیدی و بعد خندیدی به ترست؟',
+    '📖 خاطره‌ی «اولین دوستیِ» خاصت چیه؟',
+    '📖 یه خاطره که مامان‌بزرگ یا بابابزرگ تعریفش می‌کرد و حالا خودت تعریفش می‌کنی؟',
+    '📖 قشنگ‌ترین «شبِ قدیمی» که یادت مونده چیه؟',
+    '📖 یه خاطره از خیابونِ محله‌ت که هر بار رد می‌شی ازش یادت میاد؟',
+    '📖 آخرین خاطره‌ای که ساختید و ۱۰ سال دیگه تعریفش می‌کنید؟',
+    '📖 خاطره‌ی اولین باری که یه جای جدید رفتی؟',
+    '📖 یه خاطره‌ی «زمستونی» با چای و پتو؟',
+    '📖 بدترین خنده‌ی نامناسبت کجا اتفاق افتاد؟',
+    '📖 اولین پیام چت‌ت با بهترین رفیقت چی بود؟ (اگه جرئت داری بخون)',
+    '📖 یه خاطره از دبیرستان که هنوز سرش احساس خجالت و خوشی می‌کنی؟',
+    '📖 قشنگ‌ترین «حرفِ» یه معلم بهت چی بود؟',
+    '📖 خاطره‌ی اولین باری که یه چیزی رو «از دست دادی» و بعد پیداش کردی؟',
+    '📖 یه خاطره که همیشه موقع «خداحافظی» یادت می‌افته؟',
+    '📖 اولین مسافرتت با دوستات کجا بود و چی شد؟',
+    '📖 یه خاطره‌ی قدیمی که الان می‌دونی اون موقع نمی‌فهمیدی چی بوده؟',
+    '📖 قشنگ‌ترین اتفاقِ یه «عصرِ جمعه» چی بود؟',
+    '📖 خاطره‌ای که هر بار که آهنگ خاصی می‌شنوی یه گوشه ذهنت می‌درخشه؟',
+    '📖 اولین باری که «عاشقِ» یه چیزی (نه یه نفر) شدی؟',
+    '📖 یه خاطره از یه «تولدِ» خاص که هیچ‌وقت فراموشش نمی‌کنی؟',
+    '📖 خاطره‌ای که درش «بارون» نقش اصلی رو داشته؟',
+    '📖 اولین باری که یکی از بزرگ‌ترها بهت گفت «چقدر بزرگ شدی»؟',
+    '📖 قشنگ‌ترین «صبحِ» زندگی‌ت تا حالا چه شکلی بود؟',
+    '📖 یه خاطره که الکی ۱۰ بار تعریفش کردی چون خوش می‌گذشت؟',
+    '📖 آخرین باری که یه خاطره قدیمی باعث شد یه نفر رو «کال» کنی؟',
+    '📖 یه خاطره از این جمع که ۲۰ سال دیگه در عروسی‌هاتون تعریف می‌شه؟',
+],
+}
+
+# ================================================================
+# [V19-BANKS-B] نیمه‌ی دوم گنجینه‌ی جدید V19
+# ================================================================
+V19_BANK_ADDITIONS_B = {
+"relation": [
+    '💔 به نظرت «دوست داشتن» از «عادت کردن» چطور جدا می‌شه؟',
+    '💔 یه چیزی که در رابطه‌ها «کم گفته می‌شه» ولی از همه‌چیز مهم‌تره؟',
+    '💔 اگه یه نفر فقط با «متن» عاشقت کنه و با «رفتار» عاشقِ خودش باشه، چی می‌گی بهش؟',
+    '💔 تا حالا رابطه‌ای رو به خاطر «خستگی» تمام کردی نه به خاطر «نامزدیِ احساس»؟',
+    '💔 به نظرت «جذاب» بودن یه انتخابِ آگاهانه‌ست یا یه ویژگیِ ذاتی؟',
+    '💔 یه جمله‌ی «نه» که به عشق گفتی و هنوز معتبره؟',
+    '💔 فرقِ کسی که «می‌خواد باشی براش» با کسی که «می‌خواد باشی باهاش» چیه؟',
+    '💔 تا حالا پیش کسی احساس کردی «ساده‌» هستی و او از سادگیِ تو سلطه می‌سازه؟',
+    '💔 به نظرت پایانِ رابطه «مرگ» عشقه یا «آزادیِ» طرفین؟',
+    '💔 یه چیزی که در رابطه‌ی والدینت دیدی و خودت می‌خوای تکرارش نکنی؟',
+    '💔 اگه قرار باشه یکی از این جمع «برادر/خواهرِ» دومت باشه، کی و چرا؟',
+    '💔 تا حالا شد از کسی که دوستش داری، فقط چون «زیادی» دنبالش بودی، دور بشی؟',
+    '💔 به نظرت قشنگ‌ترین رابطه اونه که «حرف نزاشتنش» هم معنی داشته باشه؟',
+    '💔 یه جمله هست که هر بار یکی‌ش رو می‌گی، رابطه‌تون یه پله می‌ره بالا؟',
+    '💔 تا حالا کسی رو «دوست» داشتی که فقط حضورش یه قسمتِ از روزت رو قشنگ می‌کرد؟',
+    '💔 فرقِ «تنهاییِ آزاد» و «تنهاییِ دل‌بسته» رو کجای زندگی‌ت تجربه کردی؟',
+    '💔 یه رابطه که «آزاد» بود و با این حال «وفادار» — باورش داری؟',
+    '💔 تا حالا پیش کسی حس کردی «کم» هستی و بعد فهمیدی مشکل از «کم بودنِ» تو نبوده؟',
+    '💔 به نظرت در رابطه «این‌طوری حرف زدن» بیشتر نجات‌دهنده‌ست یا «سکوتِ خوب»؟',
+    '💔 یه چیزی که در رابطه‌ها «زود» لو می‌ره (قبل از هر چیز دیگه) چیه؟',
+    '💔 تا حالا یه نفر رو دوست داشتی که فقط با یکی از جنس‌های «حس»شت جور بود؟',
+    '💔 به نظرت «رازِ» رابطه‌های طولانی چیه؟ (فقط یه جمله)',
+    '💔 یه حسِ قدیمی هست که هنوز جاش در قلبت خالیه؟',
+    '💔 تا حالا کسی رو دوست داشتی چون «راضی‌ت» می‌کرد؟',
+    '💔 فرقِ کسی که «می‌خوادت» و کسی که «انتخابت می‌کنه» در یک کلمه چیه؟',
+    '💔 یه رابطه که «مقیاسِ» بقیه‌ی رابطه‌هات شد — چه چیزی ازش یاد گرفتی؟',
+    '💔 تا حالا در یه رابطه «خودِ خودت» بودی و با این حال ترسیدی؟',
+    '💔 به نظرت «صبر» در عشق از «عادت» جدا می‌شه چطور؟',
+    '💔 یه چیزی که در این جمع می‌بینیش و امیدوار بودن به عشق رو یادت می‌ده؟',
+    '💔 تا حالا شد عشقت به یکی «خیلی ساده» بود و هیچ‌کس باورش رو نمی‌کرد؟',
+    '💔 به نظرت آدم‌ها در عشق «جذبِ» شبیهِ خودشون می‌شن یا جذبِ مکملِ خودشون؟',
+    '💔 یه عشقِ «بی‌جواب» که خوشبختیِ خودش رو در «خوشبختیِ» اون یکی دید — دیدیش؟',
+    '💔 تا حالا از قلبیت خواستی یه نفر بمونه و عقلت گفت بذار بره؟ کدوم رو گوش دادی؟',
+    '💔 به نظرت «بغض» در رابطه نشونه‌ی ضعفه یا از شیرین‌ترین احساس‌هاست؟',
+    '💔 یه چیزی که فقط در «رفت و برگشتِ» رابطه‌ها یاد گرفتید؟',
+    '💔 تا حالا یه رابطه رو «مرده» اعلام کردی که هنوز نفس می‌کشید؟',
+    '💔 به نظرت «رسمی بودن» رابطه ارزش قلب رو کم می‌کنه یا امنیتش رو زیاد؟',
+    '💔 یه جمله که دوست داری در اولین ملاقاتِ عاشقانه‌ی آینده‌ت بگی؟',
+    '💔 تا حالا پیش این جمع احساس کردی عشق واقعی «جمعی» هم می‌تونه باشه؟',
+],
+"cringe": [
+    '😳 یه چیزی که مامانت یا بابات در جمع گفت و هنوز ازش خجالت می‌کشی؟',
+    '😳 بدترین «استوریِ» اشتباهی که گذاشتی چی بود؟',
+    '😳 تا حالا اسمِ یه نفر رو اشتباه صدا کردی در حالی که دنبال جذبش بودی؟',
+    '😳 قشنگ‌ترین جمله‌ای که در ذهنت ساختی و در عمل «فاجعه» شد؟',
+    '😳 یه سوتی در «پیامِ عاشقانه» که به نفر اشتباه فرستادی؟',
+    '😳 تا حالا در جمع خندیدی و صدای غریبه‌ای ازت در اومد؟',
+    '😳 یه چیزی که برای «خوش‌تیپ» بودن پوشیدی و آبروت رفت؟',
+    '😳 بدترین «میم» یا جوکی که در زمان اشتباه فرستادی؟',
+    '😳 تا حالا جلوی همه گریه کردی و بعد گفتی «چشمام سوخته»؟',
+    '😳 یه بار با تفکرِ «کاملاً اشتباه» یه آدم رو معاشرت کردی؟',
+    '😳 تا حالا «لایکِ» قدیمی رو در نیمه‌شب زدی و صبح دنبال بهونه گشتی؟',
+    '😳 بدترین سوتیِ «فیلم/سریال» که با یه نفر رفتید؟',
+    '😳 یه چیزی که از سرِ خستگی گفتی و ساعت ۷ صبح پشیمون شدی؟',
+    '😳 تا حالا در جمع جوک گفتی و کسری جز خودت نخندید؟ تعریفش کن.',
+    '😳 بدترین «مدل مویی» که به خودت زدی؟ (خودت تعریف کن)',
+    '😳 تا حالا از «جیغ» در جایی نامناسب استفاده کردی؟',
+    '😳 یه عکسِ قدیمی از خودت که هر بار می‌بینیش می‌خوای حذفش کنی ولی نمی‌کنی؟',
+    '😳 تا حالا اسمِ یه نفر رو غلط تایپ کردی و پر قرمز شدی؟',
+    '😳 یه رفتارت در خواب که یکی برات تعریف کرده و هنوز اذیتت می‌کنه؟',
+    '😳 تا حالا برای «خوش‌شونست» کسی، یه علاقه‌ی غیرواقعی زدی و بعد لو رفتی؟',
+    '😳 بدترین «قانون‌شکنیِ» مودبانه که در جمع دوستانت کردی؟',
+    '😳 یه چیزی که در «سخنرانی/ارائه» گفتی و هنوز یادش می‌کنی؟',
+    '😳 تا حالا یه دعوت رو «قبول» کردی و یادت رفت و الان هنوز جوابش رو می‌دی؟',
+    '😳 بدترین «استوری» که با یه نفر عکس گذاشتی و بعد رابطه‌تون تموم شد؟',
+    '😳 یه جوابی که به سوالِ ساده‌ی کسی دادی و همه‌ی جمع ساکت شد؟',
+    '😳 تا حالا در «چتِ خانواده» چیزی فرستادی که مناسب جمع نبود؟',
+    '😳 قشنگ‌ترین سوتی که «همیشه» تعریف می‌شه و خودت هم عاشقشی؟',
+    '😳 تا حالا با یه نفر بی‌خودی «جدی» بحث کردی و بعد فهمیدی شوخی بود؟',
+    '😳 یه جمله که برای «تسلی» به کسی گفتی و برداشت برعکس شد؟',
+    '😳 بدترین تایپِ عجیبی که در پیام‌های کاری فرستادی؟',
+    '😳 تا حالا صدای گوشی رو با آهنگِ اشتباه در جمع «ترکاندی»؟',
+    '😳 یه چیزی که در جمع گفتنت به نیتِ «قشنگ» بود ولی کف شد؟',
+    '😳 تا حالا از یه نفر تعریف کردی که خودش هم گوش می‌داد و نفهمیدی؟',
+    '😳 بدترین کاری که جلوی یه نفر انجام دادی و بعد متوجه شدی اشتباه بود؟',
+    '😳 یه سوتی که در «زبان» خارجی دادی و خودت از خودت خجالت کشیدی؟',
+    '😳 تا حالا «فیلترِ» غلط گذاشتی و بابات کامنت گذاشت؟',
+    '😳 یه عکس که برای یه نفر فرستادی و «زمان‌بندی‌ش» افتضاح بود؟',
+    '😳 تا حالا در پیام کسی «شاد» جواب دادی در حالی که غم‌گین بود؟',
+    '😳 بدترین جوابی که به «دوست داری بریم بیرون؟» دادی؟',
+    '😳 یه چیزی که الان دیگه با «خنده» تعریفش می‌کنی ولی اون روز مُردی از خجالت؟',
+],
+"adult": [
+    '🔞 تا حالا از نظر جنسی شدیداً جذب کسی شدی ولی هیچ‌وقت بهش نگفتی؟',
+    '🔞 تا حالا فقط با نگاه یه نفر بدجوری بهش کشش پیدا کردی؟',
+    '🔞 جذاب‌ترین ویژگی بدنی برای تو چیه که فوراً توجهت رو جلب می‌کنه؟',
+    '🔞 تا حالا دلت خواسته یه نفر رو ببوسی ولی خودت رو نگه داشتی؟ چرا؟',
+    '🔞 تا حالا یه بوسه باعث شده کششت به یه نفر چند برابر بشه؟',
+    '🔞 تا حالا فقط با شنیدن صدای یه نفر تحریک شدی؟ چی در صداش جذبت کرد؟',
+    '🔞 تا حالا با یه نفر تنها موندی و حس کردی کشش بینتون خیلی زیاده؟ آخرش چی شد؟',
+    '🔞 تا حالا از نزدیک شدن یه نفر هیجان زیادی گرفتی؟',
+    '🔞 تا حالا کسی بوده که فقط با عطرش برات خیلی جذاب بشه؟',
+    '🔞 تا حالا استایل یه نفر باعث شده فوراً از نظر جنسی جذبت کنه؟',
+    '🔞 تا حالا از نوع نگاه یه نفر فهمیدی که بهت کشش داره؟',
+    '🔞 تا حالا عمداً به کسی نزدیک شدی چون خیلی جذبت می‌کرد؟',
+    '🔞 تا حالا با کسی فلرت کردی فقط برای اینکه ببینی چقدر بهت کشش داره؟',
+    '🔞 تا حالا شوخی دوپهلو با کسی کردی و منتظر واکنشش موندی؟',
+    '🔞 تا حالا شوخی دوپهلو یه نفر کاری کرده ذهنت خیلی درگیرش بشه؟',
+    '🔞 تا حالا شده از شدت کشش به یه نفر، خونسردی‌ات رو از دست بدی؟',
+    '🔞 تا حالا کسی بوده که فقط با نزدیک شدنش دستپاچه بشی؟',
+    '🔞 تا حالا کسی بوده که فکر کردن به تنها موندن باهاش هیجانت کنه؟',
+    '🔞 تا حالا قبل خواب به یه نفر فکر کردی چون کشش زیادی بهش داشتی؟',
+    '🔞 تا حالا ذهنت درباره نزدیک شدن به یه نفر سناریو ساخته؟',
+    '🔞 تا حالا فانتزی صمیمی درباره یه نفر داشتی و هیچ‌وقت بهش نگفتی؟',
+    '🔞 تا حالا فانتزی‌هات رو با کسی در میون گذاشتی؟ واکنشش چی بود؟',
+    '🔞 تا حالا کسی ازت درباره فانتزی‌هات پرسیده و جواب واقعی رو ندادی؟',
+    '🔞 تا حالا از کسی درباره خواسته‌های صمیمی‌اش سؤال کردی؟',
+    '🔞 تا حالا یک گفت‌وگوی معمولی با کسی کم‌کم خیلی داغ و صمیمی شده؟',
+    '🔞 تا حالا شب تا صبح با کسی چت کردی و موضوع چت خیلی شخصی شده؟',
+    '🔞 تا حالا یه پیام آخرشب از کسی گرفتی که فهمیدی منظورش بیشتر از یه گفت‌وگوی معمولیه؟',
+    '🔞 تا حالا خودت آخرشب به کسی پیام دادی چون دلت صمیمیت بیشتری می‌خواست؟',
+    '🔞 تا حالا یه «بیداری؟» از طرف کسی خیلی بیشتر از یه سؤال ساده برات معنا داشته؟',
+    '🔞 تا حالا یه چت رو فقط به خاطر کشش بینتون عمداً طول دادی؟',
+    '🔞 تا حالا به خاطر کشش زیاد، منتظر پیام یه نفر موندی؟',
+    '🔞 تا حالا جواب کسی رو دیر دادی تا بیشتر دنبالت بیاد؟',
+    '🔞 تا حالا کسی مستقیم گفته از نظر فیزیکی جذبت می‌کنه؟',
+    '🔞 تا حالا خودت مستقیم به کسی گفتی از نظر فیزیکی جذبت می‌کنه؟',
+    '🔞 تا حالا تعریف یه نفر از ظاهر یا اندامت واقعاً رویت اثر گذاشته؟',
+    '🔞 تا حالا برای دیدن یه نفر بیشتر از همیشه به ظاهرت رسیدی؟',
+    '🔞 تا حالا لباسی پوشیدی فقط برای اینکه یه نفر خاص جذبت ببینه؟',
+    '🔞 تا حالا استوری گذاشتی فقط برای جلب توجه یه نفر خاص؟',
+    '🔞 تا حالا عکس یه نفر رو دیدی و همون لحظه از نظر جنسی جذبت کرد؟',
+    '🔞 تا حالا یه نفر در واقعیت خیلی جذاب‌تر از عکس‌هاش بوده؟',
+    '🔞 تا حالا چشم‌های یه نفر بیشتر از هر چیز دیگه‌ای جذبت کرده؟',
+    '🔞 تا حالا لبخند یه نفر از نظر جنسی برات جذاب بوده؟',
+    '🔞 تا حالا طرز راه رفتن یا نشستن یه نفر توجهت رو خیلی جلب کرده؟',
+    '🔞 تا حالا دست‌ها یا حرکات بدن یه نفر برات جذاب بوده؟',
+    '🔞 تا حالا عمداً تماس چشمی رو با یه نفر طول دادی چون از فضا لذت می‌بردی؟',
+    '🔞 تا حالا کسی متوجه شده که داری نگاهش می‌کنی و فضا ناگهان خیلی صمیمی شده؟',
+    '🔞 تا حالا توی یه جمع فقط حواست به یه نفر بوده؟',
+    '🔞 تا حالا عمداً کنار کسی نشستی چون از نظر جنسی جذبت می‌کرد؟',
+    '🔞 تا حالا کسی از همین جمع برات جذابیت جنسی داشته؟',
+    '🔞 تا حالا از یکی از دوستات بیشتر از حد دوستی خوشت اومده؟',
+    '🔞 تا حالا به کسی کشش داشتی که می‌دونستی نباید سمتش بری؟',
+    '🔞 تا حالا کسی بوده که می‌دونستی اگر باهاش تنها بمونی، کنترل هیجانت سخت‌تر می‌شه؟',
+    '🔞 تا حالا کشش جنسی‌ات به یه نفر از علاقه عاطفی‌ات بیشتر بوده؟',
+    '🔞 تا حالا علاقه عاطفی باعث شده کششت به یه نفر بیشتر بشه؟',
+    '🔞 تا حالا کشش فیزیکی باعث شده نسبت به یه نفر احساس جدی پیدا کنی؟',
+    '🔞 تا حالا کسی بوده که فقط برای کشش بینتون بخوای دوباره ببینیش؟',
+    '🔞 تا حالا کسی بوده که برای رابطه جدی نخوایش ولی کشش زیادی بهش داشته باشی؟',
+    '🔞 تا حالا برعکس، کسی رو برای رابطه خواستی ولی کشش اولیه نداشتی؟',
+    '🔞 تا حالا یک نفر بعد از شناخت بیشتر از نظر جنسی خیلی جذاب‌تر شده؟',
+    '🔞 تا حالا یک نفر بعد از شناخت بیشتر تمام کششت رو از بین برده؟ چرا؟',
+    '🔞 تا حالا از کسی خوشت اومده و عمداً سرد رفتار کردی که لو نری؟',
+    '🔞 تا حالا دلت خواسته یه نفر اول قدم رو برای نزدیک شدن برداره؟',
+    '🔞 تا حالا خودت اولین قدم رو برای نزدیک شدن برداشتی؟',
+    '🔞 تا حالا از ترس جواب منفی، یک حرکت صمیمی رو انجام ندادی؟',
+    '🔞 تا حالا کسی مستقیم علاقه‌اش رو گفته و همین صراحت بیشتر جذبت کرده؟',
+    '🔞 تا حالا خواسته شدن از طرف یه نفر باعث شده بیشتر بهش کشش پیدا کنی؟',
+    '🔞 تا حالا توجه زیاد یه نفر برات جذابیتش رو کمتر کرده؟',
+    '🔞 تا حالا فاصله گرفتن یه نفر باعث شده بیشتر دنبالش بگردی؟',
+    '🔞 تا حالا خودت از کسی فاصله گرفتی تا ببینی برمی‌گرده یا نه؟',
+    '🔞 تا حالا بین تو و یه نفر کششی بوده که دوستات هم متوجهش بشن؟',
+    '🔞 تا حالا دوستت گفته «بین شما دوتا یه چیزی هست» و درست گفته؟',
+    '🔞 تا حالا جلوی بقیه انکار کردی که به یه نفر کشش داری؟',
+    '🔞 تا حالا یک لحظه کوتاه با کسی داشتی که از کل یک رابطه بیشتر توی ذهنت مونده؟',
+    '🔞 تا حالا یه تماس ساده باعث شده حس خیلی شدیدی نسبت به یه نفر پیدا کنی؟',
+    '🔞 تا حالا از کسی خوشت اومده چون خیلی خوب بلد بوده فضا رو صمیمی کنه؟',
+    '🔞 تا حالا یه نفر بدون عجله بهت نزدیک شده و همین بیشتر جذبت کرده؟',
+    '🔞 تا حالا عجله یه نفر برای صمیمی شدن تمام جذابیتش رو برات از بین برده؟',
+    '🔞 تا حالا کسی به مرزهات احترام گذاشته و همین باعث شده بیشتر بهش کشش پیدا کنی؟',
+    '🔞 تا حالا درباره مرزهای صمیمی‌ات با کسی خیلی صریح حرف زدی؟',
+    '🔞 تا حالا یک نفر باعث شده راحت‌تر درباره خواسته‌های صمیمی‌ات حرف بزنی؟',
+    '🔞 تا حالا چیزی درباره خواسته‌هات رو از ترس قضاوت شدن نگفتی؟',
+    '🔞 تا حالا به کسی اعتماد کردی و همین اعتماد کششت رو بهش بیشتر کرد؟',
+    '🔞 تا حالا یک دروغ کوچک باعث شده کششت به یه نفر کامل از بین بره؟',
+    '🔞 تا حالا با کسی شیمی جنسی شدیدی داشتی ولی هیچ‌وقت وارد رابطه نشدید؟ چرا؟',
+    '🔞 تا حالا کسی بوده که فقط با یه «نگاه» بفهمی بینتون کشش هست؟',
+    '🔞 تا حالا شده قبل از دیدن کسی، از فکر کردن بهش هیجان بگیری؟',
+    '🔞 تا حالا یه قرار داشتی که از همون اول حس کنی ممکنه خیلی صمیمی‌تر از یک قرار معمولی بشه؟',
+    '🔞 تا حالا دلت خواسته یه قرار با کسی خیلی دیرتر تموم بشه؟',
+    '🔞 تا حالا عمداً خداحافظی رو کش دادی چون نمی‌خواستی لحظه صمیمی تموم بشه؟',
+    '🔞 تا حالا یک شب با کسی داشتی که بعدش کششت نسبت بهش خیلی بیشتر شده باشه؟',
+    '🔞 تا حالا یه گفت‌وگوی شبانه باعث شده نگاهت به یه نفر کاملاً عوض بشه؟',
+    '🔞 تا حالا آخرشب پیام دادی فقط چون کشش زیادی به طرف مقابل داشتی؟',
+    '🔞 تا حالا یه پیام آخرشب از کسی گرفتی که ضربان قلبت رو بیشتر کنه؟',
+    '🔞 تا حالا یه نفر بوده که فقط وقتی باهاش خلوت می‌کنی جذابیتش چند برابر بشه؟',
+    '🔞 تا حالا کسی بوده که دوست داشته باشی فقط خودتون دوتا باشید تا ببینی بینتون چه حسی شکل می‌گیره؟',
+    '🔞 تا حالا شده از شدت کشش نسبت به یه نفر ندونی چی باید بگی؟',
+    '🔞 تا حالا کسی بوده که حتی سکوت بینتون هم برات حس جنسی و صمیمی داشته باشه؟',
+    '🔞 تا حالا کسی بوده که فقط با نزدیک شدنش فضای بینتون رو عوض کنه؟',
+    '🔞 تا حالا از شدت کشش به یه نفر، بیشتر از حد معمول به ظاهرت توجه کردی؟',
+    '🔞 تا حالا یه نفر بوده که دوست داشته باشی بدانی دقیقاً کدام ویژگی‌ات براش جذابه؟',
+    '🔞 تا حالا از کسی پرسیدی دقیقاً چه چیزی در تو براش جذابه؟',
+    '🔞 تا حالا جواب چنین سؤالی بیشتر از چیزی که انتظار داشتی هیجانت کرده؟',
+    '🔞 تا حالا یک نفر بوده که اگر خودش قدم اول رو برداره، احتمالاً جواب مثبت بدی؟',
+    '🔞 تا حالا کسی بوده که اگر شرایط فرق می‌کرد، احتمالاً وارد رابطه صمیمی باهاش می‌شدی؟',
+],
+"dream": [
+    '💤 آخرین خوابی که توش بودی و نمی‌خواستی بیدار شی؟',
+    '💤 یه خوابِ تکراری که هر بار یه جزئیاتش عوض می‌شه؟',
+    '💤 عجیب‌ترین «جای» خواب‌هات کجاست؟',
+    '💤 تا حالا توی خواب جواب یه سوالِ واقعی رو گرفتی؟',
+    '💤 یه خواب که «حس»ش هنوز یادته ولی جزئیاتش نه؟',
+    '💤 خوابِ بچه‌گی‌ت که هنوز تعریفش می‌کنی؟',
+    '💤 تا حالا توی خواب گریه کردی و بیدار شدی و بازم گریه می‌کردی؟',
+    '💤 یه خواب که توش یکی از این جمع بود و بعد ازش خجالت کشیدی؟',
+    '💤 بدترین «کابوسِ» بچه‌گیت چی بود؟',
+    '💤 تا حالا خواب دیدی داری پرواز می‌کنی و با خوشحالی بیدار شدی و بعد از ته دل خندیدی؟',
+    '💤 یه خواب که بعدش تمام روزت رو رنگ کرد؟',
+    '💤 خوابِ «پرواز» دیدی؟ آخرینش کی بود و چه شکلی؟',
+    '💤 تا حالا توی خواب «لو رفتی»؟ (هر چیزی که توی خواب لو رفتی!)',
+    '💤 یه خوابِ قدیمی که مطمئنی معنا داره ولی هنوز رمزش رو نفهمیدی؟',
+    '💤 عجیب‌ترین صدایی که در خواب شنیدی؟',
+    '💤 تا حالا خوابِ «آزمون» دیدی که هنوز بعدِ سال‌ها میاد سراغت؟',
+    '💤 یه خواب که توش آدم‌های غریبه بودن ولی حسِ آشنایی داشتی؟',
+    '💤 خواب دیدی که یه نفر فوت کرده و بعد با اون حرف زدی؟ چه حرفی شد؟',
+    '💤 تا حالا «خوابِ چشمی» دیدی؟ (اون لحظه‌ای که فکر می‌کنی بیداری ولی نمی‌تونی تکون بخوری)',
+    '💤 یه خواب که توش «موزیک» بود؟ کدوم آهنگ؟',
+    '💤 آخرین خوابی که خندیدی توش و بیدار شدی هنوز می‌خندی؟',
+    '💤 خوابِ «سقوط» — آخرین بار کی و بعدش چی حس کردی؟',
+    '💤 تا حالا توی خواب یکی از «علت‌های» روزت رو حل کردی؟',
+    '💤 یه خواب که می‌خوای دوباره ببینیش؟',
+    '💤 عجیب‌ترین «قوانینِ» دنیای خواب‌هات چیه؟',
+    '💤 تا حالا توی خواب دنبال چیزی گشتی و هیچ‌وقت پیدا نشد؟',
+    '💤 یه خواب که توش «زمان» عجیب بود؟',
+    '💤 خواب دیدی یکی از رفیقات یه کارِ عجیب کرد و بعد ازش پرسیدی؟',
+    '💤 تا حالا خوابِ «دندان» دیدی؟ (افتاد یا شکست؟)',
+    '💤 یه خواب که بیدار شدی و کل روز دنبال معناش بودی؟',
+    '💤 عجیب‌ترین خوابی که «مکث» داشت؟',
+    '💤 تا حالا توی خواب با یه فامیلِ قدیمی روبه‌رو شدی که سال‌هاست ندیدیش؟',
+    '💤 یه خوابِ قشنگ که فقط «صدا» داشت (تصویر نداشت)؟',
+    '💤 خواب دیدی «آینه» و توش یه چیزِ دیگه بود؟',
+    '💤 تا حالا بعد از یه خواب، رفتارت رو با یکی عوض کردی؟',
+    '💤 یه خوابِ بچه‌گانه که هنوز با «ترس» یادش می‌کنی؟',
+    '💤 عجیب‌ترین خوابی که درباره‌ی «خونه» بود؟',
+    '💤 تا حالا خواب دیدی «عاشق» بودی با یه نفر که در واقعیت نمی‌شناسی؟',
+    '💤 یه خواب که فقط یه «کلمه» یادت مونده ازش؟ کلمه چی بود؟',
+    '💤 خواب دیدی دیر رسیدی و درست همون روز واقعی شد؟',
+],
+"regret": [
+    '🌧 یه چیزی که «همین الان» می‌دونی اگه انجامش ندهی، ۵ سال دیگه حسرت می‌خوری؟',
+    '🌧 بزرگ‌ترین «کاشِ» امسالَت چی بود؟',
+    '🌧 تا حالا یه خداحافظی رو عقب انداختی و فرصت دیگه نیامد؟',
+    '🌧 یه چیزی که در ۲۰ سالگی نگفتی و الان می‌خوای بگی (ولی نمی‌گی)؟',
+    '🌧 کاش کدوم «سکوتِ» عمرت رو نمی‌کردی؟',
+    '🌧 تا حالا یه جمعِ خوب رو برای «چرا»یی ساده از دست دادی؟',
+    '🌧 یه چیزی که پول و وقت دادی و هیچ‌وقت کاملش نکردی؟',
+    '🌧 بزرگ‌ترین «کاشِ» تحصیلیت چی بود؟',
+    '🌧 تا حالا یه نفر رو «کاش بیشتر» سالم کردی؟',
+    '🌧 یه عکسی که نگرفتی و الان دلت می‌خواد وجود داشت؟',
+    '🌧 کاش کدوم تصمیمِ «عاقلانه» رو نمی‌گرفتی؟',
+    '🌧 تا حالا یه آدم رو «کاش دیرتر» می‌شناختی؟',
+    '🌧 یه چیزی که «زود» شروع کردی و کاش دیرتر شروع می‌کردی؟',
+    '🌧 بزرگ‌ترین حسرتی که «خوبِ» هم بود؟ (چون درس داد)',
+    '🌧 تا حالا یه پیام رو «کاش» نفرستادی؟',
+    '🌧 یه کاری که مامان‌بزرگت گفت و گوش نکردی و حالا حسرت می‌خوری؟',
+    '🌧 کاش کدوم «شروع» رو زودتر می‌کردی؟',
+    '🌧 تا حالا یه بسته‌بندیِ هدیه رو با عجله باز کردی و بعد فهمیدی چقدر خاص بود؟',
+    '🌧 یه «بمون» که نگفتی و رفت؟',
+    '🌧 بزرگ‌ترین حسرتِ «واژه‌هات» چیه؟ (کلمه‌ای که نگفتی)',
+    '🌧 تا حالا یه کتاب/فیلم رو کاش با یه نفر خاص می‌دیدی؟',
+    '🌧 یه چیزی که «آزاد» بود و کاش بیشترش استفاده می‌کردی؟',
+    '🌧 کاش کدوم روزِ ساده‌ی عمرت رو «آهسته‌تر» زندگی می‌کردی؟',
+    '🌧 تا حالا پیش کسی بودی که «کاش تا ابد» می‌موند و ازش نگفتی؟',
+    '🌧 یه «حرفِ» که از بابات شنیدی و کاش عمل می‌کردی؟',
+    '🌧 بزرگ‌ترین حسرتی که «دیگه» راه برگشتی نداره؟',
+    '🌧 تا حالا یه نفر رو «سریع» قضاوت کردی و کاش دیرتر؟',
+    '🌧 یه چیزی که کاش بهش «آره» می‌گفتی؟',
+    '🌧 کاش کدوم «نه» رو می‌گفتی؟',
+    '🌧 تا حالا یه سفر رو کاش با همین جمع می‌رفتی؟',
+    '🌧 یه چیزی که کاش «قبلِ» یکی رفتنش می‌گفتی؟',
+    '🌧 بزرگ‌ترین حسرتِ «کم‌انگاشتنِ» خودت چی بود؟',
+    '🌧 تا حالا یه مهارتی رو کاش نیمه‌کاره رها نمی‌کردی؟',
+    '🌧 یه چیزی که «همین امروز» از دست دادی و هنوز اذیتت می‌کنه؟',
+    '🌧 کاش کدوم «خنده‌ی» عمرت رو دوباره تجربه می‌کردی؟',
+    '🌧 تا حالا یه «معذرت‌خواهیِ» رو عقب انداختی و دیگه فرصت نشد؟',
+    '🌧 یه چیزی که کاش «زودتر» می‌بخشیدی؟',
+    '🌧 بزرگ‌ترین «کاش» درباره‌ی خودِ خودت چی بود؟ (نه آدم‌ها، نه موقعیت‌ها)',
+    '🌧 تا حالا کاری کردی که «کاش» فقط یه نفر دیگر هم می‌دیدت؟',
+    '🌧 یه چیزی که هنوز دیر نشده — ولی اگه امروز نگیری، فردا حسرتِ امروز می‌شه؟',
+],
+"future": [
+    '🚀 اگه قرار باشه «فردا» فقط یک اتفاق داشته باشه، چی رو انتخاب می‌کنی؟',
+    '🚀 ده سال دیگه چه «حرفِ»ی رو دوست داری به خودِ الانِ بزنی؟',
+    '🚀 یه چیزی که مطمئنی در آینده «عوض» می‌شه ولی هنوز شروع نشده؟',
+    '🚀 اگه بتونی یه «قانون» برای آینده‌ی این جمع بذاری، چی بود؟',
+    '🚀 پنج سال دیگه دوست داری «صبح‌هات» چه شکلی باشن؟',
+    '🚀 یه چیزی که از آینده «می‌ترسی» ولی همون جالبه؟',
+    '🚀 اگه رؤیای بزرگِ تو یه «مکانِ» بود، الان در چه مرحله‌ای از مسیرشی؟',
+    '🚀 ده سال دیگه چه چیزی از «الانِ» تو دوست داری بمونه؟',
+    '🚀 یه مهارتی که مطمئنی در آینده «قهرمانِ» می‌شی؟',
+    '🚀 اگه آینده بهت یه «سوال» بپرسه، چی می‌پرسه؟',
+    '🚀 یه چیزی که باید «درش» رو در آینده ببندی تا درِ جدیدی باز شه؟',
+    '🚀 دوست داری در آینده بیشتر «شب‌هات» باشی یا «روز‌هات»؟',
+    '🚀 یه چیزی که در آینده «غیرعادی» می‌شه ولی الان عادیه؟',
+    '🚀 اگه ده سال دیگه همین جمع دور یه میز باشه، چی بحث می‌شه؟',
+    '🚀 یه «عادتِ» کوچیک که اگه امروز شروعش کنی، آینده‌ت رو عوض می‌کنه؟',
+    '🚀 دوست داری اسمت در آینده کنار چه «کیفیتی» بیاد؟',
+    '🚀 یه چیزی که مطمئنی «یکی از این جمع» در آینده انجامش می‌ده؟',
+    '🚀 اگه آینده یه «بلیط» بود، کجا می‌رفتی؟',
+    '🚀 دوست داری در آخرین روزِ زندگیت چی به یادت بمونه؟',
+    '🚀 یه چیزی که «امروز» شروعش می‌شه و «فردا» ثمرش رو می‌بینی؟',
+    '🚀 اگه یه پیام از خودِ ۱۰ سال بعدت بگیری، از چی می‌ترسی که نوشته باشه؟',
+    '🚀 یه چیزی که در آینده «کم می‌شه» و الان زیاده؟',
+    '🚀 دوست داری آینده‌ات «قابل پیش‌بینی» باشه یا «ماجراجویانه»؟',
+    '🚀 یه چیزی که مطمئنی ۱۰ سال دیگه «می‌خندی» بهش؟',
+    '🚀 اگه بتونی فقط یه «آرزو» برای یکی از این جمع ذخیره کنی، برای کی و چی بود؟',
+    '🚀 دوست داری در آینده با چه «حسی» بیدار شی؟',
+    '🚀 یه چیزی که از آینده «انتظارِ» داری ولی به کسی نگفتی؟',
+    '🚀 اگه آینده یه «شخص» بود، الان چه شکلی بود؟',
+    '🚀 ده سال دیگه دوست داری «رفیق‌هات» چه شکلی باشن؟',
+    '🚀 یه چیزی که باید «امروز» بسازی تا آینده «فردا» سقفش بلندتر شه؟',
+    '🚀 دوست داری در آینده «اسمِ»ت با یه خاطره گره بخوره؟ چه خاطره‌ای؟',
+    '🚀 یه چیزی که در آینده «قشنگ» می‌شه ولی الان زحمته؟',
+    '🚀 اگه فردا «مسیر» زندگی‌ت به دو شاخه تقسیم شه، کدومو انتخاب می‌کنی: امن یا عاشقانه؟',
+    '🚀 یه چیزی که دوست داری «بچه‌هات» در آینده درباره‌ت بدونن؟',
+    '🚀 ده سال دیگه اگه همین سوال ازت پرسیده بشه، جوابت چقدر فرق می‌کنه؟',
+    '🚀 یه چیزی که در آینده «معجزه» نیست ولی «معجزه‌مانند»ه؟',
+    '🚀 دوست داری «دفترچه‌ی» آینده‌ات چی نوشته باشه درباره‌ی امشب؟',
+    '🚀 یه چیزی که مطمئنی آینده «ساده‌ترش» می‌کنه ولی کسی باور نمی‌کنه؟',
+    '🚀 اگه آینده یه «آینه» بود، چی اول از همه می‌بینی؟',
+    '🚀 دوست داری آخرین جمله‌ی این بازی در آینده چی باشه، وقتی همه یادشون می‌ره جز تو؟',
+],
+"penalty": [
+    '☠️ تا سه پیام بعدی، آخر هر جمله‌ات یه «قانون جدید بازی» اختراع کن.',
+    '☠️ یه وویس بفرست که فقط توش از سه نفری که نمی‌شناسیشون تعریف کنی (بدون اسم).',
+    '☠️ تا نوبت بعدی، به هر سوالی فقط با یک «مثل» جواب بده.',
+    '☠️ یه پیام به خودت در آینده بنویس و الان بفرستش (تاریخ بذار).',
+    '☠️ تا دو نوبت بعد، هر وقت کسی «چرا» پرسید، جوابت با «چون دنیا هنوز آماده نیست» شروع شه.',
+    '☠️ سه تا مزیت رقیبِ داخلیِ خودت رو تعریف کن (افسانه‌ی ذهنی‌ت!).',
+    '☠️ تا پایان بازی، امضای هر پیامت یه «شعرِ یک‌مصری» باشه.',
+    '☠️ یه جمله‌ی خیلی مهم با صدای خیلی خسته بفرست (وویس).',
+    '☠️ تا نوبت بعدی فقط با کلمات «بله/نه/شاید» جواب بده.',
+    '☠️ یه مکملِ صادقانه به نفر قبل از خودت در چت بفرست.',
+    '☠️ تا سه پیام بعدی هر جواب باید «دو زبانه» باشه (فارسی + یه زبون ساختگی).',
+    '☠️ یه اتفاقِ کوچیکِ امروز رو مثل خبرِ فوری گزارش کن (متن).',
+    '☠️ تا نوبت بعدی، اولِ هر پیامت یه عددِ تصادفی بنویس (اگه ۷ بود، یه اعتراف کن).',
+    '☠️ یه کتابِ خیالی معرفی کن که «به نظر» وجود داره (اسم + موضوع).',
+    '☠️ تا دو پیام بعدی، جواب‌هات فقط «سوالِ متقابل» باشه.',
+    '☠️ یه «مصاحبه‌ی کوتاه» با خودِ آینده‌ات بنویس (۳ سوال/۳ جواب).',
+    '☠️ تا پایان این نوبت، هر جوابت باید توی «یک کلمه» باشه (بعدش توضیح بده).',
+    '☠️ یه وویس ۱۰ ثانیه‌ای بفرست که توش فقط «صداپیشه‌ی» یه آهنگِ ترجیح‌داده‌شده‌ی خودت باشه.',
+    '☠️ تا نوبت بعدی، اسم همه رو در هر پیام یه‌بار صدا کن (اگه یادت رفت، از اول).',
+    '☠️ یه جمله‌ی خیلی «فیلسوفانه» درباره‌ی چتِ همین الان بنویس.',
+]
+}
+
+# ================================================================
+# [V19-WIRING] سیم‌کشی لایه — همه‌ی اتصال‌ها، بدون حذف حتی یک خط
+# ================================================================
+
+# ----------------------------------------------------------------
+# [V19-EXPAND] گسترش بانک‌ها با محتوای جدید + همگام‌سازی کارخانه
+# ----------------------------------------------------------------
+def v19_expand_banks() -> dict:
+    """بانک‌های جدید V19 را به V7_BANKS_FINAL اضافه می‌کند.
+    - تکراری‌ها (نسبت به کل محتوای موجود) حذف می‌شوند
+    - ترتیب گرما حفظ می‌شود
+    - اسنپ‌شاتِ کارخانه (V18_FACTORY) هم به‌روز می‌شود تا «ریست بانک»
+      محتوای V19 را هم نگه دارد (ریست = بازگشت به حالت کاملِ کارخانه)
+    - گزارش تعداد افزودن هر بانک برمی‌گردد."""
+    report: dict[str, int] = {}
+    try:
+        parallel = ("adult_male", "adult_female")
+        global_seen: set = set()
+        for key, bank in V7_BANKS_FINAL.items():
+            if key in parallel:
+                continue
+            global_seen.update(str(x) for x in bank)
+        additions_all = {}
+        try:
+            additions_all.update(V19_BANK_ADDITIONS)
+        except Exception:
+            pass
+        try:
+            additions_all.update(V19_BANK_ADDITIONS_B)
+        except Exception:
+            pass
+        for key, additions in additions_all.items():
+            try:
+                bank = V7_BANKS_FINAL.setdefault(key, [])
+                local = set(str(x) for x in bank)
+                added = 0
+                for raw in additions:
+                    text = str(raw).strip()
+                    if not text or text in local:
+                        continue
+                    if key not in parallel and text in global_seen:
+                        continue
+                    bank.append(text)
+                    local.add(text)
+                    if key not in parallel:
+                        global_seen.add(text)
+                    added += 1
+                # کارخانه هم به‌روز شود تا reset حذفش نکند
+                try:
+                    factory_bank = V18_FACTORY.setdefault(key, [])
+                    factory_local = set(str(x) for x in factory_bank)
+                    for raw in additions:
+                        text = str(raw).strip()
+                        if text and text not in factory_local:
+                            factory_bank.append(text)
+                            factory_local.add(text)
+                except Exception:
+                    pass
+                report[key] = added
+            except Exception:
+                continue
+        # اعمال دوباره ویرایش/حذف‌های ذخیره‌شده روی محتوای جدید
+        try:
+            v18_apply_overrides_and_disables()
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return report
+
+
+_V19_EXPAND_REPORT = v19_expand_banks()
+
+# ----------------------------------------------------------------
+# [V19-HOOKS] قلاب‌های لایه — رِپِ امن روی توابع موجود (هیچ خطی حذف نمی‌شود)
+# ----------------------------------------------------------------
+# ۱) XP → آمار هفتگی + ثبت ارتقای سطح
+_AR19_OLD_ADD_XP = add_xp
+
+
+def add_xp(uid: int, amount: int, name: str = "کاربر", group_mult: int = 1) -> int:
+    delta = _AR19_OLD_ADD_XP(uid, amount, name, group_mult)
+    try:
+        if int(amount) > 0:
+            v19_track_weekly(uid, int(amount), str(name or ""))
+        if int(delta) > 0:
+            v19_note_levelup(uid, int(delta))
+    except Exception:
+        pass
+    return delta
+
+
+# ۲) اعلامِ «نوبت بعدی» → نصبِ نگهبان نوبت (یادآوری + رد خودکار)
+_AR19_OLD_TURN_ANNOUNCE = v7_turn_announcement
+
+
+def v7_turn_announcement(game: dict[str, Any], questioner: int) -> str:
+    text = _AR19_OLD_TURN_ANNOUNCE(game, int(questioner))
+    try:
+        v19_stall_arm(game, int(questioner))
+    except Exception:
+        pass
+    return text
+
+
+# ۳) پایان بازی → خاموشی تایمرها
+_AR19_OLD_ENDGAME = end_game
+
+
+def end_game(game: dict[str, Any], reason: str = "") -> Any:
+    try:
+        if isinstance(game, dict):
+            v19_stall_cancel(str(game.get("id") or ""))
+    except Exception:
+        pass
+    return _AR19_OLD_ENDGAME(game, reason)
+
+
+# ۴) جریان جواب → جشنِ ارتقای سطح در همان گروه
+_AR19_OLD_REPLY = v7_handle_reply
+
+
+async def v7_handle_reply(update, context):
+    chat = None
+    try:
+        chat = getattr(update, "effective_chat", None)
+    except Exception:
+        chat = None
+    handled = await _AR19_OLD_REPLY(update, context)
+    try:
+        if chat is not None:
+            user = getattr(update, "effective_user", None)
+            if user is not None:
+                await v19_celebrate_levelup(update, int(user.id))
+    except Exception:
+        pass
+    return handled
+
+
+# ۵) منوی ادمین → دکمه‌ی «تنظیمات ضد اذیت»
+_AR19_OLD_ADMIN_HOME = v16_admin_home_markup
+
+
+def v16_admin_home_markup():
+    mk = _AR19_OLD_ADMIN_HOME()
+    try:
+        rows = [[v5_button("🌿 تنظیمات ضد اذیت", "V19|SET|HOME")]]
+        if mk is not None:
+            existing = getattr(mk, "inline_keyboard", None)
+            if existing:
+                rows = list(existing) + rows
+        return v5_markup(rows)
+    except Exception:
+        return mk
+
+
+# ۶) مرکز راهنما → مطالب جدید V19
+try:
+    V18_HELP_CENTER_EXTRA.extend([
+        ("🌿 چطور کاری کنم ربات منو تگ نکنه؟",
+         'کافیه دستور /apexmute رو بزنی؛ از اون لحظه دیگه هیچ‌جا تگ نمی‌شی و اسمت بدون لینک نمایش داده می‌شه. هر وقت پشیمون شدی /apexunmute رو بزن. این تنظیم شخصیه و روی بقیه اثر نداره.'),
+        ("⏳ اگه کسی نوبتش رو نزنه چی می‌شه؟",
+         'نگهبان نوبت (Stall Guard) فعال شده: بعد از چند دقیقه یه یادآوری محترمانه با تگ می‌فرسته و اگه باز هم جواب نده، نوبت خودکار می‌ره نفر بعدی تا بازی وسط گروه گیر نکنه. ادمین می‌تونه این زمان‌ها رو از «تنظیمات ضد اذیت» عوض کنه.'),
+        ("🏆 رتبه‌بندی هفتگی چیه؟",
+         'با /apextop می‌تونی قهرمانان این هفته و همه‌ی زمان‌ها رو با مدال ببینی. XP که از هر مسیری بگیری (جواب، سوال، کوئست) توی دفتر هفتگی ثبت می‌شه و هر هفته از صفر شروع می‌شه — همیشه شانس قهرمان شدن داری!'),
+        ("🪪 پروفایل جدید چه چیزهایی نشون می‌ده؟",
+         '/apexprofile کارت کاملته: سطح با نوار پیشرفت، لقب، سکه، استریک، دستاوردها، موضوعات محبوب و پیشرفت کوئست‌های روزانه‌ت — همه در یک کارت خوشگل.'),
+        ("🎓 سریع‌ترین راه یادگیری بازی چیه؟",
+         'دستور /apexguide رو بزن؛ یه راهنمای تعاملی ۸ صفحه‌ای‌ست که با دکمه‌های قبلی/بعدی می‌تونی ورق بزنی و در ۲ دقیقه حرفه‌ای می‌شی.'),
+    ])
+except Exception:
+    pass
+
+
+# ۷) دستورات اختصاصی جدید → عبور از گیت گروهی V17 (تا در گروه‌ها بلعیده نشوند)
+try:
+    V17_UNIQUE_COMMANDS = V17_UNIQUE_COMMANDS + (
+        "apexprofile", "apextop", "apexguide", "apexmute", "apexunmute",
+    )
+except Exception:
+    pass
+
+
+# ۸) منوی دستورات تلگرام → دستورات جدید V19 (روشن‌تر شدن دسترسی)
+try:
+    V19_COMMAND_MENU_INSERTS = [
+        BotCommand("apexprofile", "🪪 پروفایل کامل من"),
+        BotCommand("apextop", "🏆 رتبه‌بندی هفته و کل"),
+        BotCommand("apexguide", "🎓 راهنمای تعاملی"),
+        BotCommand("apexmute", "🔇 تگ‌شدن من خاموش شود"),
+        BotCommand("apexunmute", "🔔 تگ‌شدن من روشن شود"),
+    ]
+    # درج در جای درست منوی موجود (بعد از دستورات اختصاصی V17)
+    V17_COMMAND_MENU[4:4] = V19_COMMAND_MENU_INSERTS
+except Exception:
+    pass
+
+
+# ----------------------------------------------------------------
+# [V19-REGISTER] ثبت هندلرهای V19 روی اپلیکیشن اصلی
+# ----------------------------------------------------------------
+def v19_register_handlers(app) -> None:
+    try:
+        V19_BOOT["app"] = app
+        try:
+            V19_BOOT["bot"] = app.bot
+        except Exception:
+            pass
+        # محافظ اسپم — قبل از همه (گروه -۹۷)
+        try:
+            app.add_handler(CallbackQueryHandler(v19_rate_guard_callback, pattern=r""), group=-97)
+        except Exception:
+            pass
+        try:
+            app.add_handler(MessageHandler(filters.COMMAND, v19_rate_guard_command), group=-97)
+        except Exception:
+            pass
+        # خوش‌آمدگویی — قبل از روترهای اصلی (گروه -۹۰)
+        try:
+            app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, v19_welcome_new_member), group=-90)
+        except Exception:
+            pass
+        # روتر دکمه‌های V19 — الگوی اختصاصی، بدون تداخل
+        try:
+            app.add_handler(CallbackQueryHandler(v19_callback_router, pattern=r"^V19\|"))
+        except Exception:
+            pass
+        # دستورات اختصاصی جدید
+        try:
+            app.add_handler(CommandHandler("apexprofile", v19_cmd_profile))
+            app.add_handler(CommandHandler("apextop", v19_cmd_top))
+            app.add_handler(CommandHandler("apexguide", v19_cmd_guide))
+            app.add_handler(CommandHandler("apexmute", v19_cmd_mute))
+            app.add_handler(CommandHandler("apexunmute", v19_cmd_unmute))
+        except Exception:
+            pass
+    except Exception as exc:
+        try:
+            print(f"ApexRival V19 register warning: {exc!r}")
+        except Exception:
+            pass
+
+
+_AR19_OLD_REGISTER = ar15_register_handlers
+
+
+def ar15_register_handlers(app):
+    _AR19_OLD_REGISTER(app)
+    v19_register_handlers(app)
+
+
+# ----------------------------------------------------------------
+# [V19-BOOT] post_init: مسلح‌کردن دوباره نگهبانان + آمار بوت
+# ----------------------------------------------------------------
+_AR19_OLD_POST_INIT = ar15_post_init
+
+
+async def ar15_post_init(application):
+    await _AR19_OLD_POST_INIT(application)
+    try:
+        V19_BOOT["app"] = application
+        try:
+            V19_BOOT["bot"] = application.bot
+        except Exception:
+            pass
+        V19_BOOT["boot_ts"] = now_ts()
+        armed = v19_rearm_stalls()
+        try:
+            app_ref = application
+            app_ref.create_task(v19_rearm_report(armed))
+        except Exception:
+            print(f"ApexRival V19 boot | stall-guards re-armed: {armed}")
+    except Exception as exc:
+        try:
+            print(f"ApexRival V19 post-init warning: {exc!r}")
+        except Exception:
+            pass
+
+
+async def v19_rearm_report(armed: int) -> None:
+    try:
+        print(
+            f"ApexRival V19 ULTRA layer online | smart-mentions=on | "
+            f"anti-spam=on | stall-guard=on | weekly-board=on | profile2=on | "
+            f"guide=on | welcome=on | quiet-hours=on | new-prompts={sum(_V19_EXPAND_REPORT.values())} | "
+            f"stall-guards-armed={armed}"
+        )
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V19-CHECK] سلف-چک لایه — هنگام لود اجرا می‌شود
+# ----------------------------------------------------------------
+def v19_self_check() -> None:
+    # ۱) همه‌ی توابع کلیدی تعریف شده‌اند
+    for fn in (
+        v19_cfg, v19_prefs, v19_wants_mentions, v19_mention,
+        v19_rate_hit, v19_rate_guard_callback, v19_rate_guard_command,
+        v19_quiet_now, v19_stall_cancel, v19_stall_arm, v19_stall_watch,
+        v19_auto_skip, v19_rearm_stalls, v19_week_key, v19_track_weekly,
+        v19_week_top, v19_alltime_top, v19_board_text, v19_note_levelup,
+        v19_celebrate_levelup, v19_profile_text, v19_xp_bar, v19_guide_text,
+        v19_guide_markup, v19_welcome_new_member, v19_cmd_profile, v19_cmd_top,
+        v19_cmd_guide, v19_cmd_mute, v19_cmd_unmute, v19_callback_router,
+        v19_set_text, v19_set_markup, v19_register_handlers,
+        v19_expand_banks, v19_send_group,
+    ):
+        assert callable(fn), f"v19 missing function: {getattr(fn, '__name__', fn)}"
+    # ۲) محتوای جدید واقعاً اضافه شده (بعد از دی‌داپ)
+    assert isinstance(_V19_EXPAND_REPORT, dict) and len(_V19_EXPAND_REPORT) >= 14
+    total_new = sum(_V19_EXPAND_REPORT.values())
+    assert total_new >= 300, f"v19 bank expansion too small: {total_new}"
+    for key in ("truth", "dare", "secret", "drama", "flirty", "scenario", "mind",
+                "wouldyou", "memory", "relation", "cringe", "adult", "dream",
+                "regret", "future", "penalty"):
+        assert key in _V19_EXPAND_REPORT, f"v19 bank missing report: {key}"
+        bank = V18_FACTORY.get(key, [])
+        assert len(bank) >= 20, f"v19 factory bank too small: {key}"
+        assert len(bank) == len(set(str(x) for x in bank)), f"v19 factory duplicates: {key}"
+    # ۳) کاربر mute شده → بدون لینک؛ unmute → با لینک
+    probe_uid = 987654321
+    v19_prefs(probe_uid)["mentions"] = False
+    plain = mention_user(probe_uid, "ProbeName")
+    assert "tg://user" not in str(plain) and "ProbeName" in str(plain)
+    v19_prefs(probe_uid)["mentions"] = True
+    linked = mention_user(probe_uid, "ProbeName")
+    assert "tg://user" in str(linked)
+    # پاک‌سازی پروب
+    try:
+        v19_store()["prefs"].pop(user_key(probe_uid), None)
+    except Exception:
+        pass
+    # ۴) الگوی callbackها کوتاه و معتبر (≤ ۶۴ بایت)
+    for sample in (
+        "V19|GUI|0", "V19|GUI|7", "V19|GUI|DONE", "V19|TOP|W", "V19|TOP|A",
+        "V19|MUTE|TO", "V19|SET|HOME", "V19|SET|ST", "V19|SET|WL",
+        "V19|SET|QH", "V19|SET|RL", "V19|SET|RMIN|P", "V19|SET|RMIN|B",
+        "V19|SET|SMIN|P", "V19|SET|QF|P", "V19|SET|QT|B", "V19|SET|NOP",
+    ):
+        assert 1 <= len(sample.encode("utf-8")) <= 64, sample
+        assert sample.count("|") >= 2 and sample.startswith("V19|"), sample
+    # ۵) راهنمای تعاملی سالم
+    assert len(V19_GUIDE_PAGES) == 8
+    for idx in range(len(V19_GUIDE_PAGES)):
+        t = v19_guide_text(idx)
+        assert t and "راهنمای ApexRival" in t and f"صفحه {idx + 1} از 8" in t
+    assert v19_guide_markup(3) is not None
+    # ۶) رتبه‌بندی هفتگی و دفتر
+    wk = v19_week_key()
+    assert isinstance(wk, str) and wk
+    v19_track_weekly(123456789, 5, "Probe")
+    probe_rows = [r for r in v19_week_top(50) if int(r[1]) == 123456789]
+    assert probe_rows and int(probe_rows[0][0]) >= 5
+    rows = v19_week_top(10)
+    txt = v19_board_text(rows, "W")
+    assert "قهرمانان این هفته" in txt
+    txt2 = v19_board_text(v19_alltime_top(5), "A")
+    assert "همه‌ی زمان‌ها" in txt2
+    # پاک‌سازی پروب‌های آمار
+    try:
+        v19_store()["weekly"].get(wk, {}).pop(user_key(123456789), None)
+        v19_store()["weekly"].get(wk, {}).pop(user_key(987654321), None)
+    except Exception:
+        pass
+    # ۷) پروفایل کامل رندر می‌شود (پروبِ موقت با XP؛ اگر کاربرِ واقعی بود
+    #    مقدار قبلی‌اش دقیقاً برمی‌گردد تا داده‌ی واقعی دست‌نخورده بماند)
+    _p7_uid = 123456789
+    _p7_existed = user_key(_p7_uid) in DATA.get("users", {})
+    _p7_xp_before = int(get_user(_p7_uid).get("xp", 0) or 0)
+    try:
+        add_xp(_p7_uid, 137, "ProbeProfile")
+    except Exception:
+        pass
+    ptxt = v19_profile_text(_p7_uid)
+    assert "پروفایل ApexRival" in ptxt and "تا سطح" in ptxt and "▓" in ptxt
+    # قلابِ ارتقای سطح هم کار کرده باشد
+    assert v19_take_levelup(_p7_uid) is not None
+    # پاک‌سازی کاملِ ردپای پروب
+    try:
+        v19_store()["weekly"].get(v19_week_key(), {}).pop(user_key(_p7_uid), None)
+        v19_store()["lvl_pending"].pop(user_key(_p7_uid), None)
+        if _p7_existed:
+            _p7_u = get_user(_p7_uid)
+            _p7_u["xp"] = _p7_xp_before
+            _p7_u["level"] = level_for_xp(_p7_xp_before)
+        else:
+            DATA.get("users", {}).pop(user_key(_p7_uid), None)
+    except Exception:
+        pass
+    # ۸) تنظیمات: مقادیر پیش‌فرض و گیرها
+    probe_gid = -100999
+    cfg = v19_cfg(probe_gid)
+    assert cfg["stall"] is True and cfg["rmin"] >= 1 and cfg["smin"] > cfg["rmin"]
+    assert v19_quiet_now(probe_gid) is False  # خاموش پیش‌فرض
+    cfg2 = dict(cfg)
+    cfg2["quiet_on"] = True
+    v19_save_cfg(probe_gid, cfg2)
+    assert isinstance(v19_quiet_now(probe_gid), bool)
+    # پاک‌سازی گروهِ پروب از مخزن پایدار
+    try:
+        v19_store()["cfg"].pop(group_key(probe_gid), None)
+    except Exception:
+        pass
+    # ۹) محافظ اسپم: آستانه‌های معتبر
+    for lvl, (c, m) in V19_RATE_LIMITS.items():
+        assert 1 <= c <= 50 and 1 <= m <= 50
+    assert v19_rate_hit(987654000, "callback", 0) in (True, False)
+    # ۱۰) دستورات جدید ثبت‌شده در گیت و منو
+    for cmd in ("apexprofile", "apextop", "apexguide", "apexmute", "apexunmute"):
+        assert cmd in V17_UNIQUE_COMMANDS, f"gate missing: {cmd}"
+        assert 1 <= len(cmd) <= 32 and cmd.isascii() and cmd.islower(), cmd
+    menu_names = [str(c.command) for c in V17_COMMAND_MENU]
+    for cmd in ("apex", "apexprofile", "apextop", "apexguide", "apexmute", "start", "help"):
+        assert cmd in menu_names, f"menu missing: {cmd}"
+    assert menu_names[0] == "apex"
+    # ۱۱) قلاب‌ها واقعاً نصب شده‌اند
+    assert add_xp.__name__ != "_AR19_OLD_ADD_XP" and callable(_AR19_OLD_ADD_XP)
+    assert v7_turn_announcement.__name__ == "v7_turn_announcement"
+    assert callable(_AR19_OLD_TURN_ANNOUNCE)
+    assert callable(_AR19_OLD_ENDGAME) and callable(_AR19_OLD_REPLY)
+    assert callable(_AR19_OLD_REGISTER) and callable(_AR19_OLD_POST_INIT)
+    assert callable(_AR19_OLD_ADMIN_HOME) and callable(_AR19_OLD_MENTION)
+    assert v16_admin_home_markup() is not None
+    # ۱۲) مرکز راهنما گسترش یافته
+    assert len(V18_HELP_CENTER_EXTRA) >= 5
+    print(
+        f"ApexRival V19 self-check OK | new-prompts={total_new} | "
+        "smart-mentions=on | anti-spam=on | stall-guard=on | weekly=on | "
+        "profile2=on | guide=on | welcome=on | settings-panel=on"
+    )
+
+
+v19_self_check()
+
+
 # ----------------------------------------------------------------
 # [V18-MAIN] لانچر نهایی — همه‌ی چک‌های اصلی + چک V18 + استارت
 # ----------------------------------------------------------------
@@ -28101,6 +30698,27 @@ def main_apexrival_18():
 # ورودی اصلی فایل — لایه V18 جای نسخ قبل را می‌گیرد
 main_apexrival_15 = main_apexrival_18
 main = main_apexrival_18
+
+
+
+# ----------------------------------------------------------------
+# [V19-MAIN] لانچر نهایی با لایه‌ی V19 — قبل از گارد اصلی فایل
+# ----------------------------------------------------------------
+def main_apexrival_19():
+    """لانچر ULTRA: همه‌ی چک‌های V18 + چک‌های V19 + استارت اصلی.
+    هیچ خطی از نسخه‌ی قبل حذف نشده — فقط لایه‌ی V19 رویش سوار شده."""
+    v19_self_check()
+    print(
+        f"{BOT_NAME} V19 ULTRA | smart-mentions | anti-spam | stall-guard | "
+        "weekly-board | profile2 | interactive-guide | smart-welcome | "
+        "quiet-hours | admin-anti-annoy-panel | +600 new prompts"
+    )
+    return main_apexrival_18()
+
+
+# لایه‌ی V19 جای لانچر قبلی را می‌گیرد (نسخه‌ی قبلی سر جایش است)
+main_apexrival_15 = main_apexrival_19
+main = main_apexrival_19
 
 
 
