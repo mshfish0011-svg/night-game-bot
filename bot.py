@@ -1339,6 +1339,182 @@ def panel_stale(uid: int, message_id: int) -> bool:
 
 
 # ================================================================
+#  گیت عضویت کانال — بازگردانی‌شده از نسخه‌ی اصلی (قفل دوم ورود)
+#  REQUIRED_CHANNEL از ENV خوانده می‌شود؛ ادمین می‌تواند از تنظیمات عوضش کند.
+#  برای غیرفعال‌سازی کامل گیت: APEX_CHANNEL_GATE=off
+# ================================================================
+
+MEMBERSHIP_CACHE: dict[int, tuple[float, bool | None]] = {}
+MEMBERSHIP_CACHE_TTL = max(10, int(os.getenv("MEMBERSHIP_CACHE_TTL", "45") or 45))
+GATE_NOTICE_CACHE: dict[tuple[int, int], float] = {}
+GATE_NOTICE_TTL = 90  # ضد اسپم: حداکثر یک پیام راهنما در هر چت هر ۹۰ ثانیه
+
+
+def channel_gate_enabled() -> bool:
+    """گیت کانال به‌صورت پیش‌فرض روشن است (مثل نسخه‌ی اصلی)."""
+    return str(os.getenv("APEX_CHANNEL_GATE", "on")).strip().lower() not in ("off", "0", "no", "false")
+
+
+def channel_target() -> str:
+    """کانال اجباری — اولویت: تنظیم ذخیره‌شده‌ی ادمین، بعد ENV."""
+    try:
+        saved = DATA.get("settings", {}).get("required_channel")
+        if saved and str(saved).strip().startswith("@") and len(str(saved).strip()) > 1:
+            return str(saved).strip()
+    except Exception:
+        pass
+    return REQUIRED_CHANNEL
+
+
+def channel_url() -> str:
+    """لینک کانال اجباری."""
+    try:
+        saved = DATA.get("settings", {}).get("required_channel_url")
+        if saved and str(saved).strip().startswith("http"):
+            return str(saved).strip()
+    except Exception:
+        pass
+    return REQUIRED_CHANNEL_URL or f"https://t.me/{channel_target().lstrip('@')}"
+
+
+async def channel_membership(uid: int, *, force: bool = False, bot=None) -> bool | None:
+    """بررسی عضویت در کانال اجباری.
+    True = عضو · False = غیرعضو · None = خطای موقت تلگرام (بازی قفل نمی‌شود)."""
+    uid = int(uid)
+    if not channel_gate_enabled():
+        return True
+    now = time.time()
+    if not force:
+        cached = MEMBERSHIP_CACHE.get(uid)
+        if cached and now - cached[0] < MEMBERSHIP_CACHE_TTL:
+            return cached[1]
+    if bot is None:
+        return None
+    try:
+        member = await bot.get_chat_member(channel_target(), uid)
+        status = str(getattr(member, "status", "")).lower()
+        ok = status in ("member", "administrator", "creator")
+        MEMBERSHIP_CACHE[uid] = (now, ok)
+        return ok
+    except Exception as exc:
+        print(f"ApexRival membership check error for {uid}: {exc!r}")
+        MEMBERSHIP_CACHE[uid] = (now, None)
+        return None
+
+
+def verify_text(kind: str) -> str:
+    """متن‌های صفحه‌ی تأیید عضویت."""
+    ch = escape(channel_target())
+    if kind == "ok":
+        return (
+            "✅ <b>عضویتت تأیید شد!</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🔓 قفل ورود به بازی باز شد.\n"
+            "حالا می‌تونی تو گروه‌ها به لابی بپیوندی و بازی کنی 🎮"
+        )
+    if kind == "error":
+        return (
+            "⚠️ <b>فعلاً نمی‌تونم عضویتت رو بررسی کنم</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "خطای موقت تلگرام است. چند لحظه بعد دوباره «بررسی کن» را بزن 🙏"
+        )
+    return (
+        "🔐 <b>قفل عضویت کانال</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"برای شرکت در بازی‌ها، اول عضو کانال ما شو:\n"
+        f"📢 <b>{ch}</b>\n\n"
+        "۱️⃣ روی دکمه‌ی «عضویت در کانال» بزن\n"
+        "۲️⃣ برگرد اینجا و «بررسی کن» را بزن ✅"
+    )
+
+
+def verify_markup(kind: str = "need") -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if kind != "ok":
+        rows.append([InlineKeyboardButton("📢 عضویت در کانال", url=channel_url())])
+        rows.append([btn("✅ عضو شدم، بررسی کن", "VF|CHECK")])
+        rows.append([btn("ℹ️ راهنمای ورود", "VF|INFO")])
+    rows.append([btn("🏠 منوی اصلی", "H|HOME")])
+    return kb(rows)
+
+
+async def cmd_verify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /verify — بررسی عضویت در کانال (فقط چت خصوصی)."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    if update.effective_chat and update.effective_chat.type != "private":
+        await msg.reply_text("🔒 این بررسی را در چت خصوصی من انجام بده.")
+        return
+    get_user(int(user.id), user.first_name)
+    if not channel_gate_enabled():
+        await msg.reply_text("✅ قفل کانال فعلاً غیرفعال است — بازی آزاد است!")
+        return
+    membership = await channel_membership(int(user.id), force=True, bot=context.bot)
+    if membership is True:
+        await msg.reply_text(verify_text("ok"), parse_mode=ParseMode.HTML, reply_markup=verify_markup("ok"))
+    elif membership is False:
+        await msg.reply_text(verify_text("need"), parse_mode=ParseMode.HTML, reply_markup=verify_markup("need"))
+    else:
+        await msg.reply_text(verify_text("error"), parse_mode=ParseMode.HTML, reply_markup=verify_markup("error"))
+
+
+async def verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """کالبک‌های صفحه‌ی تأیید (VF|CHECK / VF|INFO)."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    action = str(query.data or "").split("|")[1] if "|" in str(query.data or "") else ""
+    if action == "INFO":
+        await safe_answer_query(query)
+        await safe_edit(
+            query,
+            "ℹ️ <b>راهنمای ورود به بازی</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "۱️⃣ عضو کانال شو\n"
+            f"📢 <b>{escape(channel_target())}</b>\n"
+            "۲️⃣ اینجا «بررسی کن» بزن\n"
+            "۳️⃣ تو گروه /apex بزن و به لابی بپیوند 🎮",
+            verify_markup("need"),
+        )
+        return
+    membership = await channel_membership(uid, force=True, bot=context.bot)
+    if membership is True:
+        await safe_answer_query(query, "✅ تأیید شد!")
+        await safe_edit(query, verify_text("ok"), verify_markup("ok"))
+    elif membership is False:
+        await safe_answer_query(query, "🚫 هنوز عضو کانال نیستی.", True)
+        await safe_edit(query, verify_text("need"), verify_markup("need"))
+    else:
+        await safe_answer_query(query, "⚠️ بررسی ممکن نیست، دوباره تلاش کن.", True)
+        await safe_edit(query, verify_text("error"), verify_markup("error"))
+
+
+async def gate_notice(query, uid: int, context) -> None:
+    """ارسال پیام راهنمای گیت با ضد اسپم (حداکثر هر ۹۰ ثانیه در هر چت)."""
+    try:
+        chat_id = int(query.message.chat.id) if query.message else 0
+    except Exception:
+        chat_id = 0
+    now = time.time()
+    key = (chat_id, uid)
+    if now - GATE_NOTICE_CACHE.get(key, 0) < GATE_NOTICE_TTL:
+        return
+    GATE_NOTICE_CACHE[key] = now
+    try:
+        await context.bot.send_message(
+            chat_id,
+            verify_text("need"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=verify_markup("need"),
+        )
+    except Exception:
+        pass
+
+
+# ================================================================
 #  آنبوردینگ — جنسیت + سن + دروازه‌ی بزرگسال
 # ================================================================
 GENDER_ICONS = {"male": "👦 پسر", "female": "👧 دختر"}
@@ -1824,6 +2000,12 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if punishment_blocks_join(uid):
             await safe_answer_query(query, "⚖️ اول مجازاتت را تمام کن!", True)
             return
+        # گیت عضویت کانال (قفل دوم ورود) — بازگردانی از نسخه‌ی اصلی
+        membership = await channel_membership(uid, force=False, bot=context.bot)
+        if membership is False:
+            await safe_answer_query(query, "📢 برای پیوستن، اول عضو کانال شو!", True)
+            await gate_notice(query, uid, context)
+            return
         game["players"].append(uid)
         game["names"][str(uid)] = query.from_user.first_name or name_of(uid)
         touch_game(game)
@@ -1959,6 +2141,40 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if len(players) < mn:
             await safe_answer_query(query, f"حداقل {fmt_num(mn)} نفر لازم است!", True)
             return
+        # گیت عضویت کانال — بازبینی همه‌ی بازیکنان قبل از شروع (مثل نسخه‌ی اصلی)
+        if channel_gate_enabled():
+            current, removed, errors = [], [], []
+            for p in players:
+                m = await channel_membership(int(p), force=True, bot=context.bot)
+                if m is True:
+                    current.append(int(p))
+                elif m is False:
+                    removed.append(int(p))
+                else:
+                    errors.append(int(p))
+            if errors:
+                await safe_answer_query(query, "⚠️ عضویت یکی از بازیکنان قابل بررسی نیست. فعلاً بازی شروع نشد.", True)
+                return
+            if removed:
+                game["players"] = current
+                game["ready"] = [int(x) for x in game.get("ready", []) if int(x) in current]
+                for pid in removed:
+                    game.get("names", {}).pop(str(pid), None)
+                touch_game(game)
+                save_data(force=True)
+                removed_names = ", ".join(name_of(pid, game) for pid in removed[:8])
+                try:
+                    await query.message.reply_text(
+                        f"🚫 این افراد به دلیل خارج بودن از کانال از لابی حذف شدند: {escape(removed_names)}",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+                if len(current) < mn:
+                    await safe_answer_query(query, f"بعد از حذف، حداقل {fmt_num(mn)} نفر لازم است!", True)
+                    await lobby_refresh(None, context, game, query=query)
+                    return
+                players = current
         await game_start(context, game, query)
         return
 
@@ -6303,6 +6519,8 @@ async def route_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await love2_callback(update, context)
         elif prefix == "ST":
             await settings_callback(update, context)
+        elif prefix == "VF":
+            await verify_callback(update, context)
         else:
             await safe_answer_query(query)
     except Exception as exc:
@@ -6652,8 +6870,38 @@ async def cmd_apexid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+def _start_fallback_jobs(app) -> None:
+    """زمان‌بند پشتیبان — وقتی APScheduler (job-queue) در دسترس نیست.
+    همان کارهای دوره‌ای را با حلقه‌ی asyncio اجرا می‌کند تا ذخیره‌ی دوره‌ای،
+    نگهبان نوبت، بازیابی بازی گیرکرده و بکاپ خودکار هرگز خاموش نمانند."""
+
+    class _JobContext:
+        """شبیه‌ساز مینیمال context — این jobها فقط به context.bot نیاز دارند."""
+        def __init__(self, bot):
+            self.bot = bot
+
+    async def _run_loop(coro_fn, interval: int, first: int) -> None:
+        await asyncio.sleep(first)
+        while True:
+            try:
+                await coro_fn(_JobContext(app.bot))
+            except Exception as exc:
+                print(f"ApexRival fallback job warning: {exc!r}")
+            await asyncio.sleep(interval)
+
+    app.create_task(_run_loop(periodic_maintenance, 180, 60))
+    app.create_task(_run_loop(backup_job, 6 * 3600, 300))
+    print("ApexRival: fallback scheduler active (periodic=180s, backup=6h)")
+
+
 async def post_init(app) -> None:
     """بعد از ساخت اپلیکیشن: منوها، یوزرنیم، بکاپ بوت."""
+    # زمان‌بند پشتیبان اگر job_queue در دسترس نیست (مثلاً Render بدون extras)
+    try:
+        if app.job_queue is None:
+            _start_fallback_jobs(app)
+    except Exception as exc:
+        print(f"ApexRival fallback scheduler warning: {exc!r}")
     try:
         me = await app.bot.get_me()
         BOT_USERNAME_CACHE["u"] = me.username or ""
@@ -6739,6 +6987,7 @@ def build_application() -> Application:
         "apexunmute": cmd_apexunmute,
         "shop": cmd_shop,
         "skip": cmd_skip_wizard,
+        "verify": cmd_verify,
         # نام‌های آشنای قدیمی
         "profile": cmd_apexprofile,
         "rank": cmd_apextop,
