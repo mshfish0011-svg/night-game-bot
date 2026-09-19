@@ -1,3 +1,47 @@
+# ================================================================
+# [V22-PREFLIGHT] پیش‌پرواز دوستانه — قبل از هر چیز، محیط اجرا را چک می‌کند
+# اگر کتابخانه نصب نباشد یا نسخه قدیمی باشد، به‌جای traceback پیچیده،
+# راهنمای فارسی و شفاف نشان می‌دهد.
+# ================================================================
+import sys as _v22_sys
+
+
+def _v22_preflight() -> None:
+    try:
+        import telegram as _v22_tg
+    except Exception:
+        print(
+            "\n" + "=" * 62 +
+            "\n  کتابخانه‌ی تلگرام نصب نیست! (python-telegram-bot)"
+            "\n  برای نصب، این دستور را در CMD / ترمینال بزن:"
+            "\n"
+            "\n      pip install \"python-telegram-bot[job-queue]>=21\" --upgrade"
+            "\n"
+            "\n  بعد از نصب، دوباره ربات را اجرا کن. ✅" +
+            "\n" + "=" * 62 + "\n"
+        )
+        _v22_sys.exit(1)
+    try:
+        _v22_ver = str(getattr(_v22_tg, "__version__", "0")).split(".")
+        _v22_num = tuple(int(x) for x in _v22_ver[:2] if x.isdigit())
+        if _v22_num and _v22_num < (20, 0):
+            print(
+                "\n" + "=" * 62 +
+                f"\n  نسخه‌ی python-telegram-bot نصب‌شده ({_v22_tg.__version__}) قدیمی است."
+                "\n  این ربات به نسخه‌ی ۲۱ یا بالاتر نیاز دارد. آپگرید کن:"
+                "\n"
+                "\n      pip install \"python-telegram-bot[job-queue]>=21\" --upgrade" +
+                "\n" + "=" * 62 + "\n"
+            )
+            _v22_sys.exit(1)
+    except SystemExit:
+        raise
+    except Exception:
+        pass
+
+
+_v22_preflight()
+
 import asyncio
 import json
 import os
@@ -11993,17 +12037,20 @@ async def _ar8_post_init(application):
     global APEX_RUNTIME_BOT
     APEX_RUNTIME_BOT = application.bot
     await application.bot.set_my_commands([
-        ("start", "فعال‌سازی حساب"),
-        ("verify", "بررسی عضویت کانال"),
-        ("game", "ساخت Lobby"),
-        ("menu", "منوی اصلی"),
-        ("profile", "پروفایل"),
-        ("rank", "رتبه‌بندی"),
-        ("shop", "فروشگاه"),
-        ("achievements", "دستاوردها"),
-        ("help", "راهنما"),
-        ("id", "آیدی"),
-        ("admin", "پنل مدیریت"),
+        # [V22-FIX] این فهرست قبلاً تاپل خام بود؛ PTB 22.x فقط BotCommand
+        # می‌پذیرد و همین باعث می‌شد کل این بلوک (از جمله زمان‌بند پاکسازی
+        # v5_cleanup_job و بررسی کانال) بی‌صدا از کار بیفتد.
+        BotCommand("start", "فعال‌سازی حساب"),
+        BotCommand("verify", "بررسی عضویت کانال"),
+        BotCommand("game", "ساخت Lobby"),
+        BotCommand("menu", "منوی اصلی"),
+        BotCommand("profile", "پروفایل"),
+        BotCommand("rank", "رتبه‌بندی"),
+        BotCommand("shop", "فروشگاه"),
+        BotCommand("achievements", "دستاوردها"),
+        BotCommand("help", "راهنما"),
+        BotCommand("id", "آیدی"),
+        BotCommand("admin", "پنل مدیریت"),
     ])
     if application.job_queue:
         application.job_queue.run_repeating(v5_cleanup_job, interval=30, first=15, name="apexrival_cleanup")
@@ -35045,32 +35092,32 @@ def v21_self_check() -> None:
     assert v21_love_score("id:1", "id:2") == v21_love_score("id:2", "id:1")
     assert 0 <= v21_love_score("id:1", "id:2") <= 100
     # مسابقه: جواب درست
-for _ in range(50):
-    q, a = v21_quiz_make()
+    for _ in range(50):
+        q, a = v21_quiz_make()
 
-    assert isinstance(a, int)
+        assert isinstance(a, int)
 
-    parts = q.split()
+        parts = q.split()
 
-    assert len(parts) == 3, f"bad quiz format: {q}"
+        assert len(parts) == 3, f"bad quiz format: {q}"
 
-    aa, o, bb = parts
+        aa, o, bb = parts
 
-    assert aa.lstrip("-").isdigit(), f"bad left number: {q}"
-    assert bb.lstrip("-").isdigit(), f"bad right number: {q}"
+        assert aa.lstrip("-").isdigit(), f"bad left number: {q}"
+        assert bb.lstrip("-").isdigit(), f"bad right number: {q}"
 
-    x = int(aa)
-    y = int(bb)
+        x = int(aa)
+        y = int(bb)
 
-    assert o in {"+", "-", "×"}, f"bad operator: {q}"
+        assert o in {"+", "-", "×"}, f"bad operator: {q}"
 
-    result = {
-        "+": x + y,
-        "-": x - y,
-        "×": x * y
-    }[o]
+        result = {
+            "+": x + y,
+            "-": x - y,
+            "×": x * y
+        }[o]
 
-    assert result == a, f"wrong answer: {q} != {a}"
+        assert result == a, f"wrong answer: {q} != {a}"
     # مخزن پایدار
     st = v21_store()
     assert isinstance(st["stats"], dict)
@@ -35123,6 +35170,293 @@ main_apexrival_15 = main_apexrival_21
 main = main_apexrival_21
 
 
+# ================================================================
+# ▼▼▼ [V22] لایه‌ی «پولیش نهایی» — منوی مرتب + همه‌ی دکمه‌ها/دستورها ▼▼▼
+# ----------------------------------------------------------------
+#  هدف: هیچ چیزی «کار نکند»:
+#   ۱) منوی / دستورات تلگرام — مرتب، کامل و یکسان در همه‌ی اسکوپ‌ها
+#      (منوی خصوصی ۱۶ دستورِ مرتب + منوی گروهی مخصوص گروه‌ها)
+#   ۲) دستورهای جدید V21 (apexquiz/apexluck/apexlove/apexgift/apexlive)
+#      در گروه‌ها از گیت ضدتداخل رد می‌شوند (قبلاً بی‌صدا بلعیده می‌شدند)
+#   ۳) اگر افزونه‌ی job-queue نصب نباشد، پاکسازی خودکار با تسک جایگزین
+#      فعال می‌ماند
+#   ۴) لانچر دوستانه: token.txt و proxy.txt + راهنمای فارسی
+#  هیچ خطی حذف نشده؛ هیچ سؤالی دست نخورده است.
+# ================================================================
+
+V22_VERSION = "22.0"
+
+
+# ----------------------------------------------------------------
+# [V22-MENU] منوی دستورات — ترتیب حساب‌شده و منطقی
+#   منوی خصوصی: شروع → بازی → پروفایل → رتبه → فروشگاه → راهنما → سرگرمی
+#   منوی گروهی: فقط دستورهایی که واقعاً در گروه کار می‌کنند
+# ----------------------------------------------------------------
+V22_COMMAND_MENU_PRIVATE = [
+    BotCommand("start", "⚡ شروع و فعال‌سازی حساب"),
+    BotCommand("game", "🎮 ساخت Lobby"),
+    BotCommand("apex", "🚀 ساخت بازی در گروه (اختصاصی)"),
+    BotCommand("profile", "👤 پروفایل من"),
+    BotCommand("apexprofile", "🪪 پروفایل کامل با سطح و کوئست"),
+    BotCommand("rank", "🏆 رتبه‌بندی"),
+    BotCommand("apextop", "🥇 قهرمانان هفته و همیشه"),
+    BotCommand("shop", "🛒 فروشگاه"),
+    BotCommand("help", "❓ راهنما و قوانین"),
+    BotCommand("apexhelp", "📖 آموزش گام‌به‌گام بازی"),
+    BotCommand("apexquiz", "🧮 مسابقه سرعتی ریاضی"),
+    BotCommand("apexluck", "🎡 گردونه‌ی شانس"),
+    BotCommand("apexlove", "💘 عشق‌سنج دو نفره"),
+    BotCommand("apexgift", "🎁 هدیه‌ی روزانه"),
+    BotCommand("apexlive", "📡 بازی‌های زنده در گروه‌ها"),
+    BotCommand("apexend", "🛑 پایان بازی (سرگروه)"),
+]
+
+V22_COMMAND_MENU_GROUP = [
+    BotCommand("start", "⚡ معرفی ربات"),
+    BotCommand("apex", "🚀 ساخت بازی جدید (اختصاصی)"),
+    BotCommand("apexquiz", "🧮 مسابقه سرعتی ریاضی"),
+    BotCommand("apexteams", "⚔️ تیم‌های رقابتی"),
+    BotCommand("apexdaily", "🎯 چالش روزانه‌ی گروه"),
+    BotCommand("apexrecap", "📊 گزارش هفتگی گروه"),
+    BotCommand("apexheart", "❤️ قلب محبت (ریپلای)"),
+    BotCommand("apexbrb", "🌙 موقتاً نیستم"),
+    BotCommand("apexback", "🌞 برگشتم"),
+    BotCommand("apexprofile", "🪪 پروفایل کامل من"),
+    BotCommand("apextop", "🥇 قهرمانان هفته"),
+    BotCommand("apexguide", "🎓 راهنمای تعاملی بازی"),
+    BotCommand("apexmute", "🔇 تگ‌شدن من خاموش شود"),
+    BotCommand("apexunmute", "🔔 تگ‌شدن من روشن شود"),
+    BotCommand("apexend", "🛑 پایان بازی (سرگروه)"),
+    BotCommand("apexhelp", "❓ راهنما"),
+]
+
+V22_PRIVATE_SIGNATURE = tuple((c.command, c.description) for c in V22_COMMAND_MENU_PRIVATE)
+V22_GROUP_SIGNATURE = tuple((c.command, c.description) for c in V22_COMMAND_MENU_GROUP)
+
+
+# ----------------------------------------------------------------
+# [V22-GATE] دستورهای V21 باید در گروه‌ها هم رد شوند (قبلاً بلعیده می‌شدند)
+# ----------------------------------------------------------------
+try:
+    V17_UNIQUE_COMMANDS = V17_UNIQUE_COMMANDS + (
+        "apexlive", "apexluck", "apexlove", "apexquiz", "apexgift",
+    )
+except Exception:
+    pass
+
+
+def _v22_scope_is_group(scope) -> bool:
+    """تشخیص اسکوپ گروهی برای انتخاب منوی درست."""
+    try:
+        t = str(getattr(scope, "type", "") or "")
+        if t == "all_group_chats" or t == "all_chat_administrators":
+            return True
+        if t in ("chat", "chat_administrators", "chat_member"):
+            return int(getattr(scope, "chat_id", 0) or 0) < 0
+    except Exception:
+        pass
+    return False
+
+
+async def _v22_push_menu(bot, scope, language_code=None, *, verify: bool = True) -> bool:
+    """منوی V22 را روی یک اسکوپ می‌نویسد + تأیید و ترمیم خودکار."""
+    is_group = _v22_scope_is_group(scope)
+    menu = V22_COMMAND_MENU_GROUP if is_group else V22_COMMAND_MENU_PRIVATE
+    signature = V22_GROUP_SIGNATURE if is_group else V22_PRIVATE_SIGNATURE
+    try:
+        await bot.set_my_commands(menu, scope=scope)
+        if language_code:
+            try:
+                await bot.set_my_commands(menu, scope=scope, language_code=language_code)
+            except Exception:
+                pass
+        if verify:
+            try:
+                got = await bot.get_my_commands(scope=scope)
+                got_sig = tuple((str(c.command), str(c.description)) for c in (got or []))
+                if got_sig != signature:
+                    # اسکوپ کهنه ممکن است باقی بماند؛ حذف و دوباره نوشتن
+                    try:
+                        await bot.delete_my_commands(scope=scope)
+                    except Exception:
+                        pass
+                    await bot.set_my_commands(menu, scope=scope)
+                    if language_code:
+                        try:
+                            await bot.set_my_commands(menu, scope=scope, language_code=language_code)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        return True
+    except Exception as exc:
+        print(f"ApexRival V22 command-scope warning: {exc!r}")
+        return False
+
+
+# [V22-SCOPE] نقطه‌ی واحد منو — همه‌ی لایه‌های قبلی (AR15/V17/V18/V19/V20)
+# این تابع را با نام صدا می‌زنند؛ حالا همه به منوی مرتب V22 می‌رسند.
+async def ar15_force_scope5(bot, scope, language_code=None, *, verify: bool = True) -> bool:
+    return await _v22_push_menu(bot, scope, language_code, verify=verify)
+
+
+# ----------------------------------------------------------------
+# [V22-CLEANUP] اگر افزونه‌ی job-queue نصب نبود، پاکسازی دوره‌ای می‌میرد؛
+# این حلقه‌ی جایگزین همان v5_cleanup_job را زنده نگه می‌دارد.
+# ----------------------------------------------------------------
+async def v22_cleanup_loop(application) -> None:
+    shim = type("V22CleanupCtx", (), {"job": None, "application": application})()
+    while True:
+        try:
+            await asyncio.sleep(30)
+            await v5_cleanup_job(shim)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            try:
+                await asyncio.sleep(10)
+            except Exception:
+                return
+
+
+# ----------------------------------------------------------------
+# [V22-BOOT] زنجیره‌ی post_init — بعد از همه‌ی لایه‌ها
+# ----------------------------------------------------------------
+_AR22_OLD_POST_INIT = ar15_post_init
+
+
+async def ar15_post_init(application):
+    await _AR22_OLD_POST_INIT(application)
+    try:
+        if getattr(application, "job_queue", None) is None:
+            application.create_task(v22_cleanup_loop(application))
+            print("ApexRival V22 | cleanup-fallback=on (python-telegram-bot[job-queue] نصب نشده؛ پاکسازی با تسک جایگزین فعال است)")
+        else:
+            print("ApexRival V22 | cleanup job-queue=on")
+    except Exception as exc:
+        try:
+            print(f"ApexRival V22 boot warning: {exc!r}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V22-LAUNCH] توکن و پروکسی — دوستانه و بدون دردسر
+#   ۱) متغیر محیطی BOT_TOKEN          (برای هاست‌ها)
+#   ۲) فایل token.txt کنار همین فایل  (برای اجرای محلی — راحت‌ترین راه)
+#   ۳) پروکسی اختیاری با PROXY_URL یا فایل proxy.txt (برای شبکه‌های فیلترشده)
+# ----------------------------------------------------------------
+def _v22_resource_dir():
+    try:
+        return Path(__file__).resolve().parent
+    except Exception:
+        return Path.cwd()
+
+
+def _v22_read_aux_file(name: str) -> str:
+    for cand in (_v22_resource_dir() / name, Path.cwd() / name):
+        try:
+            if cand.exists():
+                txt = cand.read_text(encoding="utf-8").strip()
+                if txt:
+                    return txt.splitlines()[0].strip()
+        except Exception:
+            pass
+    return ""
+
+
+def _v22_apply_proxy() -> None:
+    proxy = os.getenv("PROXY_URL", "").strip() or _v22_read_aux_file("proxy.txt")
+    if not proxy:
+        return
+    os.environ.setdefault("HTTPS_PROXY", proxy)
+    os.environ.setdefault("HTTP_PROXY", proxy)
+    print(f"ApexRival V22 | proxy=on ({proxy})")
+
+
+def _v22_print_token_guide() -> None:
+    print(
+        "\n" + "=" * 62 +
+        "\n  ⚠️  توکن ربات پیدا نشد!"
+        "\n"
+        "\n  راه ۱ (ساده‌ترین): کنار همین فایل یک فایل متنی به نام"
+        "\n      token.txt بساز و فقط توکن ربات را داخلش بگذار."
+        "\n      توکن را از @BotFather در تلگرام می‌گیری (دستور /newbot)."
+        "\n"
+        "\n  راه ۲ (هاست/سرور): متغیر محیطی BOT_TOKEN را ست کن:"
+        "\n      ویندوز CMD :  set BOT_TOKEN=123456:ABC-DEF..."
+        "\n      ویندوز PowerShell :  $env:BOT_TOKEN=\"123456:ABC-DEF...\""
+        "\n      لینوکس/مک :  export BOT_TOKEN=123456:ABC-DEF..."
+        "\n"
+        "\n  💡 پروکسی (اختیاری): اگر تلگرام فیلتر است، آدرس پروکسی را در"
+        "\n      فایل proxy.txt بگذار یا متغیر PROXY_URL را ست کن."
+        "\n" + "=" * 62 + "\n"
+    )
+
+
+def main_apexrival_22():
+    """لانچر نهایی V22 — پیش‌پرواز + منوی مرتب + استارت مقاوم."""
+    _v22_apply_proxy()
+    token = str(globals().get("BOT_TOKEN", "") or "").strip() or _v22_read_aux_file("token.txt")
+    if not token:
+        _v22_print_token_guide()
+        _v22_sys.exit(1)
+    globals()["BOT_TOKEN"] = token
+    print(
+        f"{BOT_NAME} V22 POLISH | ordered-command-menu | group-gate-fix | "
+        "cleanup-fallback | friendly-launcher | proxy-ready"
+    )
+    return main_apexrival_21()
+
+
+main_apexrival_15 = main_apexrival_22
+main = main_apexrival_22
+
+
+# ----------------------------------------------------------------
+# [V22-CHECK] سلف‌چک لایه — هنگام لود اجرا می‌شود
+# ----------------------------------------------------------------
+def v22_self_check() -> None:
+    # ۱) منوها: معتبر، مرتب، بدون تکرار
+    for menu, sig in ((V22_COMMAND_MENU_PRIVATE, V22_PRIVATE_SIGNATURE),
+                      (V22_COMMAND_MENU_GROUP, V22_GROUP_SIGNATURE)):
+        names = [c.command for c in menu]
+        assert names == [c for c, _ in sig], "menu/signature mismatch"
+        assert len(set(names)) == len(names), "duplicate command in menu"
+        assert all(n.isascii() and n.islower() for n in names), "bad command name"
+        assert all(1 <= len(c.description) <= 256 for c in menu)
+        assert names[0] == "start", "menu must begin with start"
+    # ۲) /game در منوی خصوصی هست و در منوی گروهی نیست (در گروه /apex هست)
+    assert "game" in [c.command for c in V22_COMMAND_MENU_PRIVATE]
+    assert "game" not in [c.command for c in V22_COMMAND_MENU_GROUP]
+    assert "apex" in [c.command for c in V22_COMMAND_MENU_GROUP]
+    # ۳) گیت گروهی حالا دستورهای V21 را هم رد می‌کند
+    for c in ("apexlive", "apexluck", "apexlove", "apexquiz", "apexgift"):
+        assert c in V17_UNIQUE_COMMANDS, c
+    # ۴) منوی گروهی فقط دستورهای اختصاصی + start (ضدتداخل کامل)
+    for c in V22_COMMAND_MENU_GROUP:
+        if c.command != "start":
+            assert c.command in V17_UNIQUE_COMMANDS, c.command
+    # ۵) پنل مدیریت دقیقاً دکمه‌های تصویر مرجع را دارد
+    rows = getattr(v16_admin_home_markup(), "inline_keyboard", [])
+    labels = [str(getattr(b, "text", "")) for row in rows for b in row]
+    for need in ("👥 کاربران", "📢 تبلیغات", "📨 ارسال همگانی", "📝 بانک سؤال‌ها",
+                 "🎮 بازی‌های زنده", "🌐 گروه‌ها", "⚙️ تنظیمات", "📋 لاگ‌ها",
+                 "🩺 سلامت", "🔄 تازه‌سازی", "🛠 مدیریت سوالات", "🌿 تنظیمات ضد اذیت"):
+        assert need in labels, f"admin panel missing button: {need}"
+    # ۶) مسیر دسته‌بندی اسکوپ‌ها
+    assert _v22_scope_is_group(BotCommandScopeAllGroupChats()) is True
+    assert _v22_scope_is_group(BotCommandScopeChat(chat_id=-1001234)) is True
+    assert _v22_scope_is_group(BotCommandScopeDefault()) is False
+    assert _v22_scope_is_group(BotCommandScopeAllPrivateChats()) is False
+    print(
+        "ApexRival V22 POLISH self-check OK | ordered-menu=on | "
+        "group-gate-fix=on | cleanup-fallback=on | friendly-launcher=on"
+    )
+
+
+v22_self_check()
+
+
 if __name__ == "__main__":
     main_apexrival_15()
-
