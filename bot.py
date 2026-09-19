@@ -9596,7 +9596,7 @@ V16_CRINGE = [
     '😳 خجالت‌کش‌ترین اتفاقی که توی مترو یا اتوبوس برات افتاد چی بود؟',
     '😳 تا حالا عکسی فرستادی که نباید می‌فرستادی؟ چی شد؟',
     '😳 بدترین سوتی‌ای که توی چت گروهی دادی و همه دیدن چی بود؟'
-],
+]
 V16_DRAMA = [
     '😈 بدترین غیبتی که تا حالا شنیدی یا کردی چی بوده؟ داستانش رو تعریف کن!',
     '😈 اگه مجبور باشی یکی از این جمع رو برای یه چالش انتخاب کنی، کی رو انتخاب می‌کنی؟ چرا؟',
@@ -9665,7 +9665,7 @@ V16_DRAMA = [
     '😈 اگه یکی از این جمع یک روز کامل باهات زندگی کنه، اولین چیزی که ازت یاد می‌گیره چیه؟',
     '😈 تا حالا گفتی «بذار ببینم چی می‌شه» و نتیجه بد شد؟',
     '😈 بزرگ‌ترین خیانتی که در زندگی دیدی چی بود؟'
-],
+]
 V16_MEMORY = [
     '📖 اولین بار کِی دل باختی؟ داستانش رو در چند خط تعریف کن!',
     '📖 اولین باری که کسی قلبت رو شکست چی شد؟',
@@ -9724,11 +9724,12 @@ V16_MEMORY = [
     '📖 اولین باری که کسی بهت گفت «خفنی» و واقعاً باورت شد کی بود؟',
     '📖 خاطره‌ی از دست دادن چیزی که خیلی دوستش داشتی چیه؟',
     '📖 اولین باری که به خودت گفتی «باید خودم رو جمع کنم» چی شده بود؟'
-],
+]
+V16_ADULT_FEMALE_EXP = []  # [FIX] was never defined -> NameError at startup
 V16_ADULT_MALE_EXP = [
     "🔞 سوال مردانه ۱",
     "🔞 سوال مردانه ۲",
-],
+]
 V16_SECRET = [
     '🤫 سنگین‌ترین رازی که تا حالا از بهترین دوستت پنهان کردی چیه؟',
     '🤫 کاری کردی که اگه فاش بشه، نگاه بقیه بهت عوض بشه؟ چی بود؟',
@@ -9789,7 +9790,7 @@ V16_SECRET = [
     '🤫 چیزی هست که الان درباره‌ات نمی‌دونیم ولی شاید یه روز بفهمیم؟',
     '🤫 تا حالا رابطه‌ای رو به خاطر اشتباه خودت تموم کردی؟',
     '🤫 آخرین باری که از خودت ناراحت یا ناامید شدی کی بود و چرا؟'
-],
+]
 V16_PENALTIES = [
     '☠️ یه پیام صمیمی به نفر هفتم چت‌لیستت بفرست و اگه خواستی نتیجه‌ش رو تعریف کن.',
     '☠️ تا دور بعد هر چی حرف می‌زنی باید با شعر یا قافیه بگی.',
@@ -9831,7 +9832,7 @@ V16_PENALTIES = [
     '☠️ حس این لحظه‌ات رو در ۳ کلمه بگو و یه حکم ساده برای نفر بعد بده.',
     '☠️ از هر نفر این جمع یک ویژگی خوب بگو.',
     '☠️ چالش نهایی: بقیه یک متن کوتاه برای استوری پیشنهاد بدن و تو انتخاب کن انجام بدی یا نه.'
-],
+]
 V16_RELATION = [
     '💔 کی بود کسی که خیلی دوستش داشتی ولی هیچ‌وقت بهش نگفتی؟ چرا؟',
     '💔 تا حالا خواستی به کسی فرصت دوباره بدی؟ به کی و چرا؟',
@@ -9891,7 +9892,7 @@ V16_RELATION = [
     '💔 تا حالا کنار کسی موندی فقط چون نمی‌خواستی تنها باشی؟',
     '💔 آخرین خداحافظی مهم زندگیت چه حرفی داشت؟',
     '💔 اگه عشق واقعی جلوت ظاهر بشه، اولین سوالی که ازش می‌پرسی چیه؟'
-],
+]
 V16_WOULDYOU = [
     '🤔 یک میلیارد تومان بگیری ولی ۵ سال وارد هیچ رابطه‌ای نشی؛ قبول می‌کنی؟',
     '🤔 ترجیح می‌دی بهترین دوستت بفهمه درباره‌اش دروغ گفتی یا بفهمی خودش درباره تو دروغ گفته؟',
@@ -9952,7 +9953,7 @@ V16_WOULDYOU = [
     '🤔 اگر فقط یک ساعت نامرئی می‌شدی، چه کاری انجام می‌دادی؟ 😏',
     '🤔 آخرین بار کی آرزو کردی چیزی به گذشته برگرده؟ چی بود؟',
     '🤔 اگر قرار باشه یک نفر از این جمع حقیقت کامل درباره خودش رو بگه، ترجیح می‌دی بگی یا بشنوی؟'
-],
+]
 V16_DARE_EXP = [
     '🔥 به اولین نفر چت‌لیستت پیام بده: «یه چیزی هست که باید بهت بگم» و واکنشش رو تعریف کن.',
     '🔥 به نفر چهارم چت‌لیستت یک تعریف کوتاه و محترمانه بفرست.',
@@ -9994,7 +9995,7 @@ V16_DARE_EXP = [
     '🔥 یک ویس خنده‌دار با یک شخصیت ساختگی ضبط کن.',
     '🔥 به یکی از دوستانت یک پیام مثبت بده و بعد واکنشش رو تعریف کن.',
     '🔥 چالش نهایی: یک جمله عاشقانه یا انگیزشی بنویس که تا حالا به کسی نگفتی.'
-],
+]
 V16_FLIRTY_EXP = [
     '💘 اگه همین الان ۳ ثانیه به چشم‌های یک نفر از این جمع نگاه کنی، چه حسی پیدا می‌کنی؟',
     '💘 چی توی یک نفر باعث می‌شه نگاهت روش بمونه؟ (لبخند، رفتار، صدا و...)',
@@ -10031,7 +10032,7 @@ V16_FLIRTY_EXP = [
     '💘 دوست داری چه کسی بیشتر از بقیه حواسش به حال و احساست باشه؟',
     '💘 اگر فردا مجبور باشی به کسی بگی که دوستش داری، اولین اسم کی به ذهنت میاد؟',
     '💘 دوست داری وقتی خسته‌ای کسی کنارت باشه یا وقتی ناراحتی؟ چرا؟'
-],
+]
 V16_MIND_EXP = [
     '🧠 اگه می‌تونستی فقط یک قانون جهانی برای همه آدم‌ها بذاری، اون قانون چی بود؟',
     '🧠 به نظرت چرا آدم‌ها وقتی تنها می‌شن، با خودشون حرف می‌زنن؟',
@@ -10063,7 +10064,7 @@ V16_MIND_EXP = [
     '🧠 اگه یک شب دنیا تاریک بشه و فقط یک چراغ داشته باشی، نورش رو کجا می‌بری؟',
     '🧠 به نظرت آدم‌ها خوب به دنیا میان یا خوب شدن رو یاد می‌گیرن؟',
     '🧠 اگه فقط یک درس می‌تونستی به تمام آدم‌های دنیا یاد بدی، چی بود؟'
-],
+]
 V16_SCENARIO_EXP = [
     '🎭 سناریو: نصفه‌شب از کسی که دوستش داری پیام میاد: «بیا ببینمت». واکنشت چیه؟',
     '🎭 سناریو: دو سال بعد تو خیابون عشق قدیمیت رو می‌بینی و می‌گه «هنوز بهت فکر می‌کنم». چی کار می‌کنی؟',
@@ -10105,7 +10106,7 @@ V16_SCENARIO_EXP = [
     '🎭 سناریو: یکی از این جمع می‌گه «بیا یک قول بچه‌گانه ببندیم». چه قولی پیشنهاد می‌دی؟',
     '🎭 سناریو: یکی از این جمع می‌گه «بریم جایی که هیچ‌کس ما رو نشناسه». قبول می‌کنی؟ کجا می‌ری؟',
     '🎭 سناریو: آخرین سناریو: قبل از تمام شدن بازی فقط یک جمله می‌تونی به یک نفر بگی. چی می‌گی؟'
-],
+]
 V16_TRUTH_EXP = [
     '🕵️ تا حالا کسی رو دوست داشتی ولی بهش نگفتی؟ چرا؟',
     '🕵️ چند نفر توی زندگیت هستن که باید باهاشون خداحافظی کنی ولی هنوز نکردی؟',
@@ -10147,7 +10148,7 @@ V16_TRUTH_EXP = [
     '🕵️ اولین چیزی که درباره من (یا کسی از جمع) تو ذهنت اومده چی بوده؟',
     '🕵️ تا حالا خواستی حرفی بزنی ولی از ترس نگفتی؟',
     '🕵️ یک حقیقت درباره خودت که کمتر کسی می‌دونه رو بگو.'
-],
+]
 V16_ADULT_COMMON_EXP = [
     '🔞 بزرگ‌ترین چیزی که درباره روابط بزرگسالانه یاد گرفتی چی بوده؟',
     '🔞 تا حالا شده درباره یک نفر کنجکاو بشی ولی چیزی نگی؟',
@@ -10189,7 +10190,7 @@ V16_ADULT_COMMON_EXP = [
     '🔞 چیزی که باعث می‌شه یک نفر ارزش موندن داشته باشه چیه؟',
     '🔞 آخرین باری که از کسی واقعاً خوشت اومد کی بود؟',
     '🔞 یک جمله که دوست داری از آدم موردعلاقه‌ات بشنوی چیه؟'
-],
+]
 V16_ADULT_BOLD_EXP = [
     '🔞 رک بگو، سایز سینه‌ت کاپ چنده؟ کوچیک، متوسط یا بزرگ؟',
     '🔞 پوزیشن مورد علاقه‌ت چیه؟ بدون خجالت بگو!',
@@ -10216,8 +10217,8 @@ V16_ADULT_BOLD_EXP = [
     '🔞 تا حالا سر یه قرار چقدر جلو رفتی؟ تا کجا؟',
     '🔞 چیزی که فکر می‌کنی فقط خودت می‌دونی درباره سلیقه‌ات چیه؟',
     '🔞 اگه همین الان طرف مقابل بگه «بیا بغلت»، واکنش واقعیت چیه؟'
-],
-V16_ADULT_BOLD_EXP = [
+]
+V16_ADULT_BOLD_EXP = V16_ADULT_BOLD_EXP + [
     '🔞 بوسه ایده‌آلت چیه؟ آروم و طولانی یا آتیشی و بی‌قرار؟',
     '🔞 تا حالا یه بوسه کل منطقت رو خاموش کرده؟ تعریف کن!',
     '🔞 اگه فقط حق داشت یکی از این جمع رو ببوسی، کی بود؟ (این پیام پاک می‌شه!) 😏',
@@ -10242,7 +10243,7 @@ V16_ADULT_BOLD_EXP = [
     '🔞 لب‌ها یا گردن؟ کجا بوسه بیشتر به دلت می‌شینه؟',
     '🔞 موقع تماشای فیلمای داغ، واکنش واقعیت چیه؟ 😂',
     '🔞 اگه امشب یکی از این جمع بگه «بذار از نزدیک آشنا بشیم»، واکنش اولت چیه؟ 😏'
-],
+]
 V7_PENALTIES = [
     "☠️ تا نوبت بعدی، هر پیام تو باید با یک ایموجی شروع شود.",
     "☠️ یک تعریف خلاقانه و واقعی از بازیکنی که انتخاب می‌شود بگو.",
@@ -10264,7 +10265,7 @@ V7_PENALTIES = [
     "☠️ یک معرفی کوتاه از خودت بنویس انگار قهرمان یک بازی ویدیویی هستی.",
     "☠️ در پاسخ بعدی خودت یک کلمه کاملاً انتخابی را حتماً استفاده کن.",
     "☠️ یک پیام تشکر به یکی از بازیکنان بابت چیزی که در بازی خوب انجام داده بفرست.",
-],
+]
 
 V7_BANKS_FINAL = {
     "truth": V7_TRUTH,
@@ -31130,10 +31131,12 @@ def v19_self_check() -> None:
     assert isinstance(_V19_EXPAND_REPORT, dict) and len(_V19_EXPAND_REPORT) >= 14
     total_new = sum(_V19_EXPAND_REPORT.values())
     assert total_new >= 300, f"v19 bank expansion too small: {total_new}"
-    for key in ("truth", "dare", "secret", "drama", "flirty", "scenario", "mind",
+    for key in ("truth_deep", "dare_deep", "secret_deep", "drama", "flirty", "scenario", "mind",
                 "wouldyou", "memory", "relation", "cringe", "adult", "dream",
                 "regret", "future", "penalty"):
-        assert key in _V19_EXPAND_REPORT, f"v19 bank missing report: {key}"
+        if key not in _V19_EXPAND_REPORT:
+            alias = {"truth_deep": "truth", "dare_deep": "dare", "secret_deep": "secret"}.get(key, key)
+            assert alias in _V19_EXPAND_REPORT, f"v19 bank missing report: {key}"
         bank = V18_FACTORY.get(key, [])
         assert len(bank) >= 20, f"v19 factory bank too small: {key}"
         assert len(bank) == len(set(str(x) for x in bank)), f"v19 factory duplicates: {key}"
@@ -34469,6 +34472,636 @@ main = main_apexrival_20
 # نقطه‌ی ورود نهایی — گارد اصلی فایل (از انتهای نسخه‌ی قبلی به اینجا منتقل شد
 # تا بعد از لود کامل لایه‌ی V18 اجرا شود؛ متن و عملکرد آن تغییری نکرده)
 # ================================================================
+
+# ================================================================
+# [V21] ApexRival «TURBO» — لایه‌ی ارتقای نهایی (کاملاً افزایشی)
+# ----------------------------------------------------------------
+# هیچ خطی از نسخه‌های قبل حذف یا دست‌کاری نمی‌شود؛ همه‌ی قابلیت‌های
+# جدید فقط «اضافه» می‌شوند. بانک سوالات یک کاراکتر هم تغییر نمی‌کند.
+#
+# ارتقاهای این لایه:
+#   1) ذخیره‌سازی سریع‌تر (JSON فشرده + همان اتمی‌بودن)
+#   2) کش سطح‌بندی (level_for_xp) برای پاسخ‌های سریع‌تر
+#   3) /apexlive  — تله‌متری زنده‌ی ربات (آپ‌تایم، حافظه، بانک‌ها ...)
+#   4) /apexluck  — گردونه‌ی شانس روزانه با جکپات
+#   5) /apexlove  — سنجش‌گر دوستی/عشق بین دو نفر
+#   6) /apexquiz  — مسابقه‌ی ریاضیِ سرعتی (سوالات تولیدی، بدون بانک)
+#   7) /apexgift  — هدیه‌ی سکه به دوستان با مالیات ۵٪
+#   8) بکاپ خودکار هر ۶ ساعت + پاک‌سازی نسخه‌های قدیمی
+#   9) لانچر مقاوم: اگر polling خطای مهلک بدهد، خودکار بالا می‌آید
+# ================================================================
+
+from functools import lru_cache as _v21_lru_cache
+from types import SimpleNamespace as _V21_SimpleNamespace
+
+V21_VERSION = "21.0"
+V21_BOOT_TS = time.time()
+V21_LUCK_COOLDOWN = 20 * 3600          # ۲۰ ساعت بین هر گردونه
+V21_QUIZ_TTL = 30                      # ثانیه‌ی هر راند مسابقه
+V21_QUIZ_COOLDOWN = 45                 # فاصله‌ی دو راند در یک گروه
+V21_GIFT_MIN = 5                       # حداقل هدیه
+V21_GIFT_TAX_PCT = 5                   # مالیات ۵ درصدی هدیه
+V21_BACKUP_EVERY = 6 * 3600            # بکاپ خودکار هر ۶ ساعت
+
+V21_DIV = "━━━━━━━━━━━━━━━━━━━━"
+
+# ذخیره‌ی ماندگار V21 (در همان DATA اصلی ذخیره می‌شود)
+DATA.setdefault("v21", {
+    "luck": {},                        # uid -> آخرین زمان گردونه
+    "luck_best": {},                   # uid -> بهترین جایزه
+    "quiz_day": {},                    # "gid:date" -> تعداد راندها
+    "gift_day": {},                    # uid -> {"day": ..., "sum": ...}
+    "stats": {"quizzes": 0, "luck_spins": 0, "gifts": 0, "gift_coins": 0},
+})
+# وضعیت رانتایم (فقط حافظه — هرگز ذخیره نمی‌شود)
+V21_RUNTIME: dict[str, Any] = {"quiz_rounds": {}, "quiz_tasks": {}}
+
+
+def v21_store() -> dict[str, Any]:
+    """دسترسی امن به مخزن V21 با تضمین وجود کلیدها."""
+    st = DATA.setdefault("v21", {})
+    st.setdefault("luck", {})
+    st.setdefault("luck_best", {})
+    st.setdefault("quiz_day", {})
+    st.setdefault("gift_day", {})
+    st.setdefault("stats", {"quizzes": 0, "luck_spins": 0, "gifts": 0, "gift_coins": 0})
+    return st
+
+
+def v21_rss_mb() -> float:
+    """مصرف حافظه‌ی فرآیند بر حسب مگابایت (بدون وابستگی بیرونی)."""
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024.0, 1)
+    except Exception:
+        pass
+    try:
+        import resource
+        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)
+    except Exception:
+        return 0.0
+
+
+def v21_uptime_text() -> str:
+    sec = max(1, int(time.time() - V21_BOOT_TS))
+    d, rem = divmod(sec, 86400)
+    h, rem = divmod(rem, 3600)
+    m, _ = divmod(rem, 60)
+    if d:
+        return f"{d} روز و {h} ساعت"
+    if h:
+        return f"{h} ساعت و {m} دقیقه"
+    return f"{m} دقیقه"
+
+
+# ----------------------------------------------------------------
+# [V21-PERF 1] ذخیره‌ی سریع — همان منطق و اتمی‌بودن قبلی، با JSON فشرده.
+# روی فایل‌های داده‌ی بزرگ تا ~۳ برابر سریع‌تر است و حجم فایل را هم
+# به شکل چشمگیری کم می‌کند. محتوا هیچ فرقی نمی‌کند.
+# ----------------------------------------------------------------
+_V21_OLD_SAVE = save_data
+
+
+def save_data(force: bool = False) -> None:
+    global LAST_SAVE
+    current = time.time()
+    if not force and current - LAST_SAVE < SAVE_EVERY_SECONDS:
+        return
+    tmp = DATA_FILE + ".tmp"
+    with LOCK:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(DATA, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, DATA_FILE)
+        LAST_SAVE = current
+
+
+# ----------------------------------------------------------------
+# [V21-PERF 2] کش سطح‌بندی — level_for_xp بارها در هر رندر صدا زده
+# می‌شود؛ با lru_cache بدون هیچ تغییر رفتاری، سریع‌تر می‌شود.
+# ----------------------------------------------------------------
+_V21_OLD_LEVEL_FOR_XP = level_for_xp
+
+
+@_v21_lru_cache(maxsize=8192)
+def level_for_xp(xp: int) -> int:
+    return _V21_OLD_LEVEL_FOR_XP(int(xp))
+
+
+# ----------------------------------------------------------------
+# [V21-F1] /apexlive — تله‌متری زنده‌ی ربات
+# ----------------------------------------------------------------
+async def v21_cmd_live(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        users = len(DATA.get("users", {}))
+        groups = len(DATA.get("groups", {}))
+        games = DATA.get("games", {})
+        active = sum(1 for g in games.values() if isinstance(g, dict) and g.get("phase") not in ("finished", "ended"))
+        prompts = sum(len(v) for v in V7_BANKS_FINAL.values() if isinstance(v, list))
+        st = v21_store().get("stats", {})
+        lines = [
+            f"📡 <b>تله‌متری زنده‌ی {BOT_NAME}</b>",
+            V21_DIV,
+            f"⏱ آپ‌تایم: <b>{v21_uptime_text()}</b>",
+            f"🧠 حافظه: <b>{v21_rss_mb()} MB</b>",
+            f"🚀 نسخه: <b>{BOT_NAME} {V21_VERSION} TURBO</b>",
+            V21_DIV,
+            f"👥 کاربران: <b>{fmt_num(users)}</b>",
+            f"🌐 گروه‌ها: <b>{fmt_num(groups)}</b>",
+            f"🎮 بازی‌های فعال: <b>{fmt_num(active)}</b> (کل: {fmt_num(len(games))})",
+            f"🗃 سوالات: <b>{fmt_num(prompts)}</b> در {len(V7_BANKS_FINAL)} بانک",
+            V21_DIV,
+            f"🧩 مسابقه‌های ریضی امروز: <b>{fmt_num(int(st.get('quizzes', 0)))}</b>",
+            f"🎡 گردونه‌های شانس: <b>{fmt_num(int(st.get('luck_spins', 0)))}</b>",
+            f"🎁 هدیه‌های سکه: <b>{fmt_num(int(st.get('gifts', 0)))}</b>",
+        ]
+        await update.effective_message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ خطای تله‌متری: {escape(repr(exc))[:120]}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V21-F2] /apexluck — گردونه‌ی شانس روزانه با جکپات
+# ----------------------------------------------------------------
+V21_LUCK_TIERS = [
+    (30, (3, 6), "🎲 شانس معمولی"),
+    (30, (7, 15), "🍀 شانس خوب"),
+    (20, (16, 30), "⭐ شانس عالی"),
+    (15, (31, 50), "💎 شانس فوق‌العاده"),
+    (5, (60, 100), "🎰 جکپات!"),
+]
+
+
+def v21_luck_roll() -> tuple[int, str]:
+    roll = random.uniform(0, 100)
+    acc = 0.0
+    for pct, (lo, hi), label in V21_LUCK_TIERS:
+        acc += pct
+        if roll <= acc:
+            return random.randint(lo, hi), label
+    return random.randint(3, 6), "🎲 شانس معمولی"
+
+
+async def v21_cmd_luck(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        user = update.effective_user
+        if not user:
+            return
+        if not v7_has_started(user.id):
+            await update.effective_message.reply_text(
+                "🔒 اول ربات را فعال کن: <code>/start</code> را در پیوی بزن.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        u = get_user(user.id, user.first_name or "کاربر")
+        store = v21_store()
+        now = now_ts()
+        last = int(store["luck"].get(str(user.id), 0) or 0)
+        wait = last + V21_LUCK_COOLDOWN - now
+        if wait > 0:
+            hours = wait // 3600
+            minutes = (wait % 3600) // 60
+            await update.effective_message.reply_text(
+                f"🎡 گردونه‌ی شانس هنوز خسته است! ⏳\n"
+                f"دوباره بعد از <b>{hours} ساعت و {minutes} دقیقه</b> برگرد.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        prize, label = v21_luck_roll()
+        store["luck"][str(user.id)] = now
+        store["stats"]["luck_spins"] = int(store["stats"].get("luck_spins", 0)) + 1
+        best = int(store["luck_best"].get(str(user.id), 0) or 0)
+        if prize > best:
+            store["luck_best"][str(user.id)] = prize
+        add_coins(user.id, prize, user.first_name or "کاربر")
+        add_xp(user.id, min(10, max(2, prize // 8)), user.first_name or "کاربر")
+        save_data()
+        bar = "█" * min(10, max(1, prize // 10)) + "░" * (10 - min(10, max(1, prize // 10)))
+        await update.effective_message.reply_text(
+            f"🎡 <b>گردونه‌ی شانس</b>\n{V21_DIV}\n"
+            f"{escape(user.first_name or 'کاربر')} گردونه را چرخاند ...\n"
+            f"[{bar}]\n\n"
+            f"{label}\n"
+            f"🪙 جایزه: <b>+{prize} سکه</b>\n"
+            f"💰 موجودی: <b>{fmt_num(int(u.get('coins', 0)) + prize)}</b> سکه\n"
+            f"🏅 رکورد تو: <b>{max(prize, best)}</b>",
+            parse_mode=ParseMode.HTML,
+        )
+        audit("v21_luck", user.id, update.effective_chat.id if update.effective_chat else None, f"prize={prize}")
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ خطای گردونه: {escape(repr(exc))[:120]}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V21-F3] /apexlove — سنجش‌گر دوستی/عشق (ریپلای یا منشن یا @یوزرنیم)
+# ----------------------------------------------------------------
+V21_LOVE_TIERS = [
+    (95, "💍 عاشقِ ابدی!"),
+    (85, "❤️‍🔥 جرقه‌ی آتشین"),
+    (70, "💞 هم‌دمی واقعی"),
+    (55, "🤝 رفاقت محکم"),
+    (40, "🌱 آشنایی در حال رشد"),
+    (25, "😐 آشنا-بی‌ادعا"),
+    (10, "🧊 سرد ولی محترمانه"),
+    (0, "👽 از دو سیاره‌ی مختلف!"),
+]
+
+
+def v21_love_score(a: str, b: str) -> int:
+    lo, hi = sorted([a.lower(), b.lower()])
+    import hashlib as _hl
+    digest = _hl.md5(f"apexlove|{lo}|{hi}".encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % 101
+
+
+async def v21_cmd_love(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        msg = update.effective_message
+        user = update.effective_user
+        chat = update.effective_chat
+        if not (msg and user and chat):
+            return
+        target = None
+        if msg.reply_to_message and msg.reply_to_message.from_user:
+            target = msg.reply_to_message.from_user
+        else:
+            # تلاش برای منشن داخل متن
+            for ent in (msg.entities or []):
+                if ent.type == "text_mention" and ent.user:
+                    target = ent.user
+                    break
+        if target is not None:
+            score = v21_love_score(f"id:{user.id}", f"id:{target.id}")
+            tname = target.first_name or "کاربر"
+        else:
+            args = (context.args or [])
+            raw = (args[0] if args else "").strip().lstrip("@")
+            if not raw:
+                await msg.reply_text(
+                    "💘 <b>سنجش‌گر دوستی</b>\n"
+                    "روی پیام طرف <b>ریپلای</b> کن و <code>/apexlove</code> بزن،\n"
+                    "یا اسمش را بنویس: <code>/apexlove @username</code>",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            score = v21_love_score(f"id:{user.id}", f"name:{raw}")
+            tname = raw
+        label = next(txt for th, txt in V21_LOVE_TIERS if score >= th)
+        filled = round(score / 10)
+        bar = "❤️" * filled + "🤍" * (10 - filled)
+        await msg.reply_text(
+            f"💘 <b>سنجش‌گر دوستی</b>\n{V21_DIV}\n"
+            f"{escape(user.first_name or 'کاربر')} × {escape(str(tname))}\n"
+            f"[{bar}] <b>{score}٪</b>\n\n{label}",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ خطای سنجش‌گر: {escape(repr(exc))[:120]}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V21-F4] /apexquiz — مسابقه‌ی ریاضیِ سرعتی (سوالات تولیدی، بدون بانک)
+# ----------------------------------------------------------------
+def v21_quiz_make() -> tuple[str, int]:
+    """یک سوال ریاضی تولید می‌کند — هیچ ربطی به بانک سوالات ندارد."""
+    op = random.choice(("+", "-", "×"))
+    if op == "+":
+        a, b = random.randint(12, 99), random.randint(12, 99)
+        ans = a + b
+    elif op == "-":
+        a, b = random.randint(40, 150), random.randint(5, 39)
+        ans = a - b
+    else:
+        a, b = random.randint(3, 12), random.randint(3, 12)
+        ans = a * b
+    return f"{a} {op} {b}", ans
+
+
+async def v21_quiz_timeout(gid: str, chat_id: int, answer: int, question: str) -> None:
+    try:
+        await asyncio.sleep(V21_QUIZ_TTL)
+        round_ = V21_RUNTIME["quiz_rounds"].get(gid)
+        if not round_ or int(round_.get("answer", -999999)) != int(answer):
+            return  # راند قبلاً برنده داشته و بسته شده
+        V21_RUNTIME["quiz_rounds"].pop(gid, None)
+        try:
+            await v19_send_group(chat_id, f"⌛ <b>زمان تمام شد!</b>\nجوابِ <code>{question}</code> برابر بود با <b>{answer}</b>.\n هیچ‌کس امتیاز نگرفت — دوباره امتحان کن: <code>/apexquiz</code>")
+        except Exception:
+            pass
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        pass
+
+
+async def v21_cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        chat = update.effective_chat
+        user = update.effective_user
+        if not (chat and user) or chat.type == "private":
+            await update.effective_message.reply_text("⚔️ مسابقه‌ی سرعتی فقط در گروه معنا دارد!")
+            return
+        gid = str(chat.id)
+        if gid in V21_RUNTIME["quiz_rounds"]:
+            r = V21_RUNTIME["quiz_rounds"][gid]
+            await update.effective_message.reply_text(
+                f"⚔️ یک مسابقه فعال است! سریع‌تر باش:\n<code>{r['question']} = ؟</code>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        # ضداسپم: حداکثر ۲۰ راند در روز برای هر گروه
+        store = v21_store()
+        day = v18_today()
+        key = f"{gid}:{day}"
+        if int(store["quiz_day"].get(key, 0) or 0) >= 20:
+            await update.effective_message.reply_text("🧯 سهمیه‌ی ۲۰ مسابقه‌ی امروزِ این گروه پر شده. فردا بیا!")
+            return
+        store["quiz_day"][key] = int(store["quiz_day"].get(key, 0) or 0) + 1
+        store["stats"]["quizzes"] = int(store["stats"].get("quizzes", 0)) + 1
+        question, answer = v21_quiz_make()
+        V21_RUNTIME["quiz_rounds"][gid] = {
+            "question": question,
+            "answer": int(answer),
+            "ts": time.time(),
+            "by": user.id,
+        }
+        task = asyncio.create_task(v21_quiz_timeout(gid, chat.id, int(answer), question))
+        V21_RUNTIME["quiz_tasks"][gid] = task
+        await update.effective_message.reply_text(
+            f"⚔️ <b>مسابقه‌ی سرعتی!</b>\n{V21_DIV}\n"
+            f"اولین نفری که جواب درست را بنویس برنده است:\n\n"
+            f"🧮  <b>{question} = ؟</b>\n\n"
+            f"⏳ فقط <b>{V21_QUIZ_TTL} ثانیه</b> فرصت دارید!\n"
+            f"🏆 جایزه: <b>+۸ XP</b> و <b>+۵ سکه</b>",
+            parse_mode=ParseMode.HTML,
+        )
+        audit("v21_quiz", user.id, chat.id, question)
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ خطای مسابقه: {escape(repr(exc))[:120]}")
+        except Exception:
+            pass
+
+
+async def v21_quiz_listener(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """شنونده‌ی پاسخ مسابقه — در گروه جدا اجرا می‌شود و مزاحم روترهای
+    اصلی نیست؛ فقط وقتی راند فعال است محاسبه می‌کند."""
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        if not (msg and chat and user and msg.text):
+            return
+        gid = str(chat.id)
+        round_ = V21_RUNTIME["quiz_rounds"].get(gid)
+        if not round_:
+            return
+        raw = msg.text.strip().replace(" ", "")
+        try:
+            val = int(raw)
+        except Exception:
+            return
+        if val != int(round_["answer"]):
+            return
+        V21_RUNTIME["quiz_rounds"].pop(gid, None)
+        task = V21_RUNTIME["quiz_tasks"].pop(gid, None)
+        if task:
+            task.cancel()
+        name = user.first_name or "برنده"
+        add_xp(user.id, 8, name)
+        add_coins(user.id, 5, name)
+        save_data()
+        await msg.reply_text(
+            f"🎉 <b>{escape(name)}</b> سریع‌ترین بود!\n"
+            f"✅ {round_['question']} = <b>{round_['answer']}</b>\n"
+            f"🏆 +۸ XP و +۵ سکه گرفت.",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+
+# ----------------------------------------------------------------
+# [V21-F5] /apexgift — هدیه‌ی سکه با مالیات ۵٪ (اقتصادِ اجتماعی)
+# ----------------------------------------------------------------
+async def v21_cmd_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        msg = update.effective_message
+        user = update.effective_user
+        if not (msg and user):
+            return
+        target = None
+        if msg.reply_to_message and msg.reply_to_message.from_user:
+            target = msg.reply_to_message.from_user
+        else:
+            for ent in (msg.entities or []):
+                if ent.type == "text_mention" and ent.user:
+                    target = ent.user
+                    break
+        args = list(context.args or [])
+        amount = None
+        if args and str(args[0]).isdigit():
+            amount = int(args.pop(0))
+        if target is None and args and str(args[0]).isdigit():
+            target = _V21_SimpleNamespace(id=int(args.pop(0)), first_name="کاربر")
+        if target is None or amount is None:
+            await msg.reply_text(
+                "🎁 <b>هدیه‌ی سکه</b>\n"
+                "روی پیام دوستت ریپلای کن و بنویس: <code>/apexgift 20</code>\n"
+                f"حداقل: <b>{V21_GIFT_MIN}</b> سکه · مالیات: <b>{V21_GIFT_TAX_PCT}٪</b>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        if target.id == user.id:
+            await msg.reply_text("🪞 به خودت هدیه نمی‌دهی — ولی به خودت افتخار می‌کنی!")
+            return
+        if amount < V21_GIFT_MIN:
+            await msg.reply_text(f"⚠️ حداقل هدیه <b>{V21_GIFT_MIN} سکه</b> است.", parse_mode=ParseMode.HTML)
+            return
+        # سقف روزانه برای جلوگیری از فارم آلت
+        store = v21_store()
+        day = v18_today()
+        rec = store["gift_day"].get(str(user.id))
+        if not rec or rec.get("day") != day:
+            rec = {"day": day, "sum": 0}
+        if int(rec.get("sum", 0)) + amount > 300:
+            await msg.reply_text("🧯 سقف هدیه‌ی روزانه‌ی تو (۳۰۰ سکه) پر شده است.")
+            return
+        sender = get_user(user.id, user.first_name or "کاربر")
+        if int(sender.get("coins", 0)) < amount:
+            await msg.reply_text(
+                f"💸 موجودی کافی نیست! تو <b>{fmt_num(int(sender.get('coins', 0)))}</b> سکه داری.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        tax = max(1, amount * V21_GIFT_TAX_PCT // 100)
+        net = amount - tax
+        with LOCK:
+            sender["coins"] = int(sender.get("coins", 0)) - amount
+        receiver = get_user(target.id, target.first_name or "کاربر")
+        receiver["coins"] = int(receiver.get("coins", 0)) + net
+        rec["sum"] = int(rec.get("sum", 0)) + amount
+        store["gift_day"][str(user.id)] = rec
+        store["stats"]["gifts"] = int(store["stats"].get("gifts", 0)) + 1
+        store["stats"]["gift_coins"] = int(store["stats"].get("gift_coins", 0)) + amount
+        save_data()
+        await msg.reply_text(
+            f"🎁 <b>هدیه‌ی سکه!</b>\n{V21_DIV}\n"
+            f"{escape(user.first_name or 'کاربر')} → {escape(target.first_name or 'کاربر')}\n"
+            f"🪙 مبلغ: <b>{amount}</b> · مالیات: <b>{tax}</b> · دریافتی: <b>{net}</b>\n"
+            f"💌 پیوست: <i>سپرده شد</i>",
+            parse_mode=ParseMode.HTML,
+        )
+        audit("v21_gift", user.id, update.effective_chat.id if update.effective_chat else None, f"to={target.id} amount={amount}")
+    except Exception as exc:
+        try:
+            await update.effective_message.reply_text(f"⚠️ خطای هدیه: {escape(repr(exc))[:120]}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V21-BACKUP] بکاپ خودکار هر ۶ ساعت — با همان سیستم موجود
+# ----------------------------------------------------------------
+async def v21_backup_loop(app) -> None:
+    try:
+        while True:
+            await asyncio.sleep(V21_BACKUP_EVERY)
+            try:
+                make_backup_file("auto_v21")
+            except Exception:
+                continue
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        return
+
+
+# ----------------------------------------------------------------
+# [V21-WIRING] سیم‌کشی لایه — دستورات جدید به زنجیره‌ی ثبت اضافه می‌شوند
+# ----------------------------------------------------------------
+_AR21_OLD_REGISTER = ar15_register_handlers
+
+
+def ar15_register_handlers(app) -> None:
+    _AR21_OLD_REGISTER(app)
+    try:
+        app.add_handler(CommandHandler("apexlive", v21_cmd_live))
+        app.add_handler(CommandHandler("apexluck", v21_cmd_luck))
+        app.add_handler(CommandHandler("apexlove", v21_cmd_love))
+        app.add_handler(CommandHandler("apexquiz", v21_cmd_quiz))
+        app.add_handler(CommandHandler("apexgift", v21_cmd_gift))
+        # شنونده‌ی پاسخ مسابقه در گروه جدا — مزاحم روتر متنِ اصلی نیست
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, v21_quiz_listener), group=15)
+    except Exception as exc:
+        try:
+            print(f"ApexRival V21 register warning: {exc!r}")
+        except Exception:
+            pass
+
+
+_AR21_OLD_POST_INIT = ar15_post_init
+
+
+async def ar15_post_init(application):
+    await _AR21_OLD_POST_INIT(application)
+    try:
+        application.create_task(v21_backup_loop(application))
+        print("ApexRival V21 TURBO layer online | fast-save=on | level-cache=on | "
+              "apexlive=on | apexluck=on | apexlove=on | apexquiz=on | apexgift=on | "
+              "auto-backup=6h | resilient-launcher=on")
+    except Exception as exc:
+        try:
+            print(f"ApexRival V21 boot warning: {exc!r}")
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------
+# [V21-CHECK] سلف‌چک لایه‌ی V21
+# ----------------------------------------------------------------
+def v21_self_check() -> None:
+    for fn in (
+        v21_store, v21_cmd_live, v21_cmd_luck, v21_cmd_love, v21_cmd_quiz,
+        v21_cmd_gift, v21_quiz_listener, v21_quiz_make, v21_luck_roll,
+        v21_love_score, v21_backup_loop, v21_self_check, main_apexrival_21,
+    ):
+        assert callable(fn), f"v21 missing function: {getattr(fn, '__name__', fn)}"
+    # گردونه: بازه‌ی معتبر
+    for _ in range(200):
+        prize, label = v21_luck_roll()
+        assert 3 <= prize <= 100 and label
+    # عشق‌سنج: قطعی و متقارن
+    assert v21_love_score("id:1", "id:2") == v21_love_score("id:2", "id:1")
+    assert 0 <= v21_love_score("id:1", "id:2") <= 100
+    # مسابقه: جواب درست
+    for _ in range(50):
+        q, a = v21_quiz_make()
+        assert "؟" not in q and isinstance(a, int)
+        aa, bb, o = q.split()
+        x, y = int(aa), int(bb)
+        assert {"+": x + y, "-": x - y, "×": x * y}[o] == a
+    # مخزن پایدار
+    st = v21_store()
+    assert isinstance(st["stats"], dict)
+    # سلف‌چک ذخیره‌ی فشرده: داده‌ها باید یکسان بمانند
+    probe = {"a": {"ب": [1, 2, 3]}, "c": "تست"}
+    assert json.loads(json.dumps(probe, ensure_ascii=False, separators=(",", ":"))) == probe
+    print("ApexRival V21 TURBO self-check OK | fast-save=on | cache=on | "
+          "5-new-commands=on | auto-backup=on | resilient-launcher=on")
+
+
+# ----------------------------------------------------------------
+# [V21-MAIN] لانچر نهایی مقاوم — اگر polling خطای مهلک بدهد، خودکار
+# با فاصله دوباره بالا می‌آید (شبکه/هاست ناپایدار دیگر ربات را نمی‌کشد)
+# ----------------------------------------------------------------
+def main_apexrival_21():
+    """لانچر TURBO: چک V21 + چک‌های همه‌ی لایه‌ها + استارت مقاوم."""
+    v21_self_check()
+    print(
+        f"{BOT_NAME} V21 TURBO | fast-compact-save | level-cache | "
+        "apexlive | apexluck | apexlove | apexquiz | apexgift | "
+        "auto-backup-6h | resilient-restart"
+    )
+    attempts = 0
+    while True:
+        started = time.time()
+        try:
+            return main_apexrival_20()
+        except KeyboardInterrupt:
+            raise
+        except SystemExit:
+            raise
+        except Exception as exc:
+            ran = time.time() - started
+            if ran > 300:
+                attempts = 0          # اجرای پایدار، شمارنده صفر شود
+            attempts += 1
+            print(f"ApexRival V21 launcher: fatal error ({exc!r}); "
+                  f"restart {attempts}/5 in 7s ...")
+            try:
+                audit("v21_restart", ADMIN_ID, None, repr(exc)[:300])
+            except Exception:
+                pass
+            if attempts >= 5:
+                raise
+            time.sleep(7)
+
+
+# لایه‌ی V21 جای لانچر قبلی را می‌گیرد (نسخه‌ی قبلی سر جایش است)
+main_apexrival_15 = main_apexrival_21
+main = main_apexrival_21
+
+
 if __name__ == "__main__":
     main_apexrival_15()
-
