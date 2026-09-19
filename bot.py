@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ================================================================
 #  ApexRival — ربات بازی گروهی جرئت و حقیقت
-#  نسخه‌ی ۱.۲.۰ — Advanced Edition (Extended) — Ultimate Build IV
+#  نسخه‌ی ۱.۲.۰ — Advanced Edition (Extended) — Ultimate Build V
 #  توسعه‌یافته روی نسخه‌ی ۱.۰.۰ (معماری تخت، بدون لایه‌بندی)
 #
 #  این فایل یک برنامه‌ی واحد و تمیز است:
@@ -115,6 +115,17 @@
 #   • خوش‌آمدگویی گروه غنی: آمار گروه، لِگ، دستورات مهم
 #   • پشتیبانی از پیام خوش‌آمدگویی سفارشی گروه
 #   • ثبت خودکار در فصل، مأموریت‌ها و قدم‌های میل
+#
+# بهبود در Ultimate Build V (همچنان نسخه 1.2.0) — عمیق‌تر کردن بازی گروهی:
+#   • نمایش سوال غنی‌تر: سطح و رتبه‌ی پرسشگر و هدف، گرما، دور، پاداش
+#   • نمایش مجازات غنی‌تر: سطح محکوم، صادرکننده، گرما، دور
+#   • پاداش کیفیت پاسخ: +۳ برای پاسخ ۱۰۰+ کاراکتر، +۲ برای ۵۰+، +۱ برای ۲۰+
+#   • ثبت خودکار پاسخ‌ها در مأموریت‌ها (answers، dares، truths)
+#   • Stall Guard چندمرحله‌ای: یادآوری اول → یادآوری فوری → رد خودکار
+#   • پیام رد خودکار با نام بازیکن
+#   • پنل امتیازات غنی‌تر: مدال، سطح، رتبه، دور، گرما، مدت، تعداد سوال
+#   • ثبت آمار کامل سوالات در حین بازی
+#   • فارسی‌سازی کامل همه‌ی پیام‌های ایکس‌پی (XP → ایکس‌پی)
 #
 #  راه‌اندازی:  BOT_TOKEN=... ADMIN_ID=... python bot.py
 # ================================================================
@@ -3924,15 +3935,36 @@ async def game_ask_question(context, game: dict, questioner: int, target: int, m
         return
 
     question = pick_question(game, mode, target)
-    heat = game_heat(game)
+    heat_info = game_heat_advanced(game)
+    heat_name = heat_info.get("name", "🟢 آرام")
+    heat_level = heat_info.get("level", 1)
+    intensity = heat_info.get("intensity", "سبک و دوستانه")
+    round_num = int(game.get("round", 0)) + 1
+    # اطلاعات پرسشگر و هدف
+    try:
+        q_user = get_user(int(questioner))
+        q_level = int(q_user.get("level", 1))
+        q_rank_name, q_rank_icon, _ = rank_for_xp(int(q_user.get("xp", 0)))
+    except Exception:
+        q_level = 1
+        q_rank_name, q_rank_icon = "تازه‌کار", "🌱"
+    try:
+        t_user = get_user(int(target))
+        t_level = int(t_user.get("level", 1))
+        t_rank_name, t_rank_icon, _ = rank_for_xp(int(t_user.get("xp", 0)))
+    except Exception:
+        t_level = 1
+        t_rank_name, t_rank_icon = "تازه‌کار", "🌱"
     text = (
-        f"🎤 پرسشگر: {mention_user(questioner, name_of(questioner, game))}\n"
-        f"🎯 هدف: {mention_user(target, name_of(target, game))}\n"
-        f"📂 موضوع: <b>{MODE_LABELS.get(mode, mode)}</b> · 🌡 {heat_chip(heat)}\n"
+        f"🎤 پرسشگر: {mention_user(questioner, name_of(questioner, game))} 🔥{q_level} {q_rank_icon}\n"
+        f"🎯 هدف: {mention_user(target, name_of(target, game))} 🔥{t_level} {t_rank_icon}\n"
+        f"📂 موضوع: <b>{MODE_LABELS.get(mode, mode)}</b>\n"
+        f"🌡 گرما: <b>{heat_name}</b> ({intensity}) · 🎯 دور {fmt_num(round_num)}\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"<b>{escape(question)}</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"✍️ {mention_user(target, name_of(target, game))}، با <b>Reply به همین پیام</b> جواب بده!"
+        f"✍️ {mention_user(target, name_of(target, game))}، با <b>Reply به همین پیام</b> جواب بده!\n"
+        f"💡 پاداش: +۵ تا +۸ ایکس‌پی و سکه"
     )
     footer = ads_footer(chat_id, "question")
     if footer:
@@ -3948,12 +3980,20 @@ async def game_ask_question(context, game: dict, questioner: int, target: int, m
             "expires": time.time() + int(settings.get("penalty_deadline", 300) or 300) + 600,
             "responders": [],
             "sent_ts": time.time(),
+            "heat_level": heat_level,
         }
         # آمار موضوع برای پروفایل
         try:
             st = get_user(target).setdefault("stats", {})
             if mode in st:
                 st[mode] = int(st.get(mode, 0)) + 1
+        except Exception:
+            pass
+        # ثبت در آمار بازی
+        try:
+            game_stats = game.setdefault("_question_stats", {})
+            game_stats[mode] = int(game_stats.get(mode, 0)) + 1
+            game_stats["total"] = int(game_stats.get("total", 0)) + 1
         except Exception:
             pass
         touch_game(game)
@@ -3973,14 +4013,29 @@ async def game_show_penalty(context, game: dict, target: int, questioner: int, q
     penalty = pick_penalty(game)
     settings = game.get("settings", {})
     deadline = int(settings.get("penalty_deadline", 300) or 300)
+    heat_info = game_heat_advanced(game)
+    heat_name = heat_info.get("name", "🟢 آرام")
+    # اطلاعات محکوم
+    try:
+        t_user = get_user(int(target))
+        t_level = int(t_user.get("level", 1))
+        t_rank_name, t_rank_icon, _ = rank_for_xp(int(t_user.get("xp", 0)))
+    except Exception:
+        t_level = 1
+        t_rank_name, t_rank_icon = "تازه‌کار", "🌱"
+    round_num = int(game.get("round", 0)) + 1
     text = (
         f"☠️ <b>حکم صادر شد!</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 محکوم: {mention_user(target, name_of(target, game))}\n"
+        f"🎯 محکوم: {mention_user(target, name_of(target, game))} 🔥{t_level} {t_rank_icon}\n"
+        f"🎤 صادرکننده: {mention_user(questioner, name_of(questioner, game))}\n"
+        f"🌡 گرما: <b>{heat_name}</b> · 🎯 دور {fmt_num(round_num)}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
         f"⚖️ حکم: <b>{escape(penalty)}</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"⏳ مهلت: <b>{fmt_num(deadline // 60)} دقیقه</b>\n"
-        f"✅ بعد از انجام، با <b>Reply به همین پیام</b> تایید کن (+۴ XP و +۲ سکه)"
+        f"✅ بعد از انجام، با <b>Reply به همین پیام</b> تأیید کن\n"
+        f"🎁 پاداش: +۴ ایکس‌پی و +۲ سکه"
     )
     footer = ads_footer(chat_id, "question")
     if footer:
@@ -4006,6 +4061,12 @@ async def game_show_penalty(context, game: dict, target: int, questioner: int, q
             "responders": [],
             "sent_ts": time.time(),
         }
+        # ثبت آمار مجازات
+        try:
+            game_stats = game.setdefault("_question_stats", {})
+            game_stats["penalties"] = int(game_stats.get("penalties", 0)) + 1
+        except Exception:
+            pass
         touch_game(game)
         save_data(force=True)
         if query is not None:
@@ -4208,6 +4269,9 @@ async def handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return True
     prompt.setdefault("responders", []).append(uid)
     kind = str(prompt.get("mode") or prompt.get("kind") or "truth")
+    # متن پاسخ برای ارزیابی کیفیت
+    answer_text = str(msg.text or "").strip()
+    answer_len = len(answer_text)
 
     # --- تکمیل حکم: پاداش کوچک، بدون پیشروی نوبت ---
     if kind == "penalty":
@@ -4223,31 +4287,60 @@ async def handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         touch_game(game)
         save_data(force=True)
         try:
-            await msg.reply_text("✅ <b>حکم انجام شد و ثبت شد.</b>\n🎁 +۴ XP و +۲ سکه", parse_mode=ParseMode.HTML)
+            await msg.reply_text("✅ <b>حکم انجام شد و ثبت شد.</b>\n🎁 +۴ ایکس‌پی و +۲ سکه", parse_mode=ParseMode.HTML)
         except Exception:
             pass
         return True
 
+    # محاسبه پاداش بر اساس کیفیت پاسخ
     xp, coins = REPLY_REWARDS.get(kind, (5, 2))
-    reward_player(game, uid, xp, coins, win=True, reason=f"Turn Reply:{kind}")
+    # پاداش کیفیت: پاسخ‌های طولانی‌تر پاداش بیشتری
+    quality_bonus = 0
+    quality_label = ""
+    if answer_len >= 100:
+        quality_bonus = 3
+        quality_label = "📝 پاسخ مفصل! +۳ ایکس‌پی"
+    elif answer_len >= 50:
+        quality_bonus = 2
+        quality_label = "📝 پاسخ خوب! +۲ ایکس‌پی"
+    elif answer_len >= 20:
+        quality_bonus = 1
+        quality_label = "📝 پاسخ متوسط! +۱ ایکس‌پی"
+    elif answer_len < 5:
+        quality_bonus = 0
+        quality_label = "📝 پاسخ کوتاه"
+    xp_total = xp + quality_bonus
+    reward_player(game, uid, xp_total, coins, win=True, reason=f"Turn Reply:{kind}")
     questioner = int(prompt.get("questioner_uid", current_questioner(game) or uid))
     add_xp(questioner, 2, name_of(questioner, game), 1)
     try:
         game.setdefault("round_scores", {})[str(questioner)] = int(game.setdefault("round_scores", {}).get(str(questioner), 0)) + 2
     except Exception:
         pass
+    # ثبت آمار پاسخ‌دهی
+    try:
+        bump_mission_progress(int(uid), "answers", 1)
+        if kind == "dare":
+            bump_mission_progress(int(uid), "dares", 1)
+        elif kind == "truth":
+            bump_mission_progress(int(uid), "truths", 1)
+    except Exception:
+        pass
     game.pop("reply_prompt", None)
     next_q = advance_turn(game)
     save_data(force=True)
+    # پیام تأیید غنی
+    confirmation_msg = (
+        f"✅ <b>پاسخ ثبت شد!</b>\n\n"
+        f"🎯 {mention_user(uid, name_of(uid, game))} پاسخ نوبت را داد.\n"
+        f"🎤 {mention_user(questioner, name_of(questioner, game))}، سوال شما با موفقیت جواب داده شد.\n"
+        f"🎁 پاسخ‌دهنده: +{fmt_num(xp_total)} ایکس‌پی و +{fmt_num(coins)} سکه\n"
+        f"⭐ پرسشگر: +۲ ایکس‌پی"
+    )
+    if quality_label:
+        confirmation_msg += f"\n{quality_label}"
     try:
-        await msg.reply_text(
-            f"✅ <b>پاسخ ثبت شد!</b>\n\n"
-            f"🎯 {mention_user(uid, name_of(uid, game))} پاسخ نوبت را داد.\n"
-            f"🎤 {mention_user(questioner, name_of(questioner, game))}، سوال شما با موفقیت جواب داده شد.\n"
-            f"🎁 پاسخ‌دهنده: +{fmt_num(xp)} XP و +{fmt_num(coins)} سکه\n"
-            f"⭐ پرسشگر: +۲ XP",
-            parse_mode=ParseMode.HTML,
-        )
+        await msg.reply_text(confirmation_msg, parse_mode=ParseMode.HTML)
     except Exception:
         pass
     if next_q is not None:
@@ -4262,10 +4355,31 @@ async def game_show_scores(query, game: dict) -> None:
         score = int(game.get("round_scores", {}).get(str(uid), 0))
         entries.append((score, int(uid)))
     entries.sort(key=lambda x: (-x[0], name_of(x[1], game)))
+    medals = ["🥇", "🥈", "🥉"]
     for i, (score, uid) in enumerate(entries, 1):
-        rows.append(f"<b>{fmt_num(i)}</b> · {mention_user(uid, name_of(uid, game))} · ⭐ {fmt_num(score)}")
+        try:
+            u = get_user(int(uid))
+            level = int(u.get("level", 1))
+            rank_name, rank_icon, _ = rank_for_xp(int(u.get("xp", 0)))
+        except Exception:
+            level = 1
+            rank_name, rank_icon = "تازه‌کار", "🌱"
+        prefix = medals[i - 1] if i <= 3 else f"<b>{fmt_num(i)}</b>"
+        rows.append(f"{prefix} {mention_user(uid, name_of(uid, game))} 🔥{level} {rank_icon} · ⭐ {fmt_num(score)}")
+    # اطلاعات بازی
+    heat_info = game_heat_advanced(game)
+    heat_name = heat_info.get("name", "🟢 آرام")
+    round_num = int(game.get("round", 0)) + 1
+    started = int(game.get("started_at", 0))
+    duration_min = (now_ts() - started) // 60 if started else 0
+    game_stats = game.get("_question_stats", {})
+    total_q = int(game_stats.get("total", 0))
     await safe_edit(query,
-                    f"{breadcrumb('بازی', 'امتیازها')}\n\n" + card("🏆 Leaderboard", *(rows or ["هنوز امتیازی ثبت نشده."])),
+                    f"📊 <b>امتیازهای بازی</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"🎯 دور: <b>{fmt_num(round_num)}</b> · 🌡 {heat_name} · ⏱ {fmt_num(duration_min)}م\n"
+                    f"📊 سوالات: <b>{fmt_num(total_q)}</b>\n\n"
+                    + "\n".join(rows or ["هنوز امتیازی ثبت نشده."]),
                     kb([[btn("↻ تازه‌سازی", "G|SCORES"), btn("🔙 نوبت", "G|TURN")]]))
 
 
@@ -4385,7 +4499,9 @@ async def end_game_flow(context, game: dict, query=None, reason: str = "manual")
 #  نگهبان نوبت (Stall Guard) + بازی گیرکرده (Stuck Recovery)
 # -----------------------------
 async def stall_guard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """هر ۳ دقیقه: بازی‌های گیرکرده را پیدا کن، یادآوری بده یا رد کن."""
+    """هر ۳ دقیقه: بازی‌های گیرکرده را پیدا کن، یادآوری بده یا رد کن.
+    نسخه‌ی بهبودیافته: یادآوری چندمرحله‌ای با Escalation.
+    """
     try:
         cfgs: dict[int, dict] = {}
         for gid, game in list(DATA.get("games", {}).items()):
@@ -4401,35 +4517,60 @@ async def stall_guard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             smin = max(3, int(cfg.get("smin", 12)))
             try:
                 sent = game.get("_q_sent_ts", 0)
-                reminded = game.get("_q_reminded", False)
+                reminded_count = int(game.get("_q_remind_count", 0))
                 if not sent and isinstance(prompt, dict):
                     sent = float(prompt.get("sent_ts", 0) or 0) or 0
                 if not sent:
                     continue
                 elapsed = time.time() - float(sent)
-                if elapsed > smin * 60 and not reminded:
+                # مرحله‌ی ۱: یادآوری اول (پس از smin دقیقه)
+                if elapsed > smin * 60 and reminded_count == 0:
                     target = prompt.get("target_uid")
                     if target:
                         try:
                             await context.bot.send_message(
                                 chat_id,
-                                f"⏳ {mention_user(int(target), name_of(int(target), game))} هنوز منتظر جواب تو هستیم! 🙏",
+                                f"⏳ {mention_user(int(target), name_of(int(target), game))} هنوز منتظر جواب تو هستیم! 🙏\n"
+                                f"💡 با Reply به پیام سوال جواب بده.",
                                 parse_mode=ParseMode.HTML,
                             )
                         except Exception:
                             pass
-                    game["_q_reminded"] = True
+                    game["_q_remind_count"] = 1
                     save_data()
+                # مرحله‌ی ۲: یادآوری دوم (پس از smin + ۳ دقیقه)
+                elif elapsed > (smin + 3) * 60 and reminded_count == 1:
+                    target = prompt.get("target_uid")
+                    if target:
+                        try:
+                            await context.bot.send_message(
+                                chat_id,
+                                f"⏰ {mention_user(int(target), name_of(int(target), game))} وقتت داره تموم می‌شه! 🚨\n"
+                                f"⏳ فقط ۳ دقیقه دیگه!",
+                                parse_mode=ParseMode.HTML,
+                            )
+                        except Exception:
+                            pass
+                    game["_q_remind_count"] = 2
+                    save_data()
+                # مرحله‌ی ۳: رد خودکار نوبت (پس از smin + ۶ دقیقه)
                 elif elapsed > (smin + 6) * 60:
                     # رد خودکار نوبت
+                    target = prompt.get("target_uid")
+                    if target:
+                        try:
+                            await context.bot.send_message(
+                                chat_id,
+                                f"⏭ نوبت {mention_user(int(target), name_of(int(target), game))} به‌خاطر عدم پاسخ، خودکار رد شد.",
+                                parse_mode=ParseMode.HTML,
+                            )
+                        except Exception:
+                            pass
                     game.pop("reply_prompt", None)
                     game.pop("_q_reminded", None)
+                    game.pop("_q_remind_count", None)
                     nxt = advance_turn(game)
                     save_data(force=True)
-                    try:
-                        await context.bot.send_message(chat_id, "⏭ نوبت معطل مانده خودکار رد شد.", parse_mode=ParseMode.HTML)
-                    except Exception:
-                        pass
                     if nxt is not None:
                         await game_send_turn_card(context, game)
             except Exception:
