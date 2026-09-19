@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ================================================================
 #  ApexRival — ربات بازی گروهی جرئت و حقیقت
-#  نسخه‌ی ۱.۱.۰ — Advanced Edition
+#  نسخه‌ی ۱.۲.۰ — Advanced Edition (Extended) — Ultimate Build
 #  توسعه‌یافته روی نسخه‌ی ۱.۰.۰ (معماری تخت، بدون لایه‌بندی)
 #
 #  این فایل یک برنامه‌ی واحد و تمیز است:
@@ -18,13 +18,47 @@
 #   • Daily Missions شخصی با جایزه
 #   • Private Match حرفه‌ای دو نفره در PV
 #   • Friend System / Rival System / Referral
-#   • Tournament / Survival / Team Battle
-#   • Season System / Event System / AI Game Master
+#   • Tournament / Season / Event
 #   • Notification Center / User Settings / Feedback
 #   • Permission System چندسطحی (Owner/Admin/Mod/User)
 #   • Maintenance Mode / Crash Recovery
-#   • Admin Dashboard حرفه‌ای (Dashboard/User/Game/Achievement/Economy/Reward/Group Managers)
-#   • Analytics حرفه‌ای / Logging ساختاریافته / Export اطلاعات
+#   • Admin Dashboard حرفه‌ای
+#
+# 新增 در نسخه‌ی ۱.۲.۰ (Advanced Edition Extended):
+#   • Admin Managers کامل: User Manager / Game Manager / Achievement Manager /
+#     Economy Manager / Group Manager / Settings (با عملیات مدیریتی کامل)
+#   • AI Game Master (پیشنهاد حالت بازی + تحلیل سبک بازیکن)
+#   • Survival Mode (بازی بقا با استریک و افزایش سختی)
+#   • Team Battle (بازی تیمی)
+#   • Leaderboard های چندگانه: Weekly / Monthly / All-time / Group
+#   • Daily Reward (پاداش روزانه با استریک)
+#   • Player of the Day (بازیکن برتر روز)
+#   • Social Wall (feed فعالیت‌های جامعه)
+#   • Crash Recovery برای Games اصلی
+#   • Anti-Spam پیشرفته (محدودیت ساعتانه/روزانه)
+#   • Export فایل JSON واقعی برای ادمین
+#   • جستجوی کاربر توسط ادمین (با آیدی یا نام)
+#
+# 新增 در Ultimate Build (همچنان نسخه 1.2.0):
+#   • Quest System (Daily + Weekly Quests با پاداش بزرگ)
+#   • Season Pass / Battle Pass (Free + Premium Tier با 50 سطح)
+#   • Player Reputation System (Upvote/Downvote دیگران)
+#   • Matchmaking System (Auto-match با هم‌سطح ELO)
+#   • ELO Rating System (استاندارد شطرنجی)
+#   • Game History & Replay (آخرین ۲۰ بازی)
+#   • Ban Appeal System (درخواست لغو مسدودیت)
+#   • Group Mod System (مدیران per-group)
+#   • Milestone Rewards (auto-claim با ۱۳ Milestone)
+#   • Hall of Fame (آرشیو افسانه‌ها)
+#   • Player Stats Dashboard (تحلیل شخصی)
+#   • Group Analytics & Welcome Customization
+#   • Anti-Toxic Moderation + Word Filter + Auto-Mod
+#   • Question Voting & Rating (امتیازدهی به سوالات)
+#   • Tutorial Mode (۹ مرحله تعاملی)
+#   • Birthday & Anniversary Rewards
+#   • Premium Membership (VIP) با ۳ پلن (۳۰/۹۰/۳۶۵ روز)
+#   • Spectator Mode (تماشای بازی‌های فعال)
+#   • Cross-Group Leaderboard (رتبه‌بندی گروه‌ها)
 #
 #  راه‌اندازی:  BOT_TOKEN=... ADMIN_ID=... python bot.py
 # ================================================================
@@ -260,7 +294,7 @@ from telegram.ext import (
 # ================================================================
 #  پیکربندی
 # ================================================================
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 BOT_NAME = "ApexRival"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -433,6 +467,49 @@ DEFAULT_USER = {
     },
     "activity_log": [],         # ۱۰ آخرین فعالیت‌ها (محدود)
     "notify_inbox": [],         # صندوق پیام‌های دریافتی (محدود به ۲۰)
+    # --- فیلدهای نسخه‌ی ۱.۲.۰ (Extended) ---
+    "reputation": 0,            # امتیاز اعتبار ( از دیگران)
+    "reputation_given": [],     # لیست {uid, ts} که به whom داده
+    "reputation_received": [],  # لیست {uid, ts, value} که از whom گرفته
+    "elo_rating": 1000,         # ریتینگ ELO برای Matchmaking
+    "matchmaking_wins": 0,
+    "matchmaking_losses": 0,
+    "matchmaking_draws": 0,
+    "game_history": [],         # آخرین ۲۰ بازی (خلاصه)
+    "ban_appeals": [],          # درخواست‌های لغو مسدودیت این کاربر
+    "milestones_claimed": [],   # Milestone های دریافت‌شده
+    "birthday": "",             # YYYY-MM-DD (اختیاری)
+    "anniversary_claimed": [],  # سالگرد‌های دریافت‌شده
+    "tutorial_completed": False,
+    "tutorial_step": 0,
+    "vip_until": 0,             # timestamp انقضای VIP
+    "vip_since": 0,
+    "vip_purchases": 0,
+    "quests_daily": {           # Quest های روزانه (متمایز از missions)
+        "day": "",
+        "list": [],
+        "claimed": [],
+    },
+    "quests_weekly": {
+        "week": "",
+        "list": [],
+        "claimed": [],
+    },
+    "season_pass_xp": 0,        # XP در Battle Pass فعلی
+    "season_pass_tier": 0,
+    "season_pass_premium": False,  # آیا Premium خریده؟
+    "season_pass_claimed": [],  # tier های دریافت‌شده
+    "question_ratings": {},     # {question_hash: 1/-1}
+    "stats_ext": {              # آمار تخصصی برای Dashboard
+        "best_elo": 1000,
+        "longest_session": 0,
+        "total_xp_earned": 0,
+        "total_coins_earned": 0,
+        "total_coins_spent": 0,
+        "first_game_at": 0,
+        "modes_played": {},
+        "groups_played_in": [],
+    },
 }
 
 DEFAULT_GROUP = {
@@ -756,6 +833,20 @@ def default_data() -> dict[str, Any]:
         },
         "analytics_daily": {},    # YYYY-MM-DD -> {new_users, active_users, games_started, games_ended, ...}
         "economy_log": [],        # [{ts, type, uid, amount, reason}]
+        # --- کلیدهای نسخه‌ی ۱.۲.۰ (Extended) ---
+        "ban_appeals_queue": [],  # درخواست‌های لغو مسدودیت در انتظار بررسی
+        "matchmaking_queue": [],  # صف matchmaking فعال
+        "hall_of_fame": [],       # آرشیو افسانه‌ها
+        "group_competitions": {}, # رقابت‌های گروهی
+        "word_filter": [],        # کلمات مسدودشده توسط ادمین
+        "auto_mod_warnings": {},  # هشدارهای auto-mod per user
+        "question_rating_global": {},  # {question_hash: {up, down}}
+        "spectator_sessions": {}, # game_id -> [uid1, uid2, ...]
+        "tutorials_active": {},   # uid -> {step, started_at}
+        "milestone_log": [],      # Milestone های اخیراً دریافت‌شده
+        "vip_store_log": [],      # خریدهای VIP
+        "group_welcome_custom": {},  # chat_id -> custom welcome message
+        "cross_group_leaderboard": {},  # snapshot آخرین رتبه‌بندی گروه‌ها
     }
 
 
@@ -802,6 +893,20 @@ def load_data() -> dict:
     data.setdefault("next_ids", {})
     data.setdefault("analytics_daily", {})
     data.setdefault("economy_log", [])
+    # --- کلیدهای نسخه‌ی ۱.۲.0 (Extended) ---
+    data.setdefault("ban_appeals_queue", [])
+    data.setdefault("matchmaking_queue", [])
+    data.setdefault("hall_of_fame", [])
+    data.setdefault("group_competitions", {})
+    data.setdefault("word_filter", [])
+    data.setdefault("auto_mod_warnings", {})
+    data.setdefault("question_rating_global", {})
+    data.setdefault("spectator_sessions", {})
+    data.setdefault("tutorials_active", {})
+    data.setdefault("milestone_log", [])
+    data.setdefault("vip_store_log", [])
+    data.setdefault("group_welcome_custom", {})
+    data.setdefault("cross_group_leaderboard", {})
     # اطمینان از وجود همه‌ی شمارنده‌ها
     for k, v in default_data()["next_ids"].items():
         data["next_ids"].setdefault(k, v)
@@ -828,9 +933,24 @@ def load_data() -> dict:
         merge_defaults(user["daily_missions"], DEFAULT_USER["daily_missions"])
         for list_field in ("friends", "friend_reqs_out", "friend_reqs_in", "rivals",
                            "referrals", "titles_owned", "frames_owned", "badges_owned",
-                           "achievements", "activity_log", "notify_inbox"):
+                           "achievements", "activity_log", "notify_inbox",
+                           "reputation_given", "reputation_received", "game_history",
+                           "ban_appeals", "milestones_claimed", "anniversary_claimed",
+                           "season_pass_claimed"):
             if not isinstance(user.get(list_field), list):
                 user[list_field] = []
+        # 1.2.0 Extended — nested dict های جدید
+        if not isinstance(user.get("quests_daily"), dict):
+            user["quests_daily"] = {}
+        merge_defaults(user["quests_daily"], DEFAULT_USER["quests_daily"])
+        if not isinstance(user.get("quests_weekly"), dict):
+            user["quests_weekly"] = {}
+        merge_defaults(user["quests_weekly"], DEFAULT_USER["quests_weekly"])
+        if not isinstance(user.get("stats_ext"), dict):
+            user["stats_ext"] = {}
+        merge_defaults(user["stats_ext"], DEFAULT_USER["stats_ext"])
+        if not isinstance(user.get("question_ratings"), dict):
+            user["question_ratings"] = {}
     for group in data["groups"].values():
         if not isinstance(group, dict):
             continue
@@ -1830,11 +1950,15 @@ def add_xp(uid: int, amount: int, name: str = "کاربر", group_mult: int = 1)
         if amount > 0:
             season_bump(int(uid), xp=amount)
             bump_mission_progress(int(uid), "answers", 0)  # noop — فقط برای فعال‌سازی
+            # 1.2.0 Extended — Season Pass XP و Quest progress
+            season_pass_add_xp(int(uid), amount)
+            bump_quest_progress(int(uid), "answers", 0)
     except Exception:
         pass
     try:
         if after_level > before_level:
             on_level_up(int(uid), before_level, after_level)
+            bump_quest_progress(int(uid), "level_ups", after_level - before_level)
     except Exception:
         pass
     try:
@@ -2562,14 +2686,23 @@ def private_home_markup(uid: int) -> InlineKeyboardMarkup:
     u = get_user(uid)
     unread = unread_notifications(uid)
     notify_label = f"🔔 اعلان‌ها ({unread})" if unread else "🔔 اعلان‌ها"
+    is_v = is_vip(int(uid))
+    vip_label = "👑 VIP" if is_v else "👑 VIP"
     rows = [
-        [btn("🪪 پروفایل من", "P|PROFILE"), btn("🏆 رتبه‌بندی", "P|TOP")],
+        [btn("🪪 پروفایل من", "P|PROFILE"), btn("📊 Stats Dashboard", "SD|HOME")],
         [btn("🎮 مسابقه خصوصی", "PM|HOME"), btn("🎯 مأموریت‌ها", "DM|HOME")],
+        [btn("🎯 Quest Center", "QS|HOME"), btn("🎫 Season Pass", "SP|HOME")],
+        [btn("🔥 Survival", "SV|HOME"), btn("🤝 Team Battle", "TB|HOME")],
+        [btn("🤖 پیشنهاد AI", "AI|HOME"), btn("🎁 پاداش روزانه", "DR|CLAIM")],
+        [btn("🎯 Matchmaking", "MM|HOME"), btn("📜 تاریخچه بازی", "GH|HOME")],
+        [btn("🎯 Milestones", "MS|HOME"), btn("👑 Hall of Fame", "HF|HOME")],
         [btn("🛍 فروشگاه", "S|HOME"), btn("🎖 دستاوردها", "P|ACH")],
         [btn("👥 دوستان", "FR|HOME"), btn("⚔️ رقبا", "RV|HOME")],
         [btn("🎁 دعوت دوستان", "RF|HOME"), btn("🏆 مسابقات", "TM|HOME")],
         [btn("🌐 فصل و رویداد", "SE|HOME"), btn(notify_label, "NT|HOME")],
         [btn("⚙️ تنظیمات من", "US|HOME"), btn("📝 بازخورد", "FB|HOME")],
+        [btn(vip_label, "VP|HOME"), btn("🎓 Tutorial", "TT|START")],
+        [btn("🌐 Social Wall", "DR|WALL"), btn("🏆 بازیکن روز", "DR|POTD")],
         [btn("🎓 راهنما", "H|GUIDE"), btn("❤️ عشق‌سنج", "LV|HOME")],
         [btn("🎮 بازی‌های مهمانی", "FY|HOME")],
     ]
@@ -9305,6 +9438,139 @@ async def cmd_apexseason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 # ================================================================
+#  Daily Reward / Social Wall / Player of the Day callback handler
+# ================================================================
+async def dr_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Daily Reward / Wall / POTD."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "CLAIM":
+            result = daily_reward_claim(int(uid))
+            if not result.get("ok"):
+                if result.get("reason") == "already_claimed":
+                    await safe_answer_query(query, "🎁 امروز قبلاً گرفتی! فردا برگرد.")
+                else:
+                    await safe_answer_query(query, UX_MSG["error_generic"])
+            else:
+                coins = result.get("coins", 0)
+                xp = result.get("xp", 0)
+                streak = result.get("streak", 1)
+                await safe_answer_query(query, f"🎁 +{coins} سکه، +{xp} XP! (استریک {streak} روز)")
+            await dr_send_home(query, uid)
+            return
+        if action == "HOME":
+            await dr_send_home(query, uid)
+            return
+        if action == "WALL":
+            await dr_send_wall(query, uid)
+            return
+        if action == "POTD":
+            await dr_send_potd(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"dr_callback failed: {exc!r}", actor=uid)
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+async def dr_send_home(query, uid: int) -> None:
+    """پنل پاداش روزانه."""
+    try:
+        eligible = daily_reward_eligible(int(uid))
+        user = get_user(int(uid))
+        streak = int(user.get("daily_streak", 1))
+        lines = [
+            "🎁 <b>پاداش روزانه</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"📅 استریک فعلی: <b>{fmt_num(streak)} روز</b>",
+            f"📊 پاداش امروز: <b>20 + {min(streak * 5, 100)} سکه</b>",
+            f"⭐ XP امروز: <b>+{10 + min(streak * 2, 30)}</b>",
+            "",
+        ]
+        if eligible:
+            lines.append("✅ امروز می‌تونی پاداش بگیری!")
+        else:
+            lines.append("✅ امروز پاداش رو گرفتی!")
+            lines.append("فردا برگرد تا استریک حفظ بشه.")
+        rows = []
+        if eligible:
+            rows.append([btn("🎁 دریافت پاداش", "DR|CLAIM")])
+        rows.append([btn("🌐 Social Wall", "DR|WALL")])
+        rows.append([btn("🏆 بازیکن روز", "DR|POTD")])
+        rows.append([btn("⬅️ بازگشت", "H|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"dr_send_home failed: {exc!r}", actor=uid)
+
+
+async def dr_send_wall(query, uid: int) -> None:
+    """نمایش Social Wall."""
+    try:
+        feed = social_wall_feed(15)
+        lines = ["🌐 <b>Social Wall</b>", "━━━━━━━━━━━━━━━━━━", "آخرین فعالیت‌های جامعه:", ""]
+        if not feed:
+            lines.append("— هنوز فعالیتی ثبت نشده.")
+        else:
+            for entry in feed:
+                if not isinstance(entry, dict):
+                    continue
+                ts = int(entry.get("ts", 0))
+                time_str = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
+                msg_text = entry.get("message", "")[:80]
+                actor = int(entry.get("actor", 0))
+                actor_name = name_of(actor) if actor else "سیستم"
+                lines.append(f"[{time_str}] {escape(actor_name)}: {escape(msg_text)}")
+        rows = [
+            [btn("⬅️ بازگشت", "DR|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"dr_send_wall failed: {exc!r}", actor=uid)
+
+
+async def dr_send_potd(query, uid: int) -> None:
+    """نمایش Player of the Day."""
+    try:
+        potd = player_of_the_day()
+        lines = ["🏆 <b>بازیکن برتر روز</b>", "━━━━━━━━━━━━━━━━━━"]
+        if potd:
+            potd_uid, name, xp = potd
+            rank_name, rank_icon, _ = rank_for_xp(xp)
+            lines.append(f"👑 {escape(name)}")
+            lines.append(f"⭐ XP: <b>{fmt_num(xp)}</b>")
+            lines.append(f"{rank_icon} رتبه: <b>{rank_name}</b>")
+            lines.append(f"🆔 #{potd_uid}")
+        else:
+            lines.append("— هنوز بازیکن برتری اعلام نشده.")
+        rows = [
+            [btn("⬅️ بازگشت", "DR|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"dr_send_potd failed: {exc!r}", actor=uid)
+
+
+async def cmd_apexdaily_reward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexdailyreward — پاداش روزانه."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("🎁 پاداش روزانه\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await dr_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexdaily_reward failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
 #  پنل مدیریت حرفه‌ای (Advanced Admin Dashboard) — فاز ۶
 # ================================================================
 async def admin_dashboard_show(query) -> None:
@@ -9478,12 +9744,3448 @@ async def admin_logs_show(query) -> None:
 
 
 # ================================================================
+#  فاز ۷ — Admin Managers کامل (نسخه‌ی ۱.۲.۰)
+# ================================================================
+
+async def admin_users_manager_show(query, page: int = 0) -> None:
+    """پنل مدیریت کاربران — جستجو، لیست، عملیات."""
+    try:
+        users = DATA.get("users", {})
+        user_list = list(users.items())
+        # صفحه‌بندی
+        per_page = 10
+        total_pages = max(1, (len(user_list) + per_page - 1) // per_page)
+        page = max(0, min(total_pages - 1, int(page)))
+        start = page * per_page
+        end = start + per_page
+        current = user_list[start:end]
+        lines = [
+            f"👥 <b>مدیریت کاربران</b> (صفحه {page + 1}/{total_pages})",
+            "━━━━━━━━━━━━━━━━━━",
+            f"👥 کل کاربران: <b>{fmt_num(len(users))}</b>",
+            "",
+            "━ کاربران این صفحه ━",
+        ]
+        for uid_str, u in current:
+            try:
+                uid_int = int(uid_str)
+                name = escape(str(u.get("name", "بدون‌نام"))[:20])
+                level = int(u.get("level", 1))
+                coins = int(u.get("coins", 0))
+                banned = "🚫" if u.get("banned") else "✅"
+                lines.append(f"{banned} <b>#{uid_int}</b> · {name} · 🔥{level} · 🪙{coins}")
+            except Exception:
+                pass
+        rows = []
+        # دکمه‌های جستجو و عملیات روی هر کاربر
+        for uid_str, _ in current[:5]:
+            try:
+                uid_int = int(uid_str)
+                rows.append([btn(f"👤 کاربر #{uid_int}", f"A|USER|{uid_int}")])
+            except Exception:
+                pass
+        # ناوبری صفحه
+        nav = []
+        if page > 0:
+            nav.append(btn("⬅️ قبلی", f"A|USERS|{page - 1}"))
+        nav.append(btn("🔍 جستجو", "A|USEARCH"))
+        if page < total_pages - 1:
+            nav.append(btn("➡️ بعدی", f"A|USERS|{page + 1}"))
+        rows.append(nav)
+        rows.append([btn("⬅️ بازگشت", "A|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_users_manager_show failed: {exc!r}")
+
+
+async def admin_user_detail_show(query, target_uid: int) -> None:
+    """نمایش جزئیات یک کاربر برای ادمین."""
+    try:
+        u = get_user(int(target_uid))
+        if not u:
+            await safe_answer_query(query, "❌ کاربر پیدا نشد.")
+            return
+        name = escape(str(u.get("name", "")))
+        xp = int(u.get("xp", 0))
+        coins = int(u.get("coins", 0))
+        level = int(u.get("level", 1))
+        wins = int(u.get("wins", 0))
+        games = int(u.get("games", 0))
+        banned = bool(u.get("banned", False))
+        role = user_role(int(target_uid))
+        rank_name, _, _ = rank_for_xp(xp)
+        lines = [
+            f"👤 <b>کاربر #{target_uid}</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"🏷 نام: <b>{name}</b>",
+            f"🔥 سطح: <b>{fmt_num(level)}</b>",
+            f"⭐ XP: <b>{fmt_num(xp)}</b>",
+            f"{rank_name}",
+            f"🪙 سکه: <b>{fmt_num(coins)}</b>",
+            f"🎮 بازی: <b>{fmt_num(games)}</b> · 🏆 برد: <b>{fmt_num(wins)}</b>",
+            f"🎭 نقش: <b>{role}</b>",
+            f"🚫 مسدود: {'بله' if banned else 'خیر'}",
+        ]
+        rows = [
+            [btn("➕ XP", f"A|UMOD|{target_uid}|addxp"),
+             btn("➕ سکه", f"A|UMOD|{target_uid}|addcoin"),
+             btn("➕ Level", f"A|UMOD|{target_uid}|addlvl")],
+            [btn("➖ XP", f"A|UMOD|{target_uid}|subxp"),
+             btn("➖ سکه", f"A|UMOD|{target_uid}|subcoin")],
+        ]
+        if banned:
+            rows.append([btn("✅ رفع مسدودیت", f"A|UMOD|{target_uid}|unban")])
+        else:
+            rows.append([btn("🚫 مسدود کردن", f"A|UMOD|{target_uid}|ban")])
+        # تنظیم نقش
+        if role == "user":
+            rows.append([btn("⬆️ ارتقا به Mod", f"A|UMOD|{target_uid}|promote_mod")])
+        elif role == "mod":
+            rows.append([btn("⬆️ ارتقا به Admin", f"A|UMOD|{target_uid}|promote_admin")])
+            rows.append([btn("⬇️ تنزل به User", f"A|UMOD|{target_uid}|demote_user")])
+        elif role == "admin":
+            rows.append([btn("⬇️ تنزل به User", f"A|UMOD|{target_uid}|demote_user")])
+        rows.append([btn("🎁 پاداش دستی", f"A|UMOD|{target_uid}|reward")])
+        rows.append([btn("⬅️ بازگشت", "A|USERS|0")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_user_detail_show failed: {exc!r}")
+
+
+async def admin_user_modify(query, target_uid: int, action: str) -> None:
+    """عملیات مدیریتی روی کاربر."""
+    try:
+        u = get_user(int(target_uid))
+        if not u:
+            await safe_answer_query(query, "❌ کاربر پیدا نشد.")
+            return
+        admin_uid = int(query.from_user.id)
+        if action == "addxp":
+            u["xp"] = max(0, int(u.get("xp", 0)) + 100)
+            u["level"] = level_for_xp(int(u["xp"]))
+            log_event("warn", "admin", f"Added 100 XP to {target_uid}", actor=admin_uid)
+            await safe_answer_query(query, "✅ +100 XP")
+        elif action == "subxp":
+            u["xp"] = max(0, int(u.get("xp", 0)) - 100)
+            u["level"] = level_for_xp(int(u["xp"]))
+            log_event("warn", "admin", f"Removed 100 XP from {target_uid}", actor=admin_uid)
+            await safe_answer_query(query, "✅ -100 XP")
+        elif action == "addcoin":
+            u["coins"] = max(0, int(u.get("coins", 0)) + 50)
+            log_economy(int(target_uid), "earn", 50, "admin_grant")
+            log_event("warn", "admin", f"Added 50 coins to {target_uid}", actor=admin_uid)
+            await safe_answer_query(query, "✅ +50 سکه")
+        elif action == "subcoin":
+            u["coins"] = max(0, int(u.get("coins", 0)) - 50)
+            log_economy(int(target_uid), "spend", 50, "admin_remove")
+            log_event("warn", "admin", f"Removed 50 coins from {target_uid}", actor=admin_uid)
+            await safe_answer_query(query, "✅ -50 سکه")
+        elif action == "addlvl":
+            new_level = min(100, int(u.get("level", 1)) + 1)
+            u["xp"] = (new_level - 1) * 100
+            u["level"] = new_level
+            log_event("warn", "admin", f"Level up {target_uid} to {new_level}", actor=admin_uid)
+            await safe_answer_query(query, f"✅ Level up to {new_level}")
+        elif action == "ban":
+            u["banned"] = True
+            log_event("warn", "admin", f"Banned user {target_uid}", actor=admin_uid)
+            await safe_answer_query(query, "🚫 کاربر مسدود شد.")
+        elif action == "unban":
+            u["banned"] = False
+            log_event("warn", "admin", f"Unbanned user {target_uid}", actor=admin_uid)
+            await safe_answer_query(query, "✅ مسدودیت رفع شد.")
+        elif action == "promote_mod":
+            set_user_role(int(target_uid), "mod")
+            log_event("warn", "admin", f"Promoted {target_uid} to mod", actor=admin_uid)
+            await safe_answer_query(query, "⬆️ ارتقا به Mod")
+        elif action == "promote_admin":
+            set_user_role(int(target_uid), "admin")
+            log_event("warn", "admin", f"Promoted {target_uid} to admin", actor=admin_uid)
+            await safe_answer_query(query, "⬆️ ارتقا به Admin")
+        elif action == "demote_user":
+            set_user_role(int(target_uid), "user")
+            log_event("warn", "admin", f"Demoted {target_uid} to user", actor=admin_uid)
+            await safe_answer_query(query, "⬇️ تنزل به User")
+        elif action == "reward":
+            # پاداش دستی: 200 XP + 100 سکه + آیتم
+            add_xp(int(target_uid), 200, name_of(int(target_uid)))
+            add_coins(int(target_uid), 100, name_of(int(target_uid)))
+            grant_item(int(target_uid), "lucky", 1)
+            log_event("warn", "admin", f"Manual reward to {target_uid}", actor=admin_uid)
+            await safe_answer_query(query, "🎁 پاداش دستی داده شد!")
+        await admin_user_detail_show(query, int(target_uid))
+    except Exception as exc:
+        log_event("error", "system", f"admin_user_modify failed: {exc!r}")
+
+
+async def admin_games_manager_show(query) -> None:
+    """پنل مدیریت بازی‌های فعال."""
+    try:
+        games = DATA.get("games", {})
+        active = [(k, g) for k, g in games.items() if isinstance(g, dict) and g.get("status") == "active"]
+        lines = [
+            "🎮 <b>مدیریت بازی‌ها</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"🎮 کل بازی‌ها: <b>{fmt_num(len(games))}</b>",
+            f"🔥 فعال: <b>{fmt_num(len(active))}</b>",
+            "",
+            "━ بازی‌های فعال ━",
+        ]
+        if not active:
+            lines.append("— فعلاً بازی فعالی نیست.")
+        else:
+            for k, g in active[:10]:
+                try:
+                    chat_id = int(g.get("chat_id", 0))
+                    players = len(g.get("players", []))
+                    started = int(g.get("started_at", 0))
+                    age_min = (now_ts() - started) // 60 if started else 0
+                    lines.append(f"🎮 #{k} · chat:{chat_id} · 👥{players} · ⏱{age_min}m")
+                except Exception:
+                    pass
+        rows = []
+        for k, g in active[:5]:
+            rows.append([btn(f"👁 #{k}", f"A|GAME|{k}")])
+        rows.append([btn("⬅️ بازگشت", "A|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_games_manager_show failed: {exc!r}")
+
+
+async def admin_game_detail_show(query, game_key: str) -> None:
+    """نمایش جزئیات یک بازی برای ادمین."""
+    try:
+        g = DATA.get("games", {}).get(str(game_key))
+        if not g or not isinstance(g, dict):
+            await safe_answer_query(query, "❌ بازی پیدا نشد.")
+            return
+        chat_id = int(g.get("chat_id", 0))
+        status = str(g.get("status", ""))
+        players = g.get("players", [])
+        started = int(g.get("started_at", 0))
+        lines = [
+            f"🎮 <b>بازی #{game_key}</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"💬 چت: <code>{chat_id}</code>",
+            f"📊 وضعیت: <b>{status}</b>",
+            f"👥 بازیکنان: <b>{len(players)}</b>",
+            f"⏱ شروع: <b>{datetime.fromtimestamp(started).strftime('%m-%d %H:%M') if started else '—'}</b>",
+            "",
+            "━ بازیکنان ━",
+        ]
+        for pid in players[:15]:
+            try:
+                lines.append(f"👤 {escape(name_of(int(pid)))}")
+            except Exception:
+                pass
+        rows = []
+        if status == "active":
+            rows.append([btn("🏁 پایان اجباری", f"A|GMOD|{game_key}|end")])
+        rows.append([btn("⬅️ بازگشت", "A|GAMES")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_game_detail_show failed: {exc!r}")
+
+
+async def admin_game_end_force(query, game_key: str) -> None:
+    """پایان اجباری یک بازی."""
+    try:
+        g = DATA.get("games", {}).get(str(game_key))
+        if not g or not isinstance(g, dict):
+            await safe_answer_query(query, "❌ بازی پیدا نشد.")
+            return
+        g["status"] = "finished"
+        g["finish_reason"] = "admin_force_end"
+        g["finished_at"] = now_ts()
+        # پاک کردن اشاره‌ی گروه
+        chat_id = int(g.get("chat_id", 0))
+        if chat_id:
+            grp = get_group(chat_id)
+            if grp.get("active_game") == str(game_key):
+                grp["active_game"] = None
+        admin_uid = int(query.from_user.id)
+        log_event("warn", "admin", f"Force-ended game {game_key}", actor=admin_uid)
+        await safe_answer_query(query, "🏁 بازی پایان یافت.")
+        await admin_games_manager_show(query)
+    except Exception as exc:
+        log_event("error", "system", f"admin_game_end_force failed: {exc!r}")
+
+
+async def admin_achievements_manager_show(query) -> None:
+    """پنل مدیریت دستاوردها."""
+    try:
+        # ترکیب ACHIEVEMENTS_BASE و ACHIEVEMENTS_V11
+        all_achs = {}
+        all_achs.update(ACHIEVEMENTS_BASE)
+        all_achs.update(ACHIEVEMENTS_V11)
+        users = DATA.get("users", {})
+        # شمارش دارندگان هر دستاورد
+        owner_count = {}
+        for u in users.values():
+            if not isinstance(u, dict):
+                continue
+            for a in u.get("achievements", []):
+                owner_count[a] = owner_count.get(a, 0) + 1
+        lines = [
+            "🎖 <b>مدیریت دستاوردها</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"🎖 کل دستاوردها: <b>{fmt_num(len(all_achs))}</b>",
+            "",
+            "━ آمار دارندگان ━",
+        ]
+        for key, (name, desc, coins) in list(all_achs.items())[:15]:
+            count = owner_count.get(key, 0)
+            lines.append(f"🎖 {escape(name[:25])} · 👥{count} · 🪙{coins}")
+        rows = [
+            [btn("➕ ساخت دستاورد سفارشی", "A|ACHNEW")],
+            [btn("⬅️ بازگشت", "A|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_achievements_manager_show failed: {exc!r}")
+
+
+async def admin_economy_manager_show(query) -> None:
+    """پنل مدیریت اقتصاد."""
+    try:
+        users = DATA.get("users", {})
+        total_coins = sum(int(u.get("coins", 0)) for u in users.values() if isinstance(u, dict))
+        # 10 کاربر برتر از نظر سکه
+        top_rich = sorted(
+            [(int(uid), int(u.get("coins", 0))) for uid, u in users.items() if isinstance(u, dict)],
+            key=lambda x: x[1], reverse=True
+        )[:10]
+        # تراکنش‌های اخیر
+        economy_log = DATA.get("economy_log", [])[:10]
+        today = analytics_day()
+        lines = [
+            "🪙 <b>مدیریت اقتصاد</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"💰 مجموع سکه کاربران: <b>{fmt_num(total_coins)}</b>",
+            f"📈 درآمد امروز: <b>{fmt_num(today.get('coins_earned', 0))}</b>",
+            f"📉 مصرف امروز: <b>{fmt_num(today.get('coins_spent', 0))}</b>",
+            f"⚖️ تراز امروز: <b>{fmt_num(int(today.get('coins_earned', 0)) - int(today.get('coins_spent', 0)))}</b>",
+            "",
+            "━ ۱۰ ثروتمندترین ━",
+        ]
+        for uid, coins in top_rich:
+            lines.append(f"🪙 {escape(name_of(uid)[:20])}: <b>{fmt_num(coins)}</b>")
+        lines.extend(["", "━ تراکنش‌های اخیر ━"])
+        for entry in economy_log:
+            ts = int(entry.get("ts", 0))
+            time_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else ""
+            etype = entry.get("type", "")
+            amount = int(entry.get("amount", 0))
+            emoji = "📈" if etype == "earn" else "📉"
+            lines.append(f"{time_str} {emoji} {name_of(int(entry.get('uid', 0)))[:15]}: {amount}")
+        rows = [
+            [btn("💸 تورم (سکه به همه)", "A|ECON|infl8"),
+             btn("💎 توزیع (سکه به همه)", "A|ECON|distrib")],
+            [btn("📊 تنظیم ضریب XP", "A|ECON|xpmult"),
+             btn("📊 تنظیم ضریب سکه", "A|ECON|coinmult")],
+            [btn("⬅️ بازگشت", "A|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_economy_manager_show failed: {exc!r}")
+
+
+async def admin_economy_action(query, action: str) -> None:
+    """عملیات اقتصادی ادمین."""
+    try:
+        admin_uid = int(query.from_user.id)
+        users = DATA.get("users", {})
+        if action == "infl8":
+            # اضافه کردن 100 سکه به همه‌ی کاربران
+            count = 0
+            for uid, u in users.items():
+                if isinstance(u, dict):
+                    u["coins"] = int(u.get("coins", 0)) + 100
+                    count += 1
+            log_event("warn", "admin", f"Inflation +100 to {count} users", actor=admin_uid)
+            await safe_answer_query(query, f"💸 +100 سکه به {count} کاربر داده شد.")
+        elif action == "distrib":
+            # توزیع 50 سکه به کاربران فعال (30 روز اخیر)
+            count = 0
+            now = now_ts()
+            for uid, u in users.items():
+                if isinstance(u, dict) and int(u.get("last_active", 0)) > now - 30 * 86400:
+                    u["coins"] = int(u.get("coins", 0)) + 50
+                    count += 1
+            log_event("warn", "admin", f"Distributed 50 coins to {count} active users", actor=admin_uid)
+            await safe_answer_query(query, f"💎 +50 سکه به {count} کاربر فعال.")
+        elif action == "xpmult":
+            # افزایش ضریب XP موقت
+            current = float(DATA.get("settings", {}).get("xp_multiplier", 1))
+            new = 2.0 if current < 2.0 else 1.0
+            DATA["settings"]["xp_multiplier"] = new
+            log_event("warn", "admin", f"XP multiplier set to {new}", actor=admin_uid)
+            await safe_answer_query(query, f"⭐ ضریب XP: {new}x")
+        elif action == "coinmult":
+            current = float(DATA.get("settings", {}).get("coins_multiplier", 1))
+            new = 2.0 if current < 2.0 else 1.0
+            DATA["settings"]["coins_multiplier"] = new
+            log_event("warn", "admin", f"Coins multiplier set to {new}", actor=admin_uid)
+            await safe_answer_query(query, f"🪙 ضریب سکه: {new}x")
+        await admin_economy_manager_show(query)
+    except Exception as exc:
+        log_event("error", "system", f"admin_economy_action failed: {exc!r}")
+
+
+async def admin_groups_manager_show(query) -> None:
+    """پنل مدیریت گروه‌ها."""
+    try:
+        groups = DATA.get("groups", {})
+        lines = [
+            "👥 <b>مدیریت گروه‌ها</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"👥 کل گروه‌ها: <b>{fmt_num(len(groups))}</b>",
+            "",
+            "━ گروه‌ها ━",
+        ]
+        for gid, g in list(groups.items())[:15]:
+            if not isinstance(g, dict):
+                continue
+            try:
+                gid_int = int(gid)
+                games_count = int(g.get("created_games", 0))
+                active = "🔥" if g.get("active_game") else "💤"
+                adult = "🔞" if g.get("adult_mode") else ""
+                lines.append(f"{active} <code>{gid_int}</code> · 🎮{games_count} {adult}")
+            except Exception:
+                pass
+        rows = [
+            [btn("⬅️ بازگشت", "A|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_groups_manager_show failed: {exc!r}")
+
+
+async def admin_settings_show(query) -> None:
+    """پنل تنظیمات کلی سیستم."""
+    try:
+        settings = DATA.get("settings", {})
+        maintenance = maintenance_active()
+        maintenance_msg = str(DATA.get("maintenance_message", ""))
+        xp_mult = float(settings.get("xp_multiplier", 1))
+        coin_mult = float(settings.get("coins_multiplier", 1))
+        max_players = int(settings.get("max_players_default", 20))
+        adult_default = bool(settings.get("adult_default", False))
+        required_ch = REQUIRED_CHANNEL
+        lines = [
+            "⚙️ <b>تنظیمات سیستم</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"🔧 حالت تعمیرات: {'✅ روشن' if maintenance else '❌ خاموش'}",
+            f"📝 پیام تعمیرات: {escape(maintenance_msg[:50])}",
+            f"⭐ ضریب XP: <b>{xp_mult}x</b>",
+            f"🪙 ضریب سکه: <b>{coin_mult}x</b>",
+            f"👥 سقف بازیکن: <b>{fmt_num(max_players)}</b>",
+            f"🔞 حالت ۱۸+ پیش‌فرض: {'✅' if adult_default else '❌'}",
+            f"📢 کانال اجباری: <code>{escape(required_ch)}</code>",
+            f"📦 نسخه: <b>{VERSION}</b>",
+        ]
+        rows = [
+            [btn("🔧 تعمیرات", "A|MAINT"),
+             btn("⭐ ضریب XP", "A|ECON|xpmult")],
+            [btn("🪙 ضریب سکه", "A|ECON|coinmult"),
+             btn("📢 کانال اجباری", "A|SETCH")],
+            [btn("⬅️ بازگشت", "A|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_settings_show failed: {exc!r}")
+
+
+# ================================================================
+#  فاز ۸ — AI Game Master (نسخه‌ی ۱.۲.۰)
+# ================================================================
+def ai_game_master_suggest(uid: int) -> dict:
+    """پیشنهاد حالت بازی بر اساس پروفایل کاربر.
+    برمی‌گرداند: {mode, reason, difficulty, expected_xp}
+    """
+    try:
+        user = get_user(int(uid))
+        level = int(user.get("level", 1))
+        games = int(user.get("games", 0))
+        wins = int(user.get("wins", 0))
+        stats = user.get("stats", {})
+        # تحلیل سبک بازی
+        fav_mode = None
+        fav_count = 0
+        for k, v in stats.items():
+            if int(v) > fav_count:
+                fav_count = int(v)
+                fav_mode = k
+        # کاربر تازه‌وارد
+        if games < 3:
+            return {
+                "mode": "truth",
+                "reason": "برای شروع، حالت اعتراف رو امتحان کن. سوال‌های سبک و دوستانه!",
+                "difficulty": "easy",
+                "expected_xp": 30,
+            }
+        # کاربر کم‌تجربه
+        if level < 10:
+            if fav_mode:
+                return {
+                    "mode": fav_mode,
+                    "reason": f"چون به {MODE_LABELS.get(fav_mode, fav_mode)} علاقه داری، همین رو ادامه بده!",
+                    "difficulty": "easy",
+                    "expected_xp": 40,
+                }
+            return {
+                "mode": "dare",
+                "reason": "وقتشه یکم جرئت کنی! حالت جرئت رو امتحان کن.",
+                "difficulty": "easy",
+                "expected_xp": 45,
+            }
+        # کاربر متوسط
+        if level < 25:
+            win_rate = (wins / games * 100) if games > 0 else 0
+            if win_rate < 30:
+                return {
+                    "mode": "mixed",
+                    "reason": "برد‌های کم داری. حالت ترکیبی بهت کمک می‌کنه مهارت‌های متنوع بسازی.",
+                    "difficulty": "medium",
+                    "expected_xp": 60,
+                }
+            return {
+                "mode": "scenario",
+                "reason": "حرفه‌ای شدی! حالت سناریو برات چالش‌برانگیزتره.",
+                "difficulty": "medium",
+                "expected_xp": 70,
+            }
+        # کاربر حرفه‌ای
+        if level < 50:
+            return {
+                "mode": "drama",
+                "reason": "تو آماده‌ی چالش‌های سخت هستی! حالت جنجال برات عالعه.",
+                "difficulty": "hard",
+                "expected_xp": 90,
+            }
+        # افسانه
+        return {
+            "mode": "adult" if adult_allowed(int(uid)) else "mind",
+            "reason": "تو استادی! حالت‌های پیشرفته منتظرته.",
+            "difficulty": "hard",
+            "expected_xp": 120,
+        }
+    except Exception:
+        return {
+            "mode": "truth",
+            "reason": "برای شروع، حالت اعتراف رو امتحان کن.",
+            "difficulty": "easy",
+            "expected_xp": 30,
+        }
+
+
+def ai_player_style(uid: int) -> dict:
+    """تحلیل سبک بازی کاربر."""
+    try:
+        user = get_user(int(uid))
+        stats = user.get("stats", {})
+        total = sum(int(v) for v in stats.values()) or 1
+        ratios = {k: int(v) / total for k, v in stats.items() if int(v) > 0}
+        # تشخیص سبک غالب
+        style = "متعادل"
+        if ratios.get("dare", 0) > 0.4:
+            style = "جسور"
+        elif ratios.get("truth", 0) > 0.4:
+            style = "صادق"
+        elif ratios.get("flirty", 0) > 0.3:
+            style = "فلیرو"
+        elif ratios.get("adult", 0) > 0.3:
+            style = "جسور پیشرفته"
+        elif ratios.get("secret", 0) > 0.3:
+            style = "مسترموز"
+        return {
+            "style": style,
+            "ratios": ratios,
+            "total_answers": total,
+        }
+    except Exception:
+        return {"style": "نامشخص", "ratios": {}, "total_answers": 0}
+
+
+async def ai_send_suggestion(query, uid: int) -> None:
+    """نمایش پیشنهاد AI Game Master."""
+    try:
+        suggestion = ai_game_master_suggest(int(uid))
+        style = ai_player_style(int(uid))
+        lines = [
+            "🤖 <b>پیشنهاد AI Game Master</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"👤 سبک بازی تو: <b>{style.get('style', 'نامشخص')}</b>",
+            f"📊 تعداد پاسخ‌ها: <b>{fmt_num(style.get('total_answers', 0))}</b>",
+            "",
+            "━ پیشنهاد من ━",
+            f"🎯 حالت پیشنهادی: <b>{MODE_LABELS.get(suggestion['mode'], suggestion['mode'])}</b>",
+            f"🌶 سختی: <b>{suggestion['difficulty']}</b>",
+            f"⭐ XP مورد انتظار: <b>+{suggestion['expected_xp']}</b>",
+            "",
+            f"💡 <i>{escape(suggestion['reason'])}</i>",
+        ]
+        rows = [
+            [btn("🎮 شروع با پیشنهاد", f"AI|PLAY|{suggestion['mode']}")],
+            [btn("🔄 پیشنهاد دیگه", "AI|NEXT")],
+            [btn("📊 پروفایل کامل", "P|PROFILE")],
+            [btn("⬅️ بازگشت", "H|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"ai_send_suggestion failed: {exc!r}")
+
+
+async def ai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های AI Game Master."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME" or action == "NEXT":
+            await ai_send_suggestion(query, uid)
+            return
+        if action == "PLAY" and len(parts) > 2:
+            mode = parts[2]
+            await safe_answer_query(query, f"🎮 حالت {MODE_LABELS.get(mode, mode)} پیشنهاد شد!")
+            # نمایش راهنمای شروع بازی
+            await safe_edit(query,
+                f"🎮 <b>شروع بازی با حالت {MODE_LABELS.get(mode, mode)}</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "برای شروع بازی:\n"
+                "۱) ربات رو به گروهت اضافه کن\n"
+                "۲) در گروه دستور /apex رو بفرست\n"
+                "۳) در لابی، موضوع رو انتخاب کن\n"
+                "۴) بازی شروع می‌شه! 🔥",
+                kb([[btn("🏠 منوی اصلی", "H|HOME")]]))
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"ai_callback failed: {exc!r}", actor=uid)
+
+
+async def cmd_apexai(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexai — پیشنهاد AI Game Master."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("🤖 AI Game Master\n━━━━━━━━━━━━━━━━━━\nدر حال تحلیل پروفایلت...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await ai_send_suggestion(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexai failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۹ — Survival Mode (نسخه‌ی ۱.۲.۰)
+# ================================================================
+SURVIVAL_SESSIONS: dict = {}  # session_id -> {uid, streak, current_q, mode, started_at}
+
+def survival_create_session(uid: int, mode: str = "mixed") -> dict:
+    """ساخت Session بازی بقا."""
+    try:
+        sid = f"sv_{int(uid)}_{now_ts()}"
+        session = {
+            "id": sid,
+            "uid": int(uid),
+            "mode": str(mode),
+            "streak": 0,
+            "best_streak": 0,
+            "current_q": "",
+            "current_mode": "",
+            "started_at": now_ts(),
+            "ended_at": 0,
+            "ended": False,
+            "questions_used": [],
+            "total_xp": 0,
+            "total_coins": 0,
+        }
+        SURVIVAL_SESSIONS[sid] = session
+        return session
+    except Exception as exc:
+        log_event("error", "system", f"survival_create_session failed: {exc!r}")
+        return {}
+
+
+def survival_pick_question(session: dict) -> str:
+    """انتخاب سوال برای بازی بقا — با افزایش سختی."""
+    try:
+        mode = str(session.get("mode", "mixed"))
+        if mode == "mixed":
+            mode = random.choice(["truth", "dare"])
+        bank = BANKS.get(mode, [])
+        if not bank:
+            mode = "truth"
+            bank = BANKS.get(mode, [])
+        # سختی با streak افزایش می‌یابد
+        streak = int(session.get("streak", 0))
+        if streak < 3:
+            heat = 1
+        elif streak < 7:
+            heat = 2
+        else:
+            heat = 3
+        window = heat_window(bank, heat)
+        # حذف سوالات استفاده‌شده
+        used = session.get("questions_used", [])
+        available = [q for q in window if q not in used] if window else []
+        if not available:
+            available = [q for q in bank if q not in used]
+        if not available:
+            available = bank
+        question = random.choice(available) if available else ""
+        session["current_q"] = question
+        session["current_mode"] = mode
+        if question and question not in used:
+            used.append(question)
+            if len(used) > 100:
+                session["questions_used"] = used[-100:]
+        return question
+    except Exception:
+        return ""
+
+
+def survival_answer(session: dict, accepted: bool) -> dict:
+    """ثبت پاسخ در بازی بقا. برمی‌گرداند: {streak, xp, coins, ended, question}"""
+    try:
+        if session.get("ended"):
+            return {"streak": 0, "xp": 0, "coins": 0, "ended": True, "question": ""}
+        if accepted:
+            session["streak"] = int(session.get("streak", 0)) + 1
+            if int(session["streak"]) > int(session.get("best_streak", 0)):
+                session["best_streak"] = int(session["streak"])
+            # پاداش با افزایش streak
+            base_xp = 5 + int(session["streak"])
+            base_coins = 2 + int(session["streak"]) // 2
+            session["total_xp"] = int(session.get("total_xp", 0)) + base_xp
+            session["total_coins"] = int(session.get("total_coins", 0)) + base_coins
+            # سوال بعدی
+            next_q = survival_pick_question(session)
+            return {"streak": session["streak"], "xp": base_xp, "coins": base_coins,
+                    "ended": False, "question": next_q}
+        else:
+            # پایان بازی
+            session["ended"] = True
+            session["ended_at"] = now_ts()
+            return {"streak": session.get("streak", 0), "xp": 0, "coins": 0,
+                    "ended": True, "question": ""}
+    except Exception as exc:
+        log_event("error", "system", f"survival_answer failed: {exc!r}")
+        return {"streak": 0, "xp": 0, "coins": 0, "ended": True, "question": ""}
+
+
+def survival_active_session(uid: int) -> dict | None:
+    """بررسی session فعال کاربر."""
+    try:
+        for sid, s in SURVIVAL_SESSIONS.items():
+            if isinstance(s, dict) and int(s.get("uid", 0)) == int(uid) and not s.get("ended"):
+                return s
+        return None
+    except Exception:
+        return None
+
+
+async def sv_send_home(query, uid: int) -> None:
+    """نمایش پنل Survival Mode."""
+    try:
+        user = get_user(int(uid))
+        best = int(user.get("survival_best", 0))
+        active = survival_active_session(int(uid))
+        lines = [
+            "🔥 <b>حالت بقا (Survival)</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            "در این حالت، تا زمانی که جواب بدی ادامه می‌دهی!",
+            "هر سوال سختی‌تر می‌شود و پاداش بیشتر می‌شود.",
+            "اگر رد کنی، بازی تمام می‌شود!",
+            "",
+            f"🏆 بهترین استریک تو: <b>{fmt_num(best)}</b>",
+        ]
+        if active:
+            streak = int(active.get("streak", 0))
+            lines.extend([
+                "",
+                "━ بازی فعال ━",
+                f"🔥 استریک فعلی: <b>{fmt_num(streak)}</b>",
+                f"⭐ XP کل: <b>{fmt_num(active.get('total_xp', 0))}</b>",
+                f"🪙 سکه کل: <b>{fmt_num(active.get('total_coins', 0))}</b>",
+            ])
+        rows = []
+        if active:
+            rows.append([btn("▶️ ادامه بازی", f"SV|CONT")])
+            rows.append([btn("🏁 پایان بازی", "SV|END")])
+        else:
+            rows.append([btn("🎮 شروع بازی جدید", "SV|NEW")])
+        rows.append([btn("⬅️ بازگشت", "H|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"sv_send_home failed: {exc!r}")
+
+
+async def sv_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Survival."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            await sv_send_home(query, uid)
+            return
+        if action == "NEW":
+            # ساخت session جدید
+            session = survival_create_session(int(uid), mode="mixed")
+            if not session:
+                await safe_answer_query(query, UX_MSG["error_generic"])
+                return
+            question = survival_pick_question(session)
+            await sv_show_question(query, session, question)
+            return
+        if action == "CONT":
+            session = survival_active_session(int(uid))
+            if not session:
+                await safe_answer_query(query, "❌ بازی فعالی نداری.")
+                await sv_send_home(query, uid)
+                return
+            question = session.get("current_q") or survival_pick_question(session)
+            await sv_show_question(query, session, question)
+            return
+        if action == "ANS" and len(parts) > 2:
+            ans = parts[2]
+            session = survival_active_session(int(uid))
+            if not session:
+                await safe_answer_query(query, "❌ بازی فعالی نداری.")
+                return
+            accepted = (ans == "y")
+            result = survival_answer(session, accepted)
+            if result.get("ended"):
+                await sv_finish(update, context, session)
+            else:
+                add_xp(int(uid), int(result.get("xp", 0)))
+                add_coins(int(uid), int(result.get("coins", 0)))
+                await sv_show_question(query, session, result.get("question", ""))
+            return
+        if action == "END":
+            session = survival_active_session(int(uid))
+            if session:
+                await sv_finish(update, context, session)
+            else:
+                await safe_answer_query(query, "❌ بازی فعالی نداری.")
+                await sv_send_home(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"sv_callback failed: {exc!r}", actor=uid)
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+async def sv_show_question(query, session: dict, question: str) -> None:
+    """نمایش سوال بازی بقا."""
+    try:
+        streak = int(session.get("streak", 0))
+        heat = 1 if streak < 3 else (2 if streak < 7 else 3)
+        heat_label = HEAT_LABELS.get(heat, "")
+        mode = str(session.get("current_mode", ""))
+        lines = [
+            f"🔥 <b>Survival — استریک {fmt_num(streak)}</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"🌶 سختی: <b>{heat_label}</b>",
+            f"📊 پاداش بعدی: ⭐+{5 + streak + 1} 🪙+{2 + (streak + 1) // 2}",
+            "",
+            f"{'🕵️ اعتراف' if mode == 'truth' else '🔥 جرئت'}:",
+            f"<b>{escape(question)}</b>",
+            "",
+            "✅ انجام دادم → ادامه",
+            "❌ رد کردم → پایان بازی",
+        ]
+        rows = [
+            [btn("✅ انجام دادم", "SV|ANS|y"),
+             btn("❌ رد کردم", "SV|ANS|n")],
+            [btn("🏁 پایان بازی", "SV|END")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"sv_show_question failed: {exc!r}")
+
+
+async def sv_finish(update: Update, context: ContextTypes.DEFAULT_TYPE, session: dict) -> None:
+    """پایان بازی بقا."""
+    try:
+        session["ended"] = True
+        session["ended_at"] = now_ts()
+        uid = int(session.get("uid", 0))
+        streak = int(session.get("streak", 0))
+        best = int(session.get("best_streak", 0))
+        total_xp = int(session.get("total_xp", 0))
+        total_coins = int(session.get("total_coins", 0))
+        # آپدیت بهترین استریک کاربر
+        user = get_user(int(uid))
+        if best > int(user.get("survival_best", 0)):
+            user["survival_best"] = best
+        # پاداش پایان
+        bonus_coins = streak * 3
+        if bonus_coins:
+            add_coins(int(uid), bonus_coins)
+        # ثبت آمار
+        bump_mission_progress(int(uid), "answers", streak)
+        bump_mission_progress(int(uid), "games", 1)
+        award_achievement_v11(int(uid), "v11_first_survival")
+        log_user_activity(int(uid), f"survival_end", f"streak={streak} xp={total_xp}")
+        lines = [
+            "🏁 <b>پایان بازی بقا!</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"🔥 استریک نهایی: <b>{fmt_num(streak)}</b>",
+            f"🏆 بهترین استریک: <b>{fmt_num(best)}</b>",
+            f"⭐ XP کل: <b>+{fmt_num(total_xp)}</b>",
+            f"🪙 سکه کل: <b>+{fmt_num(total_coins + bonus_coins)}</b>",
+        ]
+        if best == streak and streak > 0:
+            lines.append("🎉 رکورد جدید!")
+        rows = [
+            [btn("🔄 بازی دوباره", "SV|NEW")],
+            [btn("⬅️ بازگشت", "H|HOME")],
+        ]
+        await safe_edit(update.callback_query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"sv_finish failed: {exc!r}")
+
+
+async def cmd_apexsurvival(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexsurvival."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("🔥 Survival Mode\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await sv_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexsurvival failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۱۰ — Team Battle (نسخه‌ی ۱.۲.۰)
+# ================================================================
+TEAM_BATTLE_SESSIONS: dict = {}  # session_id -> {teams, scores, current_q, ...}
+
+def team_battle_create(chat_id: int, team_size: int = 2) -> dict:
+    """ساخت یک Team Battle."""
+    try:
+        sid = f"tb_{int(chat_id)}_{now_ts()}"
+        session = {
+            "id": sid,
+            "chat_id": int(chat_id),
+            "team_size": int(team_size),
+            "team_a": [],
+            "team_b": [],
+            "score_a": 0,
+            "score_b": 0,
+            "current_q": "",
+            "current_team": "a",
+            "started": False,
+            "ended": False,
+            "started_at": 0,
+            "ended_at": 0,
+            "round": 0,
+        }
+        TEAM_BATTLE_SESSIONS[sid] = session
+        return session
+    except Exception as exc:
+        log_event("error", "system", f"team_battle_create failed: {exc!r}")
+        return {}
+
+
+async def tb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Team Battle."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            await tb_send_home(query, uid)
+            return
+        if action == "NEW":
+            # ساخت بازی جدید
+            session = team_battle_create(0, team_size=2)
+            await safe_answer_query(query, "🎮 Team Battle ساخته شد!")
+            await tb_view_session(query, session)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"tb_callback failed: {exc!r}", actor=uid)
+
+
+async def tb_send_home(query, uid: int) -> None:
+    """نمایش پنل Team Battle."""
+    try:
+        user = get_user(int(uid))
+        team_battles = int(user.get("team_battles", 0))
+        lines = [
+            "🤝 <b>Team Battle</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            "بازی تیمی! دو تیم مقابل هم.",
+            "",
+            f"📊 تعداد بازی‌های تیمی تو: <b>{fmt_num(team_battles)}</b>",
+            "",
+            "🆚 Team A vs Team B",
+            "🎯 هر تیم با همکاری امتیاز جمع می‌کنه",
+            "🏆 تیم برنده پاداش ویژه می‌گیره!",
+        ]
+        rows = [
+            [btn("🎮 ساخت Team Battle", "TB|NEW")],
+            [btn("⬅️ بازگشت", "H|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"tb_send_home failed: {exc!r}")
+
+
+async def tb_view_session(query, session: dict) -> None:
+    """نمایش جزئیات Team Battle."""
+    try:
+        lines = [
+            f"🤝 <b>Team Battle #{session['id']}</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"🔴 Team A: <b>{session.get('score_a', 0)}</b>",
+            f"🔵 Team B: <b>{session.get('score_b', 0)}</b>",
+            f"👥 اندازه تیم: <b>{session.get('team_size', 2)}</b>",
+            f"📊 وضعیت: <b>{'شروع شده' if session.get('started') else 'در انتظار'}</b>",
+        ]
+        rows = [
+            [btn("⬅️ بازگشت", "TB|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"tb_view_session failed: {exc!r}")
+
+
+async def cmd_apexteambattle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexteambattle."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("🤝 Team Battle\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await tb_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexteambattle failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۱۱ — Leaderboard های چندگانه (نسخه‌ی ۱.۲.۰)
+# ================================================================
+def leaderboard_global(limit: int = 20) -> list:
+    """Leaderboard کلی — همه‌ی زمان‌ها."""
+    try:
+        users = DATA.get("users", {})
+        items = []
+        for uid_str, u in users.items():
+            if not isinstance(u, dict):
+                continue
+            try:
+                uid = int(uid_str)
+                xp = int(u.get("xp", 0))
+                items.append((uid, xp, int(u.get("wins", 0)), int(u.get("games", 0))))
+            except Exception:
+                continue
+        items.sort(key=lambda x: x[1], reverse=True)
+        return items[:limit]
+    except Exception:
+        return []
+
+
+def leaderboard_monthly(limit: int = 20) -> list:
+    """Leaderboard ماهانه — بر اساس XP فصل فعلی."""
+    try:
+        users = DATA.get("users", {})
+        items = []
+        for uid_str, u in users.items():
+            if not isinstance(u, dict):
+                continue
+            try:
+                uid = int(uid_str)
+                season_xp = int(u.get("season_xp", 0))
+                items.append((uid, season_xp, int(u.get("season_wins", 0)), 0))
+            except Exception:
+                continue
+        items.sort(key=lambda x: x[1], reverse=True)
+        return items[:limit]
+    except Exception:
+        return []
+
+
+def leaderboard_group(chat_id: int, limit: int = 20) -> list:
+    """Leaderboard یک گروه خاص."""
+    try:
+        g = get_group(int(chat_id))
+        games = DATA.get("games", {})
+        # جمع‌آوری آمار بازیکنان این گروه از بازی‌های گذشته
+        player_stats = {}
+        for k, game in games.items():
+            if not isinstance(game, dict):
+                continue
+            if int(game.get("chat_id", 0)) != int(chat_id):
+                continue
+            scores = game.get("scores", {})
+            for pid, score in scores.items():
+                try:
+                    pid_int = int(pid)
+                    player_stats[pid_int] = player_stats.get(pid_int, 0) + int(score)
+                except Exception:
+                    continue
+        items = sorted(player_stats.items(), key=lambda x: x[1], reverse=True)
+        return [(uid, score, 0, 0) for uid, score in items[:limit]]
+    except Exception:
+        return []
+
+
+async def cmd_apextop_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apextop_all — Leaderboard کلی."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        lb = leaderboard_global(20)
+        lines = ["🏆 <b>Leaderboard کلی (All-time)</b>", "━━━━━━━━━━━━━━━━━━"]
+        if not lb:
+            lines.append("— هنوز کسی ثبت نشده.")
+        else:
+            for i, (uid, xp, wins, games) in enumerate(lb, start=1):
+                medal = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}."))
+                lines.append(f"{medal} {escape(name_of(uid)[:20])} · ⭐{fmt_num(xp)} · 🏆{wins}")
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        lines.append("برای Leaderboard هفتگی: /apextop")
+        lines.append("برای Leaderboard ماهانه: /apextop_month")
+        await msg.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apextop_all failed: {exc!r}")
+
+
+async def cmd_apextop_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apextop_month — Leaderboard ماهانه."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        lb = leaderboard_monthly(20)
+        sid = current_season_id()
+        lines = [f"🌐 <b>Leaderboard ماهانه (فصل {sid})</b>", "━━━━━━━━━━━━━━━━━━"]
+        if not lb:
+            lines.append("— هنوز کسی در این فصل فعالیتی نداشته.")
+        else:
+            for i, (uid, xp, wins, _) in enumerate(lb, start=1):
+                medal = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}."))
+                lines.append(f"{medal} {escape(name_of(uid)[:20])} · ⭐{fmt_num(xp)} · 🏆{wins}")
+        await msg.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apextop_month failed: {exc!r}")
+
+
+# ================================================================
+#  فاز ۱۲ — Daily Reward + Player of the Day + Social Wall
+# ================================================================
+def daily_reward_eligible(uid: int) -> bool:
+    """آیا کاربر برای پاداش روزانه واجد است؟"""
+    try:
+        user = get_user(int(uid))
+        last = str(user.get("_last_daily_reward", "") or "")
+        return last != today_key()
+    except Exception:
+        return False
+
+
+def daily_reward_claim(uid: int) -> dict:
+    """دریافت پاداش روزانه."""
+    try:
+        if not daily_reward_eligible(int(uid)):
+            return {"ok": False, "reason": "already_claimed"}
+        user = get_user(int(uid))
+        streak = int(user.get("daily_streak", 1))
+        # پاداش افزایشی با streak
+        base = 20
+        bonus = min(streak * 5, 100)
+        total_coins = base + bonus
+        total_xp = 10 + min(streak * 2, 30)
+        add_coins(int(uid), total_coins)
+        add_xp(int(uid), total_xp)
+        user["_last_daily_reward"] = today_key()
+        log_user_activity(int(uid), "daily_reward", f"+{total_coins}c +{total_xp}xp")
+        return {"ok": True, "coins": total_coins, "xp": total_xp, "streak": streak}
+    except Exception as exc:
+        log_event("error", "system", f"daily_reward_claim failed: {exc!r}")
+        return {"ok": False, "reason": "error"}
+
+
+async def cmd_apexdaily_reward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexdailyreward — پاداش روزانه."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        result = daily_reward_claim(int(user.id))
+        if not result.get("ok"):
+            if result.get("reason") == "already_claimed":
+                await msg.reply_text(
+                    "🎁 <b>پاداش روزانه</b>\n━━━━━━━━━━━━━━━━━━\n"
+                    "今日 فردا پاداش بگیر!",
+                    parse_mode=ParseMode.HTML)
+            else:
+                await msg.reply_text(UX_MSG["error_generic"])
+            return
+        coins = result.get("coins", 0)
+        xp = result.get("xp", 0)
+        streak = result.get("streak", 1)
+        await msg.reply_text(
+            "🎁 <b>پاداش روزانه!</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"📅 استریک: <b>{fmt_num(streak)} روز</b>\n"
+            f"🪙 سکه: <b>+{fmt_num(coins)}</b>\n"
+            f"⭐ XP: <b>+{fmt_num(xp)}</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "فردا هم بیا تا استریکت حفظ بشه! 🔥",
+            parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexdaily_reward failed: {exc!r}")
+
+
+def player_of_the_day() -> tuple[int, str, int] | None:
+    """بازیکن برتر روز — بر اساس Analytics امروز."""
+    try:
+        # استفاده از active_uids امروز
+        today = today_key()
+        d = DATA.get("analytics_daily", {}).get(today, {})
+        active_uids = d.get("_active_uids", [])
+        if not active_uids:
+            return None
+        # پیدا کردن کاربری که امروز بیشترین XP گرفته
+        # (ساده‌سازی: بیشترین level)
+        best_uid = 0
+        best_xp = 0
+        for uid in active_uids:
+            try:
+                u = get_user(int(uid))
+                xp = int(u.get("xp", 0))
+                if xp > best_xp:
+                    best_xp = xp
+                    best_uid = int(uid)
+            except Exception:
+                continue
+        if best_uid:
+            return (best_uid, name_of(best_uid), best_xp)
+        return None
+    except Exception:
+        return None
+
+
+async def cmd_apexpotd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexpotd — Player of the Day."""
+    msg = update.message
+    if msg is None:
+        return
+    try:
+        potd = player_of_the_day()
+        lines = ["🏆 <b>بازیکن برتر روز</b>", "━━━━━━━━━━━━━━━━━━"]
+        if potd:
+            uid, name, xp = potd
+            lines.append(f"👑 {escape(name)}")
+            lines.append(f"⭐ XP: <b>{fmt_num(xp)}</b>")
+            lines.append(f"🆔 #{uid}")
+        else:
+            lines.append("— هنوز بازیکن برطری اعلام نشده.")
+        await msg.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexpotd failed: {exc!r}")
+
+
+# ================================================================
+#  فاز ۱۳ — Social Wall + Crash Recovery برای Games اصلی
+# ================================================================
+def social_wall_feed(limit: int = 15) -> list:
+    """Feed فعالیت‌های اجتماعی."""
+    try:
+        # ترکیب activity_feed و رویدادهای اخیر
+        feed = list(DATA.get("activity_feed", []))
+        # افزودن رویدادهای اخیر کاربران فعال
+        recent_users = sorted(
+            [(int(uid), u) for uid, u in DATA.get("users", {}).items() if isinstance(u, dict)],
+            key=lambda x: int(x[1].get("last_active", 0)),
+            reverse=True
+        )[:5]
+        for uid, u in recent_users:
+            try:
+                ts = int(u.get("last_active", 0))
+                if ts:
+                    feed.append({
+                        "ts": ts,
+                        "level": "info",
+                        "category": "social",
+                        "message": f"{name_of(uid)} فعال شد",
+                        "actor": uid,
+                    })
+            except Exception:
+                continue
+        # مرتب‌سازی بر اساس ts
+        feed.sort(key=lambda x: int(x.get("ts", 0)) if isinstance(x, dict) else 0, reverse=True)
+        return feed[:limit]
+    except Exception:
+        return []
+
+
+async def cmd_apexwall(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexwall — Social Wall."""
+    msg = update.message
+    if msg is None:
+        return
+    try:
+        feed = social_wall_feed(15)
+        lines = ["🌐 <b>Social Wall</b>", "━━━━━━━━━━━━━━━━━━", "آخرین فعالیت‌های جامعه‌ی ApexRival:", ""]
+        if not feed:
+            lines.append("— هنوز فعالیتی ثبت نشده.")
+        else:
+            for entry in feed:
+                if not isinstance(entry, dict):
+                    continue
+                ts = int(entry.get("ts", 0))
+                time_str = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
+                msg_text = entry.get("message", "")[:80]
+                actor = int(entry.get("actor", 0))
+                actor_name = name_of(actor) if actor else "سیستم"
+                lines.append(f"[{time_str}] {escape(actor_name)}: {escape(msg_text)}")
+        await msg.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexwall failed: {exc!r}")
+
+
+def crash_recovery_games() -> list:
+    """بازیابی بازی‌های گیرکرده — برای Games اصلی."""
+    try:
+        fixes = []
+        now = now_ts()
+        for k, g in list(DATA.get("games", {}).items()):
+            if not isinstance(g, dict):
+                continue
+            status = str(g.get("status", ""))
+            if status != "active":
+                continue
+            started = int(g.get("started_at", 0))
+            last_activity = int(g.get("last_activity", 0))
+            # اگر بازی بیش از ۲ ساعت از آخرین فعالیت گذشته
+            if last_activity and (now - last_activity) > 2 * 3600:
+                # یادآوری
+                if not g.get("_reminder_sent"):
+                    g["_reminder_sent"] = True
+                    fixes.append({"game": k, "action": "reminder"})
+            # اگر بازی بیش از ۴ ساعت بدون فعالیت
+            if last_activity and (now - last_activity) > 4 * 3600:
+                g["status"] = "finished"
+                g["finish_reason"] = "crash_recovery_inactivity"
+                g["finished_at"] = now
+                # پاک کردن اشاره‌ی گروه
+                chat_id = int(g.get("chat_id", 0))
+                if chat_id:
+                    grp = get_group(chat_id)
+                    if grp.get("active_game") == str(k):
+                        grp["active_game"] = None
+                fixes.append({"game": k, "action": "ended"})
+        return fixes
+    except Exception as exc:
+        log_event("error", "system", f"crash_recovery_games failed: {exc!r}")
+        return []
+
+
+# ================================================================
+#  فاز ۱۴ — Anti-Spam پیشرفته + Export فایل واقعی
+# ================================================================
+def anti_spam_check(uid: int, action: str) -> bool:
+    """بررسی محدودیت Anti-Spam پیشرفته.
+    action: private_match | tournament | feedback | friend_req
+    """
+    try:
+        uid = int(uid)
+        now = now_ts()
+        # کلید ذخیره‌سازی
+        store = DATA.setdefault("anti_spam", {})
+        user_store = store.setdefault(user_key(uid), {})
+        # انتخاب محدودیت
+        limits = {
+            "private_match": (ANTI_SPAM_LIMITS["private_match_per_hour"], 3600),
+            "tournament": (ANTI_SPAM_LIMITS["tournament_per_day"], 86400),
+            "feedback": (ANTI_SPAM_LIMITS["feedback_per_day"], 86400),
+            "friend_req": (ANTI_SPAM_LIMITS["friend_req_per_hour"], 3600),
+        }
+        if action not in limits:
+            return True
+        max_count, window = limits[action]
+        key = f"{action}_{int(now // window)}"
+        count = int(user_store.get(key, 0))
+        if count >= max_count:
+            return False
+        user_store[key] = count + 1
+        # پاکسازی کلیدهای قدیمی
+        for k in list(user_store.keys()):
+            if k.startswith(f"{action}_"):
+                try:
+                    k_time = int(k.split("_")[-1])
+                    if k_time < int(now // window) - 2:
+                        user_store.pop(k, None)
+                except Exception:
+                    pass
+        return True
+    except Exception:
+        return True  # در صورت خطا، اجازه بده
+
+
+def export_data_to_json() -> str:
+    """خروجی JSON کامل داده‌ها (برای دانلود)."""
+    try:
+        # ساخت یک خروجی فشرده بدون داده‌های حساس
+        export = {
+            "exported_at": now_ts(),
+            "version": VERSION,
+            "schema": DATA.get("schema", 4),
+            "stats": {
+                "users": len(DATA.get("users", {})),
+                "groups": len(DATA.get("groups", {})),
+                "games": len(DATA.get("games", {})),
+                "private_matches": len(DATA.get("private_matches", {})),
+                "tournaments": len(DATA.get("tournaments", {})),
+                "seasons": len(DATA.get("seasons", {})),
+                "feedback": len(DATA.get("feedback", [])),
+            },
+            "users_summary": [],
+            "top_players": leaderboard_global(50),
+            "season_leaderboard": season_leaderboard(50),
+            "analytics_last_7_days": {},
+            "audit_last_50": DATA.get("audit", [])[-50:],
+        }
+        # خلاصه‌ی کاربران (بدون داده‌ی حساس)
+        for uid, u in list(DATA.get("users", {}).items())[:200]:
+            if not isinstance(u, dict):
+                continue
+            try:
+                export["users_summary"].append({
+                    "uid": int(uid),
+                    "name": str(u.get("name", ""))[:50],
+                    "level": int(u.get("level", 1)),
+                    "xp": int(u.get("xp", 0)),
+                    "coins": int(u.get("coins", 0)),
+                    "games": int(u.get("games", 0)),
+                    "wins": int(u.get("wins", 0)),
+                })
+            except Exception:
+                continue
+        # 7 روز اخیر Analytics
+        from datetime import timedelta
+        for i in range(6, -1, -1):
+            d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+            export["analytics_last_7_days"][d] = DATA.get("analytics_daily", {}).get(d, {})
+        return json.dumps(export, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        log_event("error", "system", f"export_data_to_json failed: {exc!r}")
+        return "{}"
+
+
+async def admin_export_download(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ارسال فایل Export به ادمین."""
+    try:
+        uid = int(update.effective_user.id)
+        if not has_permission(int(uid), "admin"):
+            return
+        json_data = export_data_to_json()
+        # ساخت فایل موقت
+        import io
+        from telegram import InputFile
+        bio = io.BytesIO(json_data.encode("utf-8"))
+        bio.name = f"apexrival_export_{today_key()}.json"
+        await context.bot.send_document(
+            chat_id=int(update.effective_chat.id),
+            document=InputFile(bio, filename=bio.name),
+            caption=f"📤 خروجی ApexRival — {today_key()}\n📦 نسخه: {VERSION}",
+        )
+        log_event("info", "admin", "Data exported", actor=uid)
+    except Exception as exc:
+        log_event("error", "system", f"admin_export_download failed: {exc!r}")
+
+
+async def cmd_apexexport(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexexport — خروجی JSON برای ادمین."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    if not has_permission(int(user.id), "admin"):
+        await msg.reply_text(UX_MSG["no_permission"])
+        return
+    await admin_export_download(update, context)
+
+
+# ================================================================
+#  فاز ۱۵ — Quest System (Daily/Weekly Quests) — Extended
+# ================================================================
+QUEST_DAILY_POOL = [
+    {"key": "q_play_2", "name": "🎮 ۲ بازی انجام بده", "target": 2, "reward_xp": 30, "reward_coins": 20, "type": "games"},
+    {"key": "q_answer_10", "name": "💬 به ۱۰ سوال پاسخ بده", "target": 10, "reward_xp": 40, "reward_coins": 25, "type": "answers"},
+    {"key": "q_win_2", "name": "🏆 ۲ بازی را ببر", "target": 2, "reward_xp": 50, "reward_coins": 35, "type": "wins"},
+    {"key": "q_dare_5", "name": "🔥 ۵ جرئت انجام بده", "target": 5, "reward_xp": 35, "reward_coins": 25, "type": "dares"},
+    {"key": "q_truth_5", "name": "🧠 ۵ حقیقت پاسخ بده", "target": 5, "reward_xp": 35, "reward_coins": 25, "type": "truths"},
+    {"key": "q_use_item", "name": "🛡 از یک آیتم استفاده کن", "target": 1, "reward_xp": 20, "reward_coins": 15, "type": "items_used"},
+    {"key": "q_play_private", "name": "🎮 یک مسابقه خصوصی بساز", "target": 1, "reward_xp": 40, "reward_coins": 30, "type": "private_games"},
+    {"key": "q_survival_5", "name": "🔥 در Survival به استریک ۵ برس", "target": 5, "reward_xp": 45, "reward_coins": 35, "type": "survival_streak"},
+]
+QUEST_WEEKLY_POOL = [
+    {"key": "qw_play_10", "name": "🎮 ۱۰ بازی انجام بده", "target": 10, "reward_xp": 150, "reward_coins": 100, "type": "games"},
+    {"key": "qw_answer_50", "name": "💬 به ۵۰ سوال پاسخ بده", "target": 50, "reward_xp": 200, "reward_coins": 150, "type": "answers"},
+    {"key": "qw_win_5", "name": "🏆 ۵ بازی را ببر", "target": 5, "reward_xp": 250, "reward_coins": 200, "type": "wins"},
+    {"key": "qw_duel_3", "name": "🤺 ۳ دوئل انجام بده", "target": 3, "reward_xp": 180, "reward_coins": 130, "type": "duels"},
+    {"key": "qw_invite_2", "name": "🎁 ۲ دوست دعوت کن", "target": 2, "reward_xp": 220, "reward_coins": 200, "type": "referrals"},
+    {"key": "qw_level_up", "name": "⭐ ۲ سطح ارتقا پیدا کن", "target": 2, "reward_xp": 300, "reward_coins": 250, "type": "level_ups"},
+    {"key": "qw_7day_streak", "name": "📅 ۷ روز پیاپی فعالیت کن", "target": 7, "reward_xp": 500, "reward_coins": 400, "type": "daily_streak"},
+]
+
+
+def week_key_full() -> str:
+    """کلید هفته (ISO format YYYY-Www)."""
+    try:
+        from datetime import datetime as _dt
+        now = _dt.now(timezone.utc)
+        iso = now.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+    except Exception:
+        return "unknown"
+
+
+def user_quests_daily(uid: int) -> list:
+    """بازگرداندن Quest های روزانه کاربر."""
+    try:
+        user = get_user(int(uid))
+        qd = user.get("quests_daily", {})
+        if not isinstance(qd, dict):
+            qd = {}
+            user["quests_daily"] = qd
+        today = today_key()
+        if qd.get("day", "") != today:
+            pool = list(QUEST_DAILY_POOL)
+            random.shuffle(pool)
+            picked = pool[:3]
+            qd.clear()
+            qd["day"] = today
+            qd["list"] = [
+                {"key": q["key"], "name": q["name"], "target": q["target"],
+                 "reward_xp": q["reward_xp"], "reward_coins": q["reward_coins"],
+                 "type": q["type"], "progress": 0, "completed": False}
+                for q in picked
+            ]
+            qd["claimed"] = []
+        return qd.get("list", [])
+    except Exception:
+        return []
+
+
+def user_quests_weekly(uid: int) -> list:
+    """بازگرداندن Quest های هفتگی کاربر."""
+    try:
+        user = get_user(int(uid))
+        qw = user.get("quests_weekly", {})
+        if not isinstance(qw, dict):
+            qw = {}
+            user["quests_weekly"] = qw
+        week = week_key_full()
+        if qw.get("week", "") != week:
+            pool = list(QUEST_WEEKLY_POOL)
+            random.shuffle(pool)
+            picked = pool[:2]
+            qw.clear()
+            qw["week"] = week
+            qw["list"] = [
+                {"key": q["key"], "name": q["name"], "target": q["target"],
+                 "reward_xp": q["reward_xp"], "reward_coins": q["reward_coins"],
+                 "type": q["type"], "progress": 0, "completed": False}
+                for q in picked
+            ]
+            qw["claimed"] = []
+        return qw.get("list", [])
+    except Exception:
+        return []
+
+
+def bump_quest_progress(uid: int, qtype: str, amount: int = 1) -> None:
+    """افزایش پیشرفت Quest های روزانه و هفتگی بر اساس نوع."""
+    try:
+        for quests in [user_quests_daily(int(uid)), user_quests_weekly(int(uid))]:
+            for q in quests:
+                if str(q.get("type", "")) == str(qtype) and not q.get("completed", False):
+                    q["progress"] = int(q.get("progress", 0)) + int(amount)
+                    if int(q["progress"]) >= int(q.get("target", 1)):
+                        q["completed"] = True
+                        push_notification(int(uid), "achievement",
+                                          "🎯 Quest کامل شد!",
+                                          q.get("name", "")[:60],
+                                          action_data="QS|HOME")
+    except Exception:
+        pass
+
+
+def claim_quest(uid: int, kind: str, quest_key: str) -> bool:
+    """دریافت پاداش Quest. kind: daily | weekly"""
+    try:
+        user = get_user(int(uid))
+        store = user.get(f"quests_{kind}", {})
+        if not isinstance(store, dict):
+            return False
+        claimed = store.setdefault("claimed", [])
+        if quest_key in claimed:
+            return False
+        for q in store.get("list", []):
+            if str(q.get("key", "")) == str(quest_key) and q.get("completed", False):
+                claimed.append(quest_key)
+                xp = int(q.get("reward_xp", 0))
+                coins = int(q.get("reward_coins", 0))
+                if xp:
+                    add_xp(int(uid), xp)
+                if coins:
+                    add_coins(int(uid), coins)
+                log_user_activity(int(uid), f"quest_{kind}_claim:{quest_key}", f"+{xp}xp +{coins}c")
+                return True
+        return False
+    except Exception:
+        return False
+
+
+async def qs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Quest System."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            await qs_send_home(query, uid)
+            return
+        if action == "DAILY":
+            await qs_show_daily(query, uid)
+            return
+        if action == "WEEKLY":
+            await qs_show_weekly(query, uid)
+            return
+        if action == "CLMD" and len(parts) > 3:
+            kind = parts[2]
+            qkey = parts[3]
+            ok = claim_quest(int(uid), kind, qkey)
+            if ok:
+                await safe_answer_query(query, "🎁 پاداش Quest دریافت شد!")
+            else:
+                await safe_answer_query(query, "❌ قابل دریافت نیست.")
+            if kind == "daily":
+                await qs_show_daily(query, uid)
+            else:
+                await qs_show_weekly(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"qs_callback failed: {exc!r}", actor=uid)
+
+
+async def qs_send_home(query, uid: int) -> None:
+    """پنل اصلی Quest."""
+    try:
+        daily = user_quests_daily(int(uid))
+        weekly = user_quests_weekly(int(uid))
+        daily_done = sum(1 for q in daily if q.get("completed", False))
+        weekly_done = sum(1 for q in weekly if q.get("completed", False))
+        lines = [
+            "🎯 <b>Quest Center</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            "📅 <b>Quest های روزانه</b>",
+            f"✅ تکمیل‌شده: <b>{daily_done}/{len(daily)}</b>",
+            "",
+            "🗓 <b>Quest های هفتگی</b>",
+            f"✅ تکمیل‌شده: <b>{weekly_done}/{len(weekly)}</b>",
+            "",
+            "💡 Quest ها پاداش بیشتری از Mission ها دارند!",
+        ]
+        rows = [
+            [btn("📅 Quest های روزانه", "QS|DAILY")],
+            [btn("🗓 Quest های هفتگی", "QS|WEEKLY")],
+            [btn("⬅️ بازگشت", "H|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"qs_send_home failed: {exc!r}")
+
+
+async def qs_show_daily(query, uid: int) -> None:
+    """نمایش Quest های روزانه."""
+    try:
+        quests = user_quests_daily(int(uid))
+        user = get_user(int(uid))
+        claimed = user.get("quests_daily", {}).get("claimed", [])
+        lines = ["📅 <b>Quest های روزانه</b>", f"🗓 روز: {today_key()}", "━━━━━━━━━━━━━━━━━━"]
+        if not quests:
+            lines.append("— امروز Quest ای نداری.")
+        else:
+            for q in quests:
+                status = "✅" if q.get("completed", False) else "⏳"
+                progress = int(q.get("progress", 0))
+                target = int(q.get("target", 1))
+                is_claimed = q.get("key", "") in claimed
+                lines.append(f"{status} {q.get('name', '')}")
+                lines.append(f"   پیشرفت: <b>{progress}/{target}</b> · ⭐{q.get('reward_xp', 0)} 🪙{q.get('reward_coins', 0)}" + (" (گرفته‌شده)" if is_claimed else ""))
+        rows = []
+        for q in quests:
+            if q.get("completed", False) and q.get("key", "") not in claimed:
+                rows.append([btn(f"🎁 {q.get('name', '')[:25]}", f"QS|CLMD|daily|{q.get('key', '')}")])
+        rows.append([btn("⬅️ بازگشت", "QS|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"qs_show_daily failed: {exc!r}")
+
+
+async def qs_show_weekly(query, uid: int) -> None:
+    """نمایش Quest های هفتگی."""
+    try:
+        quests = user_quests_weekly(int(uid))
+        user = get_user(int(uid))
+        claimed = user.get("quests_weekly", {}).get("claimed", [])
+        lines = ["🗓 <b>Quest های هفتگی</b>", f"📅 هفته: {week_key_full()}", "━━━━━━━━━━━━━━━━━━"]
+        if not quests:
+            lines.append("— این هفته Quest ای نداری.")
+        else:
+            for q in quests:
+                status = "✅" if q.get("completed", False) else "⏳"
+                progress = int(q.get("progress", 0))
+                target = int(q.get("target", 1))
+                is_claimed = q.get("key", "") in claimed
+                lines.append(f"{status} {q.get('name', '')}")
+                lines.append(f"   پیشرفت: <b>{progress}/{target}</b> · ⭐{q.get('reward_xp', 0)} 🪙{q.get('reward_coins', 0)}" + (" (گرفته‌شده)" if is_claimed else ""))
+        rows = []
+        for q in quests:
+            if q.get("completed", False) and q.get("key", "") not in claimed:
+                rows.append([btn(f"🎁 {q.get('name', '')[:25]}", f"QS|CLMD|weekly|{q.get('key', '')}")])
+        rows.append([btn("⬅️ بازگشت", "QS|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"qs_show_weekly failed: {exc!r}")
+
+
+async def cmd_apexquests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexquests."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("🎯 Quest Center\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await qs_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexquests failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۱۶ — Season Pass / Battle Pass — Extended
+# ================================================================
+SEASON_PASS_TIERS = 50  # 50 tier
+SEASON_PASS_XP_PER_TIER = 100
+SEASON_PASS_FREE_REWARDS = {
+    1: {"coins": 20, "item": None, "title": None},
+    5: {"coins": 50, "item": "lucky", "title": None},
+    10: {"coins": 100, "item": "reroll", "title": None},
+    15: {"coins": 100, "item": None, "title": "funny_player"},
+    20: {"coins": 150, "item": "shield", "title": None},
+    25: {"coins": 200, "item": "double_xp", "title": None},
+    30: {"coins": 200, "item": None, "title": "dare_master"},
+    40: {"coins": 300, "item": "pass", "title": None},
+    50: {"coins": 500, "item": "double_xp", "title": "rival_hunter"},
+}
+SEASON_PASS_PREMIUM_REWARDS = {
+    1: {"coins": 50, "item": None, "title": None, "frame": None},
+    5: {"coins": 100, "item": "lucky", "title": None, "frame": None},
+    10: {"coins": 200, "item": "reroll", "title": None, "frame": "gold"},
+    15: {"coins": 200, "item": "shield", "title": None, "frame": None},
+    20: {"coins": 300, "item": "double_xp", "title": "heart_breaker", "frame": None},
+    25: {"coins": 400, "item": "pass", "title": None, "frame": "fire"},
+    30: {"coins": 400, "item": None, "title": "mystery_soul", "frame": None},
+    40: {"coins": 600, "item": "double_xp", "title": None, "frame": "ice"},
+    50: {"coins": 1000, "item": "pass", "title": "apex_legend", "frame": "legendary"},
+}
+SEASON_PASS_PREMIUM_PRICE = 1500  # سکه برای ۳۰ روز
+
+
+def season_pass_add_xp(uid: int, xp: int) -> int:
+    """افزایش XP در Battle Pass. برمی‌گرداند: تعداد tier ارتقا."""
+    try:
+        user = get_user(int(uid))
+        before_tier = int(user.get("season_pass_tier", 0))
+        user["season_pass_xp"] = int(user.get("season_pass_xp", 0)) + int(xp)
+        new_tier = min(SEASON_PASS_TIERS, int(user["season_pass_xp"]) // SEASON_PASS_XP_PER_TIER)
+        user["season_pass_tier"] = new_tier
+        return new_tier - before_tier
+    except Exception:
+        return 0
+
+
+def season_pass_buy_premium(uid: int) -> bool:
+    """خرید Premium Battle Pass با سکه."""
+    try:
+        if not spend_coins(int(uid), SEASON_PASS_PREMIUM_PRICE):
+            return False
+        user = get_user(int(uid))
+        now = now_ts()
+        # اگر قبلاً VIP داشته، تمدید کن
+        if int(user.get("vip_until", 0)) > now:
+            user["vip_until"] = int(user["vip_until"]) + 30 * 86400
+        else:
+            user["vip_since"] = now
+            user["vip_until"] = now + 30 * 86400
+        user["season_pass_premium"] = True
+        user["vip_purchases"] = int(user.get("vip_purchases", 0)) + 1
+        log_user_activity(int(uid), "season_pass_premium", f"-{SEASON_PASS_PREMIUM_PRICE} coins")
+        log_economy(int(uid), "spend", SEASON_PASS_PREMIUM_PRICE, "season_pass_premium")
+        DATA.setdefault("vip_store_log", []).append({
+            "uid": int(uid), "ts": now, "type": "season_pass", "amount": SEASON_PASS_PREMIUM_PRICE
+        })
+        return True
+    except Exception:
+        return False
+
+
+def season_pass_claim_tier(uid: int, tier: int, premium: bool = False) -> dict | None:
+    """دریافت پاداش یک tier."""
+    try:
+        user = get_user(int(uid))
+        if int(user.get("season_pass_tier", 0)) < int(tier):
+            return None
+        claimed = user.setdefault("season_pass_claimed", [])
+        claim_key = f"{'p' if premium else 'f'}_{tier}"
+        if claim_key in claimed:
+            return None
+        rewards = SEASON_PASS_PREMIUM_REWARDS if premium else SEASON_PASS_FREE_REWARDS
+        reward = rewards.get(int(tier))
+        if not reward:
+            return None
+        claimed.append(claim_key)
+        coins = int(reward.get("coins", 0))
+        item = reward.get("item")
+        title = reward.get("title")
+        frame = reward.get("frame")
+        if coins:
+            add_coins(int(uid), coins)
+        if item:
+            grant_item(int(uid), item, 1)
+        if title and title in TITLES_SHOP:
+            owned = user.setdefault("titles_owned", [])
+            if title not in owned:
+                owned.append(title)
+        if frame and frame in FRAMES_SHOP:
+            owned = user.setdefault("frames_owned", [])
+            if frame not in owned:
+                owned.append(frame)
+        return {"coins": coins, "item": item, "title": title, "frame": frame}
+    except Exception:
+        return None
+
+
+async def sp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Season Pass."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            await sp_send_home(query, uid)
+            return
+        if action == "BUY":
+            ok = season_pass_buy_premium(int(uid))
+            if ok:
+                await safe_answer_query(query, "🎉 Premium Battle Pass فعال شد!")
+            else:
+                await safe_answer_query(query, "❌ سکه کافی نداری!")
+            await sp_send_home(query, uid)
+            return
+        if action == "CLMF" and len(parts) > 2:
+            tier = int(parts[2])
+            result = season_pass_claim_tier(int(uid), tier, premium=False)
+            if result:
+                await safe_answer_query(query, f"🎁 پاداش Tier {tier} دریافت شد!")
+            else:
+                await safe_answer_query(query, "❌ قابل دریافت نیست.")
+            await sp_send_home(query, uid)
+            return
+        if action == "CLMP" and len(parts) > 2:
+            tier = int(parts[2])
+            result = season_pass_claim_tier(int(uid), tier, premium=True)
+            if result:
+                await safe_answer_query(query, f"🎁 پاداش Premium Tier {tier} دریافت شد!")
+            else:
+                await safe_answer_query(query, "❌ قابل دریافت نیست.")
+            await sp_send_home(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"sp_callback failed: {exc!r}", actor=uid)
+
+
+async def sp_send_home(query, uid: int) -> None:
+    """نمایش پنل Battle Pass."""
+    try:
+        user = get_user(int(uid))
+        tier = int(user.get("season_pass_tier", 0))
+        xp = int(user.get("season_pass_xp", 0))
+        is_premium = bool(user.get("season_pass_premium", False))
+        claimed = user.get("season_pass_claimed", [])
+        xp_in_tier = xp % SEASON_PASS_XP_PER_TIER
+        lines = [
+            "🎫 <b>Season Pass / Battle Pass</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"📊 Tier فعلی: <b>{tier}/{SEASON_PASS_TIERS}</b>",
+            f"⭐ XP در Pass: <b>{fmt_num(xp)}</b>",
+            f"📊 پیشرفت Tier: <b>{xp_in_tier}/{SEASON_PASS_XP_PER_TIER}</b>",
+            f"👑 Premium: {'✅ فعال' if is_premium else '❌ غیرفعال'}",
+            "",
+            "━ پاداش‌های قابل دریافت ━",
+        ]
+        # پیدا کردن tier های قابل دریافت
+        claimable_free = []
+        claimable_premium = []
+        for t in sorted(SEASON_PASS_FREE_REWARDS.keys()):
+            if t <= tier and f"f_{t}" not in claimed:
+                claimable_free.append(t)
+        if is_premium:
+            for t in sorted(SEASON_PASS_PREMIUM_REWARDS.keys()):
+                if t <= tier and f"p_{t}" not in claimed:
+                    claimable_premium.append(t)
+        if not claimable_free and not claimable_premium:
+            lines.append("— فعلاً پاداش قابل دریافت نیست.")
+            lines.append("برای دریافت پاداش، Tier های بالاتر رو باز کن!")
+        else:
+            if claimable_free:
+                lines.append(f"🎁 پاداش Free قابل دریافت: {len(claimable_free)}")
+            if claimable_premium:
+                lines.append(f"👑 پاداش Premium قابل دریافت: {len(claimable_premium)}")
+        rows = []
+        # دکمه‌های دریافت
+        for t in claimable_free[:3]:
+            rows.append([btn(f"🎁 Free Tier {t}", f"SP|CLMF|{t}")])
+        for t in claimable_premium[:3]:
+            rows.append([btn(f"👑 Premium Tier {t}", f"SP|CLMP|{t}")])
+        if not is_premium:
+            rows.append([btn(f"👑 خرید Premium ({SEASON_PASS_PREMIUM_PRICE} 🪙)", "SP|BUY")])
+        rows.append([btn("⬅️ بازگشت", "H|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"sp_send_home failed: {exc!r}")
+
+
+async def cmd_apexpass(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexpass."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("🎫 Season Pass\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await sp_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexpass failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۱۷ — Player Reputation System — Extended
+# ================================================================
+def reputation_give(from_uid: int, to_uid: int, value: int) -> bool:
+    """value: +1 (upvote) یا -1 (downvote)."""
+    try:
+        if int(from_uid) == int(to_uid):
+            return False
+        uf = get_user(int(from_uid))
+        ut = get_user(int(to_uid))
+        # بررسی اینکه قبلاً داده یا نه
+        given = uf.get("reputation_given", [])
+        for g in given:
+            if int(g.get("uid", 0)) == int(to_uid):
+                return False  # قبلاً داده
+        given.append({"uid": int(to_uid), "ts": now_ts(), "value": int(value)})
+        if len(given) > 50:
+            uf["reputation_given"] = given[-50:]
+        # ثبت برای گیرنده
+        received = ut.get("reputation_received", [])
+        received.append({"uid": int(from_uid), "ts": now_ts(), "value": int(value)})
+        if len(received) > 100:
+            ut["reputation_received"] = received[-100:]
+        # آپدیت مجموع
+        ut["reputation"] = int(ut.get("reputation", 0)) + int(value)
+        return True
+    except Exception:
+        return False
+
+
+async def rep_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Reputation."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "UP" and len(parts) > 2:
+            target = int(parts[2])
+            ok = reputation_give(int(uid), int(target), 1)
+            if ok:
+                await safe_answer_query(query, "👍 اعتبار مثبت داده شد!")
+            else:
+                await safe_answer_query(query, "❌ نمی‌تونی دوباره بدی!")
+            return
+        if action == "DOWN" and len(parts) > 2:
+            target = int(parts[ 2])
+            ok = reputation_give(int(uid), int(target), -1)
+            if ok:
+                await safe_answer_query(query, "👎 اعتبار منفی داده شد!")
+            else:
+                await safe_answer_query(query, "❌ نمی‌تونی دوباره بدی!")
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"rep_callback failed: {exc!r}", actor=uid)
+
+
+# ================================================================
+#  فاز ۱۸ — Matchmaking System — Extended
+# ================================================================
+def matchmaking_join(uid: int) -> bool:
+    """اضافه کردن کاربر به صف Matchmaking."""
+    try:
+        queue = DATA.setdefault("matchmaking_queue", [])
+        # اگر قبلاً در صف است
+        for entry in queue:
+            if isinstance(entry, dict) and int(entry.get("uid", 0)) == int(uid):
+                return False
+        user = get_user(int(uid))
+        queue.append({
+            "uid": int(uid),
+            "elo": int(user.get("elo_rating", 1000)),
+            "joined_at": now_ts(),
+        })
+        return True
+    except Exception:
+        return False
+
+
+def matchmaking_leave(uid: int) -> None:
+    """خروج از صف."""
+    try:
+        queue = DATA.setdefault("matchmaking_queue", [])
+        DATA["matchmaking_queue"] = [e for e in queue if not (isinstance(e, dict) and int(e.get("uid", 0)) == int(uid))]
+    except Exception:
+        pass
+
+
+def matchmaking_try_match() -> list:
+    """تلاش برای پیدا کردن Match برای کاربران در صف.
+    برمی‌گرداند: لیست [(uid1, uid2), ...] که با هم Match شدند."""
+    try:
+        queue = DATA.setdefault("matchmaking_queue", [])
+        if len(queue) < 2:
+            return []
+        matches = []
+        used = set()
+        # مرتب‌سازی بر اساس ELO
+        sorted_queue = sorted(queue, key=lambda x: int(x.get("elo", 1000)))
+        i = 0
+        while i < len(sorted_queue) - 1:
+            if i in used:
+                i += 1
+                continue
+            a = sorted_queue[i]
+            # پیدا کردن نزدیک‌ترین ELO بعدی
+            for j in range(i + 1, len(sorted_queue)):
+                if j in used:
+                    continue
+                b = sorted_queue[j]
+                elo_diff = abs(int(a.get("elo", 1000)) - int(b.get("elo", 1000)))
+                if elo_diff <= 200:  # تلورانس 200 ELO
+                    matches.append((int(a.get("uid", 0)), int(b.get("uid", 0))))
+                    used.add(i)
+                    used.add(j)
+                    break
+            i += 1
+        # حذف کاربران Match شده از صف
+        matched_uids = set()
+        for u1, u2 in matches:
+            matched_uids.add(u1)
+            matched_uids.add(u2)
+        DATA["matchmaking_queue"] = [e for e in queue if int(e.get("uid", 0)) not in matched_uids]
+        return matches
+    except Exception:
+        return []
+
+
+def elo_update(winner: int, loser: int, draw: bool = False) -> None:
+    """آپدیت ELO بعد از یک Match."""
+    try:
+        K = 32  # ضریب K استاندارد
+        u_w = get_user(int(winner))
+        u_l = get_user(int(loser))
+        r_w = int(u_w.get("elo_rating", 1000))
+        r_l = int(u_l.get("elo_rating", 1000))
+        # امید ریاضی
+        e_w = 1.0 / (1.0 + 10 ** ((r_l - r_w) / 400.0))
+        e_l = 1.0 - e_w
+        if draw:
+            s_w, s_l = 0.5, 0.5
+        else:
+            s_w, s_l = 1.0, 0.0
+        new_r_w = r_w + K * (s_w - e_w)
+        new_r_l = r_l + K * (s_l - e_l)
+        u_w["elo_rating"] = max(100, int(new_r_w))
+        u_l["elo_rating"] = max(100, int(new_r_l))
+        # آپدیت best_elo
+        if int(u_w["elo_rating"]) > int(u_w.get("stats_ext", {}).get("best_elo", 1000)):
+            u_w.setdefault("stats_ext", {})["best_elo"] = int(u_w["elo_rating"])
+        # آمار
+        if not draw:
+            u_w["matchmaking_wins"] = int(u_w.get("matchmaking_wins", 0)) + 1
+            u_l["matchmaking_losses"] = int(u_l.get("matchmaking_losses", 0)) + 1
+        else:
+            u_w["matchmaking_draws"] = int(u_w.get("matchmaking_draws", 0)) + 1
+            u_l["matchmaking_draws"] = int(u_l.get("matchmaking_draws", 0)) + 1
+    except Exception:
+        pass
+
+
+async def mm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Matchmaking."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            await mm_send_home(query, uid)
+            return
+        if action == "JOIN":
+            ok = matchmaking_join(int(uid))
+            if ok:
+                await safe_answer_query(query, "✅ به صف Matchmaking اضافه شدی!")
+                # تلاش برای Match
+                matches = matchmaking_try_match()
+                for u1, u2 in matches:
+                    if int(uid) in (u1, u2):
+                        # کاربر فعلی Match شد
+                        other = u2 if u1 == int(uid) else u1
+                        # ساخت Private Match
+                        match = private_match_create(int(uid), mode="mixed", rounds=10)
+                        match["p2"] = int(other)
+                        match["status"] = "active"
+                        match["started_at"] = now_ts()
+                        match["turn"] = int(uid)
+                        private_match_save(match)
+                        # اعلان به هر دو
+                        try:
+                            await context.bot.send_message(int(other),
+                                f"🎮 <b>Match پیدا شد!</b>\nحریف: {escape(name_of(int(uid)))}\nمسابقه #{match['id']} شروع شد!",
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=kb([[btn("▶️ بازی کن", f"PM|PLAY|{match['id']}")]]))
+                        except Exception:
+                            pass
+                        await safe_answer_query(query, f"🎮 Match پیدا شد! مسابقه #{match['id']}")
+                        await pm_view_match(query, int(uid), match["id"])
+                        return
+                # Match نشد — در صف است
+                await safe_answer_query(query, "⏳ در صف جستجو... به‌زودی Match پیدا می‌شه!")
+            else:
+                await safe_answer_query(query, "ℹ️ قبلاً در صف هستی!")
+            await mm_send_home(query, uid)
+            return
+        if action == "LEAVE":
+            matchmaking_leave(int(uid))
+            await safe_answer_query(query, "❌ از صف خارج شدی.")
+            await mm_send_home(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"mm_callback failed: {exc!r}", actor=uid)
+
+
+async def mm_send_home(query, uid: int) -> None:
+    """نمایش پنل Matchmaking."""
+    try:
+        user = get_user(int(uid))
+        elo = int(user.get("elo_rating", 1000))
+        mm_wins = int(user.get("matchmaking_wins", 0))
+        mm_losses = int(user.get("matchmaking_losses", 0))
+        mm_draws = int(user.get("matchmaking_draws", 0))
+        # بررسی آیا در صف است
+        queue = DATA.get("matchmaking_queue", [])
+        in_queue = any(int(e.get("uid", 0)) == int(uid) for e in queue if isinstance(e, dict))
+        queue_size = len(queue)
+        lines = [
+            "🎯 <b>Matchmaking رقیب</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"⭐ ELO تو: <b>{fmt_num(elo)}</b>",
+            f"🏆 برد: <b>{fmt_num(mm_wins)}</b> · ❌ باخت: <b>{fmt_num(mm_losses)}</b> · 🤝 مساوی: <b>{fmt_num(mm_draws)}</b>",
+            "",
+            f"👥 در صف: <b>{fmt_num(queue_size)}</b> نفر",
+        ]
+        if in_queue:
+            lines.append("⏳ تو در صف هستی! صبر کن...")
+        else:
+            lines.append("برای پیدا کردن حریف هم‌سطح، دکمه‌ی زیر رو بزن.")
+        rows = []
+        if in_queue:
+            rows.append([btn("❌ خروج از صف", "MM|LEAVE")])
+        else:
+            rows.append([btn("🎮 پیدا کردن حریف", "MM|JOIN")])
+        rows.append([btn("⬅️ بازگشت", "H|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"mm_send_home failed: {exc!r}")
+
+
+async def cmd_apexmatchmaking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexmatchmaking."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("🎯 Matchmaking\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await mm_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexmatchmaking failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۱۹ — Game History & Replay — Extended
+# ================================================================
+def game_history_add(uid: int, game_summary: dict) -> None:
+    """افزودن یک بازی به history کاربر (آخرین ۲۰)."""
+    try:
+        user = get_user(int(uid))
+        history = user.setdefault("game_history", [])
+        history.insert(0, {
+            "ts": now_ts(),
+            **game_summary,
+        })
+        if len(history) > 20:
+            user["game_history"] = history[:20]
+    except Exception:
+        pass
+
+
+async def gh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Game History."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            await gh_send_home(query, uid)
+            return
+        if action == "V" and len(parts) > 2:
+            idx = int(parts[2])
+            await gh_view_entry(query, uid, idx)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"gh_callback failed: {exc!r}", actor=uid)
+
+
+async def gh_send_home(query, uid: int) -> None:
+    """نمایش تاریخچه بازی."""
+    try:
+        user = get_user(int(uid))
+        history = user.get("game_history", [])
+        lines = [
+            "📜 <b>تاریخچه بازی‌های من</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"📊 آخرین بازی‌ها: <b>{fmt_num(len(history))}</b>",
+            "",
+        ]
+        if not history:
+            lines.append("— هنوز بازی‌ای ثبت نشده.")
+        else:
+            for i, entry in enumerate(history[:15]):
+                ts = int(entry.get("ts", 0))
+                time_str = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
+                mode = str(entry.get("mode", ""))[:15]
+                result = str(entry.get("result", ""))[:8]
+                xp = int(entry.get("xp", 0))
+                lines.append(f"[{time_str}] {mode} · {result} · +{xp}xp")
+        rows = []
+        for i, entry in enumerate(history[:5]):
+            rows.append([btn(f"👁 {entry.get('mode', '')[:15]}", f"GH|V|{i}")])
+        rows.append([btn("⬅️ بازگشت", "H|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"gh_send_home failed: {exc!r}")
+
+
+async def gh_view_entry(query, uid: int, idx: int) -> None:
+    """نمایش جزئیات یک بازی."""
+    try:
+        user = get_user(int(uid))
+        history = user.get("game_history", [])
+        if idx < 0 or idx >= len(history):
+            await safe_answer_query(query, "❌ پیدا نشد.")
+            return
+        entry = history[idx]
+        ts = int(entry.get("ts", 0))
+        time_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else ""
+        lines = [
+            "📜 <b>جزئیات بازی</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"⏱ زمان: <b>{time_str}</b>",
+            f"🎮 نوع: <b>{escape(str(entry.get('mode', '')))}</b>",
+            f"📊 نتیجه: <b>{escape(str(entry.get('result', '')))}</b>",
+            f"⭐ XP: <b>+{fmt_num(int(entry.get('xp', 0)))}</b>",
+            f"🪙 سکه: <b>+{fmt_num(int(entry.get('coins', 0)))}</b>",
+            f"👥 بازیکنان: <b>{fmt_num(int(entry.get('players', 0)))}</b>",
+        ]
+        if entry.get("chat_id"):
+            lines.append(f"💬 چت: <code>{entry.get('chat_id')}</code>")
+        rows = [[btn("⬅️ بازگشت", "GH|HOME")]]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"gh_view_entry failed: {exc!r}")
+
+
+async def cmd_apexhistory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexhistory."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("📜 تاریخچه بازی\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await gh_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexhistory failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۲۰ — Ban Appeal System — Extended
+# ================================================================
+def ban_appeal_submit(uid: int, text: str) -> bool:
+    """ثبت درخواست لغو مسدودیت."""
+    try:
+        appeal_id = next_id("feedback")
+        appeal = {
+            "id": appeal_id,
+            "uid": int(uid),
+            "text": str(text)[:500],
+            "ts": now_ts(),
+            "status": "pending",  # pending | approved | rejected
+            "admin_reply": "",
+            "reviewed_by": 0,
+            "reviewed_at": 0,
+        }
+        DATA.setdefault("ban_appeals_queue", []).append(appeal)
+        user = get_user(int(uid))
+        user.setdefault("ban_appeals", []).append({
+            "id": appeal_id, "ts": now_ts(), "text": str(text)[:500], "status": "pending",
+        })
+        return True
+    except Exception:
+        return False
+
+
+async def ba_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Ban Appeal."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            await ba_send_home(query, uid)
+            return
+        if action == "NEW":
+            await safe_answer_query(query, "📝 دلیل لغو مسدودیت رو بفرست:")
+            context.application.user_data[uid] = context.application.user_data.get(uid, {})
+            context.application.user_data[uid]["await_ban_appeal"] = True
+            return
+        if action == "MINE":
+            await ba_show_mine(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"ba_callback failed: {exc!r}", actor=uid)
+
+
+async def ba_send_home(query, uid: int) -> None:
+    """نمایش پنل درخواست لغو مسدودیت."""
+    try:
+        user = get_user(int(uid))
+        appeals = user.get("ban_appeals", [])
+        lines = [
+            "⚖️ <b>درخواست لغو مسدودیت</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"📊 تعداد درخواست‌های تو: <b>{fmt_num(len(appeals))}</b>",
+        ]
+        if not appeals:
+            lines.append("— هنوز درخواستی ندادی.")
+        rows = [
+            [btn("📝 ثبت درخواست جدید", "BA|NEW")],
+            [btn("📜 درخواست‌های من", "BA|MINE")],
+            [btn("⬅️ بازگشت", "H|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"ba_send_home failed: {exc!r}")
+
+
+async def ba_show_mine(query, uid: int) -> None:
+    """نمایش درخواست‌های کاربر."""
+    try:
+        user = get_user(int(uid))
+        appeals = user.get("ban_appeals", [])
+        lines = ["📜 <b>درخواست‌های من</b>", "━━━━━━━━━━━━━━━━━━"]
+        if not appeals:
+            lines.append("— هنوز درخواستی ندادی.")
+        else:
+            for a in appeals[:10]:
+                ts = int(a.get("ts", 0))
+                time_str = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
+                status = a.get("status", "pending")
+                lines.append(f"📝 [{time_str}] {escape(a.get('text', '')[:50])}")
+                lines.append(f"   وضعیت: {status}")
+                if a.get("admin_reply"):
+                    lines.append(f"   💬 پاسخ: {escape(a.get('admin_reply', '')[:80])}")
+                lines.append("")
+        rows = [[btn("⬅️ بازگشت", "BA|HOME")]]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"ba_show_mine failed: {exc!r}")
+
+
+# ================================================================
+#  فاز ۲۲ — Milestone Rewards — Extended
+# ================================================================
+MILESTONES = [
+    {"key": "games_10", "name": "🎮 ۱۰ بازی", "type": "games", "target": 10, "coins": 50, "xp": 50, "title": None},
+    {"key": "games_50", "name": "🎮 ۵۰ بازی", "type": "games", "target": 50, "coins": 150, "xp": 150, "title": None},
+    {"key": "games_100", "name": "🎮 ۱۰۰ بازی", "type": "games", "target": 100, "coins": 400, "xp": 400, "title": None},
+    {"key": "games_500", "name": "🎮 ۵۰۰ بازی", "type": "games", "target": 500, "coins": 1500, "xp": 1000, "title": "rival_hunter"},
+    {"key": "wins_10", "name": "🏆 ۱۰ برد", "type": "wins", "target": 10, "coins": 80, "xp": 80, "title": None},
+    {"key": "wins_50", "name": "🏆 ۵۰ برد", "type": "wins", "target": 50, "coins": 300, "xp": 300, "title": None},
+    {"key": "wins_100", "name": "🏆 ۱۰۰ برد", "type": "wins", "target": 100, "coins": 800, "xp": 800, "title": "dare_master"},
+    {"key": "xp_1000", "name": "⭐ ۱۰۰۰ XP", "type": "xp", "target": 1000, "coins": 100, "xp": 0, "title": None},
+    {"key": "xp_5000", "name": "⭐ ۵۰۰۰ XP", "type": "xp", "target": 5000, "coins": 500, "xp": 0, "title": None},
+    {"key": "streak_7", "name": "📅 ۷ روز پیاپی", "type": "daily_streak", "target": 7, "coins": 200, "xp": 200, "title": None},
+    {"key": "streak_30", "name": "📅 ۳۰ روز پیاپی", "type": "daily_streak", "target": 30, "coins": 1000, "xp": 1000, "title": "apex_legend"},
+    {"key": "duels_25", "name": "🤺 ۲۵ دوئل", "type": "duels", "target": 25, "coins": 250, "xp": 250, "title": None},
+    {"key": "private_10", "name": "🎮 ۱۰ مسابقه خصوصی", "type": "private_games", "target": 10, "coins": 200, "xp": 200, "title": None},
+]
+
+
+def check_milestones(uid: int) -> list:
+    """بررسی Milestone های قابل دریافت. برمی‌گرداند: لیست Milestone های جدید."""
+    try:
+        user = get_user(int(uid))
+        claimed = user.get("milestones_claimed", [])
+        # مقادیر فعلی
+        current_values = {
+            "games": int(user.get("games", 0)),
+            "wins": int(user.get("wins", 0)),
+            "xp": int(user.get("xp", 0)),
+            "daily_streak": int(user.get("daily_streak", 0)),
+            "duels": int(user.get("duels", 0)),
+            "private_games": int(user.get("private_games", 0)),
+        }
+        new_milestones = []
+        for m in MILESTONES:
+            if m["key"] in claimed:
+                continue
+            current = current_values.get(m["type"], 0)
+            if current >= m["target"]:
+                # اعطای پاداش
+                coins = int(m.get("coins", 0))
+                xp = int(m.get("xp", 0))
+                title = m.get("title")
+                if coins:
+                    add_coins(int(uid), coins)
+                if xp:
+                    add_xp(int(uid), xp)
+                if title and title in TITLES_SHOP:
+                    owned = user.setdefault("titles_owned", [])
+                    if title not in owned:
+                        owned.append(title)
+                claimed.append(m["key"])
+                new_milestones.append(m)
+                # لاگ
+                DATA.setdefault("milestone_log", []).append({
+                    "uid": int(uid), "ts": now_ts(), "key": m["key"], "name": m["name"],
+                })
+                # اعلان
+                push_notification(int(uid), "achievement",
+                                  f"🎯 Milestone رسید!",
+                                  f"{m['name']} - +{coins}🪙 +{xp}⭐",
+                                  action_data="MS|HOME")
+                log_user_activity(int(uid), f"milestone:{m['key']}", f"+{coins}c +{xp}xp")
+        return new_milestones
+    except Exception:
+        return []
+
+
+async def ms_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Milestone."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            # بررسی Milestone های جدید
+            new_ms = check_milestones(int(uid))
+            if new_ms:
+                await safe_answer_query(query, f"🎯 {len(new_ms)} Milestone جدید دریافت شد!")
+            else:
+                await safe_answer_query(query)
+            await ms_send_home(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"ms_callback failed: {exc!r}", actor=uid)
+
+
+async def ms_send_home(query, uid: int) -> None:
+    """نمایش پنل Milestone."""
+    try:
+        # ابتدا Milestone ها را بررسی کن
+        check_milestones(int(uid))
+        user = get_user(int(uid))
+        claimed = user.get("milestones_claimed", [])
+        lines = [
+            "🎯 <b>Milestone Rewards</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"✅ دریافت‌شده: <b>{fmt_num(len(claimed))}/{fmt_num(len(MILESTONES))}</b>",
+            "",
+            "━ همه‌ی Milestone ها ━",
+        ]
+        # مقادیر فعلی
+        current_values = {
+            "games": int(user.get("games", 0)),
+            "wins": int(user.get("wins", 0)),
+            "xp": int(user.get("xp", 0)),
+            "daily_streak": int(user.get("daily_streak", 0)),
+            "duels": int(user.get("duels", 0)),
+            "private_games": int(user.get("private_games", 0)),
+        }
+        for m in MILESTONES:
+            is_claimed = m["key"] in claimed
+            current = current_values.get(m["type"], 0)
+            status = "✅" if is_claimed else ("🎯" if current >= m["target"] else "⏳")
+            lines.append(f"{status} {m['name']} ({current}/{m['target']}) - 🪙{m['coins']} ⭐{m['xp']}")
+        rows = [
+            [btn("🔄 بررسی مجدد", "MS|HOME")],
+            [btn("⬅️ بازگشت", "H|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"ms_send_home failed: {exc!r}")
+
+
+async def cmd_apexmilestones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexmilestones."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("🎯 Milestone Rewards\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await ms_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexmilestones failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۲۳ — Hall of Fame — Extended
+# ================================================================
+def hall_of_fame_update() -> None:
+    """آپدیت Hall of Fame با بهترین بازیکنان."""
+    try:
+        lb = leaderboard_global(20)
+        existing_uids = {entry.get("uid") for entry in DATA.get("hall_of_fame", []) if isinstance(entry, dict)}
+        for rank, (uid, xp, wins, games) in enumerate(lb, start=1):
+            if uid not in existing_uids and rank <= 10:
+                DATA.setdefault("hall_of_fame", []).append({
+                    "uid": uid,
+                    "name": name_of(uid),
+                    "xp": xp,
+                    "wins": wins,
+                    "games": games,
+                    "rank": rank,
+                    "inducted_at": now_ts(),
+                })
+        # مرتب‌سازی و نگه‌داشتن 50 تای اول
+        hof = DATA.get("hall_of_fame", [])
+        hof.sort(key=lambda x: int(x.get("xp", 0)), reverse=True)
+        DATA["hall_of_fame"] = hof[:50]
+    except Exception:
+        pass
+
+
+async def hf_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Hall of Fame."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            hall_of_fame_update()
+            await hf_send_home(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"hf_callback failed: {exc!r}", actor=uid)
+
+
+async def hf_send_home(query, uid: int) -> None:
+    """نمایش Hall of Fame."""
+    try:
+        hof = DATA.get("hall_of_fame", [])[:20]
+        lines = ["👑 <b>Hall of Fame — تالار افسانه‌ها</b>", "━━━━━━━━━━━━━━━━━━"]
+        if not hof:
+            lines.append("— هنوز کسی وارد تالار نشده.")
+        else:
+            for i, entry in enumerate(hof, start=1):
+                medal = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}."))
+                name = escape(str(entry.get("name", ""))[:20])
+                xp = int(entry.get("xp", 0))
+                wins = int(entry.get("wins", 0))
+                inducted = int(entry.get("inducted_at", 0))
+                inducted_str = datetime.fromtimestamp(inducted).strftime("%Y-%m") if inducted else ""
+                lines.append(f"{medal} {name} · ⭐{fmt_num(xp)} · 🏆{wins} · {inducted_str}")
+        rows = [[btn("⬅️ بازگشت", "H|HOME")]]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"hf_send_home failed: {exc!r}")
+
+
+async def cmd_apexhof(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexhof."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("👑 Hall of Fame\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await hf_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexhof failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۲۴ — Player Stats Dashboard — Extended
+# ================================================================
+async def sd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Stats Dashboard."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            await sd_send_home(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"sd_callback failed: {exc!r}", actor=uid)
+
+
+async def sd_send_home(query, uid: int) -> None:
+    """نمایش Stats Dashboard."""
+    try:
+        user = get_user(int(uid))
+        stats = user.get("stats", {})
+        stats_ext = user.get("stats_ext", {})
+        # محاسبه توزیع مودها
+        total_mode = sum(int(v) for v in stats.values()) or 1
+        mode_dist = []
+        for k, v in sorted(stats.items(), key=lambda x: -int(x[1])):
+            if int(v) > 0:
+                pct = int(int(v) * 100 / total_mode)
+                mode_dist.append(f"{MODE_LABELS.get(k, k)}: {pct}%")
+        # آمار کلی
+        games = int(user.get("games", 0))
+        wins = int(user.get("wins", 0))
+        losses = int(user.get("losses", 0))
+        win_rate = (wins * 100 // games) if games > 0 else 0
+        # آمار ELO
+        elo = int(user.get("elo_rating", 1000))
+        best_elo = int(stats_ext.get("best_elo", 1000))
+        # آمار VIP
+        vip_until = int(user.get("vip_until", 0))
+        is_vip = vip_until > now_ts()
+        vip_days = max(0, (vip_until - now_ts()) // 86400) if is_vip else 0
+        # گروه‌های بازی‌کرده
+        groups_played = stats_ext.get("groups_played_in", [])
+        lines = [
+            "📊 <b>Stats Dashboard</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            "━ آمار کلی ━",
+            f"🎮 بازی: <b>{fmt_num(games)}</b> · 🏆 برد: <b>{fmt_num(wins)}</b> · 💔 باخت: <b>{fmt_num(losses)}</b>",
+            f"📊 درصد برد: <b>{win_rate}%</b>",
+            f"⭐ XP کل: <b>{fmt_num(int(user.get('xp', 0)))}</b>",
+            f"🔥 استریک روزانه: <b>{fmt_num(int(user.get('daily_streak', 0)))}</b>",
+            "",
+            "━ Matchmaking ━",
+            f"⭐ ELO: <b>{fmt_num(elo)}</b> (best: {fmt_num(best_elo)})",
+            f"🏆 برد: <b>{fmt_num(int(user.get('matchmaking_wins', 0)))}</b>",
+            f"❌ باخت: <b>{fmt_num(int(user.get('matchmaking_losses', 0)))}</b>",
+            "",
+            "━ Reputation ━",
+            f"👍 اعتبار: <b>{fmt_num(int(user.get('reputation', 0)))}</b>",
+            "",
+            "━ VIP ━",
+            f"👑 وضعیت: {'✅ فعال' if is_vip else '❌ غیرفعال'}",
+        ]
+        if is_vip:
+            lines.append(f"⏳ روزهای باقی‌مانده: <b>{fmt_num(vip_days)}</b>")
+        if mode_dist:
+            lines.extend(["", "━ توزیع مودها ━"])
+            for m in mode_dist[:8]:
+                lines.append(f"📊 {m}")
+        if groups_played:
+            lines.extend(["", f"👥 بازی‌کرده در <b>{fmt_num(len(groups_played))}</b> گروه"])
+        rows = [[btn("⬅️ بازگشت", "H|HOME")]]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"sd_send_home failed: {exc!r}")
+
+
+async def cmd_apexstats_me(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexstats_me — Stats Dashboard شخصی."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("📊 Stats Dashboard\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await sd_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexstats_me failed: {exc!r}", actor=int(user.id))
+
+
+# ================================================================
+#  فاز ۲۶ — Anti-Toxic Moderation + Word Filter + Auto-Mod — Extended
+# ================================================================
+def word_filter_check(text: str) -> bool:
+    """بررسی متن با Word Filter."""
+    try:
+        words = DATA.get("word_filter", [])
+        if not words:
+            return False
+        text_lower = str(text).lower()
+        for w in words:
+            if str(w).lower() in text_lower:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def word_filter_add(word: str) -> bool:
+    """افزودن کلمه به Word Filter."""
+    try:
+        words = DATA.setdefault("word_filter", [])
+        word = str(word).strip()
+        if word and word not in words:
+            words.append(word)
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def word_filter_remove(word: str) -> bool:
+    """حذف کلمه از Word Filter."""
+    try:
+        words = DATA.setdefault("word_filter", [])
+        if word in words:
+            words.remove(word)
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def auto_mod_warn(uid: int, chat_id: int, reason: str) -> int:
+    """ثبت هشدار auto-mod. برمی‌گرداند: تعداد هشدارهای فعلی."""
+    try:
+        store = DATA.setdefault("auto_mod_warnings", {})
+        key = f"{uid}_{chat_id}"
+        warnings = store.setdefault(key, [])
+        warnings.append({"ts": now_ts(), "reason": str(reason)[:50]})
+        # نگه‌داشتن فقط ۱۰ هشدار اخیر
+        if len(warnings) > 10:
+            store[key] = warnings[-10:]
+        return len(warnings)
+    except Exception:
+        return 0
+
+
+def auto_mod_warnings_count(uid: int, chat_id: int) -> int:
+    """تعداد هشدارهای فعلی."""
+    try:
+        store = DATA.get("auto_mod_warnings", {})
+        key = f"{uid}_{chat_id}"
+        return len(store.get(key, []))
+    except Exception:
+        return 0
+
+
+def auto_mod_should_mute(uid: int, chat_id: int) -> bool:
+    """آیا کاربر باید mute بشه؟ (بعد ۳ هشدار در ۱ ساعت)"""
+    try:
+        store = DATA.get("auto_mod_warnings", {})
+        key = f"{uid}_{chat_id}"
+        warnings = store.get(key, [])
+        if len(warnings) < 3:
+            return False
+        # بررسی ۳ هشدار در ۱ ساعت اخیر
+        cutoff = now_ts() - 3600
+        recent = [w for w in warnings if int(w.get("ts", 0)) > cutoff]
+        return len(recent) >= 3
+    except Exception:
+        return False
+
+
+# ================================================================
+#  فاز ۲۷ — Question Voting & Rating — Extended
+# ================================================================
+def question_hash(text: str) -> str:
+    """هش سوال برای ذخیره‌ی امتیاز."""
+    try:
+        return hashlib.md5(str(text).encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return "unknown"
+
+
+def question_rate(uid: int, question: str, rating: int) -> bool:
+    """ثبت امتیاز سوال. rating: 1 (up) یا -1 (down)."""
+    try:
+        user = get_user(int(uid))
+        ratings = user.get("question_ratings", {})
+        if not isinstance(ratings, dict):
+            ratings = {}
+            user["question_ratings"] = ratings
+        qh = question_hash(question)
+        # اگر قبلاً امتیاز داده
+        if qh in ratings:
+            return False
+        ratings[qh] = int(rating)
+        # ثبت در امتیاز کلی
+        global_ratings = DATA.setdefault("question_rating_global", {})
+        entry = global_ratings.setdefault(qh, {"up": 0, "down": 0, "question": question})
+        if rating > 0:
+            entry["up"] = int(entry.get("up", 0)) + 1
+        else:
+            entry["down"] = int(entry.get("down", 0)) + 1
+        return True
+    except Exception:
+        return False
+
+
+def question_get_rating(question: str) -> tuple[int, int]:
+    """برمی‌گرداند: (up, down) برای یک سوال."""
+    try:
+        qh = question_hash(question)
+        entry = DATA.get("question_rating_global", {}).get(qh, {})
+        return (int(entry.get("up", 0)), int(entry.get("down", 0)))
+    except Exception:
+        return (0, 0)
+
+
+# ================================================================
+#  فاز ۲۸ — Tutorial Mode + Birthday/Anniversary — Extended
+# ================================================================
+TUTORIAL_STEPS = [
+    {
+        "title": "🎮 خوش آمدی به ApexRival!",
+        "body": "این ربات میدونِ جنگ گروهی توست. در ادامه یاد می‌گیری چطور بازی کنی!",
+    },
+    {
+        "title": "⚔️ شروع بازی",
+        "body": "ربات رو به گروهت اضافه کن و دستور /apex رو بفرست. یک لابی بازی ساخته می‌شه.",
+    },
+    {
+        "title": "👥 پیوستن به بازی",
+        "body": "بقیه با دکمه‌ی «پیوستن» وارد می‌شن و «آماده» می‌زنن. سازنده «شروع بازی» رو می‌زنه.",
+    },
+    {
+        "title": "🎭 موضوع بازی",
+        "body": "هر نوبت یک «پرسشگر» یک موضوع انتخاب می‌کنه (اعتراف، جرئت، فلرت و ...).",
+    },
+    {
+        "title": "🎯 انتخاب هدف",
+        "body": "سپس بازیکن هدف رو از لیست انتخاب می‌کنه. ربات سوال رو می‌فرسته.",
+    },
+    {
+        "title": "💬 پاسخ دادن",
+        "body": "هدف با Reply به پیام سوال جواب می‌ده. با ثبت جواب، +XP و +سکه می‌گیری.",
+    },
+    {
+        "title": "🛍 فروشگاه",
+        "body": "با سکه‌ها از /shop خرید کن: سپر، ریرول، XP دوبرابر و ...",
+    },
+    {
+        "title": "🏆 رشد کن!",
+        "body": "هر چه بیشتر بازی کنی، Level و Rank بالاتری می‌گیری. به Level 100 برس و افسانه شو!",
+    },
+    {
+        "title": "🎉 آماده‌ای!",
+        "body": "حالا همه چیز رو می‌دونی! با /apex شروع کن. موفق باشی! ⚔️",
+    },
+]
+
+
+def tutorial_start(uid: int) -> None:
+    """شروع Tutorial."""
+    try:
+        DATA.setdefault("tutorials_active", {})[str(int(uid))] = {
+            "step": 0,
+            "started_at": now_ts(),
+        }
+    except Exception:
+        pass
+
+
+def tutorial_complete(uid: int) -> None:
+    """تکمیل Tutorial."""
+    try:
+        user = get_user(int(uid))
+        user["tutorial_completed"] = True
+        DATA.get("tutorials_active", {}).pop(str(int(uid)), None)
+        # پاداش تکمیل
+        add_coins(int(uid), 50)
+        add_xp(int(uid), 30)
+        log_user_activity(int(uid), "tutorial_complete", "+50c +30xp")
+    except Exception:
+        pass
+
+
+async def tt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های Tutorial."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "START":
+            tutorial_start(int(uid))
+            await tt_show_step(query, uid, 0)
+            return
+        if action == "NEXT":
+            tutorials = DATA.get("tutorials_active", {})
+            t = tutorials.get(str(int(uid)), {})
+            step = int(t.get("step", 0)) + 1
+            if step >= len(TUTORIAL_STEPS):
+                tutorial_complete(int(uid))
+                await safe_answer_query(query, "🎉 Tutorial تکمیل شد! +50 سکه +30 XP")
+                await safe_edit(query,
+                    "🎉 <b>Tutorial تکمیل شد!</b>\n━━━━━━━━━━━━━━━━━━\n"
+                    "🎁 +50 سکه + 30 XP\n"
+                    "حالا با /apex شروع کن! ⚔️",
+                    kb([[btn("🏠 منوی اصلی", "H|HOME")]]))
+                return
+            t["step"] = step
+            await tt_show_step(query, uid, step)
+            return
+        if action == "SKIP":
+            tutorial_complete(int(uid))
+            await safe_answer_query(query, "⏭ Tutorial رد شد")
+            await safe_edit(query,
+                "⏭ <b>Tutorial رد شد</b>\n"
+                "هر وقت خواستی، با /apextutorial دوباره ببین!",
+                kb([[btn("🏠 منوی اصلی", "H|HOME")]]))
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"tt_callback failed: {exc!r}", actor=uid)
+
+
+async def tt_show_step(query, uid: int, step: int) -> None:
+    """نمایش یک مرحله از Tutorial."""
+    try:
+        if step < 0 or step >= len(TUTORIAL_STEPS):
+            return
+        s = TUTORIAL_STEPS[step]
+        lines = [
+            f"🎓 <b>Tutorial</b> — مرحله {step + 1}/{len(TUTORIAL_STEPS)}",
+            "━━━━━━━━━━━━━━━━━━",
+            f"<b>{escape(s['title'])}</b>",
+            "",
+            escape(s['body']),
+        ]
+        # progress bar
+        progress = "█" * (step + 1) + "░" * (len(TUTORIAL_STEPS) - step - 1)
+        lines.append(f"\n📊 پیشرفت: {progress}")
+        rows = []
+        if step < len(TUTORIAL_STEPS) - 1:
+            rows.append([btn("➡️ بعدی", "TT|NEXT"), btn("⏭ رد کردن", "TT|SKIP")])
+        else:
+            rows.append([btn("🎉 تمام!", "TT|NEXT")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"tt_show_step failed: {exc!r}")
+
+
+async def cmd_apextutorial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apextutorial."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text(
+            "🎓 <b>Tutorial ApexRival</b>\n━━━━━━━━━━━━━━━━━━\n"
+            "آماده‌ای یاد بگیری چطور بازی کنی؟\n"
+            "۹ مرحله کوتاه — فقط ۲ دقیقه!",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb([[btn("🎓 شروع Tutorial", "TT|START")]]))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apextutorial failed: {exc!r}", actor=int(user.id))
+
+
+# Birthday & Anniversary
+def set_birthday(uid: int, birthday: str) -> bool:
+    """تنبیم تاریخ تولد (YYYY-MM-DD)."""
+    try:
+        from datetime import datetime as _dt
+        _dt.strptime(birthday, "%Y-%m-%d")  # validate
+        user = get_user(int(uid))
+        user["birthday"] = birthday
+        return True
+    except Exception:
+        return False
+
+
+def check_birthday_reward(uid: int) -> bool:
+    """بررسی و اعطای پاداش تولد."""
+    try:
+        user = get_user(int(uid))
+        bday = str(user.get("birthday", "") or "")
+        if not bday:
+            return False
+        today = today_key()
+        # استخراج month-day
+        bday_md = bday[5:] if len(bday) >= 10 else ""
+        today_md = today[5:] if len(today) >= 10 else ""
+        if bday_md != today_md:
+            return False
+        # بررسی اینکه امسال گرفته یا نه
+        year = today[:4] if len(today) >= 4 else "2025"
+        claimed = user.get("anniversary_claimed", [])
+        bday_key = f"bday_{year}"
+        if bday_key in claimed:
+            return False
+        # اعطای پاداش
+        add_coins(int(uid), 200)
+        add_xp(int(uid), 100)
+        claimed.append(bday_key)
+        push_notification(int(uid), "achievement",
+                          "🎂 تولدت مبارک!",
+                          "۲۰۰ سکه و ۱۰۰ XP هدیه گرفتید! 🎉",
+                          action_data="P|PROFILE")
+        log_user_activity(int(uid), "birthday_reward", f"+200c +100xp year={year}")
+        return True
+    except Exception:
+        return False
+
+
+def check_anniversary_reward(uid: int) -> bool:
+    """بررسی و اعطای پاداش سالگرد عضویت."""
+    try:
+        user = get_user(int(uid))
+        created = int(user.get("created_at", 0))
+        if not created:
+            return False
+        now = now_ts()
+        # سالگرد (یک سال = 365 روز)
+        years = (now - created) // (365 * 86400)
+        if years < 1:
+            return False
+        claimed = user.get("anniversary_claimed", [])
+        ann_key = f"ann_{years}"
+        if ann_key in claimed:
+            return False
+        # اعطای پاداش (با افزایش سال)
+        coins = 100 * years
+        xp = 50 * years
+        add_coins(int(uid), coins)
+        add_xp(int(uid), xp)
+        claimed.append(ann_key)
+        push_notification(int(uid), "achievement",
+                          f"🎉 سالگرد {years} سالگی!",
+                          f"ممنون که {years} سال با ما هستی! +{coins}🪙 +{xp}⭐",
+                          action_data="P|PROFILE")
+        log_user_activity(int(uid), "anniversary_reward", f"+{coins}c +{xp}xp years={years}")
+        return True
+    except Exception:
+        return False
+
+
+async def cmd_apexbirthday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexbirthday — تنظیم تولد."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    args = list(getattr(context, "args", None) or [])
+    if not args:
+        await msg.reply_text(
+            "🎂 <b>تنظیم تاریخ تولد</b>\n━━━━━━━━━━━━━━━━━━\n"
+            "برای دریافت پاداش تولد، تاریخ تولدت رو با این فرمت بفرست:\n\n"
+            "<code>/apexbirthday 2000-05-15</code>\n\n"
+            "📅 فرمت: YYYY-MM-DD (سال-ماه-روز)\n"
+            "🎁 هر سال در روز تولدت ۲۰۰ سکه + ۱۰۰ XP هدیه می‌گیری!",
+            parse_mode=ParseMode.HTML)
+        return
+    bday = str(args[0])
+    ok = set_birthday(int(user.id), bday)
+    if ok:
+        await msg.reply_text(f"✅ تاریخ تولدت تنظیم شد: <b>{escape(bday)}</b>\n🎁 در روز تولدت پاداش ویژه می‌گیری!",
+                              parse_mode=ParseMode.HTML)
+    else:
+        await msg.reply_text("❌ فرمت اشتباه! مثال: <code>/apexbirthday 2000-05-15</code>",
+                              parse_mode=ParseMode.HTML)
+
+
+# ================================================================
+#  فاز ۲۹ — Premium Membership (VIP) + Spectator Mode — Extended
+# ================================================================
+VIP_PRICES = {
+    "30d": 1500,    # 30 روز
+    "90d": 4000,    # 90 روز
+    "365d": 12000,  # 365 روز
+}
+
+
+def vip_buy(uid: int, duration: str) -> bool:
+    """خرید VIP. duration: 30d | 90d | 365d"""
+    try:
+        price = VIP_PRICES.get(duration, 0)
+        if not price:
+            return False
+        if not spend_coins(int(uid), price):
+            return False
+        user = get_user(int(uid))
+        now = now_ts()
+        days = {"30d": 30, "90d": 90, "365d": 365}.get(duration, 30)
+        # اگر قبلاً VIP داشته، تمدید کن
+        if int(user.get("vip_until", 0)) > now:
+            user["vip_until"] = int(user["vip_until"]) + days * 86400
+        else:
+            user["vip_since"] = now
+            user["vip_until"] = now + days * 86400
+        user["vip_purchases"] = int(user.get("vip_purchases", 0)) + 1
+        log_user_activity(int(uid), f"vip_buy:{duration}", f"-{price} coins")
+        log_economy(int(uid), "spend", price, f"vip_{duration}")
+        DATA.setdefault("vip_store_log", []).append({
+            "uid": int(uid), "ts": now, "type": f"vip_{duration}", "amount": price
+        })
+        push_notification(int(uid), "achievement",
+                          "👑 VIP فعال شد!",
+                          f"مدت: {days} روز\nممنون از حمایتت! 🎉",
+                          action_data="P|PROFILE")
+        return True
+    except Exception:
+        return False
+
+
+def is_vip(uid: int) -> bool:
+    """آیا کاربر VIP است؟"""
+    try:
+        user = get_user(int(uid))
+        return int(user.get("vip_until", 0)) > now_ts()
+    except Exception:
+        return False
+
+
+def vip_days_left(uid: int) -> int:
+    """روزهای باقی‌مانده VIP."""
+    try:
+        user = get_user(int(uid))
+        left = int(user.get("vip_until", 0)) - now_ts()
+        return max(0, left // 86400)
+    except Exception:
+        return 0
+
+
+async def vp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های VIP."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "HOME":
+            await vp_send_home(query, uid)
+            return
+        if action == "BUY" and len(parts) > 2:
+            duration = parts[2]
+            ok = vip_buy(int(uid), duration)
+            if ok:
+                await safe_answer_query(query, "👑 VIP فعال شد! 🎉")
+            else:
+                await safe_answer_query(query, "❌ سکه کافی نداری!")
+            await vp_send_home(query, uid)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"vp_callback failed: {exc!r}", actor=uid)
+
+
+async def vp_send_home(query, uid: int) -> None:
+    """نمایش پنل VIP."""
+    try:
+        is_v = is_vip(int(uid))
+        days = vip_days_left(int(uid))
+        user = get_user(int(uid))
+        coins = int(user.get("coins", 0))
+        lines = [
+            "👑 <b>ApexRival VIP</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            "🎨 مزایای VIP:",
+            "• 🏆 بج ویژه‌ی VIP",
+            "• 🖼 قاب افسانه‌ای",
+            "• 🏷 لقب «👑 VIP Member»",
+            "• ⭐ ۱۰٪ XP بیشتر در همه‌ی بازی‌ها",
+            "• 🎁 پاداش روزانه ۲ برابر",
+            "• 🎫 اولویت در Matchmaking",
+            "• 🛍 ۱۰٪ تخفیف در فروشگاه",
+            "",
+            "━ وضعیت تو ━",
+            f"👑 VIP: {'✅ فعال' if is_v else '❌ غیرفعال'}",
+        ]
+        if is_v:
+            lines.append(f"⏳ روزهای باقی‌مانده: <b>{fmt_num(days)}</b>")
+        lines.extend(["", f"🪙 سکه‌ی تو: <b>{fmt_num(coins)}</b>"])
+        rows = []
+        if not is_v or days < 30:
+            rows.append([btn(f"👑 ۳۰ روز ({VIP_PRICES['30d']}🪙)", "VP|BUY|30d")])
+        if not is_v or days < 90:
+            rows.append([btn(f"👑 ۹۰ روز ({VIP_PRICES['90d']}🪙) — ۱۲٪ تخفیف", "VP|BUY|90d")])
+        if not is_v or days < 365:
+            rows.append([btn(f"👑 ۳۶۵ روز ({VIP_PRICES['365d']}🪙) — ۲۰٪ تخفیف", "VP|BUY|365d")])
+        rows.append([btn("⬅️ بازگشت", "H|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"vp_send_home failed: {exc!r}")
+
+
+async def cmd_apexvip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexvip."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    try:
+        m = await msg.reply_text("👑 VIP Membership\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                                  parse_mode=ParseMode.HTML)
+        fq = _FakeQuery(m, user)
+        await vp_send_home(fq, int(user.id))
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexvip failed: {exc!r}", actor=int(user.id))
+
+
+# Spectator Mode
+def spectator_join(game_key: str, uid: int) -> bool:
+    """پیوستن به تماشای یک بازی."""
+    try:
+        sessions = DATA.setdefault("spectator_sessions", {})
+        spectators = sessions.setdefault(str(game_key), [])
+        if int(uid) not in [int(x) for x in spectators]:
+            spectators.append(int(uid))
+            if len(spectators) > 50:
+                sessions[str(game_key)] = spectators[-50:]
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def spectator_leave(game_key: str, uid: int) -> None:
+    """خروج از تماشا."""
+    try:
+        sessions = DATA.setdefault("spectator_sessions", {})
+        spectators = sessions.get(str(game_key), [])
+        sessions[str(game_key)] = [x for x in spectators if int(x) != int(uid)]
+    except Exception:
+        pass
+
+
+def spectator_count(game_key: str) -> int:
+    """تعداد تماشاچیان."""
+    try:
+        return len(DATA.get("spectator_sessions", {}).get(str(game_key), []))
+    except Exception:
+        return 0
+
+
+# ================================================================
+#  فاز ۳۰ — Cross-Group Leaderboard + Group Competition — Extended
+# ================================================================
+def cross_group_leaderboard(limit: int = 20) -> list:
+    """رتبه‌بندی گروه‌ها بر اساس فعالیت."""
+    try:
+        groups = DATA.get("groups", {})
+        items = []
+        for gid, g in groups.items():
+            if not isinstance(g, dict):
+                continue
+            try:
+                gid_int = int(gid)
+                games_count = int(g.get("created_games", 0))
+                # تعداد بازیکنان فعال (تقریبی)
+                active_players = sum(1 for u in DATA.get("users", {}).values()
+                                     if isinstance(u, dict) and gid_int in [int(x) for x in u.get("stats_ext", {}).get("groups_played_in", [])])
+                items.append((gid_int, games_count, active_players))
+            except Exception:
+                continue
+        items.sort(key=lambda x: x[1], reverse=True)
+        return items[:limit]
+    except Exception:
+        return []
+
+
+async def cmd_apexgrouptop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /apexgrouptop — رتبه‌بندی گروه‌ها."""
+    msg = update.message
+    if msg is None:
+        return
+    try:
+        lb = cross_group_leaderboard(20)
+        lines = ["👥 <b>رتبه‌بندی گروه‌ها</b>", "━━━━━━━━━━━━━━━━━━"]
+        if not lb:
+            lines.append("— هنوز گروهی ثبت نشده.")
+        else:
+            for i, (gid, games, players) in enumerate(lb, start=1):
+                medal = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}."))
+                lines.append(f"{medal} <code>{gid}</code> · 🎮{games} · 👥{players}")
+        await msg.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        log_event("error", "system", f"cmd_apexgrouptop failed: {exc!r}")
+
+
+# ================================================================
+#  فاز ۲۵ — Group Welcome Customization — Extended
+# ================================================================
+def group_set_welcome(chat_id: int, message: str) -> bool:
+    """تنظیم پیام خوش‌آمدگویی سفارشی گروه."""
+    try:
+        DATA.setdefault("group_welcome_custom", {})[str(int(chat_id))] = str(message)[:500]
+        return True
+    except Exception:
+        return False
+
+
+def group_get_welcome(chat_id: int) -> str:
+    """بازگرداندن پیام خوش‌آمدگویی گروه."""
+    try:
+        return str(DATA.get("group_welcome_custom", {}).get(str(int(chat_id)), "")) or ""
+    except Exception:
+        return ""
+
+
+# ================================================================
+#  Group Mod System (per-group moderators) — Extended
+# ================================================================
+def group_add_mod(chat_id: int, uid: int) -> bool:
+    """افزودن مدیر به گروه."""
+    try:
+        g = get_group(int(chat_id))
+        mods = g.setdefault("mods", [])
+        if int(uid) not in [int(x) for x in mods]:
+            mods.append(int(uid))
+        return True
+    except Exception:
+        return False
+
+
+def group_remove_mod(chat_id: int, uid: int) -> bool:
+    """حذف مدیر از گروه."""
+    try:
+        g = get_group(int(chat_id))
+        mods = g.get("mods", [])
+        g["mods"] = [x for x in mods if int(x) != int(uid)]
+        return True
+    except Exception:
+        return False
+
+
+def is_group_mod(chat_id: int, uid: int) -> bool:
+    """آیا کاربر مدیر گروه است؟"""
+    try:
+        return is_moderator_in_group(int(uid), int(chat_id))
+    except Exception:
+        return False
+
+
+# ================================================================
 #  روتر مرکزی کالبک‌ها
 # ================================================================
 
 async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """روتر پنل ادمین نسخه‌ی ۱.۱.۰ — wrapper روی admin_callback موجود
-    با افزودن مسیرهای داشبورد جدید."""
+    """روتر پنل ادمین نسخه‌ی ۱.۲.۰ — wrapper روی admin_callback موجود
+    با افزودن مسیرهای داشبورد جدید و Admin Managers کامل."""
     query = update.callback_query
     if query is None:
         return
@@ -9508,7 +13210,8 @@ async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await admin_maintenance_toggle(query)
             return
         if action == "EXPORT":
-            await admin_export_data(query)
+            # خروجی فایل واقعی
+            await admin_export_download(update, context)
             return
         if action == "LOGS":
             await admin_logs_show(query)
@@ -9524,6 +13227,65 @@ async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except Exception as exc:
                 await safe_answer_query(query, f"❌ {exc!r}")
             await admin_dashboard_show(query)
+            return
+        # --- فاز ۷: Admin Managers کامل ---
+        if action == "USERS":
+            page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            await admin_users_manager_show(query, page)
+            return
+        if action == "USER" and len(parts) > 2:
+            target_uid = int(parts[2])
+            await admin_user_detail_show(query, target_uid)
+            return
+        if action == "UMOD" and len(parts) > 3:
+            target_uid = int(parts[2])
+            mod_action = parts[3]
+            await admin_user_modify(query, target_uid, mod_action)
+            return
+        if action == "GAMES":
+            await admin_games_manager_show(query)
+            return
+        if action == "GAME" and len(parts) > 2:
+            game_key = parts[2]
+            await admin_game_detail_show(query, game_key)
+            return
+        if action == "GMOD" and len(parts) > 3:
+            game_key = parts[2]
+            mod_action = parts[3]
+            if mod_action == "end":
+                await admin_game_end_force(query, game_key)
+            return
+        if action == "ACHM":
+            await admin_achievements_manager_show(query)
+            return
+        if action == "ECON":
+            await admin_economy_manager_show(query)
+            return
+        if action == "ECONACT" and len(parts) > 2:
+            econ_action = parts[2]
+            await admin_economy_action(query, econ_action)
+            return
+        # اطمینان از کار کردن دکمه‌های ECON با فرمت قدیمی
+        if action == "ECON" and len(parts) > 2:
+            econ_action = parts[2]
+            await admin_economy_action(query, econ_action)
+            return
+        if action == "GROUPS":
+            await admin_groups_manager_show(query)
+            return
+        if action == "SETTINGS":
+            await admin_settings_show(query)
+            return
+        if action == "SETCH":
+            await safe_answer_query(query, "📢 برای تغییر کانال اجباری، متغیر محیطی REQUIRED_CHANNEL را تنظیم کنید.")
+            return
+        if action == "USEARCH":
+            await safe_answer_query(query, "🔍 آیدی عددی کاربر رو بفرست:")
+            context.application.user_data[uid] = context.application.user_data.get(uid, {})
+            context.application.user_data[uid]["await_admin_user_search"] = True
+            return
+        if action == "ACHNEW":
+            await safe_answer_query(query, "🎖 ساخت دستاورد سفارشی به‌زودی!")
             return
         # مسیرهای قدیمی — ارسال به admin_callback اصلی
         # برای حفظ Backward Compatibility
@@ -9599,6 +13361,36 @@ async def route_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await us_callback(update, context)
         elif prefix == "FB":
             await fb_callback(update, context)
+        # --- 1.2.0 Callback Handlers ---
+        elif prefix == "AI":
+            await ai_callback(update, context)
+        elif prefix == "SV":
+            await sv_callback(update, context)
+        elif prefix == "TB":
+            await tb_callback(update, context)
+        elif prefix == "DR":
+            await dr_callback(update, context)
+        # --- 1.2.0 Extended Callback Handlers ---
+        elif prefix == "QS":
+            await qs_callback(update, context)
+        elif prefix == "SP":
+            await sp_callback(update, context)
+        elif prefix == "MM":
+            await mm_callback(update, context)
+        elif prefix == "GH":
+            await gh_callback(update, context)
+        elif prefix == "BA":
+            await ba_callback(update, context)
+        elif prefix == "MS":
+            await ms_callback(update, context)
+        elif prefix == "HF":
+            await hf_callback(update, context)
+        elif prefix == "SD":
+            await sd_callback(update, context)
+        elif prefix == "TT":
+            await tt_callback(update, context)
+        elif prefix == "VP":
+            await vp_callback(update, context)
         else:
             await safe_answer_query(query)
     except Exception as exc:
@@ -9847,6 +13639,43 @@ async def user_input_router_v11(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 await msg.reply_text("❌ خطا در ثبت بازخورد.")
             return True
+        # 1.2.0 — حالت جستجوی کاربر توسط ادمین
+        if user_data.get("await_admin_user_search"):
+            user_data.pop("await_admin_user_search", None)
+            if not has_permission(int(uid), "admin"):
+                await msg.reply_text("⛔ دسترسی نداری!")
+                return True
+            target_uid = 0
+            try:
+                if text.lstrip("-").isdigit():
+                    target_uid = int(text)
+                else:
+                    # جستجو بر اساس نام
+                    for k, u in DATA.get("users", {}).items():
+                        if isinstance(u, dict) and text.lower() in str(u.get("name", "")).lower():
+                            target_uid = int(k)
+                            break
+            except Exception:
+                pass
+            if not target_uid or str(target_uid) not in DATA.get("users", {}):
+                await msg.reply_text("❌ کاربر پیدا نشد. آیدی عددی یا بخشی از نام رو بفرست.")
+                return True
+            # ساخت fake query برای نمایش جزئیات کاربر
+            fq = _FakeQuery(msg, user)
+            await admin_user_detail_show(fq, int(target_uid))
+            return True
+        # 1.2.0 Extended — حالت درخواست لغو مسدودیت
+        if user_data.get("await_ban_appeal"):
+            user_data.pop("await_ban_appeal", None)
+            if len(text) < 10:
+                await msg.reply_text("❌ دلیل خیلی کوتاه است. حداقل ۱۰ حرف بنویس.")
+                return True
+            ok = ban_appeal_submit(int(uid), text)
+            if ok:
+                await msg.reply_text("⚖️ درخواستت ثبت شد! ادمین‌ها بررسی می‌کنن.")
+            else:
+                await msg.reply_text("❌ خطا در ثبت درخواست.")
+            return True
     except Exception as exc:
         log_event("error", "system", f"user_input_router_v11 failed: {exc!r}")
     return False
@@ -9964,6 +13793,73 @@ async def periodic_maintenance(context: ContextTypes.DEFAULT_TYPE) -> None:
                 ev["active"] = False
     except Exception:
         pass
+    # --- 1.2.0 — Crash Recovery برای Games اصلی ---
+    try:
+        fixes = crash_recovery_games()
+        if fixes:
+            for fix in fixes:
+                log_event("info", "system", f"Game {fix.get('game')} {fix.get('action')}")
+    except Exception:
+        pass
+    # --- 1.2.0 — پاکسازی Survival Sessions قدیمی ---
+    try:
+        # Session های قدیمی (>2 ساعت) را پاک کن
+        cutoff = now_ts() - 2 * 3600
+        for sid in list(SURVIVAL_SESSIONS.keys()):
+            s = SURVIVAL_SESSIONS.get(sid)
+            if isinstance(s, dict):
+                started = int(s.get("started_at", 0))
+                if started and started < cutoff:
+                    SURVIVAL_SESSIONS.pop(sid, None)
+    except Exception:
+        pass
+    # --- 1.2.0 — آپدیت Player of the Day ---
+    try:
+        # پاکسازی _active_uids قدیمی (>2 روز)
+        cutoff_day = (now_ts() - 2 * 86400) // 86400
+        for d_key in list(DATA.get("analytics_daily", {}).keys()):
+            try:
+                # parse YYYY-MM-DD
+                from datetime import datetime as _dt
+                d_dt = _dt.strptime(d_key, "%Y-%m-%d")
+                d_ts = int(d_dt.timestamp())
+                if d_ts < cutoff_day * 86400:
+                    # نگه‌داری آمار ولی پاک‌سازی active_uids
+                    d_data = DATA["analytics_daily"].get(d_key, {})
+                    d_data.pop("_active_uids", None)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # --- 1.2.0 Extended — بررسی Birthday و Anniversary ---
+    try:
+        # فقط کاربران فعال امروز رو بررسی کن
+        today = today_key()
+        d = DATA.get("analytics_daily", {}).get(today, {})
+        active_uids = d.get("_active_uids", [])
+        for uid in active_uids:
+            try:
+                check_birthday_reward(int(uid))
+                check_anniversary_reward(int(uid))
+                check_milestones(int(uid))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # --- 1.2.0 Extended — آپدیت Hall of Fame (هر ۳۰ دقیقه) ---
+    try:
+        if (now_ts() // 180) % 10 == 0:  # هر ~30 دقیقه
+            hall_of_fame_update()
+    except Exception:
+        pass
+    # --- 1.2.0 Extended — پاکسازی Matchmaking Queue قدیمی ---
+    try:
+        queue = DATA.get("matchmaking_queue", [])
+        cutoff = now_ts() - 600  # 10 دقیقه
+        DATA["matchmaking_queue"] = [e for e in queue
+                                       if isinstance(e, dict) and int(e.get("joined_at", 0)) > cutoff]
+    except Exception:
+        pass
 
 
 async def backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -10044,6 +13940,27 @@ COMMANDS_PRIVATE = [
     ("apexsettings_me", "⚙️ تنظیمات من"),
     ("apexfeedback", "📝 بازخورد"),
     ("apexseason", "🌐 فصل و رویداد"),
+    # --- 1.2.0 — دستورات جدید ---
+    ("apexai", "🤖 پیشنهاد AI"),
+    ("apexsurvival", "🔥 Survival Mode"),
+    ("apexteambattle", "🤝 Team Battle"),
+    ("apextop_all", "🏆 رتبه‌بندی کلی"),
+    ("apextop_month", "🌐 رتبه‌بندی ماهانه"),
+    ("apexdailyreward", "🎁 پاداش روزانه"),
+    ("apexpotd", "👑 بازیکن روز"),
+    ("apexwall", "🌐 Social Wall"),
+    # --- 1.2.0 Extended — دستورات جدید ---
+    ("apexquests", "🎯 Quest Center"),
+    ("apexpass", "🎫 Season Pass"),
+    ("apexmatchmaking", "🎯 Matchmaking"),
+    ("apexhistory", "📜 تاریخچه بازی"),
+    ("apexmilestones", "🎯 Milestones"),
+    ("apexhof", "👑 Hall of Fame"),
+    ("apexstats_me", "📊 Stats Dashboard"),
+    ("apextutorial", "🎓 Tutorial"),
+    ("apexvip", "👑 VIP Membership"),
+    ("apexbirthday", "🎂 تنظیم تولد"),
+    ("apexgrouptop", "👥 رتبه‌بندی گروه‌ها"),
 ]
 
 COMMANDS_GROUP = [
@@ -10205,6 +14122,28 @@ def build_application() -> Application:
         "apexsettings_me": cmd_apexsettings_me, # تنظیمات شخصی
         "apexfeedback": cmd_apexfeedback,       # بازخورد
         "apexseason": cmd_apexseason,           # فصل و رویداد
+        # --- 1.2.0 — دستورات جدید ---
+        "apexai": cmd_apexai,                   # AI Game Master
+        "apexsurvival": cmd_apexsurvival,       # Survival Mode
+        "apexteambattle": cmd_apexteambattle,   # Team Battle
+        "apextop_all": cmd_apextop_all,         # Leaderboard کلی
+        "apextop_month": cmd_apextop_month,     # Leaderboard ماهانه
+        "apexdailyreward": cmd_apexdaily_reward, # پاداش روزانه
+        "apexpotd": cmd_apexpotd,               # بازیکن روز
+        "apexwall": cmd_apexwall,               # Social Wall
+        "apexexport": cmd_apexexport,           # خروجی (ادمین)
+        # --- 1.2.0 Extended — دستورات جدید ---
+        "apexquests": cmd_apexquests,           # Quest Center
+        "apexpass": cmd_apexpass,               # Season Pass / Battle Pass
+        "apexmatchmaking": cmd_apexmatchmaking, # Matchmaking رقیب
+        "apexhistory": cmd_apexhistory,         # تاریخچه بازی‌ها
+        "apexmilestones": cmd_apexmilestones,   # Milestone Rewards
+        "apexhof": cmd_apexhof,                 # Hall of Fame
+        "apexstats_me": cmd_apexstats_me,       # Stats Dashboard شخصی
+        "apextutorial": cmd_apextutorial,       # Tutorial
+        "apexvip": cmd_apexvip,                 # VIP Membership
+        "apexbirthday": cmd_apexbirthday,       # تنظیم تولد
+        "apexgrouptop": cmd_apexgrouptop,       # رتبه‌بندی گروه‌ها
         # نام‌های آشنای قدیمی
         "profile": cmd_apexprofile,
         "rank": cmd_apextop,
@@ -10302,4 +14241,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
