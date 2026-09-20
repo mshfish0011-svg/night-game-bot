@@ -3939,6 +3939,8 @@ async def guide_show(update: Update, context: ContextTypes.DEFAULT_TYPE, page: i
         rows.append([btn("◀️ قبلی", f"H|GUIDE|{page-1}"), btn("بعدی ▶️", f"H|GUIDE|{page+1}")])
     else:
         rows.append([btn("شروع بازی 🎮", "H|GUIDE|1")])
+    # نسخه ۶ — دسترسی همیشگی به هاب راهنمای بخش‌ها
+    rows.append([btn("📚 راهنمای بخش‌ها", "GD|INDEX")])
     if page == len(GUIDE_PAGES) - 1:
         rows.append([btn("⌂ منوی اصلی", "H|HOME")])
     markup = kb(rows)
@@ -3946,6 +3948,572 @@ async def guide_show(update: Update, context: ContextTypes.DEFAULT_TYPE, page: i
         await safe_edit(query, text, markup)
     elif update.message is not None:
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+# ================================================================
+#  نسخه ۶ — 📚 راهنمای هر بخش (GD): هر پنل، راهنمای خودش را دارد
+# ================================================================
+SECTION_GUIDES = {
+    "FEEDBACK": {
+        "icon": "📮", "title": "بازخورد و گزارش", "sub": "سریع‌ترین راه رسیدن صدات به تیم ربات",
+        "back": "FB|HOME", "back_label": "بازخورد",
+        "steps": [
+            "دکمه‌ی «📝 ارسال بازخورد» را بزن — صفحه به حالت نوشتن می‌رود",
+            "متن، پیشنهاد یا مشکلت را به‌صورت یک پیام معمولی بفرست",
+            "کارت تأیید با شماره‌ی پیگیری می‌رسد — ثبت شد!",
+            "پاسخ تیم اگر لازم باشد، همین‌جا برایت ارسال می‌شود",
+        ],
+        "tips": [
+            "هر متن آزادی در خصوصی بفرستی، خودم می‌پرسم بازخورد است یا نه — چیزی گم نمی‌شود",
+            "برای گزارش یک سوال خاص، روی کارت سوال دکمه‌ی «🚩 گزارش این سوال» را بزن",
+            "یا روی کارت سوال Reply کن و کلمه‌ی «گزارش» را اول متن بنویس",
+            "وضعیت همه‌ی بازخوردهایت را از «📜 بازخوردهای من» دنبال کن",
+        ],
+        "cmds": ["/apexfeedback"],
+    },
+    "GROUP": {
+        "icon": "👥", "title": "بازی گروهی", "sub": "قلب تپنده‌ی ApexRival — نوبت‌چرخ دوستانه",
+        "back": "H|HOME", "back_label": "منوی اصلی",
+        "steps": [
+            "ربات را به گروه اضافه کن و مطمئن شو ادمین است",
+            "در گروه دستور /apex را بفرست تا لابی ساخته شود",
+            "بقیه با دکمه‌ی «➕ پیوستن» وارد شوند و «آماده» بزنند",
+            "سازنده «شروع بازی» را بزند — چرخه‌ی نوبت‌ها شروع می‌شود",
+            "پرسشگر موضوع و هدف را انتخاب می‌کند؛ ربات سوال را می‌فرستد",
+            "بازیکن هدف با Reply به کارت سوال جواب می‌دهد تا پاداش بگیرد",
+        ],
+        "tips": [
+            "جواب‌های بلندتر پاداش بیشتری دارند (تا +۳ ایکس‌پی اضافه)",
+            "نگهبان نوبت، بازیکن بی‌جواب را خودکار رد می‌کند",
+            "موتور گرما سوال‌ها را با پیشرفت بازی داغ‌تر می‌کند (۵ سطح)",
+        ],
+        "cmds": ["/apex", "/apexquick", "/apexend", "/apexstatus"],
+    },
+    "LOBBY": {
+        "icon": "🎪", "title": "لابی بازی", "sub": "اتاق انتظار قبل از شروع میدان",
+        "back": "H|HOME", "back_label": "منوی اصلی",
+        "steps": [
+            "با /apex لابی باز می‌شود و همه دکمه‌ی «پیوستن» را می‌بینند",
+            "هر عضو با یک کلیک وارد بازی می‌شود — بدون نیاز به دستور",
+            "با «آماده» اعلام آمادگی کن؛ شمارنده‌ی آمادگی زنده است",
+            "سازنده می‌تواند تنظیمات (موضوعات، ۱۸+، مهلت‌ها) را تغییر دهد",
+            "وقتی همه آماده‌اند، سازنده «شروع بازی» را می‌زند",
+        ],
+        "tips": [
+            "بازی سریع (/apexquick) برای گروه‌های بی‌حوصله — بدون لابی!",
+            "تنظیمات گروه فقط با مجوز سازنده یا ادمین قابل تغییر است",
+        ],
+        "cmds": ["/apex", "/apexquick"],
+    },
+    "DAILY": {
+        "icon": "🎁", "title": "پاداش روزانه", "sub": "هر روز یه سر بزن، استریک بساز، سکه بگیر",
+        "back": "DR|HOME", "back_label": "پاداش روزانه",
+        "steps": [
+            "هر ۲۴ ساعت یک‌بار به بخش «🎁 پاداش روزانه» سر بزن",
+            "دکمه‌ی «🎁 دریافت پاداش» را بزن — سکه و ایکس‌پی فوری",
+            "هر روز پشت‌سرهم که بیایی، استریک بالاتر و پاداش بیشتر",
+            "حداکثر پاداش روزانه: ۱۲۰ سکه + ۴۰ ایکس‌پی",
+        ],
+        "tips": [
+            "اگر یک روز جا بمانی استریک ریست می‌شود — نگذار!",
+            "Social Wall آخرین رخدادهای جامعه‌ی بازی را نشان می‌دهد",
+            "«بازیکن روز» بر اساس فعالیت روز قبل انتخاب می‌شود",
+        ],
+        "cmds": ["/apexdailyreward"],
+    },
+    "DAILYMISSIONS": {
+        "icon": "📅", "title": "مأموریت‌های روزانه", "sub": "هر روز یک بسته مأموریت تازه",
+        "back": "DM|HOME", "back_label": "مأموریت‌ها",
+        "steps": [
+            "هر روز ساعت ۰۰:۰۰ سه مأموریت جدید می‌گیری (آسان/متوسط/سخت)",
+            "کارها را داخل بازی انجام بده — پیشرفت خودکار ثبت می‌شود",
+            "هر مأموریت تمام‌شده، سکه و ایکس‌پی فوری می‌دهد",
+            "اگر همه‌ی سه‌تای روز را ببندی، جعبه‌ی جایزه‌ی اضافه می‌رسد",
+        ],
+        "tips": [
+            "مأموریت‌های انجام‌نشده آخر روز حذف می‌شوند — تعلل نکن",
+            "مأموریت سخت معمولاً همان پاداش روزانه‌ی دوبرابر است",
+        ],
+        "cmds": ["/apexdailymissions"],
+    },
+    "MISSIONS": {
+        "icon": "🎯", "title": "مأموریت‌ها", "sub": "مسیر پیشرفت با پاداش‌های قطعی",
+        "back": "MS|HOME", "back_label": "مأموریت‌ها",
+        "steps": [
+            "فهرست مأموریت‌های فعال را در همین پنل ببین",
+            "هر مأموریت پیش‌نیاز مشخصی دارد: جواب دادن، جرئت، برد و...",
+            "پیشرفت هر مأموریت زیر آن نمایش داده می‌شود",
+            "با پرشدن نوار، دکمه‌ی دریافت پاداش فعال می‌شود",
+        ],
+        "tips": [
+            "مأموریت‌ها هیچوقت منقضی نمی‌شوند — با خیال راحت جمعشان کن",
+            "بعضی دستاوردها فقط از دل مأموریت‌ها باز می‌شوند",
+        ],
+        "cmds": ["/apexmissions"],
+    },
+    "QUESTS": {
+        "icon": "🗓", "title": "مرکز کوئست", "sub": "چالش‌های روزانه و هفتگی",
+        "back": "QS|HOME", "back_label": "کوئست‌ها",
+        "steps": [
+            "دو نوع کوئست داری: روزانه (ساعت ۰۰:۰۰ ریست) و هفتگی (دوشنبه‌ها)",
+            "هر کوئست یک هدف مشخص دارد — مثلاً «۵ جواب در نظر بده»",
+            "پیشرفت خودکار ثبت می‌شود؛ فقط پاداش را دریافت کن",
+            "کوئست‌های هفتگی پاداش بزرگ‌تری دارند",
+        ],
+        "tips": [
+            "کوئست روزانه‌ی ساده را اول ببند تا زنجیره باز شود",
+            "پیشرفت کوئست‌های هفتگی در طول هفته جمع می‌شود",
+        ],
+        "cmds": ["/apexquests"],
+    },
+    "SEASON": {
+        "icon": "🌐", "title": "فصل و رویداد", "sub": "دنیای زنده‌ی ApexRival",
+        "back": "SE|HOME", "back_label": "فصل",
+        "steps": [
+            "هر فصل چند هفته طول می‌کشد و تم مخصوص خودش را دارد",
+            "در طول فصل، رویدادهای محدود زمانی فعال می‌شوند",
+            "با بازی در رویدادها نشان فصلی و جایزه‌ی ویژه می‌گیری",
+            "پایان فصل = مراسم اختتامیه و توزیع جوایز برنده‌ها",
+        ],
+        "tips": [
+            "نشان‌های فصلی بعد از پایان فصل دیگر قابل گرفتن نیستند",
+            "رویدادها معمولاً آخر هفته‌ها فعال‌ترند",
+        ],
+        "cmds": ["/apexseason"],
+    },
+    "PASS": {
+        "icon": "🎫", "title": "پاس فصل", "sub": "۵۰ سطح پاداش تا قله",
+        "back": "SP|HOME", "back_label": "پاس فصل",
+        "steps": [
+            "با هر بازی و هر جواب، ایکس‌پی پاس می‌گیری",
+            "هر سطح، جایزه‌ی خودش را دارد: سکه، سپر، قاب و...",
+            "نوار پیشرفت پاس را در همین پنل دنبال کن",
+            "سطح‌های بالا جایزه‌های افسانه‌ای دارند",
+        ],
+        "tips": [
+            "ایکس‌پی پاس جدا از ایکس‌پی اصلی بازی است",
+            "پاداش‌های دریافت‌نشده حذف نمی‌شوند — وقت کن جمع کن",
+        ],
+        "cmds": ["/apexpass"],
+    },
+    "SHOP": {
+        "icon": "🛍", "title": "فروشگاه", "sub": "۲۷ آیتم — از سپر تا قاب پروفایل",
+        "back": "S|HOME", "back_label": "فروشگاه",
+        "steps": [
+            "دسته‌بندی‌ها را ببین: سپرها، بوست‌ها، ظاهری‌ها و...",
+            "روی هر آیتم بزن تا توضیح کامل و قیمتش را ببینی",
+            "خرید با سکه انجام می‌شود — سکه‌ها را از بازی و پاداش‌ها بگیر",
+            "آیتم‌های مصرفی هنگام نیاز خودکار استفاده می‌شوند",
+        ],
+        "tips": [
+            "«🎒 موجودی من» همه‌ی خریدهایت را نشان می‌دهد",
+            "سپر، اولین جواب اجباری را برایت رد می‌کند",
+            "قبل از خرید سنگین، گردونه‌ی شانس رایگان را بچرخان",
+        ],
+        "cmds": ["/apexshop"],
+    },
+    "FRIENDS": {
+        "icon": "🤝", "title": "دوستان", "sub": "با رفیقت بازی کن، راحت‌تر ببر",
+        "back": "FR|HOME", "back_label": "دوستان",
+        "steps": [
+            "با «➕ اضافه کردن دوست» آیدی عددی تلگرام دوستت را بفرست",
+            "درخواست برای طرف مقابل می‌رود؛ با تأییدش دوست می‌شوید",
+            "درخواست‌های دریافتی‌ات را از «📨 درخواست‌ها» ببین",
+            "دوستان در دعوت به بازی و جفت‌یابی اولویت دارند",
+        ],
+        "tips": [
+            "آیدی عددی را می‌توانی از لینک پروفایل تلگرام کپی کنی",
+            "دوستی قابل حذف است — از همان لیست دوستان",
+        ],
+        "cmds": ["/apexfriends"],
+    },
+    "RIVALS": {
+        "icon": "⚔️", "title": "رقبا", "sub": "حریفان هم‌سطحت — کجا داری می‌روی؟",
+        "back": "RV|HOME", "back_label": "رقبا",
+        "steps": [
+            "رقبایت را با آیدی عددی اضافه کن",
+            "در لیدربرد رقابتی، جایگاهت نسبت به آن‌ها را ببین",
+            "با برد در بازی‌های مشترک، فاصله‌ات را کم کن",
+        ],
+        "tips": [
+            "افزودن رقیب یک‌طرفه است — نیازی به تأیید ندارد",
+            "جفت‌یابی حریف، رقبای هم‌سطح را پیشنهاد می‌دهد",
+        ],
+        "cmds": ["/apexrivals"],
+    },
+    "NOTIFICATIONS": {
+        "icon": "🔔", "title": "اعلان‌ها", "sub": "چه خبر از دنیای بازی؟",
+        "back": "NT|HOME", "back_label": "اعلان‌ها",
+        "steps": [
+            "آخرین خبرها: دعوت‌ها، جوایز، پاسخ بازخوردها و...",
+            "اعلان‌های خوانده‌شده خودکار پاک می‌شوند",
+            "از تنظیمات می‌توانی نوع اعلان‌ها را خاموش/روشن کنی",
+        ],
+        "tips": [
+            "پاسخ تیم به بازخوردت هم همین‌جا اعلام می‌شود",
+        ],
+        "cmds": ["/apexnotifications"],
+    },
+    "MINIGAMES": {
+        "icon": "🎮", "title": "مینی‌بازی‌ها", "sub": "۵ بازی برای گرم‌کردن گروه",
+        "back": "MG|HOME", "back_label": "مینی‌بازی‌ها",
+        "steps": [
+            "🧩 تربیا — حدس کلمه با راهنما، حرف‌به‌حرف",
+            "🔤 کلمات — به‌روزرسانی زنده حروف",
+            "🔢 حدس عدد — بازه‌ی عددی را کوچک کن",
+            "🃏 حافظه — جفت کارت‌ها را پیدا کن",
+            "⚡ واکنش — سریع‌ترین شست گروه باش",
+        ],
+        "tips": [
+            "همه‌ی مینی‌بازی‌ها در گروه اجرا می‌شوند نه خصوصی",
+            "برنده هر مینی‌بازی سکه و ایکس‌پی می‌گیرد",
+        ],
+        "cmds": ["/apexminigames"],
+    },
+    "DUEL": {
+        "icon": "🤺", "title": "دوئل", "sub": "نبرد تن‌به‌تن با ۱۰ راند سوال",
+        "back": "H|HOME", "back_label": "منوی اصلی",
+        "steps": [
+            "در گروه /apexduel بفرست تا کد دعوت ساخته شود",
+            "حریفت روی دکمه‌ی «⚔️ قبول دعوت» بزند",
+            "۱۰ راند سوال و جواب — هر جواب امتیاز دارد",
+            "در پایان، برنده اعلام و پاداش داده می‌شود",
+        ],
+        "tips": [
+            "جواب‌های دوئل خصوصی هم قابل ارسال است",
+            "دوئل‌های نیمه‌کاره از «دوئل‌های من» قابل ادامه است",
+        ],
+        "cmds": ["/apexduel"],
+    },
+    "PARTY": {
+        "icon": "🎉", "title": "بازی‌های مهمانی", "sub": "شب‌هایی که هیچ‌کس خسته نمی‌شود",
+        "back": "FY|HOME", "back_label": "مهمانی",
+        "steps": [
+            "🎰 گردونه‌ی بطری — کیجرا؟ سرنوشت می‌چرخد",
+            "🤔 می‌کردی؟ — رأی‌گیری زنده گروه",
+            "🙈 هرگز نشده — رازهای کوچک",
+            "🎯 به احتمال زیاد کی؟ — قلب گروه را پیدا کن",
+        ],
+        "tips": [
+            "همه در گروه اجرا می‌شوند؛ فقط دستور را بفرست",
+            "گردونه‌ی شانس (/apexluck) هر ۲۰ ساعت یک شانس رایگان",
+        ],
+        "cmds": ["/apexspin", "/apexwyr", "/apexnhie", "/apexlikely"],
+    },
+    "LOVE": {
+        "icon": "❤️", "title": "عشق‌سنج", "sub": "شیمی دو نفره را بسنج!",
+        "back": "H|HOME", "back_label": "منوی اصلی",
+        "steps": [
+            "نسخه‌ی تک‌نفره: اسم طرف را بفرست تا درصد شیمی محاسبه شود",
+            "نسخه‌ی دو نفره (/apexlove2): دو نفر به نوبت سوال می‌پرسند",
+            "در پایان، کارت نتیجه با درصد و پیام ویژه",
+        ],
+        "tips": [
+            "عشق‌سنج دو نفره فقط در خصوصی اجرا می‌شود",
+            "نتیجه سرگرمی است — تصمیم جدی زندگی نگیر! 😄",
+        ],
+        "cmds": ["/apexlove", "/apexlove2"],
+    },
+    "PROFILE": {
+        "icon": "🪪", "title": "پروفایل", "sub": "شناسنامه‌ی بازی‌ات",
+        "back": "P|PROFILE", "back_label": "پروفایل",
+        "steps": [
+            "کارت پروفایل: سطح، رتبه، سکه، ایکس‌پی و آمار کل",
+            "دستاوردها و نشان‌های باز‌شده‌ات را ببین",
+            "تاریخچه‌ی بازی‌ها و آمار تفکیکی در بخش‌های مربوط",
+            "با معرفی دوستان، اعتبار پروفایلت بالا می‌رود",
+        ],
+        "tips": [
+            "سطح با ایکس‌پی بالا می‌رود — جواب‌های باکیفیت سریع‌ترین راه",
+            "بقیه می‌توانند بهت Upvote بدهند — اعتبار بساز",
+        ],
+        "cmds": ["/apexprofile", "/apexstats_me"],
+    },
+    "STATS": {
+        "icon": "📊", "title": "داشبورد آمار", "sub": "عددها هیچ‌وقت دروغ نمی‌گویند",
+        "back": "SD|HOME", "back_label": "آمار",
+        "steps": [
+            "آمار تفکیکی: حقیقت، جرئت، مجازات، برد و...",
+            "روند رشد ایکس‌پی و بهترین رکوردهایت",
+            "مقایسه با میانگین جامعه‌ی بازی",
+        ],
+        "tips": [
+            "نرخ جواب‌دهی‌ات را جدی بگیر — اعتبارت وابسته به آن است",
+        ],
+        "cmds": ["/apexstats_me"],
+    },
+    "SURVIVAL": {
+        "icon": "🏝", "title": "حالت بقا", "sub": "تا آخرین نفس بازی کن",
+        "back": "SV|HOME", "back_label": "بقا",
+        "steps": [
+            "با شروع بقا، همه با جان کامل وارد می‌شوند",
+            "هر جواب ناقص یا جاافتاده = یک جان کمتر",
+            "با اتمام جان‌ها از بازی حذف می‌شوی",
+            "آخرین بازمانده، پاداش بزرگ می‌برد",
+        ],
+        "tips": [
+            "سپر خریداری‌شده یک اشتباه را جبران می‌کند",
+            "در بقا، جواب‌های بلندتر امتیاز بقای بیشتری دارند",
+        ],
+        "cmds": ["/apexsurvival"],
+    },
+    "TEAM": {
+        "icon": "👥", "title": "نبرد تیمی", "sub": "سرخ‌ها در برابر آبی‌ها",
+        "back": "TB|HOME", "back_label": "نبرد تیمی",
+        "steps": [
+            "با «ساخت نبرد» دو تیم قرمز و آبی شکل می‌گیرد",
+            "هر نوبت، یک تیم سوال می‌پرسد و تیم مقابل جواب می‌دهد",
+            "امتیاز تیمی است — هم‌بازی‌هایت را پوشش بده",
+            "تیم برنده در پایان، پاداش گروهی می‌گیرد",
+        ],
+        "tips": [
+            "هماهنگی تیمی با رأی‌گیری قبل از جواب انجام می‌شود",
+        ],
+        "cmds": ["/apexteams"],
+    },
+    "MATCHMAKING": {
+        "icon": "🎯", "title": "جفت‌یابی حریف", "sub": "حریفی هم‌قدِ خودت پیدا کن",
+        "back": "MM|HOME", "back_label": "جفت‌یابی",
+        "steps": [
+            "وارد صف جفت‌یابی شو — «🎮 پیدا کردن حریف»",
+            "سیستم حریف هم‌سطح (بر اساس رتبه) پیدا می‌کند",
+            "وقتی جفت شد، دوئل دو نفره شروع می‌شود",
+            "هر وقت خواستی می‌توانی از صف خارج شوی",
+        ],
+        "tips": [
+            "رتبه‌ی ای‌ال‌وی‌ات مطابق استاندارد شطرنجی است",
+            "برد با حریف قوی‌تر، امتیاز رتبه‌ی بیشتری می‌دهد",
+        ],
+        "cmds": ["/apexmatchmaking"],
+    },
+    "PRIVATE": {
+        "icon": "🏆", "title": "مسابقه خصوصی", "sub": "میدان اختصاصی تو و رفقاتت",
+        "back": "PM|HOME", "back_label": "مسابقه",
+        "steps": [
+            "با «ساخت مسابقه» یک مسابقه‌ی خصوصی بساز",
+            "کد دعوت را برای بقیه بفرست",
+            "با ورود همه، مسابقه با قوانین دلخواه شروع می‌شود",
+        ],
+        "tips": [
+            "تنظیمات مسابقه خصوصی کاملاً با تو است: موضوع، مهلت، امتیاز",
+        ],
+        "cmds": ["/apexprivate"],
+    },
+    "TOURNAMENT": {
+        "icon": "🏅", "title": "تورنمنت", "sub": "جام قهرمانی گروه",
+        "back": "TM|HOME", "back_label": "تورنمنت",
+        "steps": [
+            "با «🏆 ساخت مسابقه» جدول تورنمنت ساخته می‌شود",
+            "بازیکنان به‌صورت حذفی به هم می‌خورند",
+            "هر مرحله، برندگان به دور بعد می‌روند",
+            "قهرمان نهایی، تاج و جایزه‌ی ویژه می‌گیرد",
+        ],
+        "tips": [
+            "تورنمنت‌ها معمولاً با استقبال گروه‌های فعال ساخته می‌شوند",
+        ],
+        "cmds": ["/apextournament"],
+    },
+    "HOF": {
+        "icon": "🏆", "title": "تالار افتخار", "sub": "اسطوره‌ها اینجا جاودانه‌اند",
+        "back": "HF|HOME", "back_label": "تالار افتخار",
+        "steps": [
+            "برترین‌های تاریخ بازی: بیشترین برد، بالاترین سطح،...",
+            "رکوردهای جهانی و موضوعی",
+            "نشان افسانه‌ای برای قله‌ی هر رتبه‌بندی",
+        ],
+        "tips": [
+            "جایت تو این تالار خالی است — بازی کن!",
+        ],
+        "cmds": ["/apexhof"],
+    },
+    "VIP": {
+        "icon": "👑", "title": "عضویت VIP", "sub": "مزایای طلایی حامیان",
+        "back": "VP|HOME", "back_label": "VIP",
+        "steps": [
+            "سطوح مختلف VIP با مزایای ماندگار",
+            "بوست ایکس‌پی، قاب اختصاصی، اولویت پشتیبانی",
+            "پشتیبانی از ربات = خدمات بهتر برای همه",
+        ],
+        "tips": [
+            "قاب VIP در پروفایل همه جا با تو نمایش داده می‌شود",
+        ],
+        "cmds": ["/apexvip"],
+    },
+    "TRADE": {
+        "icon": "🔄", "title": "مرکز تجارت", "sub": "آیتم‌هایت را مبادله کن",
+        "back": "TR|HOME", "back_label": "تجارت",
+        "steps": [
+            "آیتم‌های ظاهری (قاب، نشان) قابل تجارت‌اند",
+            "پیشنهاد تجارت بده: آیتمت را با آیتم دوستت عوض کن",
+            "دو طرف تأیید کنند، معامله قطعی می‌شود",
+        ],
+        "tips": [
+            "سکه و ایکس‌پی قابل تجارت نیستند — فقط آیتم‌های ظاهری",
+        ],
+        "cmds": ["/apextrade"],
+    },
+    "LUCKY": {
+        "icon": "🔢", "title": "عدد شانسی", "sub": "هر روز یک برد رایگان",
+        "back": "LN|HOME", "back_label": "عدد شانسی",
+        "steps": [
+            "هر روز یک عدد انتخاب کن",
+            "اگر عددت با عدد روز برخورد کند، جایزه‌ی بزرگ",
+            "حتی بدون برخورد کامل، جایزه‌ی دلپذیر هست",
+        ],
+        "tips": [
+            "هر ۲۰ ساعت یک شانس رایگان گردونه‌ی شانس هم داری",
+        ],
+        "cmds": ["/apexluck"],
+    },
+    "SETTINGS": {
+        "icon": "⚙️", "title": "تنظیمات من", "sub": "ربات را به میل خودت دربیار",
+        "back": "US|HOME", "back_label": "تنظیمات",
+        "steps": [
+            "🎖 انتخاب نشان نمایش‌داده‌شده کنار اسمت",
+            "🔔 روشن/خاموش‌کردن انواع اعلان",
+            "🔒 حریم خصوصی: نمایش آمارت به دیگران",
+        ],
+        "tips": [
+            "تنظیمات گروه (موضوعات، ۱۸+) جدا از این‌جاست — در گروه /apexsettings",
+        ],
+        "cmds": ["/apexusersettings"],
+    },
+    "HISTORY": {
+        "icon": "📜", "title": "تاریخچه بازی‌ها", "sub": "گذشته‌ی درخشانت را مرور کن",
+        "back": "GH|HOME", "back_label": "تاریخچه",
+        "steps": [
+            "آخرین بازی‌هایت با نتیجه و آمار",
+            "برندها و رکوردهای خاص هر بازی",
+        ],
+        "tips": [
+            "برای گزارش رسمی گروه، /apexrecap را در گروه بفرست",
+        ],
+        "cmds": ["/apexhistory"],
+    },
+    "APPEAL": {
+        "icon": "⚖️", "title": "درخواست رفع محدودیت", "sub": "صادق باش، شانس دوباره بگیر",
+        "back": "BA|HOME", "back_label": "درخواست",
+        "steps": [
+            "دلیل کامل و صادقانه‌ات را بنویس (حداقل ۱۰ حرف)",
+            "ادمین‌ها درخواست را بررسی می‌کنند",
+            "نتیجه همین‌جا و از اعلان‌ها به تو می‌رسد",
+        ],
+        "tips": [
+            "درخواست‌های تکراری و بی‌دلیل سریع رد می‌شوند",
+        ],
+        "cmds": ["/apexappeal"],
+    },
+    "ADMIN": {
+        "icon": "🛡", "title": "راهنمای ادمین‌ها", "sub": "فرماندهی ستاد ربات",
+        "back": "A|HOME", "back_label": "داشبورد ادمین",
+        "steps": [
+            "داشبورد: نمای کلی کاربران، گروه‌ها، بازی‌ها و سلامت سیستم",
+            "📨 صندوق بازخوردها: پاسخ مستقیم به بازیکنان",
+            "🚩 گزارش سوالات: بررسی گزارش‌های بازیکنان روی کارت‌ها",
+            "👥 مدیریت کاربران: جستجو، تغییر XP/سکه، DM، مسدودسازی",
+            "📡 پیام همگانی: ارسال با پیش‌نویس و نوار پیشرفت زنده",
+            "🛡 محافظ بانک: مانیتور سلامت ۲۱ بانک (۸,۲۸۱ سوال)",
+        ],
+        "tips": [
+            "برای پاسخ به بازخورد: دکمه‌ی «✍️ پاسخ» → متن را بفرست",
+            "گزارش سوالات با دکمه‌ی «✔️ بررسی شد» بسته می‌شود",
+            "لاگ چهارسطحی برای ردیابی همه‌ی رخدادها",
+        ],
+        "cmds": ["/apexadmin"],
+    },
+}
+
+
+GD_HUB_ORDER = [
+    ("GROUP", "LOBBY", "DAILY", "DAILYMISSIONS"),
+    ("MISSIONS", "QUESTS", "SEASON", "PASS"),
+    ("SHOP", "FRIENDS", "RIVALS", "MATCHMAKING"),
+    ("DUEL", "PARTY", "LOVE", "MINIGAMES"),
+    ("SURVIVAL", "TEAM", "PRIVATE", "TOURNAMENT"),
+    ("PROFILE", "STATS", "HISTORY", "HOF"),
+    ("VIP", "TRADE", "LUCKY", "SETTINGS"),
+    ("NOTIFICATIONS", "APPEAL", "FEEDBACK", "ADMIN"),
+]
+
+
+async def gd_show(query, uid: int, section: str) -> None:
+    """نمایش راهنمای یک بخش — قاب اومگا."""
+    g = SECTION_GUIDES.get(section)
+    if not g:
+        await safe_answer_query(query, "راهنمای این بخش هنوز آماده نشده! 🚧")
+        return
+    lines = [
+        og_top(g["icon"]),
+        og_head(g["icon"], f"راهنمای {g['title']}", g["sub"]),
+        og_sep(),
+        "┃  🎯 <b>چطور کار می‌کنه؟</b>",
+    ]
+    lines.extend(f"┃  ▸ {escape(s)}" for s in g["steps"])
+    if g.get("tips"):
+        lines.append(og_sep("◈"))
+        lines.append("┃  💡 <b>نکته‌های حرفه‌ای</b>")
+        lines.extend(f"┃  ▸ {escape(t)}" for t in g["tips"])
+    if g.get("cmds"):
+        lines.append(og_sep("⋆"))
+        lines.append("┃  ⌨️ <b>دستورهای سریع</b>")
+        lines.extend(f"┃  ▸ <code>{escape(c)}</code>" for c in g["cmds"])
+    lines.append(og_sep())
+    lines.append(og_close(g["icon"]))
+    rows = []
+    if g.get("back"):
+        rows.append([btn(f"⬅️ بازگشت به {g.get('back_label', 'بخش')}", g["back"])])
+    rows.append([btn("📚 راهنمای بخش‌ها", "GD|INDEX"), btn("🏠 منوی اصلی", "H|HOME")])
+    await safe_edit(query, "\n".join(lines), kb(rows))
+
+
+async def gd_show_index(query, uid: int) -> None:
+    """هاب راهنما — نقشه‌ی کامل همه‌ی بخش‌ها."""
+    lines = [
+        og_top("📚"),
+        og_head("📚", "راهنمای بخش‌ها", "هر قسمت ربات، راهنمای خودش را دارد"),
+        og_sep(),
+        "┃  🎯 روی بخش موردنظرت بزن تا راهنمای کاملش را ببینی.",
+        "┃  💡 داخل هر پنل هم دکمه‌ی «❓ راهنمای این بخش» داری.",
+        og_sep("◈"),
+    ]
+    rows = []
+    for group in GD_HUB_ORDER:
+        row = []
+        for key in group:
+            g = SECTION_GUIDES.get(key)
+            if g:
+                row.append(btn(f"{g['icon']} {g['title']}", f"GD|{key}"))
+        if row:
+            rows.append(row[:2])
+            if len(row) > 2:
+                rows.append(row[2:])
+    lines.append(og_close("📚"))
+    rows.append([btn("🎓 راهنمای بازی (۱۲ صفحه)", "H|GUIDE|0")])
+    rows.append([btn("🏠 منوی اصلی", "H|HOME")])
+    await safe_edit(query, "\n".join(lines), kb(rows))
+
+
+async def gd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های راهنمای بخش‌ها (GD)."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "INDEX":
+            await safe_answer_query(query)
+            await gd_show_index(query, uid)
+            return
+        if action in SECTION_GUIDES:
+            await safe_answer_query(query)
+            await gd_show(query, uid, action)
+            return
+        await safe_answer_query(query, "راهنمای این بخش هنوز آماده نشده! 🚧")
+    except Exception as exc:
+        log_event("error", "system", f"gd_callback failed: {exc!r}", actor=uid)
+        await safe_answer_query(query, UX_MSG["error_generic"])
 
 
 # ================================================================
@@ -5234,7 +5802,12 @@ async def game_ask_question(context, game: dict, questioner: int, target: int, m
     if footer:
         text += "\n\n" + footer
     try:
-        m = await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+        # 🚩 نسخه ۶ — دکمه‌ی گزارش روی کارت سوال برای همه‌ی اعضا
+        m = await context.bot.send_message(
+            chat_id, text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb([[btn("🚩 گزارش این سوال", "QG|REPORT")]]),
+        )
         game["phase"] = "question"
         # 🧹 تک‌پیام: کارت سوال تا وقتی Reply نخورده محافظت می‌شود
         ui_retag(chat_id, m.message_id, UI_TAG_QUESTION)
@@ -5243,6 +5816,7 @@ async def game_ask_question(context, game: dict, questioner: int, target: int, m
             "questioner_uid": int(questioner),
             "target_uid": int(target),
             "mode": mode,
+            "question_text": str(question),
             "expires": time.time() + int(settings.get("penalty_deadline", 300) or 300) + 600,
             "responders": [],
             "sent_ts": time.time(),
@@ -5312,7 +5886,12 @@ async def game_show_penalty(context, game: dict, target: int, questioner: int, q
     if footer:
         text += "\n\n" + footer
     try:
-        m = await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+        # 🚩 نسخه ۶ — دکمه‌ی گزارش روی کارت حکم برای همه‌ی اعضا
+        m = await context.bot.send_message(
+            chat_id, text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb([[btn("🚩 گزارش این حکم", "QG|REPORT")]]),
+        )
         game["phase"] = "question"
         # 🧹 تک‌پیام: کارت حکم تا وقتی Reply نخورده محافظت می‌شود
         ui_retag(chat_id, m.message_id, UI_TAG_QUESTION)
@@ -5330,6 +5909,7 @@ async def game_show_penalty(context, game: dict, target: int, questioner: int, q
             "target_uid": int(target),
             "mode": "penalty",
             "kind": "penalty",
+            "question_text": str(penalty),
             "expires": time.time() + deadline + 300,
             "responders": [],
             "sent_ts": time.time(),
@@ -5588,6 +6168,34 @@ async def handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await msg.reply_text("⌛ این نوبت تمام شده است؛ نوبت بعدی را از منوی بازی دنبال کنید.")
         except Exception:
             pass
+        return True
+    # 🚩 نسخه ۶ — گزارش کارت با Reply: متن شروع‌شده با «گزارش» به‌عنوان گزارش ثبت می‌شود
+    rtext = str(msg.text or "").strip()
+    if rtext.startswith(("گزارش", "/گزارش")) or rtext.startswith("🚩"):
+        rep_uid = int(update.effective_user.id)
+        qtext = str(prompt.get("question_text") or "(کارت فعال)")
+        dup = any(
+            isinstance(r, dict) and int(r.get("uid", 0)) == rep_uid
+            and str(r.get("question", "")) == qtext
+            and str(r.get("status", "")) == "pending"
+            for r in DATA.get("question_reports", [])
+        )
+        if dup:
+            try:
+                await msg.reply_text("✅ این کارت رو قبلاً گزارش کردی — در صف بررسیه. 🙏")
+            except Exception:
+                pass
+        else:
+            question_report(rep_uid, qtext, rtext[:200])
+            save_data()
+            try:
+                await msg.reply_text(
+                    "🚩 <b>گزارش ثبت شد!</b>\n"
+                    "⚡ تیم ربات این سوال رو بررسی می‌کنه — ممنون که مراقب کیفیت بازی هستی 🙏",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
         return True
     uid = int(update.effective_user.id)
     target = prompt.get("target_uid")
@@ -7798,6 +8406,7 @@ async def shop_send_home(chat_id, update, context, query=None) -> None:
     text = "\n".join(lines)
     rows = [[btn(f"{label}", f"S|CAT|{key}")] for key, label in SHOP_CATEGORIES]
     rows.append([btn("🎒 موجودی من", "S|INV")])
+    rows.append([btn("❓ راهنمای این بخش", "GD|SHOP")])
     markup = kb(rows)
     if query is not None:
         await safe_answer_query(query)
@@ -8130,6 +8739,7 @@ async def profile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                         kb([
                             [btn("🎖 دستاوردها", "P|ACH"), btn("📊 آمار من", "SD|HOME")],
                             [btn("📜 تاریخچه بازی", "GH|HOME"), btn("🛍 فروشگاه", "S|HOME")],
+                            [btn("❓ راهنمای پروفایل", "GD|PROFILE")],
                             [btn("🏠 منوی اصلی", "H|HOME")],
                         ]))
         return
@@ -9986,6 +10596,7 @@ async def pm_send_home(query, uid: int) -> None:
         ]
         if active:
             rows.append([btn(f"▶️ ادامه مسابقه #{active[0]['id']}", f"PM|V|{active[0]['id']}")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|PRIVATE")])
         rows.append(nav_row("H|HOME"))
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -10581,7 +11192,8 @@ async def fr_send_home(query, uid: int) -> None:
         rows = [
             [btn("📨 درخواست‌های دریافتی", "FR|REQS")],
             [btn("➕ اضافه کردن دوست", "FR|ADD")],
-            [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("❓ راهنمای این بخش", "GD|FRIENDS")],
+        [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -10755,6 +11367,7 @@ async def rv_send_home(query, uid: int) -> None:
                     btn("❌", f"RV|RM|{rid}"),
                 ])
         rows.append([btn("➕ اضافه کردن رقیب", "RV|ADD")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|RIVALS")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -11013,6 +11626,7 @@ async def dm_send_home(query, uid: int) -> None:
         for m in missions:
             if m.get("completed", False) and m.get("key", "") not in (get_user(int(uid)).get("daily_missions", {}).get("claimed", [])):
                 rows.append([btn(f"🎁 دریافت پاداش: {m.get('name', '')[:25]}", f"DM|CLM|{m.get('key', '')}")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|DAILYMISSIONS")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -11128,6 +11742,7 @@ async def tm_send_home(query, uid: int) -> None:
                 rows.append([btn(f"➕ پیوستن به #{t['id']}", f"TM|JOIN|{t['id']}")])
             else:
                 rows.append([btn(f"👁 مشاهده #{t['id']}", f"TM|V|{t['id']}")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|TOURNAMENT")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -11276,7 +11891,8 @@ async def se_send_home(query, uid: int) -> None:
         else:
             lines.append("— فعلاً رویدادی فعال نیست.")
         rows = [
-            [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("❓ راهنمای این بخش", "GD|SEASON")],
+        [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -11327,7 +11943,8 @@ async def nt_send_home(query, uid: int) -> None:
                 lines.append("")
         lines.append(ds_close())
         rows = [
-            [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("❓ راهنمای این بخش", "GD|NOTIFICATIONS")],
+        [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -11405,7 +12022,8 @@ async def us_send_home(query, uid: int) -> None:
             [btn("🏷 انتخاب لقب", "US|TITLE"), btn("🖼 انتخاب قاب", "US|FRAME")],
             [btn("🎖 انتخاب بج", "US|BADGE")],
             [btn("🔔 تنظیمات اعلان", "US|NOTIF"), btn("🔒 حریم خصوصی", "US|PRIV")],
-            [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("❓ راهنمای این بخش", "GD|SETTINGS")],
+        [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -11683,29 +12301,234 @@ async def cmd_apexsettings_me(update: Update, context: ContextTypes.DEFAULT_TYPE
 #  سیستم بازخورد (Feedback) — فاز ۴
 # ================================================================
 async def fb_send_home(query, uid: int) -> None:
-    """نمایش پنل بازخورد — طراحی پرایم."""
+    """نمایش پنل بازخورد — نسخه ۶: راهنمای ۳قدمی + گزارش سوال + دکمه‌ی راهنما."""
     try:
         feedbacks = [f for f in DATA.get("feedback", []) if int(f.get("uid", 0)) == int(uid)]
+        answered = sum(1 for f in feedbacks if isinstance(f, dict) and f.get("reply"))
         lines = [
-            ds_top("📮"),
-            "│  📮 <b>بازخورد و گزارش</b>",
-            "│  <i>صدایت رو می‌شنویم!</i>",
-            ds_sep(),
-            "│  💬 مشکلی هست یا پیشنهادی داری؟ برامون بفرست.",
-            "│  📌 با Reply روی پیام یه سوال، می‌تونی اون",
-            "│  سوال رو گزارش بدی تا بررسی بشه.",
-            ds_sep("⋆"),
-            ds_row("📊 بازخوردهای تو", pnum(len(feedbacks))),
-            ds_close("📮"),
+            og_top("📮"),
+            og_head("📮", "بازخورد و گزارش", "صدات مستقیم به تیم ربات می‌رسه — قول!"),
+            og_sep(),
+            "┃  🎯 <b>چطور کار می‌کنه؟ (۳ قدم ساده)</b>",
+            "┃  ▸ ۱) دکمه‌ی «📝 ارسال بازخورد» رو بزن",
+            "┃  ▸ ۲) متن، پیشنهاد یا مشکلت رو بنویس و بفرست",
+            "┃  ▸ ۳) جواب تیم همین‌جا برات میاد ✅",
+            og_sep("◈"),
+            "┃  🚩 <b>گزارش یه سوال خاص؟</b>",
+            "┃  ▸ روی کارت سوال، دکمه‌ی «🚩 گزارش این سوال» رو بزن",
+            "┃  ▸ یا روی کارت Reply کن و کلمه‌ی «گزارش» رو بنویس",
+            og_sep("⋆"),
+            "┃  💡 هر متن آزادی هم همین‌جا بفرستی، خودم می‌پرسم",
+            "┃  که بازخورده یا نه — چیزی از دست نمی‌ره!",
+            og_sep(),
+            "┃  " + " ··· ".join([
+                f"📊 بازخوردهای تو: {pnum(len(feedbacks))}",
+                f"✅ جواب‌گرفته: {pnum(answered)}",
+            ]),
+            og_close("📮"),
         ]
         rows = [
             [btn("📝 ارسال بازخورد", "FB|NEW")],
             [btn("📜 بازخوردهای من", "FB|MINE")],
+            [btn("❓ راهنمای این بخش", "GD|FEEDBACK")],
             [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"fb_send_home failed: {exc!r}", actor=uid)
+
+
+# ================================================================
+#  نسخه ۶ — 🚩 گزارش کارت سوال/حکم: یک کلیک + دلیل اختیاری
+# ================================================================
+QG_REASONS = [
+    ("repeat", "🔁 تکراری"),
+    ("inappropriate", "🔞 نامناسب"),
+    ("typo", "✏️ غلط املایی"),
+    ("offtopic", "🎯 خارج از موضوع"),
+    ("personal", "😨 خیلی شخصی"),
+]
+
+
+async def qg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های گزارش سوال (QG)."""
+    query = update.callback_query
+    if query is None:
+        return
+    uid = int(query.from_user.id)
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "REPORT":
+            chat = query.message.chat if query.message is not None else None
+            game = active_game(int(chat.id)) if chat is not None else None
+            prompt = game.get("reply_prompt") if isinstance(game, dict) else None
+            qtext = str((prompt or {}).get("question_text") or "")
+            if not qtext:
+                await safe_answer_query(query, "⌛ این کارت دیگه فعال نیست — گزارش فقط روی کارت‌های زنده کار می‌کنه", True)
+                return
+            dup = any(
+                isinstance(r, dict) and int(r.get("uid", 0)) == uid
+                and str(r.get("question", "")) == qtext
+                and str(r.get("status", "")) == "pending"
+                for r in DATA.get("question_reports", [])
+            )
+            if dup:
+                await safe_answer_query(query, "✅ قبلاً این کارت رو گزارش کردی — در صف بررسیه")
+                return
+            question_report(uid, qtext, "")
+            save_data()
+            await safe_answer_query(query, "🚩 گزارش ثبت شد! اگه خواستی دلیلش رو هم بگو 👇")
+            # پنل دلیل موقت در گروه — خودکار پاک می‌شود
+            try:
+                rows = [[btn(label, f"QG|RSN|{key}") for key, label in QG_REASONS[i:i + 2]]
+                        for i in range(0, len(QG_REASONS), 2)]
+                rows.append([btn("✖ بدون دلیل", "QG|SKIP")])
+                await ui_notice(
+                    context.bot, int(chat.id),
+                    "🚩 <b>گزارش ثبت شد!</b>\nمی‌خوای دلیلش رو هم بگی؟ (اختیاری)",
+                    ttl=90, reply_markup=kb(rows), parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+            return
+        if action == "RSN" and len(parts) > 2:
+            rkey = parts[2]
+            reason_label = dict(QG_REASONS).get(rkey, rkey)
+            reports = DATA.get("question_reports", [])
+            for r in reversed(reports):
+                if isinstance(r, dict) and int(r.get("uid", 0)) == uid and not str(r.get("reason") or ""):
+                    r["reason"] = str(reason_label)
+                    break
+            else:
+                await safe_answer_query(query, "گزارشی برای دلیل‌گذاری پیدا نشد — اول کارت رو گزارش کن 🚩")
+                return
+            save_data()
+            await safe_answer_query(query, "💗 ممنون! دلیل گزارش هم ثبت شد")
+            try:
+                await safe_delete(query.message)
+            except Exception:
+                pass
+            return
+        if action == "SKIP":
+            await safe_answer_query(query, "پس فقط خود گزارش ثبت شد ✅")
+            try:
+                await safe_delete(query.message)
+            except Exception:
+                pass
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"qg_callback failed: {exc!r}", actor=uid)
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+# ================================================================
+#  نسخه ۶ — موتور بازخورد انقلابی: کامپوزر + کارت تأیید + fallback هوشمند
+# ================================================================
+FB_INPUT_TIMEOUT = 600  # مهلت تایپ بازخورد: ۱۰ دقیقه
+
+
+async def fb_send_composer(query, uid: int) -> None:
+    """صفحه‌ی حالت نوشتن بازخورد — به‌جای توست محوشونده، صفحه‌ی واقعی."""
+    try:
+        await safe_edit(
+            query,
+            f"{og_top('✍️')}\n"
+            f"{og_head('✍️', 'بازخورد جدید', 'گوش می‌دم — هرچی تو دلته بنویس')}\n"
+            f"{og_sep()}\n"
+            "┃  ✍️ الان متن بازخوردت رو <b>همین‌جا بنویس و ارسال کن</b>\n"
+            "┃  (یک پیام معمولی کافیه — بدون هیچ دستوری)\n"
+            f"{og_sep('◈')}\n"
+            "┃  💡 <b>چه چیزی بنویسی که سریع‌تر رسیدگی بشه؟</b>\n"
+            "┃  ▸ مشکل کجا پیش اومد؟ (اسم بخش / دکمه / دستور)\n"
+            "┃  ▸ چی انتظار داشتی اتفاق بیفته؟\n"
+            "┃  ▸ اگر پیشنهاد داری، از کجا شروع کنیم؟\n"
+            f"{og_sep('⋆')}\n"
+            f"┃  ⏳ {pnum(FB_INPUT_TIMEOUT // 60)} دقیقه فرصت داری • با «انصراف» هر لحظه می‌تونی منصرف شی\n"
+            f"{og_close('✍️')}",
+            kb([
+                [btn("✖ انصراف", "FB|CANCEL")],
+                [btn("❓ راهنمای این بخش", "GD|FEEDBACK")],
+            ]),
+        )
+    except Exception as exc:
+        log_event("error", "system", f"fb_send_composer failed: {exc!r}", actor=uid)
+
+
+async def fb_confirm_card(uid: int, entry: dict, query=None, message=None) -> None:
+    """کارت تأیید ثبت بازخورد — با شماره‌ی پیگیری و مسیر پیگیری."""
+    fid = int(entry.get("id", 0)) if isinstance(entry, dict) else 0
+    text_markup = kb([
+        [btn("📜 بازخوردهای من", "FB|MINE")],
+        [btn("🏠 منوی اصلی", "H|HOME")],
+    ])
+    body = (
+        f"{og_top('✅')}\n"
+        f"{og_head('✅', 'بازخورد ثبت شد!', 'شنیده شدی — ممنون که صدات زدی')}\n"
+        f"{og_sep()}\n"
+        f"┃  📇 شماره‌ی پیگیری: <b>#{pnum(fid)}</b>\n"
+        f"┃  📊 وضعیت: <b>🟢 در صف بررسی</b>\n"
+        f"{og_sep('◈')}\n"
+        "┃  🚀 <b>چه اتفاقی می‌فته؟</b>\n"
+        "┃  ▸ تیم ربات پیامت رو می‌بینه\n"
+        "┃  ▸ اگه پاسخی لازم داشته باشه، همین‌جا می‌رسه\n"
+        "┃  ▸ وضعیت رو از «📜 بازخوردهای من» دنبال کن\n"
+        f"{og_close('✅')}\n\n"
+        "💗 از اینکه به ربات قلبت رو باز کردی ممنونیم!"
+    )
+    try:
+        if query is not None:
+            await safe_edit(query, body, text_markup)
+        elif message is not None:
+            await message.reply_text(
+                body, parse_mode=ParseMode.HTML,
+                reply_markup=text_markup, disable_web_page_preview=True,
+            )
+    except Exception as exc:
+        log_event("error", "system", f"fb_confirm_card failed: {exc!r}", actor=uid)
+
+
+async def pv_free_text_helper(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+    """🧠 نسخه ۶ — fallback هوشمند PV: هیچ متن آزادی دیگه بی‌جواب نمی‌مونه."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None or not text:
+        return
+    uid = int(user.id)
+    try:
+        # کاربر ثبت‌نام‌نشده؟ اول /start
+        if str(uid) not in DATA.get("users", {}):
+            await msg.reply_text(
+                "👋 سلام! اول باید حسابت رو بسازی.\n"
+                "روی /start بزن تا ۱۰ ثانیه‌ای وارد بازی بشیم! 🎮"
+            )
+            return
+        # نگه‌داشتن متن برای ارسال یک‌کلیکی
+        context.application.user_data[uid] = context.application.user_data.get(uid, {})
+        context.application.user_data[uid]["last_free_text"] = str(text)[:500]
+        context.application.user_data[uid]["last_free_text_ts"] = time.time()
+        snippet = escape(text[:90] + ("…" if len(text) > 90 else ""))
+        await msg.reply_text(
+            f"{og_top('📨')}\n"
+            f"{og_head('📨', 'پیامت رسید!', 'ولی مطمئن نیستم کجا باید بره')}\n"
+            f"{og_sep()}\n"
+            f"┃  ▸ «{snippet}»\n"
+            f"{og_sep('◈')}\n"
+            "┃  💡 اگه این یک <b>بازخورد یا گزارش مشکل</b>ه،\n"
+            "┃  با یه کلیک برای تیم ربات بفرستش 👇\n"
+            "┃  ⚡ یا از منوی اصلی، بخش موردنظرت رو باز کن\n"
+            f"{og_close('📨')}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb([
+                [btn("📮 ارسال به‌عنوان بازخورد", "FB|SENDLAST")],
+                [btn("🏠 منوی اصلی", "H|HOME")],
+            ]),
+            disable_web_page_preview=True,
+        )
+        log_event("info", "system", "pv_free_text_helper shown", actor=uid)
+    except Exception as exc:
+        log_event("error", "system", f"pv_free_text_helper failed: {exc!r}", actor=uid)
 
 
 async def fb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -11715,14 +12538,45 @@ async def fb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     uid = int(query.from_user.id)
     parts = str(query.data or "").split("|")
     action = parts[1] if len(parts) > 1 else ""
+    # 🧹 نسخه ۶.۱ — هر تعامل با پنل بازخورد (به‌جز NEW) حالتِ «در حال نوشتن» را پاک می‌کند
+    try:
+        if action not in ("NEW", "SENDLAST"):
+            ud = context.application.user_data.get(uid, {})
+            ud.pop("await_feedback", None)
+            ud.pop("await_feedback_ts", None)
+    except Exception:
+        pass
     try:
         if action == "HOME":
             await fb_send_home(query, uid)
             return
+        if action == "CANCEL":
+            # انصراف صریح از حالت نوشتن — پیام دوستانه
+            await safe_answer_query(query, "✖ انصراف شد — هر وقت خواستی برگرد!")
+            await fb_send_home(query, uid)
+            return
         if action == "NEW":
-            await safe_answer_query(query, "📝 بازخوردت رو به‌صورت متن بفرست:")
+            await safe_answer_query(query, "✍️ حالا متن بازخوردت رو بنویس و بفرست")
             context.application.user_data[uid] = context.application.user_data.get(uid, {})
             context.application.user_data[uid]["await_feedback"] = True
+            context.application.user_data[uid]["await_feedback_ts"] = time.time()
+            await fb_send_composer(query, uid)
+            return
+        if action == "SENDLAST":
+            ud = context.application.user_data.get(uid, {})
+            last_text = str(ud.get("last_free_text") or "")
+            last_ts = float(ud.get("last_free_text_ts") or 0)
+            if not last_text or (time.time() - last_ts) > FB_INPUT_TIMEOUT:
+                await safe_answer_query(query, "⌛ متن دیگه معتبر نیست — از «📝 ارسال بازخورد» دوباره بفرست", True)
+                await fb_send_home(query, uid)
+                return
+            ud.pop("last_free_text", None)
+            entry = fb_submit(uid, last_text)
+            if entry:
+                await safe_answer_query(query, "📮 ثبت شد!")
+                await fb_confirm_card(uid, entry, query=query)
+            else:
+                await safe_answer_query(query, "❌ خطا در ثبت — چند لحظه بعد دوباره تلاش کن", True)
             return
         if action == "MINE":
             await fb_show_mine(query, uid)
@@ -11733,31 +12587,44 @@ async def fb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def fb_show_mine(query, uid: int) -> None:
-    """نمایش بازخوردهای کاربر."""
+    """نمایش بازخوردهای کاربر — نسخه ۶: وضعیت فارسی، شماره پیگیری، پاسخ تیم."""
     try:
         feedbacks = [f for f in DATA.get("feedback", []) if int(f.get("uid", 0)) == int(uid)]
-        lines = ["📜 <b>بازخوردهای من</b>", "━━━━━━━━━━━━━━━━━━"]
+        lines = [
+            og_top("📜"),
+            og_head("📜", "بازخوردهای من", "تاریخچه‌ی گفتگوهایت با تیم"),
+            og_sep(),
+        ]
         if not feedbacks:
-            lines.append("— هنوز بازخوردی ندادی.")
+            lines.append("┃  هنوز بازخوردی ندادی — سکوت طلایی! 🌙")
+            lines.append("┃  با «📝 ارسال بازخورد» اولین‌ش رو بفرست ✍️")
         else:
-            for f in feedbacks[:10]:
+            for f in list(reversed(feedbacks))[:8]:
+                if not isinstance(f, dict):
+                    continue
                 ts = int(f.get("ts", 0))
                 time_str = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
-                status = f.get("status", "new")
-                reply = f.get("reply", "")
-                lines.append(f"📝 [{time_str}] {escape(f.get('text', '')[:50])}")
-                lines.append(f"   وضعیت: {status}")
+                status = "✅ جواب داده شد" if f.get("reply") else "🟢 در صف بررسی"
+                fid = int(f.get("id", 0))
+                lines.append(f"┃  📇 <b>#{pnum(fid)}</b> · {fa(time_str)} · {status}")
+                lines.append(f"┃  ▸ {escape(str(f.get('text', ''))[:80])}")
+                reply = str(f.get("reply") or "")
                 if reply:
-                    lines.append(f"   💬 پاسخ ادمین: {escape(reply[:80])}")
+                    lines.append(f"┃  💬 <b>پاسخ تیم:</b> {escape(reply[:120])}")
                 lines.append("")
-        rows = [[btn("⬅️ بازگشت", "FB|HOME")]]
+        lines.append(og_close("📜"))
+        rows = [
+            [btn("📝 بازخورد جدید", "FB|NEW")],
+            [btn("❓ راهنمای این بخش", "GD|FEEDBACK")],
+            [btn("⬅️ بازگشت", "FB|HOME")],
+        ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"fb_show_mine failed: {exc!r}", actor=uid)
 
 
-def fb_submit(uid: int, text: str) -> bool:
-    """ثبت بازخورد."""
+def fb_submit(uid: int, text: str) -> dict | None:
+    """ثبت بازخورد — ورودی ثبت‌شده را برمی‌گرداند (نسخه ۶)."""
     try:
         fid = next_id("feedback")
         entry = {
@@ -11773,9 +12640,10 @@ def fb_submit(uid: int, text: str) -> bool:
         user["feedback_sent"] = int(user.get("feedback_sent", 0)) + 1
         award_achievement_v11(int(uid), "v11_feedback")
         analytics_bump("feedback_sent")
-        return True
+        save_data()
+        return entry
     except Exception:
-        return False
+        return None
 
 
 async def cmd_apexfeedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -11879,6 +12747,7 @@ async def dr_send_home(query, uid: int) -> None:
             rows.append([btn("🎁 دریافت پاداش", "DR|CLAIM")])
         rows.append([btn("🌐 Social Wall", "DR|WALL")])
         rows.append([btn("🏆 بازیکن روز", "DR|POTD")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|DAILY")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -12129,6 +12998,8 @@ async def admin_feedback_show(query) -> None:
         feedbacks = DATA.get("feedback", [])
         total = len(feedbacks)
         open_count = sum(1 for f in feedbacks if isinstance(f, dict) and not f.get("reply"))
+        qreports = DATA.get("question_reports", [])
+        qpending = sum(1 for r in qreports if isinstance(r, dict) and str(r.get("status", "")) == "pending")
         lines = [
             og_top("📨"),
             og_head("📨", "صندوق بازخوردها", "صدای بازیکنان — پاسخ بده، قهرمان شو"),
@@ -12136,6 +13007,8 @@ async def admin_feedback_show(query) -> None:
             og_stat_grid([
                 ("📩", "کل بازخوردها", pnum(total)),
                 ("🟢", "در انتظار پاسخ", pnum(open_count)),
+                ("🚩", "گزارش سوال", pnum(len(qreports))),
+                ("⏳", "گزارش باز", pnum(qpending)),
             ]),
             og_sep("◈"),
         ]
@@ -12161,11 +13034,56 @@ async def admin_feedback_show(query) -> None:
             if total > 8:
                 lines.append(f"┃  <i>و {pnum(total - 8)} بازخورد قدیمی‌تر...</i>")
         lines.append(og_close("📨"))
+        if qreports:
+            rows.append([btn(f"🚩 گزارش سوالات ({pnum(len(qreports))})", "A|QREPORTS")])
         rows.append([btn("🔄 تازه‌سازی", "A|FEEDBACK")])
         rows.append([btn("🛡 داشبورد", "A|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"admin_feedback_show failed: {exc!r}")
+
+
+async def admin_qreports_show(query) -> None:
+    """🚩 صندوق گزارش سوالات — نسخه ۶."""
+    try:
+        reports = DATA.get("question_reports", [])
+        total = len(reports)
+        pending = sum(1 for r in reports if isinstance(r, dict) and str(r.get("status", "")) == "pending")
+        lines = [
+            og_top("🚩"),
+            og_head("🚩", "گزارش سوالات", "چشم‌های بازیکنان روی کیفیت کارت‌ها"),
+            og_sep(),
+            og_stat_grid([
+                ("🚩", "کل گزارش‌ها", pnum(total)),
+                ("🟢", "در انتظار", pnum(pending)),
+            ]),
+            og_sep("◈"),
+        ]
+        rows: list = []
+        if not reports:
+            lines.append("┃  هنوز گزارشی نیست — بانک سوالات مثل بلور خالص! 💎")
+        else:
+            start = max(0, total - 8)
+            for idx in range(total - 1, start - 1, -1):
+                r = reports[idx]
+                if not isinstance(r, dict):
+                    continue
+                ts = int(r.get("ts", 0))
+                time_str = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
+                status = "🟢" if str(r.get("status", "")) == "pending" else "✅"
+                lines.append(f"┃  {status} <b>#{pnum(idx + 1)}</b> — {escape(name_of(int(r.get('uid', 0))))} <i>[{fa(time_str)}]</i>")
+                lines.append(f"┃  ▸ سوال: {escape(str(r.get('question', ''))[:100])}")
+                reason = str(r.get("reason") or "")
+                lines.append(f"┃  ▸ دلیل: {escape(reason[:60]) if reason else '—'}")
+                lines.append("")
+                if str(r.get("status", "")) == "pending":
+                    rows.append([btn(f"✔️ بررسی شد #{pnum(idx + 1)}", f"A|QRDONE|{idx}")])
+        lines.append(og_close("🚩"))
+        rows.append([btn("📨 صندوق بازخوردها", "A|FEEDBACK")])
+        rows.append([btn("🛡 داشبورد", "A|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_qreports_show failed: {exc!r}")
 
 
 async def admin_maintenance_toggle(query) -> None:
@@ -13267,6 +14185,7 @@ async def sv_send_home(query, uid: int) -> None:
             rows.append([btn("🏁 پایان بازی", "SV|END")])
         else:
             rows.append([btn("🎮 شروع بازی جدید", "SV|NEW")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|SURVIVAL")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -13493,7 +14412,8 @@ async def tb_send_home(query, uid: int) -> None:
         ]
         rows = [
             [btn("🎮 ساخت نبرد تیمی", "TB|NEW")],
-            [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("❓ راهنمای این بخش", "GD|TEAM")],
+        [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -14185,7 +15105,8 @@ async def qs_send_home(query, uid: int) -> None:
         rows = [
             [btn("📅 Quest های روزانه", "QS|DAILY")],
             [btn("🗓 Quest های هفتگی", "QS|WEEKLY")],
-            [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("❓ راهنمای این بخش", "GD|QUESTS")],
+        [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -14454,6 +15375,7 @@ async def sp_send_home(query, uid: int) -> None:
             rows.append([btn(f"👑 Premium Tier {t}", f"SP|CLMP|{t}")])
         if not is_premium:
             rows.append([btn(f"👑 خرید Premium ({SEASON_PASS_PREMIUM_PRICE} 🪙)", "SP|BUY")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|PASS")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -14725,6 +15647,7 @@ async def mm_send_home(query, uid: int) -> None:
             rows.append([btn("❌ خروج از صف", "MM|LEAVE")])
         else:
             rows.append([btn("🎮 پیدا کردن حریف", "MM|JOIN")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|MATCHMAKING")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -14810,6 +15733,7 @@ async def gh_send_home(query, uid: int) -> None:
         rows = []
         for i, entry in enumerate(history[:5]):
             rows.append([btn(f"👁 {entry.get('mode', '')[:15]}", f"GH|V|{i}")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|HISTORY")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -14929,7 +15853,8 @@ async def ba_send_home(query, uid: int) -> None:
         rows = [
             [btn("📝 ثبت درخواست جدید", "BA|NEW")],
             [btn("📜 درخواست‌های من", "BA|MINE")],
-            [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("❓ راهنمای این بخش", "GD|APPEAL")],
+        [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -15083,7 +16008,8 @@ async def ms_send_home(query, uid: int) -> None:
             lines.append(f"{status} {m['name']} ({current}/{m['target']}) - 🪙{m['coins']} ⭐{m['xp']}")
         rows = [
             [btn("🔄 بررسی مجدد", "MS|HOME")],
-            [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("❓ راهنمای این بخش", "GD|MISSIONS")],
+        [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -15166,7 +16092,8 @@ async def hf_send_home(query, uid: int) -> None:
                 inducted = int(entry.get("inducted_at", 0))
                 inducted_str = datetime.fromtimestamp(inducted).strftime("%Y-%m") if inducted else ""
                 lines.append(f"{medal} {name} · ⭐{fmt_num(xp)} · 🏆{wins} · {inducted_str}")
-        rows = [[btn("⬅️ بازگشت", "H|HOME")]]
+        rows = [[btn("❓ راهنمای این بخش", "GD|HOF")],
+         [btn("⬅️ بازگشت", "H|HOME")]]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"hf_send_home failed: {exc!r}")
@@ -15263,7 +16190,8 @@ async def sd_send_home(query, uid: int) -> None:
                 lines.append(f"📊 {m}")
         if groups_played:
             lines.extend(["", f"👥 بازی‌کرده در <b>{fmt_num(len(groups_played))}</b> گروه"])
-        rows = [[btn("⬅️ بازگشت", "H|HOME")]]
+        rows = [[btn("❓ راهنمای این بخش", "GD|STATS")],
+         [btn("⬅️ بازگشت", "H|HOME")]]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"sd_send_home failed: {exc!r}")
@@ -15791,6 +16719,7 @@ async def vp_send_home(query, uid: int) -> None:
             rows.append([btn(f"👑 ۹۰ روز ({VIP_PRICES['90d']}🪙) — ۱۲٪ تخفیف", "VP|BUY|90d")])
         if not is_v or days < 365:
             rows.append([btn(f"👑 ۳۶۵ روز ({VIP_PRICES['365d']}🪙) — ۲۰٪ تخفیف", "VP|BUY|365d")])
+        rows.append([btn("❓ راهنمای این بخش", "GD|VIP")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -16143,7 +17072,8 @@ async def mg_send_home(query, uid: int) -> None:
             [btn("🧠 Trivia", "MG|TRIVIA"), btn("📝 Word Game", "MG|WORD")],
             [btn("🔢 Number Guess", "MG|NUMBER"), btn("🃏 Memory", "MG|MEMORY")],
             [btn("⚡ Reaction", "MG|REACTION")],
-            [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("❓ راهنمای این بخش", "GD|MINIGAMES")],
+        [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -16680,6 +17610,7 @@ async def tr_send_home(query, uid: int) -> None:
                 btn(f"✅ قبول #{tid}", f"TR|ACC|{tid}"),
                 btn("❌ رد", f"TR|REJ|{tid}"),
             ])
+        rows.append([btn("❓ راهنمای این بخش", "GD|TRADE")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -16946,6 +17877,7 @@ async def ln_send_home(query, uid: int) -> None:
                 btn("🔢 ۷۷", "LN|PLAY|77"),
                 btn("🔢 ۹۹", "LN|PLAY|99"),
             ])
+        rows.append([btn("❓ راهنمای این بخش", "GD|LUCKY")])
         rows.append([btn("⬅️ بازگشت", "H|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -18217,6 +19149,24 @@ async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await safe_answer_query(query, "✅ رسیدگی شد")
             await admin_feedback_show(query)
             return
+        # --- نسخه ۶: گزارش سوالات ---
+        if action == "QREPORTS":
+            await admin_qreports_show(query)
+            return
+        if action == "QRDONE" and len(parts) > 2:
+            try:
+                qr_idx = int(parts[2])
+            except Exception:
+                qr_idx = -1
+            reports = DATA.get("question_reports", [])
+            if 0 <= qr_idx < len(reports) and isinstance(reports[qr_idx], dict):
+                reports[qr_idx]["status"] = "done"
+                reports[qr_idx]["reviewed_by"] = int(query.from_user.id)
+                save_data(force=True)
+                audit("qr_done", int(query.from_user.id), None, f"idx={qr_idx}")
+                await safe_answer_query(query, "✅ گزارش بررسی شد")
+            await admin_qreports_show(query)
+            return
         if action == "EXPORT":
             # خروجی فایل واقعی
             await admin_export_download(update, context)
@@ -18378,6 +19328,10 @@ async def route_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await us_callback(update, context)
         elif prefix == "FB":
             await fb_callback(update, context)
+        elif prefix == "QG":
+            await qg_callback(update, context)
+        elif prefix == "GD":
+            await gd_callback(update, context)
         # --- 1.2.0 Callback Handlers ---
         elif prefix == "AI":
             await ai_callback(update, context)
@@ -18432,6 +19386,13 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     action = parts[1] if len(parts) > 1 else ""
     uid = int(query.from_user.id)
     chat = query.message.chat if query.message else None
+    # 🧹 نسخه ۶.۱ — منوی اصلی = درِ خروج: حالت «در حال نوشتن بازخورد» پاک شود
+    try:
+        ud = context.application.user_data.get(uid, {})
+        ud.pop("await_feedback", None)
+        ud.pop("await_feedback_ts", None)
+    except Exception:
+        pass
 
     if action == "CLOSE":
         await safe_answer_query(query)
@@ -18609,6 +19570,7 @@ async def fun_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "💡 برای اجرا، در گروه دستور رو بفرست.",
             kb([
                 [btn("🎮 بازی‌های بیشتر", "FY|MORE")],
+                [btn("❓ راهنمای این بخش", "GD|PARTY")],
                 [btn("🏠 منوی اصلی", "H|HOME")],
             ]),
         )
@@ -18675,6 +19637,13 @@ async def route_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         pass
     chat = update.effective_chat
     if chat is None or chat.type not in ("group", "supergroup"):
+        # ۶) 🧠 نسخه ۶ — fallback هوشمند PV: هیچ متنی بی‌جواب نمی‌مونه
+        if chat is not None and chat.type == "private":
+            try:
+                _free_txt = str(update.message.text or "").strip() if update.message is not None else ""
+                await pv_free_text_helper(update, context, _free_txt)
+            except Exception:
+                pass
         return
     # ۵) جواب نوبت بازی
     try:
@@ -18757,17 +19726,28 @@ async def user_input_router_v11(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 await msg.reply_text("❌ اضافه نشد.")
             return True
-        # حالت بازخورد
+        # حالت بازخورد (نسخه ۶ — مهلت، تلاش مجدد و کارت تأیید)
         if user_data.get("await_feedback"):
-            user_data.pop("await_feedback", None)
-            if len(text) < 5:
-                await msg.reply_text("❌ بازخورد خیلی کوتاه است. حداقل ۵ حرف.")
+            ts_fb = float(user_data.get("await_feedback_ts") or 0)
+            if ts_fb and (time.time() - ts_fb) > FB_INPUT_TIMEOUT:
+                user_data.pop("await_feedback", None)
+                user_data.pop("await_feedback_ts", None)
+                await msg.reply_text("⌛ فرصت نوشتن بازخورد تموم شد — از منوی 📮 بازخورد دوباره شروع کن.")
                 return True
-            ok = fb_submit(int(uid), text)
-            if ok:
-                await msg.reply_text("📝 بازخوردت ثبت شد! ممنون 🙏")
+            if len(text) < 5:
+                # حالت فعال می‌مونه تا دوباره بنویسه
+                await msg.reply_text(
+                    "✍️ بازخورد کمی کوتاهه! کمی بیشتر توضیح بده (حداقل ۵ حرف).\n"
+                    "⏳ هنوز تو حالت نوشتن هستی — همین الان دوباره بفرست ✅"
+                )
+                return True
+            user_data.pop("await_feedback", None)
+            user_data.pop("await_feedback_ts", None)
+            entry = fb_submit(int(uid), text)
+            if entry:
+                await fb_confirm_card(int(uid), entry, message=msg)
             else:
-                await msg.reply_text("❌ خطا در ثبت بازخورد.")
+                await msg.reply_text("❌ خطا در ثبت بازخورد — لطفاً چند لحظه بعد دوباره بفرست.")
             return True
         # 1.2.0 — حالت جستجوی کاربر توسط ادمین
         if user_data.get("await_admin_user_search"):
