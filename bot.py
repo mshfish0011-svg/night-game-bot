@@ -3785,21 +3785,20 @@ def turn_announcement(game: dict, questioner: int) -> str:
 
 
 def turn_markup(game: dict, viewer_uid: int) -> InlineKeyboardMarkup:
-    """دکمه‌های نوبت — ساده و واضح.
-    پرسشگر: ۴ مود اصلی + بیشتر + ناوبری
-    دیگران: وضعیت + امتیازها (بدون پایان بازی برای غیر سرگروه)
-    """
+    """دکمه‌های نوبت — +۱۸ در صدر، مودهای اصلی و بیشتر."""
     q = current_questioner(game)
     if q is None:
         return kb([[btn("📊 وضعیت بازی", "G|STATUS")]])
     if int(viewer_uid) == int(q):
-        # پرسشگر: انتخاب موضوع
         off = set(topics_off())
         adult_ok = get_group(int(game["chat_id"])).get("adult_mode", False)
-        # مودهای اصلی (۴ تا)
-        main_modes = [("truth", "🕵️ اعتراف"), ("dare", "🔥 جرئت"),
-                      ("scenario", "🎭 سناریو"), ("flirty", "💘 فلرت")]
         rows = []
+        # ردیف ۱: +۱۸ در صدر اگر فعال باشه
+        if adult_ok and "adult" not in off:
+            rows.append([btn("🔞 +۱۸ 🔥", "G|MODE|adult")])
+        # ردیف ۲: مودهای اصلی
+        main_modes = [("truth", "🕵️ اعتراف"), ("dare", "🔥 جرئت"),
+                      ("flirty", "💘 فلرت"), ("drama", "😈 جنجال")]
         pair = []
         for key, label in main_modes:
             if key in off:
@@ -3810,24 +3809,13 @@ def turn_markup(game: dict, viewer_uid: int) -> InlineKeyboardMarkup:
                 pair = []
         if pair:
             rows.append(pair)
-        # مودهای بیشتر
-        more_modes = []
-        for key, label in MODE_ORDER:
-            if key in [m[0] for m in main_modes]:
-                continue
-            if key in off:
-                continue
-            if key == "adult" and not adult_ok:
-                continue
-            more_modes.append((key, label))
-        if more_modes:
-            rows.append([btn("📋 موضوعات بیشتر", "G|MOREMODES")])
+        # ردیف موضوعات بیشتر
+        rows.append([btn("📋 موضوعات بیشتر", "G|MOREMODES")])
         rows.append([btn("🎲 رد کردن نوبت", "G|SKIP"), btn("📊 امتیازها", "G|SCORES")])
         is_leader = int(viewer_uid) == int(game.get("leader_id", 0))
         if is_leader or has_permission(int(viewer_uid), "admin"):
             rows.append([btn("🏁 پایان بازی", "G|END")])
     else:
-        # غیر پرسشگر: فقط مشاهده
         is_leader = int(viewer_uid) == int(game.get("leader_id", 0))
         rows = [
             [btn("📊 امتیازها", "G|SCORES")],
@@ -10844,43 +10832,50 @@ async def admin_logs_show(query) -> None:
 # ================================================================
 
 async def admin_users_manager_show(query, page: int = 0) -> None:
-    """پنل مدیریت کاربران — جستجو، لیست، عملیات."""
+    """پنل مدیریت کاربران — حرفه‌ای با طراحی جعبه‌ای."""
     try:
         users = DATA.get("users", {})
         user_list = list(users.items())
-        # صفحه‌بندی
-        per_page = 10
+        per_page = 8
         total_pages = max(1, (len(user_list) + per_page - 1) // per_page)
         page = max(0, min(total_pages - 1, int(page)))
         start = page * per_page
         end = start + per_page
         current = user_list[start:end]
+        banned_count = sum(1 for u in users.values() if isinstance(u, dict) and u.get("banned"))
+        verified_count = len(DATA.get("verified_users", []))
+        vip_count = sum(1 for u in users.values() if isinstance(u, dict) and int(u.get("vip_until", 0)) > now_ts())
         lines = [
-            f"👥 <b>مدیریت کاربران</b> (صفحه {page + 1}/{total_pages})",
-            "━━━━━━━━━━━━━━━━━━",
-            f"👥 کل کاربران: <b>{fmt_num(len(users))}</b>",
-            "",
-            "━ کاربران این صفحه ━",
+            "╭" + "━" * 22 + "╮",
+            "│  👥 <b>مدیریت کاربران</b>",
+            "├" + "━" * 22 + "┤",
+            f"│  📊 کل: <b>{fmt_num(len(users))}</b>  │  🚫 مسدود: <b>{fmt_num(banned_count)}</b>",
+            f"│  ✅ تأییدشده: <b>{fmt_num(verified_count)}</b>  │  👑 وی‌آی‌پی: <b>{fmt_num(vip_count)}</b>",
+            f"│  📄 صفحه: <b>{fmt_num(page + 1)}/{fmt_num(total_pages)}</b>",
+            "├" + "━" * 22 + "┤",
         ]
         for uid_str, u in current:
             try:
                 uid_int = int(uid_str)
-                name = escape(str(u.get("name", "بدون‌نام"))[:20])
+                name = escape(str(u.get("name", "بدون‌نام"))[:15])
                 level = int(u.get("level", 1))
                 coins = int(u.get("coins", 0))
-                banned = "🚫" if u.get("banned") else "✅"
-                lines.append(f"{banned} <b>#{uid_int}</b> · {name} · 🔥{level} · 🪙{coins}")
+                status = "🚫" if u.get("banned") else "✅"
+                vip = "👑" if int(u.get("vip_until", 0)) > now_ts() else ""
+                ver = "✅" if u.get("verified") else ""
+                lines.append(f"│  {status} #{uid_int} · {name} · 🔥{level} · 🪙{coins} {vip}{ver}")
             except Exception:
                 pass
+        lines.append("╰" + "━" * 22 + "╯")
         rows = []
-        # دکمه‌های جستجو و عملیات روی هر کاربر
-        for uid_str, _ in current[:5]:
+        for uid_str, _ in current[:6]:
             try:
                 uid_int = int(uid_str)
-                rows.append([btn(f"👤 کاربر #{uid_int}", f"A|USER|{uid_int}")])
+                u = users.get(uid_str, {})
+                name_short = str(u.get("name", "?"))[:10]
+                rows.append([btn(f"👤 {name_short} #{uid_int}", f"A|USER|{uid_int}")])
             except Exception:
                 pass
-        # ناوبری صفحه
         nav = []
         if page > 0:
             nav.append(btn("⬅️ قبلی", f"A|USERS|{page - 1}"))
@@ -11015,33 +11010,36 @@ async def admin_user_modify(query, target_uid: int, action: str) -> None:
 
 
 async def admin_games_manager_show(query) -> None:
-    """پنل مدیریت بازی‌های فعال."""
+    """پنل مدیریت بازی‌ها — حرفه‌ای با جعبه‌."""
     try:
         games = DATA.get("games", {})
         active = [(k, g) for k, g in games.items() if isinstance(g, dict) and g.get("status") == "active"]
+        finished = sum(1 for g in games.values() if isinstance(g, dict) and str(g.get("status")) == "finished")
         lines = [
-            "🎮 <b>مدیریت بازی‌ها</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"🎮 کل بازی‌ها: <b>{fmt_num(len(games))}</b>",
-            f"🔥 فعال: <b>{fmt_num(len(active))}</b>",
-            "",
-            "━ بازی‌های فعال ━",
+            "╭" + "━" * 22 + "╮",
+            "│  🎮 <b>مدیریت بازی‌ها</b>",
+            "├" + "━" * 22 + "┤",
+            f"│  📊 کل: <b>{fmt_num(len(games))}</b>  │  🔥 فعال: <b>{fmt_num(len(active))}</b>",
+            f"│  ✅ پایان‌یافته: <b>{fmt_num(finished)}</b>",
         ]
-        if not active:
-            lines.append("— فعلاً بازی فعالی نیست.")
-        else:
-            for k, g in active[:10]:
+        if active:
+            lines.append("├" + "━" * 22 + "┤")
+            lines.append("│  🎯 بازی‌های فعال:")
+            for k, g in active[:6]:
                 try:
                     chat_id = int(g.get("chat_id", 0))
                     players = len(g.get("players", []))
                     started = int(g.get("started_at", 0))
                     age_min = (now_ts() - started) // 60 if started else 0
-                    lines.append(f"🎮 #{k} · chat:{chat_id} · 👥{players} · ⏱{age_min}m")
+                    lines.append(f"│  · #{str(k)[:12]} · 👥{players} · ⏱{age_min}m")
                 except Exception:
                     pass
+        else:
+            lines.append("│  ❌ فعلاً بازی فعالی نیست")
+        lines.append("╰" + "━" * 22 + "╯")
         rows = []
         for k, g in active[:5]:
-            rows.append([btn(f"👁 #{k}", f"A|GAME|{k}")])
+            rows.append([btn(f"👁 {str(k)[:15]}", f"A|GAME|{k}")])
         rows.append([btn("⬅️ بازگشت", "A|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -11049,7 +11047,7 @@ async def admin_games_manager_show(query) -> None:
 
 
 async def admin_game_detail_show(query, game_key: str) -> None:
-    """نمایش جزئیات یک بازی برای ادمین."""
+    """نمایش جزئیات یک بازی — حرفه‌ای."""
     try:
         g = DATA.get("games", {}).get(str(game_key))
         if not g or not isinstance(g, dict):
@@ -11059,21 +11057,27 @@ async def admin_game_detail_show(query, game_key: str) -> None:
         status = str(g.get("status", ""))
         players = g.get("players", [])
         started = int(g.get("started_at", 0))
+        age_min = (now_ts() - started) // 60 if started else 0
+        scores = g.get("round_scores", {})
         lines = [
-            f"🎮 <b>بازی #{game_key}</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"💬 چت: <code>{chat_id}</code>",
-            f"📊 وضعیت: <b>{status}</b>",
-            f"👥 بازیکنان: <b>{len(players)}</b>",
-            f"⏱ شروع: <b>{datetime.fromtimestamp(started).strftime('%m-%d %H:%M') if started else '—'}</b>",
-            "",
-            "━ بازیکنان ━",
+            "╭" + "━" * 22 + "╮",
+            f"│  🎮 <b>بازی #{str(game_key)[:15]}</b>",
+            "├" + "━" * 22 + "┤",
+            f"│  💬 چت: <code>{chat_id}</code>",
+            f"│  📊 وضعیت: <b>{status}</b>",
+            f"│  👥 بازیکنان: <b>{fmt_num(len(players))}</b>",
+            f"│  ⏱ مدت: <b>{fmt_num(age_min)} دقیقه</b>",
         ]
-        for pid in players[:15]:
-            try:
-                lines.append(f"👤 {escape(name_of(int(pid)))}")
-            except Exception:
-                pass
+        if players:
+            lines.append("├" + "━" * 22 + "┤")
+            lines.append("│  👥 لیست بازیکنان:")
+            for pid in players[:10]:
+                try:
+                    score = int(scores.get(str(pid), 0))
+                    lines.append(f"│  · {escape(name_of(int(pid))[:15])} · ⭐{score}")
+                except Exception:
+                    pass
+        lines.append("╰" + "━" * 22 + "╯")
         rows = []
         if status == "active":
             rows.append([btn("🏁 پایان اجباری", f"A|GMOD|{game_key}|end")])
@@ -11294,6 +11298,45 @@ async def admin_reward_manager_show(query) -> None:
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"admin_reward_manager_show failed: {exc!r}")
+
+
+async def admin_backup_manager_show(query) -> None:
+    """پنل مدیریت بکاپ — حرفه‌ای و کامل."""
+    try:
+        backups = list_backups()
+        size_kb = 0
+        try:
+            size_kb = Path(DATA_FILE).stat().st_size // 1024
+        except Exception:
+            pass
+        lines = [
+            "╭" + "━" * 22 + "╮",
+            "│  💾 <b>مدیریت بکاپ</b>",
+            "├" + "━" * 22 + "┤",
+            f"│  📊 تعداد بکاپ: <b>{fmt_num(len(backups))}</b>",
+            f"│  💾 حجم داده: <b>{fmt_num(size_kb)}</b> کیلوبایت",
+        ]
+        if backups:
+            lines.append("├" + "━" * 22 + "┤")
+            lines.append("│  📋 آخرین بکاپ‌ها:")
+            for b in backups[:5]:
+                try:
+                    fname = b.name
+                    fsize = b.stat().st_size // 1024
+                    lines.append(f"│  · {escape(fname[:30])} ({fmt_num(fsize)}KB)")
+                except Exception:
+                    pass
+        else:
+            lines.append("│  ❌ هنوز بکاپی ساخته نشده")
+        lines.append("╰" + "━" * 22 + "╯")
+        rows = [
+            [btn("💾 ساخت بکاپ فوری", "A|BACKUP"), btn("📤 خروجی JSON", "A|EXPORT")],
+            [btn("📊 خروجی CSV کاربران", "A|CSV|users"), btn("📊 خروجی CSV اقتصاد", "A|CSV|economy")],
+            [btn("⬅️ بازگشت", "A|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_backup_manager_show failed: {exc!r}")
 
 
 async def admin_settings_show(query) -> None:
@@ -16521,16 +16564,21 @@ async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await admin_logs_show(query)
             return
         if action == "BACKUP":
-            # استفاده از پنل بکاپ موجود
             try:
+                Path(BACKUP_DIR).mkdir(parents=True, exist_ok=True)
+                save_data(force=True)
                 path = backup_data("manual")
                 if path:
-                    await safe_answer_query(query, f"💾 بکاپ ساخته شد: {path}")
+                    backups = list_backups()
+                    await safe_answer_query(query, f"✅ بکاپ ساخته شد! ({len(backups)} بکاپ کل)")
+                    await admin_backup_manager_show(query)
                 else:
-                    await safe_answer_query(query, "❌ خطا در ساخت بکاپ.")
+                    await safe_answer_query(query, "❌ خطا در ساخت بکاپ — دوباره تلاش کن.")
+                    await admin_backup_manager_show(query)
             except Exception as exc:
-                await safe_answer_query(query, f"❌ {exc!r}")
-            await admin_dashboard_show(query)
+                log_event("error", "admin", f"Backup failed: {exc!r}", actor=int(query.from_user.id))
+                await safe_answer_query(query, f"❌ خطا: {str(exc)[:100]}")
+                await admin_backup_manager_show(query)
             return
         # --- فاز ۷: Admin Managers کامل ---
         if action == "USERS":
