@@ -443,7 +443,7 @@ from telegram.error import RetryAfter, BadRequest  # ۶.۳/۶.۵ — فلود-ک
 # ================================================================
 #  پیکربندی
 # ================================================================
-VERSION = "1.2.0"
+VERSION = "7.0"
 BOT_NAME = "ApexRival"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -3213,16 +3213,180 @@ def data_doctor() -> list:
 #  ابزارهای رابط کاربری — دکمه، کارت، ارسال/ویرایش امن
 # ================================================================
 
-def btn(label: str, data: str, style: str | None = None) -> InlineKeyboardButton:
-    """دکمه‌ی استاندارد + رنگ واقعی (۶.۶).
+# ================================================================
+#  🌈 موتور رنگ معنایی (۷.۰) — «رنگین‌کمان»: زبان رنگِ واحدِ کل ربات
+# ================================================================
+# هر دکمه‌ی ربات — در همه‌ی منوها — به‌صورت خودکار «رنگِ هویتی» خودش
+# را می‌گیرد: مربعِ رنگیِ ایموجی در برچسب + پس‌زمینه‌ی رنگیِ واقعی
+# (Bot API 9.4) در لحظه‌های معنادار. زبان رنگ:
+#   🟥 قرمز    → بازی، هیجان، نبرد
+#   🟦 آبی     → هویت، اطلاعات، پیمایش
+#   🟩 سبز     → پیشرفت، موفقیت، مینی‌بازی
+#   🟪 بنفش    → جمعِ دوستان، مهمانی، لابی
+#   🟨 زرد     → سکه، فروشگاه، شانس، تالار افتخار
+#   🟧 نارنجی  → اطلاع‌رسانی، گزارش، حالت بقا
+#   ⬜ سفید    → تنظیمات و ابزارهای خنثی
+#   ⬛ سیاه    → راهنما و مستندات
+#   🔴 توپر    → قدرتِ ادمین و بانک | 🟢 توپر → تاییدِ قطعی
+# پس‌زمینه‌ی واقعی: danger قرمز (حذف/انصراف/پایان) · success سبز
+# (تایید/دریافت/خرید/آمادگی) · primary آبی (شروع/پیوستن/ادامه/درِ بخش‌ها).
+# موتور ایدمپوتنت است: دکمه‌ی رنگی دوباره رنگ نمی‌شود؛ ناوبری و
+# صفحه‌بندی تمیز و خنثی می‌مانند؛ استایلِ صریحِ فراخوان همیشه برنده است.
 
-    style فقط یکی از سه رنگ رسمی Bot API 9.4 است:
-    "danger" (قرمز) / "success" (سبز) / "primary" (آبی)؛
-    یا None برای دکمه‌ی خنثی. مقدار ناشناخته برای ایمنی حذف می‌شود.
+_R_SQ_RED, _R_SQ_BLUE, _R_SQ_GREEN = "🟥", "🟦", "🟩"
+_R_SQ_PURPLE, _R_SQ_YELLOW, _R_SQ_ORANGE = "🟪", "🟨", "🟧"
+_R_SQ_WHITE, _R_SQ_BLACK = "⬜", "⬛"
+_R_DOT_ADMIN = "🔴"
+
+# آیکون‌های رنگیِ ازپیش‌موجود — با دیدنشان دکمه دوباره رنگ نمی‌شود
+_R_COLORED = ("🟥", "🟦", "🟩", "🟪", "🟨", "🟧", "⬜", "⬛", "⬛️",
+              "🔴", "🔵", "🟢", "🟡", "⚪", "⚫", "✅", "❌", "⚠️")
+
+# هویت رنگی بر اساس پیشوند callback_data (تطبیق طولانی‌ترین پیشوند)
+_R_DOMAINS = (
+    # بازی و نبرد
+    ("H|GAMES", _R_SQ_RED),
+    ("G|", _R_SQ_RED), ("D|", _R_SQ_RED), ("PM|", _R_SQ_RED),
+    ("MM|", _R_SQ_RED), ("TB|", _R_SQ_RED), ("RV|", _R_SQ_RED),
+    # جمع و مهمانی
+    ("L|", _R_SQ_PURPLE), ("FY|", _R_SQ_PURPLE),
+    # شانس و طلا
+    ("LN|", _R_SQ_YELLOW), ("TM|", _R_SQ_YELLOW),
+    # مینی‌بازی و رشد
+    ("MG|", _R_SQ_GREEN), ("TT|", _R_SQ_GREEN),
+    # بقا (آتش)
+    ("SV|", _R_SQ_ORANGE),
+    # پیشرفت و موفقیت
+    ("H|PROGRESS", _R_SQ_GREEN), ("QS|", _R_SQ_GREEN), ("DM|", _R_SQ_GREEN),
+    ("MS|", _R_SQ_GREEN), ("DR|CLAIM", _R_SQ_GREEN), ("DR|WALL", _R_SQ_PURPLE),
+    ("DR|", _R_SQ_GREEN), ("P|TOP", _R_SQ_GREEN), ("P|ACH", _R_SQ_GREEN),
+    # هویت و اطلاعات
+    ("H|PROFILE", _R_SQ_BLUE), ("P|", _R_SQ_BLUE), ("GH|", _R_SQ_BLUE),
+    ("SD|", _R_SQ_BLUE), ("ON|", _R_SQ_BLUE), ("H|HOME", _R_SQ_BLUE),
+    # اجتماعی
+    ("H|SOCIAL", _R_SQ_PURPLE), ("FR|", _R_SQ_PURPLE), ("RF|", _R_SQ_PURPLE),
+    # اقتصاد و فروش
+    ("S|", _R_SQ_YELLOW), ("VP|", _R_SQ_YELLOW), ("TR|", _R_SQ_YELLOW),
+    ("SP|", _R_SQ_YELLOW), ("HF|", _R_SQ_YELLOW),
+    # اطلاع‌رسانی و گزارش
+    ("NT|", _R_SQ_ORANGE), ("FB|", _R_SQ_ORANGE), ("QG|", _R_SQ_ORANGE),
+    ("BA|", _R_SQ_ORANGE), ("PN|", _R_SQ_ORANGE),
+    # تنظیمات و ابزار
+    ("US|", _R_SQ_WHITE), ("ST|", _R_SQ_WHITE),
+    # راهنما
+    ("H|HELP", _R_SQ_BLACK), ("H|GUIDE", _R_SQ_BLACK),
+    ("H|ABOUT", _R_SQ_BLACK), ("GD|", _R_SQ_BLACK),
+    # قدرت ادمین و بانک
+    ("A|", _R_DOT_ADMIN), ("ED|", _R_DOT_ADMIN),
+    # پیش‌فرض هویتی
+    ("H|", _R_SQ_BLUE),
+)
+_R_DOMAINS_SORTED = tuple(sorted(_R_DOMAINS, key=lambda kv: -len(kv[0])))
+
+# پس‌زمینه‌ی قرمز واقعی — خطر، حذف، پایان، خروج
+_R_DANGER_WORDS = ("حذف", "پاک", "ریست", "بازنشانی", "مسدود", "اخراج",
+                   "تنزل", "تورم", "خطا", "پایان بازی", "پایان اجباری", "رد ادعا")
+_R_DANGER_STARTS = ("❌", "✖", "✕", "🚫", "🗑", "🦵", "🔻", "🚪")
+# پس‌زمینه‌ی سبز واقعی — تایید، دریافتِ پاداش (CLM/CLAIM از طریق callback)، خرید
+_R_SUCCESS_WORDS = ("تایید", "تأیید", "انجام", "قبول", "پاداش",
+                    "بخشیدن", "بررسی شد", "خرید")
+_R_SUCCESS_STARTS = ("✅", "☑")
+# پس‌زمینه‌ی آبی واقعی — شروع، پیوستن، ادامه، درِ بخش‌ها
+_R_PRIMARY_WORDS = ("شروع", "پیوستن", "ادامه", "بازی کن", "ارسال", "ثبت",
+                    "پیدا کردن", "اضافه کردن", "ساخت", "جستجو", "چرخش",
+                    "ارتقا", "وارد کن", "چالش", "جدید", "اشتراک")
+_R_PRIMARY_STARTS = ("➕",)
+# ناوبری و ابزار — بدون مربعِ هویتی و بدون پس‌زمینه
+_R_NAV_WORDS = ("بازگشت", "برگشت", "برگرد", "منوی اصلی", "تازه‌سازی",
+                "قبلی", "بعدی", "بستن", "انصراف")
+_R_ARROW_STARTS = ("◀", "▶", "⬅", "➡", "⬆", "⬇", "↻", "↺", "⏭", "⏮")
+
+
+def _btn_auto_style(label: str, data: str) -> str | None:
+    """پس‌زمینه‌ی رنگیِ واقعی (danger/success/primary) — معنایی و خودکار."""
+    l = (label or "").strip()
+    if not l:
+        return None
+    # ۱) نشانه‌های قطعیِ ابتدای متن — همیشه برنده‌اند
+    if l.startswith(_R_SUCCESS_STARTS):
+        return "success"
+    if l.startswith(_R_DANGER_STARTS):
+        return "danger"
+    # ۲) کلیدواژه‌های معنایی — خطر ← مثبت ← اقدام
+    if any(w in l for w in _R_DANGER_WORDS):
+        return "danger"
+    if "خروج" in l and "خروجی" not in l:
+        return "danger"
+    if any(w in l for w in _R_SUCCESS_WORDS):
+        return "success"
+    if any(w in l for w in _R_PRIMARY_WORDS):
+        return "primary"
+    # ۳) عمل‌های ویژه بر اساس callback
+    if "|CLM" in data or data.startswith("DR|CLAIM"):
+        return "success"           # دریافتِ پاداش/جوایز
+    if "|BUY" in data or data.startswith("S|BUY"):
+        return "success"           # خرید قطعی
+    if "|MODE" in data:
+        return "primary"           # انتخاب مود بازی/دوئل — اقدام اصلی
+    if data.startswith("ON|"):
+        return "primary"           # آنبوردینگ — انتخاب‌های آغاز
+    if data.startswith("MG|") and "ANS" not in data and "GUESS" not in data:
+        return "primary"           # درِ مینی‌بازی‌ها
+    if data == "H|CLOSE":
+        return "danger"            # بستن پنل
+    if "منوی اصلی" in l:
+        return "primary"           # خانه — پیمایش اصلی
+    return None
+
+
+def _btn_square(label: str, data: str) -> str | None:
+    """مربعِ رنگِ هویتی برچسب دکمه — بر اساس دامنه‌ی callback."""
+    l = (label or "").strip()
+    if not l or data.endswith("NOP"):
+        return None
+    if l.startswith(_R_COLORED):
+        return None                # از قبل رنگی است — ایدمپوتنت
+    if any(w in l for w in _R_NAV_WORDS) or l.startswith(_R_ARROW_STARTS):
+        return None                # ناوبری — تمیز و خنثی
+    if len(l) <= 3 and not any(ch.isalnum() for ch in l):
+        return None                # آیکونِ تکی (◀️ ▶️ ❌ ▫️ …)
+    if "/" in l and len(l) <= 8 and not any(c.isalpha() for c in l):
+        return None                # شمارنده‌ی صفحه (۱/۵)
+    # برچسبِ خاص: برچسب مقصد را دقیق‌تر از callback توصیف می‌کند
+    if l.startswith("⚔️ بازی گروهی"):
+        return _R_SQ_PURPLE        # درِ بازی گروهی در هاب بازی — بنفشِ جمع
+    for prefix, sq in _R_DOMAINS_SORTED:
+        if data.startswith(prefix):
+            return sq
+    return None
+
+
+def btn(label: str, data: str, style: str | None = None) -> InlineKeyboardButton:
+    """دکمه‌ی استاندارد + 🌈 موتور رنگ معنایی (۷.۰).
+
+    هر دکمه به‌صورت خودکار رنگِ هویتی خودش را می‌گیرد: مربعِ رنگی در
+    برچسب (🟥🟦🟩🟪🟨🟧⬜⬛🔴) بر اساس بخشی که در آن است + در صورت
+    معنادار بودن، پس‌زمینه‌ی رنگیِ واقعی (Bot API 9.4):
+      danger قرمز — حذف/انصراف/پایان/خطر
+      success سبز — تایید/دریافت/خرید/آمادگی
+      primary آبی — شروع/پیوستن/ادامه/درِ بخش‌ها
+    استایلِ صریح بر موتور اولویت دارد؛ دکمه‌ی رنگی دوباره رنگ نمی‌شود؛
+    ناوبری (بازگشت/بستن/صفحه‌بندی) خنثی و تمیز می‌ماند. مقدار styleِ
+    ناشناخته برای ایمنی حذف می‌شود.
     """
+    label = str(label)
+    data = str(data)
     if style is not None and style not in ("danger", "success", "primary"):
         style = None
-    return InlineKeyboardButton(str(label), callback_data=str(data)[:64], style=style)
+    if style is None:
+        style = _btn_auto_style(label, data)
+    sq = _btn_square(label, data)
+    if sq:
+        # اگر لیبل با حرف/عدد شروع شود، فاصله‌ی نازک می‌گذاریم (⬛ شروع)؛
+        # اگر با ایموجی شروع شود، چسبیده می‌نشانیم (🟥🎮 بازی‌ها)
+        sep = " " if (label[:1].isalnum() or "\u0600" <= label[:1] <= "\u06FF") else ""
+        label = f"{sq}{sep}{label}"
+    return InlineKeyboardButton(label, callback_data=data[:64], style=style)
 
 
 def kb(rows: list) -> InlineKeyboardMarkup | None:
@@ -3919,35 +4083,37 @@ def private_home_text(uid: int, frame: int = 0) -> str:
 
 
 def private_home_markup(uid: int, frame: int = 0) -> InlineKeyboardMarkup:
-    """منوی اصلی نسل ۷ (۶.۶) — دکمه‌های رنگیِ واقعی، مطابق عکس مرجع کاربر.
+    """منوی اصلی نسل ۸ (۷.۰) — شبکه‌ی ۲ستونی + رنگین‌کمانِ کامل.
 
-    (۶.۶) Bot API 9.4 فیلد style را به دکمه‌ها اضافه کرد: "danger" قرمز /
-    "success" سبز / "primary" آبی — پس‌زمینه‌ی رنگی واقعی که خود کلاینت
-    تلگرام رندر می‌کند (مثل ربات‌های مدرن). دکمه‌ها مطابق عکس مرجع،
-    تمام‌عرض و تک‌ستونی شدند. نگاشت رنگ: بازی‌ها=آبی، پیشرفت و فروشگاه=سبز،
-    اعلان‌ها و پنل مدیریت=قرمز؛ پروفایل/تنظیمات/راهنما=خنثی (سفید).
-    (۶.۴) دکمه‌ی «پنل مدیریت» مستقیم روی منوی اصلی (فقط ادمین) حفظ شد.
-    (۶.۵) پالس زنده‌ی آیکون‌ها (تعویض نرم دو فریم) حفظ شد — رنگ‌ها در
-    هر دو فریم ثابت‌اند؛ کلاینت‌های قدیمی بدون پشتیبانی style، دکمه‌ی
-    ساده می‌بینند (عقب‌ایمن).
+    (۷.۰) به‌خواسته‌ی کاربر: چیدمان شبکه‌ایِ دوستونه برگشت — دیگر هیچ
+    دکمه‌ای تمام‌عرض نیست؛ در عوض همه‌ی دکمه‌ها «رنگِ واقعی» (Bot API 9.4)
+    + مربعِ رنگِ هویتی خود را از موتور رنگ معنایی می‌گیرند. ادمین‌ها
+    یک ردیفِ دوتاییِ قرمزِ هم‌ترازِ شبکه می‌بینند: 🛡 پنل مدیریت +
+    📊 تحلیل‌ها. نگاشت رنگ: بازی‌ها=آبی، پیشرفت/فروشگاه=سبز، اعلان‌ها=
+    قرمز، پروفایل/تنظیمات/راهنما=آبی؛ مربع‌ها هویتِ کامل ۸ رنگ را می‌سازند.
+    (۶.۵) پالس زنده‌ی آیکون‌ها حفظ شد — رنگ‌ها در هر دو فریم ثابت‌اند.
+    (۶.۴) دسترسی مستقیم ادمین به ستون فرمان حفظ شد.
     """
     unread = unread_notifications(uid)
     f = int(frame) % 2
     notify_label = f"{_anim_icon('notify', f)} اعلان‌ها ({unread})" if unread else f"{_anim_icon('notify', f)} اعلان‌ها"
     rows = [
-        # 🎨 تمام‌عرض و رنگی — مثل ربات‌های مدرن (عکس مرجع کاربر)
-        [btn(f"{_anim_icon('games', f)} بازی‌ها", "H|GAMES", "primary")],
-        [btn(f"{_anim_icon('profile', f)} پروفایل", "H|PROFILE")],
-        [btn(f"{_anim_icon('progress', f)} پیشرفت", "H|PROGRESS", "success")],
-        [btn(f"{_anim_icon('social', f)} اجتماعی", "H|SOCIAL", "primary")],
-        [btn(f"{_anim_icon('shop', f)} فروشگاه", "S|HOME", "success")],
-        [btn(notify_label, "NT|HOME", "danger")],
-        [btn(f"{_anim_icon('settings', f)} تنظیمات", "US|HOME")],
-        [btn(f"{_anim_icon('help', f)} راهنما", "H|HELP")],
+        # 🌈 شبکه‌ی ۲ستونی — هر بخش با رنگِ هویتیِ خودش (نه تمام‌عرض)
+        [btn(f"{_anim_icon('games', f)} بازی‌ها", "H|GAMES", "primary"),
+         btn(f"{_anim_icon('profile', f)} پروفایل", "H|PROFILE", "primary")],
+        [btn(f"{_anim_icon('progress', f)} پیشرفت", "H|PROGRESS", "success"),
+         btn(f"{_anim_icon('social', f)} اجتماعی", "H|SOCIAL", "primary")],
+        [btn(f"{_anim_icon('shop', f)} فروشگاه", "S|HOME", "success"),
+         btn(notify_label, "NT|HOME", "danger")],
+        [btn(f"{_anim_icon('settings', f)} تنظیمات", "US|HOME", "primary"),
+         btn(f"{_anim_icon('help', f)} راهنما", "H|HELP", "primary")],
     ]
-    # 🛡 دکمه‌ی ورود مستقیم به ستون فرمان — تمام‌عرض قرمز، فقط برای ادمین‌ها + پالس
+    # 🛡 ستون فرمان ادمین — ردیفِ دوتاییِ قرمز، هم‌تراز شبکه (نه تمام‌عرض)
     if has_permission(int(uid), "admin"):
-        rows.append([btn(f"{_anim_icon('admin', f)} پنل مدیریت", "A|HOME", "danger")])
+        rows.append([
+            btn(f"{_anim_icon('admin', f)} پنل مدیریت", "A|HOME", "danger"),
+            btn("📊 تحلیل‌ها", "A|ANALYTICS", "danger"),
+        ])
     return kb(rows)
 
 
@@ -4001,8 +4167,8 @@ def hub_profile_view(uid: int = 0) -> tuple:
         + "\n" + _hub_foot("🪪")
     )
     markup = kb([
-        [btn("🪪 پروفایل من", "P|PROFILE"), btn("📜 تاریخچه بازی", "GH|HOME")],
-        [btn("👑 تالار افتخار", "HF|HOME"), btn("💎 وی‌آی‌پی", "VP|HOME")],
+        [btn("🪪 پروفایل من", "P|PROFILE", "primary"), btn("📜 تاریخچه بازی", "GH|HOME", "primary")],
+        [btn("👑 تالار افتخار", "HF|HOME", "primary"), btn("💎 وی‌آی‌پی", "VP|HOME", "primary")],
         [btn("🏠 منوی اصلی", "H|HOME")],
     ])
     return text, markup
@@ -4025,7 +4191,7 @@ def hub_progress_view(uid: int = 0) -> tuple:
         [btn("🎯 مأموریت‌ها", "DM|HOME", "success"), btn("🎁 پاداش روزانه", "DR|CLAIM", "success")],
         [btn("🌟 مأموریت‌های ویژه", "QS|HOME", "success"), btn("🎫 پاس فصل", "SP|HOME", "success")],
         [btn("🎯 قدم‌های میل", "MS|HOME", "success"), btn("🏆 رتبه‌بندی", "P|TOP", "success")],
-        [btn("⚔️ رقبا", "RV|HOME", "success")],
+        [btn("⚔️ رقبا", "RV|HOME", "success"), btn("🏅 بازیکن روز", "DR|POTD", "success")],
         [btn("🏠 منوی اصلی", "H|HOME")],
     ])
     return text, markup
@@ -4057,17 +4223,21 @@ def hub_help_view(uid: int = 0) -> tuple:
         + og_row("📚 راهنمای بخش‌ها", "آموزش تک‌تک قسمت‌ها") + "\n"
         + og_row("📜 قوانین", "قوانین بازی و لابی") + "\n"
         + og_row("📝 بازخورد", "نظر، پیشنهاد، گزارش") + "\n"
-        + og_row("ℹ️ درباره ربات", "نسخه و سازندگان")
+        + og_row("ℹ️ درباره ربات", "نسخه و سازندگان") + "\n"
+        + "\n" + og_section("🧭", "زبان رنگ دکمه‌ها") + "\n"
+        + og_row("🟥 بازی · 🟩 پیشرفت", "🟦 هویت · 🟪 اجتماعی", dotted_=False) + "\n"
+        + og_row("🟨 سکه · 🟧 اطلاع", "⬜ تنظیم · ⬛ راهنما", dotted_=False) + "\n"
+        + og_row("🔴 ادمین", "پس‌زمینه: 🟦 اقدام · 🟩 تایید · 🟥 خطر", dotted_=False) + "\n"
         + "\n" + _hub_foot("🎓", "سریع‌ترین راه بازخورد: روی پیام موردنظر Reply کن و بنویس «بازخورد»")
     )
     rows = [
         [btn("🎓 راهنمای بازی (۱۲ صفحه)", "H|GUIDE|0"), btn("📚 راهنمای بخش‌ها", "GD|INDEX")],
         [btn("📜 قوانین", "L|RULES"), btn("📝 بازخورد", "FB|HOME")],
-        [btn("ℹ️ درباره ربات", "H|ABOUT")],
+        [btn("ℹ️ درباره ربات", "H|ABOUT"), btn("🧭 زبان رنگ‌ها", "GD|COLORS")],
     ]
-    # ادمین‌ها علاوه بر دکمه‌ی تمام‌عرضِ منوی اصلی، از این‌جا هم به ستون فرمان می‌رسند
+    # ادمین‌ها از این‌جا هم به ستون فرمان می‌رسند — ردیف دوتایی هم‌تراز شبکه (۷.۰)
     if has_permission(int(uid), "admin"):
-        rows.append([btn("🛡 پنل مدیریت", "A|HOME", "danger")])
+        rows.append([btn("🛡 پنل مدیریت", "A|HOME", "danger"), btn("📊 تحلیل‌ها", "A|ANALYTICS", "danger")])
     rows.append([btn("🏠 منوی اصلی", "H|HOME")])
     return text, kb(rows)
 
@@ -4318,6 +4488,26 @@ async def guide_show(update: Update, context: ContextTypes.DEFAULT_TYPE, page: i
 #  نسخه ۶ — 📚 راهنمای هر بخش (GD): هر پنل، راهنمای خودش را دارد
 # ================================================================
 SECTION_GUIDES = {
+    "COLORS": {
+        "icon": "🧭", "title": "زبان رنگ‌ها", "sub": "رنگین‌کمان ApexRival — هر دکمه رنگِ معنای خودش را دارد",
+        "back": "H|HELP", "back_label": "راهنما",
+        "steps": [
+            "هر بخشِ ربات یک «رنگ هویتی» دارد که در همه‌ی منوها ثابت است — مربعِ رنگیِ ابتدای هر دکمه",
+            "🟥 قرمز = بازی و هیجان: بازی‌ها، دوئل، مسابقه خصوصی، نبرد تیمی و جفت‌یابی حریف",
+            "🟩 سبز = پیشرفت و موفقیت: مأموریت‌ها، پاداش‌ها، رتبه‌بندی و مینی‌بازی‌ها",
+            "🟦 آبی = هویت و اطلاعات: پروفایل، تاریخچه بازی و آمار",
+            "🟪 بنفش = جمعِ دوستان: لابی، بازی‌های مهمانی، دوستان و دیوار اجتماعی",
+            "🟨 زرد = سکه و شانس: فروشگاه، VIP، تالار افتخار، تورنمنت و عدد شانسی",
+            "🟧 نارنجی = اطلاع‌رسانی و بقا: اعلان‌ها، بازخورد، گزارش‌ها و حالت بقا",
+        ],
+        "tips": [
+            "⬜ سفید = تنظیمات و ابزارهای خنثی · ⬛ سیاه = راهنما و مستندات",
+            "🔴 دایره‌ی قرمز = قدرت ادمین و بانک سوالات",
+            "پس‌زمینه‌ی رنگی دکمه: 🟦 اقدام و پیمایش · 🟩 تایید و خرید · 🟥 خطر و حذف",
+            "رنگ پس‌زمینه فقط روی دکمه‌های معنادار می‌نشیند تا هر رنگ، معنای خودش را حفظ کند",
+        ],
+        "cmds": [],
+    },
     "FEEDBACK": {
         "icon": "📮", "title": "بازخورد و گزارش", "sub": "سریع‌ترین راه رسیدن صدات به تیم ربات",
         "back": "FB|HOME", "back_label": "بازخورد",
@@ -4800,6 +4990,7 @@ GD_HUB_ORDER = [
     ("PROFILE", "STATS", "HISTORY", "HOF"),
     ("VIP", "TRADE", "LUCKY", "SETTINGS"),
     ("NOTIFICATIONS", "APPEAL", "FEEDBACK", "ADMIN"),
+    ("COLORS",),
 ]
 
 
@@ -8845,9 +9036,10 @@ async def shop_send_home(chat_id, update, context, query=None) -> None:
         ds_close("🛍"),
     ]
     text = "\n".join(lines)
-    rows = [[btn(f"{label}", f"S|CAT|{key}")] for key, label in SHOP_CATEGORIES]
-    rows.append([btn("🎒 موجودی من", "S|INV")])
-    rows.append([btn("❓ راهنمای این بخش", "GD|SHOP")])
+    # 🌈 (۷.۰) دسته‌ها شبکه‌ی ۲ستونی — دیگر دیوارِ تک‌ستونی نیست
+    cats = [btn(label, f"S|CAT|{key}") for key, label in SHOP_CATEGORIES]
+    rows = [cats[i:i + 2] for i in range(0, len(cats), 2)]
+    rows.append([btn("🎒 موجودی من", "S|INV"), btn("❓ راهنمای این بخش", "GD|SHOP")])
     markup = kb(rows)
     if query is not None:
         await safe_answer_query(query)
@@ -17973,9 +18165,8 @@ async def mg_send_home(query, uid: int) -> None:
         rows = [
             [btn("🧠 Trivia", "MG|TRIVIA"), btn("📝 Word Game", "MG|WORD")],
             [btn("🔢 Number Guess", "MG|NUMBER"), btn("🃏 Memory", "MG|MEMORY")],
-            [btn("⚡ Reaction", "MG|REACTION")],
-            [btn("❓ راهنمای این بخش", "GD|MINIGAMES")],
-        [btn("⬅️ بازگشت", "H|HOME")],
+            [btn("⚡ Reaction", "MG|REACTION"), btn("❓ راهنمای این بخش", "GD|MINIGAMES")],
+            [btn("⬅️ بازگشت", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -20357,7 +20548,7 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"│  ⚔️ <b>{BOT_NAME}</b>\n"
             f"│  <i>{DS_VER} — بازنویسی کامل · هزارلولی</i>\n"
             f"{ds_sep()}\n"
-            + ds_row("📦 نسخه", f"{fa(VERSION)} پرایم") + "\n"
+            + ds_row("📦 نسخه", f"{fa(VERSION)} رنگین‌کمان 🌈") + "\n"
             + ds_row("📚 بانک سوالات", f"{pnum(BANKS_TOTAL)} سوال در {pnum(len(BANKS))} بانک") + "\n"
             + ds_row("👥 کاربران", pnum(users)) + "\n"
             + ds_row("👥 گروه‌ها", pnum(groups)) + "\n"
