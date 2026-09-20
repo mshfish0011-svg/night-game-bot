@@ -879,20 +879,233 @@ CALLBACK_DATA_MAX_LEN = 64
 
 # پیام‌های حرفه‌ای (UX بهبودیافته)
 UX_MSG = {
-    "match_created":   "🎮 مسابقه خصوصی ساخته شد!\nآماده باش، دعوت در راه است... 🔥",
-    "match_accepted":  "✅ دعوت قبول شد!\nبازی در حال شروع است... 🎯",
-    "match_rejected":  "❌ دعوت رد شد.\nشاید بعداً!",
-    "match_ended":     "🏁 مسابقه تمام شد!\nنتایج در راه است...",
+    "match_created":   "🎮 مسابقه خصوصی ساخته شد!\nآماده باش — دعوت در راهه... 🔥",
+    "match_accepted":  "✅ دعوت قبول شد!\nبازی داره شروع می‌شه... 🎯",
+    "match_rejected":  "❌ دعوت رد شد.\nاشکالی نداره — شاید یه وقت دیگه!",
+    "match_ended":     "🏁 مسابقه تموم شد!\nنتایج داره میاد...",
     "friend_added":    "🎉 دوست جدید اضافه شد!\nحالا می‌تونید با هم بازی کنید.",
-    "rival_added":     "⚔️ رقیب جدید ثبت شد!\nآماده‌ی مسابقه باشید.",
-    "level_up":        "🎉 تبریک! سطحت بالاتر رفت!\nجایزه در راه است... 🎁",
+    "rival_added":     "⚔️ رقیب جدید ثبت شد!\nمنتظر مسابقه‌ی بعدی باشید!",
+    "level_up":        "🎉 تبریک! سطحت بالاتر رفت!\nجایزه در راهه... 🎁",
     "mission_done":    "🎯 مأموریت کامل شد!\nپاداش به حسابت اضافه شد.",
-    "feedback_sent":   "📝 بازخوردت رسید!\nممنون که کمک می‌کنی بهتر شویم.",
-    "error_generic":   "⚠️ مشکلی پیش آمد.\nلطفاً دوباره تلاش کن 🙏",
-    "maintenance":     "🔧 ربات در حال بروزرسانی است.\nلطفاً چند دقیقه بعد برگرد!",
-    "no_permission":   "⛔ دسترسی نداری!\nاین کار فقط برای ادمین‌هاست.",
-    "dead_end":        "🔚 اینجا راهی نیست.\nبا دکمه‌ی «منوی اصلی» برگرد.",
+    "feedback_sent":   "📝 بازخوردت رسید!\nممنون که کمک می‌کنی بهتر شیم 💚",
+    "error_generic":   "⚠️ یه مشکلی پیش آمد.\nیه لحظه بعد دوباره امتحان کن 🙏",
+    "maintenance":     "🔧 ربات داره آپدیت می‌شه.\nچند دقیقه بعد برگرد — ارزشش رو داشته باشه!",
+    "no_permission":   "⛔ اینجا فقط مخصوص ادمین‌هاست!\nتو جای بهتری داری 😉",
+    "dead_end":        "🔚 اینجا راهی نیست!\nبا دکمه‌ی «منوی اصلی» برگرد.",
 }
+
+
+
+# ================================================================
+#  🎨 APEX PRIME DESIGN SYSTEM
+#  زبان طراحی یکپارچه‌ی ربات — همه‌ی صفحه‌ها با همین رندر می‌شوند.
+#  اصول: فریم لوکس با جواهر، نقطه‌چین راهنما، نوار گرادیانی،
+#  چیپ متادیتا، بنرهای سینمایی، اعداد فارسی، سلام زمان‌محور.
+# ================================================================
+
+DS_W = 26          # عرض استاندارد فریم‌ها
+DS_VER = "APEX PRIME v2.0"
+_FA_MAP = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def fa(text) -> str:
+    """تبدیل ارقام لاتین به فارسی — لمس نهایی زیبایی متن فارسی."""
+    try:
+        return str(text).translate(_FA_MAP)
+    except Exception:
+        return str(text)
+
+
+def pnum(n) -> str:
+    """عدد فارسی سه‌رقمی‌شده با جداکننده‌ی هزارگان «،»."""
+    try:
+        return fa(f"{int(n):,}".replace(",", "،"))
+    except Exception:
+        return fa(n)
+
+
+def _vlen(s) -> int:
+    """طول بصری تقریبی متن — ایموجی دو خانه حساب می‌شود."""
+    n = 0
+    for ch in str(s):
+        o = ord(ch)
+        if 0x1F300 <= o <= 0x1FAFF or 0x2600 <= o <= 0x27BF:
+            n += 2
+        elif o == 0xFE0F:
+            continue
+        else:
+            n += 1
+    return n
+
+
+def ds_top(jewel: str = "✦") -> str:
+    """خط بالایی فریم لوکس با جواهر وسط."""
+    half = (DS_W - 3) // 2
+    return f"╭{'━' * half} {jewel} {'━' * half}╮"
+
+
+def ds_sep(jewel: str = "") -> str:
+    """جداکننده‌ی داخلی فریم — با یا بدون جواهر."""
+    if jewel:
+        half = (DS_W - 3) // 2
+        return f"├{'━' * half} {jewel} {'━' * half}┤"
+    return f"├{'━' * (DS_W + 2)}┤"
+
+
+def ds_close(jewel: str = "✦") -> str:
+    """خط پایینی فریم لوکس."""
+    half = (DS_W - 3) // 2
+    return f"╰{'━' * half} {jewel} {'━' * half}╯"
+
+
+def ds_head(icon: str, title: str, sub: str = "") -> str:
+    """تیتر اصلی داخل فریم — با زیرنویس اختیاری."""
+    line = f"│  {icon} <b>{title}</b>"
+    if sub:
+        line += f"\n│  <i>{sub}</i>"
+    return line
+
+
+def ds_section(icon: str, name: str) -> str:
+    """سرصفحه‌ی یک بخش داخل پنل — نوار عمودی جواهری."""
+    return f"│  ▎{icon} <b>{escape(str(name))}</b>"
+
+
+def ds_row(label: str, value, dotted_: bool = True) -> str:
+    """سطر آماری با نقطه‌چین راهنما: «برچسب ··· مقدار»."""
+    val = str(value)
+    if not dotted_:
+        return f"│  {label} {val}"
+    fill = DS_W + 6 - _vlen(label) - _vlen(val)
+    fill = max(2, min(fill, 8))
+    return f"│  {label} {'·' * fill} {val}"
+
+
+def pbar(cur, total, width: int = 10, pct: bool = True) -> str:
+    """نوار پیشرفت گرادیانی ▰▰▰▱▱ با درصد فارسی."""
+    try:
+        t = max(1.0, float(total))
+        frac = max(0.0, min(1.0, float(cur) / t))
+    except Exception:
+        frac = 0.0
+    filled = int(round(frac * width))
+    bar = "▰" * filled + "▱" * (width - filled)
+    if pct:
+        bar += f" {fa(int(round(frac * 100)))}٪"
+    return bar
+
+
+def chip(*items) -> str:
+    """چیپ متادیتا: «الف» «ب» «ج» — نمایش فشرده‌ی اطلاعات."""
+    return "  ".join(f"«{str(i)}»" for i in items if str(i).strip())
+
+
+def rating_stars(n: int, max_n: int = 3) -> str:
+    """ستاره‌ی سختی/گرما: ★★☆"""
+    n = max(0, min(int(n), int(max_n)))
+    return "★" * n + "☆" * (int(max_n) - n)
+
+
+def greeting_by_hour(ts=None) -> str:
+    """سلام زمان‌محور — گرمای یک میزبان واقعی."""
+    try:
+        h = datetime.fromtimestamp(int(ts if ts is not None else now_ts())).hour
+    except Exception:
+        h = 12
+    if 5 <= h < 12:
+        return "صبح بخیر ☀️"
+    if 12 <= h < 17:
+        return "ظهر بخیر 🌤"
+    if 17 <= h < 21:
+        return "عصر بخیر 🌇"
+    return "شب بخیر 🌙"
+
+
+def tip_footer() -> str:
+    """پانوشت تیپِ چرخان برای صفحه‌های اصلی."""
+    try:
+        tip = random.choice(TIPS)
+        return f"\n\n💡 <i>{tip}</i>"
+    except Exception:
+        return ""
+
+
+def banner_box(title: str, jewel: str = "✦") -> str:
+    """بنر دوخطی لوکس برای لحظه‌های مهم."""
+    return f"{ds_top(jewel)}\n{title}\n{ds_close(jewel)}"
+
+
+def spin_frames(display_name: str) -> list:
+    """فریم‌های انیمیشن چرخش شیشه‌ی سرنوشت."""
+    return [
+        "🍾 <b>شیشه‌ی سرنوشت چرخید...</b>\n\n"
+        "        ↻  ↻  ↻\n\n"
+        "هووووم... کی می‌شه قربانی بعدی؟ 😈",
+        "🍾 <b>چرخش تند و وحشیانه!</b>\n\n"
+        "     ↻↻  ↻↻  ↻↻\n\n"
+        "نفس‌ها حبس شد... 🫣",
+        f"🎯 <b>شیشه وایساد روی:</b>\n\n"
+        f"👤 <b>{display_name}</b>\n\n"
+        "قربانی انتخاب شد! حقیقت یا جرأت؟ 😏",
+    ]
+
+
+def countdown_frames() -> list:
+    """شمارش معکوس شروع بازی."""
+    return [
+        "🎬 <b>بازی در حال شروع شدن...</b>\n\n"
+        "            ⏳ ۳",
+        "🎬 <b>آماده باش...</b>\n\n"
+        "            ⏳ ۲",
+        "🎬 <b>بر آماده باش!</b>\n\n"
+        "            ⏳ ۱",
+        "🚀 <b>بریم!</b> موفق باشید بازیکن‌ها 🎭🔥",
+    ]
+
+
+def confetti_frames() -> list:
+    """فریم‌های جشن پایان بازی."""
+    return [
+        "🎊 ✦ 🎊 ✦ 🎊 ✦ 🎊\n\n"
+        "<b>بازی به پایان می‌رسه...</b>\n"
+        "در حال محاسبه‌ی نتایج نهایی ⏳",
+    ]
+
+
+async def cinematic(bot, chat_id: int, frames: list, delay: float = 0.9,
+                    final_text: str | None = None, markup=None) -> None:
+    """موتور سکانس‌های سینمایی — فریم‌ها را روی یک پیام رندر می‌کند.
+    هر خطا بی‌صدا نادیده گرفته می‌شود تا تجربه‌ی کاربر هرگز نشکند."""
+    if not frames:
+        return
+    try:
+        m = await bot.send_message(chat_id, frames[0], parse_mode=ParseMode.HTML)
+    except Exception:
+        return
+    for fr in frames[1:]:
+        try:
+            await asyncio.sleep(delay)
+            await m.edit_text(fr, parse_mode=ParseMode.HTML)
+        except Exception:
+            continue
+    if final_text is not None:
+        try:
+            await asyncio.sleep(delay)
+            await m.edit_text(final_text, parse_mode=ParseMode.HTML,
+                              reply_markup=markup, disable_web_page_preview=True)
+        except Exception:
+            pass
+
+
+def podium_line(medal: str, mention: str, score, bar_width: int = 8) -> str:
+    """سطر سکو: مدال + نام + نوار امتیاز."""
+    try:
+        s = int(score)
+    except Exception:
+        s = 0
+    w = max(1, min(bar_width, s))
+    return f"│  {medal} {mention} <b>{pnum(s)}</b>\n│  {'▓' * w}"
+
 
 # ================================================================
 #  مخزن داده و ذخیره‌سازی
@@ -2898,9 +3111,16 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if onboarding_needed(uid):
         text = (
-            f"🎉 <b>سلام {escape(user.first_name)}!</b>\n"
-            "به <b>ApexRival</b> خوش اومدی — ربات بازی جرئت و حقیقت! ⚔️\n\n"
-            "برای شروع فقط جنسیتت رو انتخاب کن:"
+            f"{ds_top()}\n"
+            f"│  ⚔️ <b>جـ ر أ ت   و   حـ قـ یـ قـ ت</b>\n"
+            f"│  <i>نسخه‌ی پرایم — تجربه‌ی بازی نسل جدید</i>\n"
+            f"{ds_close()}\n\n"
+            f"🎉 {greeting_by_hour()} <b>{escape(user.first_name)} عزیز!</b>\n\n"
+            "به <b>ApexRival</b> خوش اومدی — جایی که:\n\n"
+            "🔥 جرأتت محک می‌خوره\n"
+            "💭 رازات لو می‌ره\n"
+            "🏆 هر بازی یه خاطره‌ی ناب می‌شه!\n\n"
+            "با یه انتخاب کوچیک شروع کنیم — جنسیتت رو بگو تا سوالات رو دقیق برات تنظیم کنم:"
         )
         markup = kb([
             [btn(GENDER_ICONS["male"], "ON|GENDER|male"), btn(GENDER_ICONS["female"], "ON|GENDER|female")],
@@ -2930,8 +3150,10 @@ async def onb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         save_data()
         await safe_answer_query(query, "ثبت شد ✅")
         text = (
-            f"{'👦' if g == 'male' else '👧'} عالیه!\n\n"
-            "حالا سن‌ت چنده؟ (برای محافظت بخش ۱۸+ لازم است)"
+            f"{banner_box('│  🎭 <b>مرحله‌ی دوم از دو</b>')}\n\n"
+            f"{'👦' if g == 'male' else '👧'} عالیه {escape(query.from_user.first_name)}!\n\n"
+            "حالا سن‌ت چنده؟\n"
+            "🔒 <i>این فقط برای محافظت از بخش ۱۸+ لازمه.</i>"
         )
         markup = kb([
             [btn("🐣 کمتر از ۱۸", "ON|AGE|minor"), btn("🦅 ۱۸ یا بیشتر", "ON|AGE|adult")],
@@ -2949,16 +3171,22 @@ async def onb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if adult:
             await safe_answer_query(query, "حله! 🔓")
             text = (
+                f"{ds_top()}\n"
+                f"│  🎉 <b>خوش اومدی به جمع ما!</b>\n"
+                f"{ds_close()}\n\n"
                 "🔓 <b>دروازه‌ی ۱۸+ باز شد</b>\n"
-                "موضوع 🔞 فقط در گروه‌هایی فعال است که بزرگسالان اجازه‌اش را داده باشند.\n\n"
-                "به جمع ما خوش اومدی! 🎉"
+                "موضوع 🔞 فقط در گروه‌هایی فعال می‌شه که بزرگسالان اجازه‌اش رو داده باشن.\n\n"
+                "🎯 پروفایلت ساخته شد — آماده‌ی اولین بازی هستی؟"
             )
         else:
             await safe_answer_query(query, "ثبت شد 🐣")
             text = (
-                "🛡 <b>حالت ایمن فعال شد</b>\n"
-                "موضوع‌های ۱۸+ برایت هرگز نمایش داده نمی‌شود و این تصمیم قابل تغییر نیست.\n\n"
-                "به جمع ما خوش اومدی! 🎉"
+                f"{ds_top()}\n"
+                f"│  🎉 <b>خوش اومدی به جمع ما!</b>\n"
+                f"{ds_close()}\n\n"
+                "🛡 <b>حالت ایمن فعاله</b>\n"
+                "موضوع‌های ۱۸+ هیچ‌وقت برایت نمایش داده نمی‌شن و این تصمیم قابل تغییر نیست.\n\n"
+                "🎯 پروفایلت ساخته شد — آماده‌ی اولین بازی هستی؟"
             )
         await safe_edit(query, text, kb([[btn("🎮 شروع کن", "H|HOME")]]))
         return
@@ -3012,31 +3240,30 @@ def private_home_text(uid: int) -> str:
     notify_badge = f" 🔴{unread}" if unread else ""
     vip_badge = " 👑" if is_v else ""
     verified_badge = " ✅" if is_ver else ""
-    # خط زیبایی بالایی
-    top_border = "╭" + "━" * 20 + "╮"
-    bot_border = "╰" + "━" * 20 + "╯"
-    # محاسبه درصد پیشرفت سطح
-    xp_pct = int(xp_in_level) if xp_in_level <= 100 else 100
-    # خط لول با درصد
-    level_line = f"{bar} {fmt_num(xp_pct)}٪"
+    # --- رندر پرایم: کارت شناسایی لوکس ---
     text = (
-        f"{top_border}\n"
+        f"{ds_top()}\n"
         f"│  {g} <b>{name}</b>{vip_badge}{verified_badge}{notify_badge}\n"
         f"│  {title_disp} {badge_disp}\n"
-        f"├" + "━" * 20 + "┤\n"
-        f"│  🔥 سطح <b>{fmt_num(level)}</b> · {lv_tier}\n"
-        f"│  {level_line}\n"
-        f"│  {rank_icon} <b>{rank_name}</b>\n"
-        f"├" + "━" * 20 + "┤\n"
-        f"│  🪙 <b>{fmt_num(coins)}</b>  🎮 <b>{fmt_num(games)}</b>  🏆 <b>{fmt_num(wins)}</b>\n"
-        f"│  🎖 <b>{fmt_num(ach_count)}/{fmt_num(ach_total)}</b>  📅 <b>{fmt_num(daily_streak)}</b> روز\n"
-        f"│  👍 <b>{fmt_num(rep)}</b>  ⭐ <b>{fmt_num(elo)}</b>"
+        f"{ds_sep()}\n"
+        f"│  🔥 سطح <b>{pnum(level)}</b> · {lv_tier}\n"
+        f"│  {pbar(xp_in_level, 100, 14)}\n"
+        f"│  {rank_icon} رنک <b>{rank_name}</b>\n"
+        f"{ds_sep('⋆')}\n"
+        + ds_row("🪙 سکه", pnum(coins)) + "\n"
+        + ds_row("🎮 بازی", pnum(games)) + "\n"
+        + ds_row("🏆 برد", pnum(wins)) + "\n"
+        + ds_row("🎖 دستاورد", f"{pnum(ach_count)}/{pnum(ach_total)}") + "\n"
+        + ds_row("📅 استریک", f"{pnum(daily_streak)} روز") + "\n"
+        + ds_row("👍 اعتبار", pnum(rep)) + "\n"
+        + ds_row("⭐ ایلو", pnum(elo))
     )
     if sid:
-        text += f"\n│  🌐 فصل {sid}: <b>{fmt_num(season_xp)}</b> ایکس‌پی"
-    text += f"\n{bot_border}"
+        text += "\n" + ds_row("🌐 فصل " + str(sid), f"{pnum(season_xp)} XP")
+    text += f"\n{ds_close()}"
     if ev_line:
         text += ev_line
+    text += tip_footer()
     return text
 
 
@@ -3130,22 +3357,27 @@ async def show_group_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
                       and (int(m.get("p1", 0)) in [int(x) for x in g.get("mods", [])] or True))
     except Exception:
         pass
-    text = (
-        f"╭" + "━" * 22 + "╮\n"
-        f"│  ⚔️ <b>{BOT_NAME}</b> — جرئت و حقیقت\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  🎮 بازی‌های گروه: <b>{fmt_num(games_count)}</b>\n"
-        f"│  🏆 لِگ: <b>{league_name}</b>\n"
-        f"│  👥 بازیکنان: <b>{fmt_num(group_players)}</b>"
-        + (f"  │  🟢 آنلاین: <b>{fmt_num(online_count)}</b>" if online_count else "")
-        + f"\n"
-        f"│  🔞 +۱۸: <b>{'روشن 🔥' if adult_on else 'خاموش'}</b>"
-        f"{theme_info}\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  🎯 بازی فعالی نیست — شروع کن!\n"
-        f"│  💡 برای شروع: /apex یا دکمه‌ی زیر\n"
-        f"╰" + "━" * 22 + "╯"
-    )
+    lines = [
+        ds_top(),
+        f"│  ⚔️ <b>{BOT_NAME}</b>",
+        "│  <i>مرکز فرمان گروه — جرئت و حقیقت</i>",
+        ds_sep(),
+        ds_row("🎮 بازی‌های گروه", pnum(games_count)),
+        ds_row("🏆 لِگ گروه", league_name),
+        ds_row("👥 بازیکنان", pnum(group_players)),
+    ]
+    if online_count:
+        lines.append(ds_row("🟢 آنلاین", pnum(online_count)))
+    lines.append(ds_row("🔞 حالت +۱۸", "روشن 🔥" if adult_on else "خاموش"))
+    if theme_info:
+        lines.append(theme_info.strip())
+    lines += [
+        ds_sep("⋆"),
+        "│  🎯 بازی فعالی نیست — وقتشه یه بازی خفن شروع کنی!",
+        "│  💡 دستور /apex یا دکمه‌ی زیر",
+        ds_close(),
+    ]
+    text = "\n".join(lines)
     is_leader = int(uid) == int(g.get("group_owner", 0)) or has_permission(int(uid), "admin")
     rows = [
         [btn("🎮 ساخت لابی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
@@ -3274,11 +3506,14 @@ GUIDE_PAGES = [
 async def guide_show(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0, query=None) -> None:
     page = max(0, min(len(GUIDE_PAGES) - 1, int(page)))
     title, lines = GUIDE_PAGES[page]
-    body = "\n".join(f"• {escape(l)}" for l in lines)
+    body = "\n".join(f"│  ▸ {escape(l)}" for l in lines)
     text = (
-        f"🎓 <b>راهنمای ApexRival</b> — صفحه {fmt_num(page + 1)} از {fmt_num(len(GUIDE_PAGES))}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"<b>{escape(title)}</b>\n\n{body}"
+        f"{ds_top('🎓')}\n"
+        f"│  🎓 <b>راهنمای ApexRival</b>\n"
+        f"│  <i>صفحه‌ی {pnum(page + 1)} از {pnum(len(GUIDE_PAGES))} — {escape(title)}</i>\n"
+        f"{ds_sep()}\n"
+        f"│  ▎<b>{escape(title)}</b>\n\n{body}\n"
+        f"{ds_close('🎓')}"
     )
     rows = []
     if page > 0:
@@ -3386,26 +3621,30 @@ def lobby_text(game: dict) -> str:
         league_info = f"\n│  🏆 لِگ: <b>{league_name}</b>"
     except Exception:
         pass
-    adult_info = f"\n│  🔞 حالت +۱۸: <b>{'روشن 🔥' if adult_on else 'خاموش'}</b>"
-    text = (
-        f"╭" + "━" * 22 + "╮\n"
-        f"│  ⚔️ <b>لابی بازی</b>\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  👑 سرگروه: {mention_user(int(game['leader_id']), game.get('leader_name') or name_of(int(game['leader_id'])))}\n"
-        f"│  👥 بازیکنان: <b>{fmt_num(len(players))}/{fmt_num(mx)}</b>"
-        f"{adult_info}{theme_info}{league_info}\n"
-        f"├" + "━" * 22 + "┤\n"
-    )
+    lines = [
+        ds_top(),
+        "│  ⚔️ <b>لابی بازی</b>",
+        "│  <i>در انتظار قهرمان‌ها...</i>",
+        ds_sep(),
+        f"│  👑 سرگروه: {mention_user(int(game['leader_id']), game.get('leader_name') or name_of(int(game['leader_id'])))}",
+        ds_row("👥 بازیکنان", f"{pnum(len(players))}/{pnum(mx)}"),
+        ds_row("🔞 حالت +۱۸", "روشن 🔥" if adult_on else "خاموش"),
+    ]
+    if theme_info:
+        lines.append("│  🌟 تم شب: <b>" + theme_info.split("<b>", 1)[-1].split("</b>", 1)[0] + "</b>")
+    if league_info:
+        lines.append("│  🏆 لِگ: <b>" + league_info.split("<b>", 1)[-1].split("</b>", 1)[0] + "</b>")
+    lines.append(ds_sep())
     for pl in player_lines:
-        text += pl + "\n"
-    text += (
-        f"├" + "━" * 22 + "┤\n"
-        f"│  📊 آمادگی: <b>{fmt_num(len(ready))}/{fmt_num(len(players))}</b> ({ready_pct}٪)\n"
-        f"│  {ready_bar}\n"
-        f"│  🚦 حداقل بازیکن: <b>{fmt_num(mn)}</b>\n"
-        f"╰" + "━" * 22 + "╯"
-    )
-    return text
+        lines.append(pl)
+    lines += [
+        ds_sep("⋆"),
+        ds_row("📊 آمادگی", f"{pnum(len(ready))}/{pnum(len(players))} ({ready_pct}٪)"),
+        f"│  {pbar(len(ready), max(1, len(players)), 14, pct=False)}",
+        ds_row("🚦 حداقل بازیکن", pnum(mn)),
+        ds_close(),
+    ]
+    return "\n".join(lines)
 
 
 def lobby_markup(game: dict, uid: int) -> InlineKeyboardMarkup:
@@ -3595,8 +3834,9 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 save_data(force=True)
                 await context.bot.send_message(
                     chat_id,
-                    "⚡ <b>بازی سریع شروع شد!</b>\n"
-                    "━━━━━━━━━━━━━━━━━━\n"
+                    f"{ds_top('⚡')}\n"
+                    "│  ⚡ <b>بازی سریع شروع شد!</b>\n"
+                    f"{ds_sep()}\n"
                     f"👑 سرگروه: {mention_user(uid, name)}\n"
                     "🎮 بقیه می‌تونن با /apexjoin وارد بشن.\n"
                     "🎯 اولین نوبت شروع می‌شه!",
@@ -3612,8 +3852,9 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if action == "RULES":
         await safe_answer_query(query)
         await safe_edit(query,
-            "📜 <b>قوانین بازی</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_top('📜')}\n"
+            "│  📜 <b>قوانین بازی</b>\n"
+            f"{ds_sep()}\n"
             "۱) /apex رو بفرست تا لابی ساخته بشه\n"
             "۲) بقیه با «پیوستن» وارد بشن و «آماده» بزنن\n"
             "۳) سرگروه «شروع بازی» رو بزنه\n"
@@ -3648,8 +3889,9 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if action == "TOP":
         await safe_answer_query(query)
         await safe_edit(query,
-            "🏆 <b>رتبه‌بندی گروه</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_top('🏆')}\n"
+            "│  🏆 <b>رتبه‌بندی گروه</b>\n"
+            f"{ds_sep()}\n"
             "برای مشاهده‌ی رتبه‌بندی هفتگی:\n"
             "<code>/apextop</code>\n\n"
             "برای رتبه‌بندی کلی:\n"
@@ -4040,25 +4282,27 @@ def turn_announcement(game: dict, questioner: int) -> str:
         q_rank_icon = "🌱"
         vip = ver = ""
     adult_on = bool(get_group(int(game.get("chat_id", 0))).get("adult_mode", False))
-    adult_line = f"\n│  🔞 حالت +۱۸: <b>{'روشن 🔥' if adult_on else 'خاموش'}</b>"
-    return (
-        f"╭" + "━" * 22 + "╮\n"
-        f"│  🎤 <b>نوبت پرسشگری</b>\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  👤 {mention_user(int(questioner), name_of(int(questioner), game))} 🔥{q_level} {q_rank_icon} {vip}{ver}\n"
-        f"│  🎯 دور: <b>{fmt_num(round_num)}</b>  │  👥 <b>{fmt_num(players_count)}</b> بازیکن\n"
-        f"│  🌡 گرما: <b>{heat_name}</b> ({intensity})"
-        f"{adult_line}\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  📋 <b>مراحل:</b>\n"
-        f"│  ۱) یک موضوع انتخاب کن\n"
-        f"│  ۲) بازیکن هدف رو انتخاب کن\n"
-        f"│  ۳) سوال خودکار میاد\n"
-        f"│  ۴) هدف با Reply جواب میده\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  🎁 پاداش: +۵ تا +۸ ایکس‌پی و سکه\n"
-        f"╰" + "━" * 22 + "╯"
-    )
+    lines = [
+        ds_top(),
+        "│  🎤 <b>چراغ خوشه‌ای روشن شد!</b>",
+        f"│  <i>نوبت پرسشگری — همه به {escape(name_of(int(questioner), game))} نگاه کنن!</i>",
+        ds_sep(),
+        f"│  👤 {mention_user(int(questioner), name_of(int(questioner), game))} 🔥{pnum(q_level)} {q_rank_icon} {vip}{ver}",
+        ds_row("🎯 دور", pnum(round_num)),
+        ds_row("👥 بازیکن", pnum(players_count)),
+        ds_row("🌡 گرما", f"{heat_name} — {intensity}"),
+        ds_row("🔞 حالت +۱۸", "روشن 🔥" if adult_on else "خاموش"),
+        ds_sep("⋆"),
+        "│  ▎📋 <b>مراحل بازی</b>",
+        "│  ۱) یک موضوع انتخاب کن",
+        "│  ۲) بازیکن هدف رو انتخاب کن",
+        "│  ۳) سوال خودکار میاد",
+        "│  ۴) هدف با Reply جواب میده",
+        ds_sep("⋆"),
+        "│  🎁 پاداش: +۵ تا +۸ ایکس‌پی و سکه",
+        ds_close(),
+    ]
+    return "\n".join(lines)
 
 
 def turn_markup(game: dict, viewer_uid: int) -> InlineKeyboardMarkup:
@@ -4144,26 +4388,30 @@ async def game_start(context, game: dict, query=None) -> None:
     # ساخت لیست بازیکنان
     roster_lines = []
     for i, p in enumerate(players, 1):
-        roster_lines.append(f"│  {fmt_num(i)}. {mention_user(p, name_of(p, game))}")
+        roster_lines.append(f"│  {pnum(i)}. {mention_user(p, name_of(p, game))}")
     roster = "\n".join(roster_lines)
-    text = (
-        f"╭" + "━" * 22 + "╮\n"
-        f"│  🚀 <b>بازی شروع شد!</b>\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  👥 بازیکنان (<b>{fmt_num(len(players))}</b>):\n"
-        f"{roster}\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  🎯 ترتیب نوبت‌ها تصادفی شد\n"
-        f"│  🌡 شروع از گرما: <b>🟢 آرام</b>\n"
-        f"│  📊 {fmt_num(BANKS_TOTAL)} سوال آماده\n"
-        f"╰" + "━" * 22 + "╯"
-    )
+    lines = [
+        ds_top("🚀"),
+        "│  🚀 <b>بازی شروع شد!</b>",
+        "│  <i>قهرمان‌ها وارد میدان شدن</i>",
+        ds_sep(),
+        f"│  ▎👥 بازیکنان (<b>{pnum(len(players))}</b> نفر)",
+        roster,
+        ds_sep("⋆"),
+        "│  🎯 ترتیب نوبت‌ها تصادفی شد",
+        "│  🌡 شروع با گرما: <b>🟢 آرام</b>",
+        f"│  📚 <b>{pnum(BANKS_TOTAL)}</b> سوال در انتظار شماست",
+        ds_close("🚀"),
+    ]
+    text = "\n".join(lines)
     try:
         if query is not None:
             await safe_answer_query(query, "بازی شروع شد! 🚀")
             await safe_edit(query, text, kb([[btn("🎤 دیدن نوبت", "G|TURN")]]))
         else:
-            await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+            # سکانس سینمایی شمارش معکوس + اعلام شروع روی همان پیام
+            await cinematic(context.bot, chat_id, countdown_frames(), delay=0.9,
+                            final_text=text)
     except Exception:
         pass
     nxt = advance_turn(game)
@@ -4185,8 +4433,8 @@ def game_home_text(game: dict) -> str:
     board_lines = []
     for i, p in enumerate(top):
         if int(scores.get(str(p), 0)) > 0:
-            board_lines.append(f"│  {medals[i]} {mention_user(p, name_of(p, game))} · ⭐{fmt_num(int(scores.get(str(p), 0)))}")
-    board = "\n".join(board_lines) if board_lines else "│  هنوز امتیازی ثبت نشده"
+            board_lines.append(podium_line(medals[i], mention_user(p, name_of(p, game)), scores.get(str(p), 0)))
+    board = "\n".join(board_lines) if board_lines else "│  هنوز امتیازی ثبت نشده — اولین قهرمان کی می‌شه؟"
     started = int(game.get("started_at", 0))
     duration_min = (now_ts() - started) // 60 if started else 0
     game_stats = game.get("_question_stats", {})
@@ -4201,22 +4449,29 @@ def game_home_text(game: dict) -> str:
     except Exception:
         pass
     q_display = mention_user(int(q), name_of(int(q), game)) if q else "—"
-    return (
-        f"╭" + "━" * 22 + "╮\n"
-        f"│  🎮 <b>وضعیت بازی</b>\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  🎤 پرسشگر: {q_display}\n"
-        f"│  🔄 نوبت: <b>{fmt_num(int(game.get('turn_number', 0)) + 1)}</b>  │  🎯 دور: <b>{fmt_num(int(game.get('round', 0)) + 1)}</b>\n"
-        f"│  🌡 گرما: <b>{heat_name}</b> ({intensity})\n"
-        f"│  ⏱ مدت: <b>{fmt_num(duration_min)} دقیقه</b>\n"
-        f"│  📊 سوال: <b>{fmt_num(total_q)}</b>  │  ⚖️ حکم: <b>{fmt_num(total_penalties)}</b>\n"
-        f"│  🔞 +۱۸: <b>{'روشن 🔥' if adult_on else 'خاموش'}</b>"
-        f"{theme_info}\n"
-        f"├" + "━" * 22 + "┤\n"
-        f"│  🏆 <b>برترین‌ها</b>\n"
-        f"{board}\n"
-        f"╰" + "━" * 22 + "╯"
-    )
+    lines = [
+        ds_top(),
+        "│  🎮 <b>وضعیت بازی</b>",
+        "│  <i>مرکز کنترل میدان نبرد</i>",
+        ds_sep(),
+        f"│  🎤 پرسشگر: {q_display}",
+        ds_row("🔄 نوبت", pnum(int(game.get('turn_number', 0)) + 1)),
+        ds_row("🎯 دور", pnum(int(game.get('round', 0)) + 1)),
+        ds_row("🌡 گرما", f"{heat_name} — {intensity}"),
+        ds_row("⏱ مدت", f"{pnum(duration_min)} دقیقه"),
+        ds_row("📊 سوال", pnum(total_q)),
+        ds_row("⚖️ حکم", pnum(total_penalties)),
+        ds_row("🔞 +۱۸", "روشن 🔥" if adult_on else "خاموش"),
+    ]
+    if theme_info:
+        lines.append(theme_info.strip())
+    lines += [
+        ds_sep("⋆"),
+        "│  ▎🏆 <b>سکوی برترین‌ها</b>",
+        board,
+        ds_close(),
+    ]
+    return "\n".join(lines)
 
 
 def game_home_markup(game: dict, viewer_uid: int) -> InlineKeyboardMarkup:
@@ -4290,9 +4545,10 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         rows.append([btn("⬅️ بازگشت به موضوع‌ها", "G|TURN")])
         await safe_answer_query(query)
         await safe_edit(query,
-            "📋 <b>موضوعات بیشتر</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "یک موضوع انتخاب کن:",
+            f"{ds_top('📋')}\n"
+            "│  📋 <b>موضوعات بیشتر</b>\n"
+            f"{ds_sep()}\n"
+            "⏳ دست نزن — این‌ها همه‌ی موضوعات ویژه‌ست. یکی رو انتخاب کن:",
             kb(rows))
         return
 
@@ -4315,6 +4571,31 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         save_data()
         await safe_answer_query(query, f"{MODE_LABELS[mode]} انتخاب شد")
         await game_show_targets(query, game, mode)
+        return
+
+    if action == "SPIN":
+        # 🍾 چرخش شیشه‌ی سرنوشت — انتخاب هدف تصادفی با انیمیشن سینمایی
+        q = current_questioner(game)
+        if q is None or int(q) != uid:
+            await safe_answer_query(query, "فقط پرسشگر فعلی می‌تواند شیشه را بچرخاند.", True)
+            return
+        mode = parts[2] if len(parts) > 2 else str(game.get("selected_mode") or "truth")
+        if mode not in MODE_LABELS:
+            mode = "truth"
+        players = [int(x) for x in game.get("players", [])]
+        others = [p for p in players if p != int(q) and not punishment_blocks_turn(p)]
+        others = [p for p in others if not (mode == "adult" and not adult_allowed(p))]
+        if not others:
+            await safe_answer_query(query, "هیچ هدفی برای چرخش باقی نمانده! 😅", True)
+            return
+        target = random.choice(others)
+        await safe_answer_query(query, "🍾 شیشه چرخید!")
+        try:
+            await safe_delete(query.message)
+        except Exception:
+            pass
+        await cinematic(context.bot, chat_id, spin_frames(escape(name_of(target, game))), delay=1.0)
+        await game_ask_question(context, game, int(q), target, mode, None)
         return
 
     if action == "TARGET":
@@ -4349,16 +4630,20 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if action == "HELP":
         await safe_answer_query(query)
         await safe_edit(query,
-            "ℹ️ <b>راهنمای بازی</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "۱) پرسشگر یک موضوع انتخاب می‌کنه\n"
-            "۲) سپس یک بازیکن هدف انتخاب می‌کنه\n"
-            "۳) ربات سوال رو می‌فرسته\n"
-            "۴) هدف با Reply به سوال جواب می‌ده\n"
-            "۵) نوبت بعدی شروع می‌شه\n\n"
-            "🌶 هرچه بازی جلوتر بره، سوال‌ها داغ‌تر می‌شن\n"
-            "☠️ گاهی به‌جای سوال، حکم صادر می‌شه\n"
-            "🎁 جواب دادن: +۵ تا +۸ ایکس‌پی و سکه",
+            f"{ds_top()}\n"
+            f"│  ℹ️ <b>راهنمای بازی</b>\n"
+            f"│  <i>قانون‌های میدان — خوندنشونا لازمه!</i>\n"
+            f"{ds_sep()}\n"
+            f"│  ۱) پرسشگر یک موضوع انتخاب می‌کنه\n"
+            f"│  ۲) سپس یک بازیکن هدف انتخاب می‌کنه\n"
+            f"│  ۳) ربات سوال رو می‌فرسته\n"
+            f"│  ۴) هدف با Reply به سوال جواب می‌ده\n"
+            f"│  ۵) نوبت بعدی شروع می‌شه\n"
+            f"{ds_sep('⋆')}\n"
+            f"│  🌶 هرچه بازی جلوتر بره، سوال‌ها داغ‌تر می‌شن\n"
+            f"│  🍾 با «چرخش شیشه» بذار شانس هدف رو انتخاب کنه\n"
+            f"│  ☠️ گاهی به‌جای سوال، حکم صادر می‌شه\n"
+            f"│  🎁 جواب دادن: +۵ تا +۸ ایکس‌پی و سکه",
             kb([[btn("⬅️ بازگشت", "G|TURN")]]))
         return
 
@@ -4388,30 +4673,41 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def game_show_targets(query, game: dict, mode: str) -> None:
-    """نمایش لیست اهداف با اطلاعات بازیکن."""
+    """نمایش لیست اهداف — کارت بازیکنان + چرخش شیشه‌ی سرنوشت."""
     q = current_questioner(game)
     players = [int(x) for x in game.get("players", [])]
     others = [p for p in players if p != q]
     # حذف بازیکنان قفل‌شده توسط مجازات از لیست هدف
     others = [p for p in others if not punishment_blocks_turn(p)]
+    # دکمه‌های دوستونه بازیکنان
     rows = []
+    pair = []
     for p in others:
         icon = gender_icon(p)
-        # اضافه کردن سطح بازیکن
         try:
             pu = get_user(int(p))
             p_level = int(pu.get("level", 1))
-            label = f"{icon} {name_of(p, game)} · 🔥{p_level}"
+            label = f"{icon} {name_of(p, game)} · 🔥{pnum(p_level)}"
         except Exception:
             label = f"{icon} {name_of(p, game)}"
-        rows.append([btn(label, f"G|TARGET|{p}")])
+        pair.append(btn(label, f"G|TARGET|{p}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    lines = [
+        ds_top(),
+        f"│  {MODE_LABELS.get(mode, mode)} — <b>انتخاب هدف</b>",
+        "│  <i>حالا نوبت انتخاب قربانیه!</i>",
+        ds_sep(),
+        "│  😈 پرسشگر عزیز، روی بازیکن مورد نظرت بزن",
+        "│  یا شیشه‌ی سرنوشت رو بچرخون و بذار بخت تصمیم بگیره!",
+        ds_close(),
+    ]
+    rows.append([btn("🍾 چرخش شیشه (تصادفی)", f"G|SPIN|{mode}")])
     rows.append([btn("⬅️ بازگشت به موضوع‌ها", "G|TURN")])
-    await safe_edit(query,
-        f"🎯 <b>{MODE_LABELS.get(mode, mode)} — هدف را انتخاب کن</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"پرسشگر عزیز، حالا نوبت انتخاب قربانی است! 😈\n"
-        f"💡 روی نام بازیکن مورد نظرت بزن.",
-        kb(rows))
+    await safe_edit(query, "\n".join(lines), kb(rows))
 
 
 async def game_ask_question(context, game: dict, questioner: int, target: int, mode: str, query=None) -> None:
@@ -4458,17 +4754,21 @@ async def game_ask_question(context, game: dict, questioner: int, target: int, m
     except Exception:
         t_level = 1
         t_rank_name, t_rank_icon = "تازه‌کار", "🌱"
-    text = (
-        f"🎤 پرسشگر: {mention_user(questioner, name_of(questioner, game))} 🔥{q_level} {q_rank_icon}\n"
-        f"🎯 هدف: {mention_user(target, name_of(target, game))} 🔥{t_level} {t_rank_icon}\n"
-        f"📂 موضوع: <b>{MODE_LABELS.get(mode, mode)}</b>\n"
-        f"🌡 گرما: <b>{heat_name}</b> ({intensity}) · 🎯 دور {fmt_num(round_num)}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"<b>{escape(question)}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"✍️ {mention_user(target, name_of(target, game))}، با <b>Reply به همین پیام</b> جواب بده!\n"
-        f"💡 پاداش: +۵ تا +۸ ایکس‌پی و سکه"
-    )
+    lines = [
+        ds_top(),
+        f"│  {MODE_LABELS.get(mode, mode)} — <b>کارت سرنوشت</b>",
+        f"│  🎤 {mention_user(questioner, name_of(questioner, game))} 🔥{pnum(q_level)} {q_rank_icon}",
+        f"│  🎯 {mention_user(target, name_of(target, game))} 🔥{pnum(t_level)} {t_rank_icon}",
+        ds_sep(),
+        f"│  ▌<b>{escape(question)}</b>",
+        ds_sep(),
+        f"│  🌡 {heat_name} {rating_stars(heat_level)} · 🎯 دور {pnum(round_num)}",
+        ds_sep("⋆"),
+        f"│  ✍️ {mention_user(target, name_of(target, game))} با <b>Reply به همین پیام</b> جواب بده!",
+        "│  🎁 پاداش: +۵ تا +۸ ایکس‌پی و سکه",
+        ds_close(),
+    ]
+    text = "\n".join(lines)
     footer = ads_footer(chat_id, "question")
     if footer:
         text += "\n\n" + footer
@@ -4527,19 +4827,24 @@ async def game_show_penalty(context, game: dict, target: int, questioner: int, q
         t_level = 1
         t_rank_name, t_rank_icon = "تازه‌کار", "🌱"
     round_num = int(game.get("round", 0)) + 1
-    text = (
-        f"☠️ <b>حکم صادر شد!</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 محکوم: {mention_user(target, name_of(target, game))} 🔥{t_level} {t_rank_icon}\n"
-        f"🎤 صادرکننده: {mention_user(questioner, name_of(questioner, game))}\n"
-        f"🌡 گرما: <b>{heat_name}</b> · 🎯 دور {fmt_num(round_num)}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"⚖️ حکم: <b>{escape(penalty)}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"⏳ مهلت: <b>{fmt_num(deadline // 60)} دقیقه</b>\n"
-        f"✅ بعد از انجام، با <b>Reply به همین پیام</b> تأیید کن\n"
-        f"🎁 پاداش: +۴ ایکس‌پی و +۲ سکه"
-    )
+    lines = [
+        ds_top("☠"),
+        "│  ⚖️ <b>دادگاه صادر کرد!</b>",
+        "│  <i>حکم اجرایی شد — راه فراری نیست</i>",
+        ds_sep(),
+        f"│  🎯 محکوم: {mention_user(target, name_of(target, game))} 🔥{pnum(t_level)} {t_rank_icon}",
+        f"│  🎤 صادرکننده: {mention_user(questioner, name_of(questioner, game))}",
+        ds_row("🌡 گرما", heat_name),
+        ds_row("🎯 دور", pnum(round_num)),
+        ds_sep("⋆"),
+        f"│  ▌⚖️ حکم: <b>{escape(penalty)}</b>",
+        ds_sep(),
+        ds_row("⏳ مهلت", f"{pnum(deadline // 60)} دقیقه"),
+        "│  ✅ بعد از انجام، با <b>Reply به همین پیام</b> تأیید کن",
+        "│  🎁 پاداش: +۴ ایکس‌پی و +۲ سکه",
+        ds_close("☠"),
+    ]
+    text = "\n".join(lines)
     footer = ads_footer(chat_id, "question")
     if footer:
         text += "\n\n" + footer
@@ -4590,11 +4895,15 @@ async def game_boss_round(context, game: dict, questioner: int, query=None) -> N
     try:
         await context.bot.send_message(
             chat_id,
-            "👑 <b>دور باس (Boss Round)!</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"{escape(challenge)}\n\n"
-            "اولین نفری که چالش را انجام دهد پاداش می‌گیرد! 🏃\n"
-            "💡 با Reply به همین پیام، انجام چالش را ثبت کن.",
+            f"{ds_top('👑')}\n"
+            f"│  👑 <b>دور باس — Boss Round</b>\n"
+            f"│  <i>چالش ویژه برای همه‌ی بازیکنان!</i>\n"
+            f"{ds_sep()}\n"
+            f"│  ▌<b>{escape(challenge)}</b>\n"
+            f"{ds_sep('⋆')}\n"
+            f"│  🏃 اولین نفری که چالش رو انجام بده پاداش می‌گیره!\n"
+            f"│  💡 با Reply به همین پیام، انجام چالش رو ثبت کن.\n"
+            f"{ds_close('👑')}",
             parse_mode=ParseMode.HTML,
         )
         for p in [int(x) for x in game.get("players", [])]:
@@ -4626,9 +4935,12 @@ async def game_random_event(context, game: dict, questioner: int, query=None) ->
     try:
         await context.bot.send_message(
             chat_id,
-            f"✨ <b>رویداد تصادفی: {escape(title)}</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"{escape(desc)}",
+            f"{ds_top('✨')}\n"
+            f"│  ✨ <b>رویداد ویژه فعال شد!</b>\n"
+            f"│  <i>{escape(title)}</i>\n"
+            f"{ds_sep()}\n"
+            f"│  ▌{escape(desc)}\n"
+            f"{ds_close('✨')}",
             parse_mode=ParseMode.HTML,
         )
     except Exception:
@@ -4994,9 +5306,9 @@ async def end_game_flow(context, game: dict, query=None, reason: str = "manual")
     audit("game_end", 0, chat_id, reason)
     medals = ["🥇", "🥈", "🥉"]
     podium = "\n".join(
-        f"{medals[i]} {mention_user(p, name_of(p, game))} · ⭐ {fmt_num(int(scores.get(str(p), 0)))}"
+        podium_line(medals[i], mention_user(p, name_of(p, game)), scores.get(str(p), 0))
         for i, p in enumerate(ranked[:3]) if int(scores.get(str(p), 0)) > 0
-    ) or "امتیازی ثبت نشد."
+    ) or "│  امتیازی ثبت نشد — ولی خاطره‌ها ارزشش رو داشت!"
     # محاسبه آمار کامل بازی
     started_at = int(game.get("started_at", 0))
     finished_at = int(game.get("finished_at", 0))
@@ -5021,21 +5333,31 @@ async def end_game_flow(context, game: dict, query=None, reason: str = "manual")
             log_user_activity(potg_uid, "player_of_game", f"+25xp +15c score={potg_score}")
         except Exception:
             pass
-    # ساخت متن خلاصه‌ی کامل
-    text = (
-        "🏁 <b>بازی تمام شد!</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"{podium}\n\n"
-    )
+    # ساخت مراسم پایانی پرایم
+    lines = [
+        ds_top("🏆"),
+        "│  🏁 <b>مراسم اختتامیه بازی!</b>",
+        "│  <i>قهرمان‌ها اعلام می‌شن...</i>",
+        ds_sep(),
+        "│  ▎🎭 <b>سکوی قهرمانی</b>",
+        podium,
+    ]
     if potg_uid:
-        text += f"🏆 <b>بهترین بازیکن بازی:</b> {mention_user(potg_uid, potg_name)} ({fmt_num(potg_score)} امتیاز)\n"
-    text += (
-        f"⏱ مدت بازی: <b>{fmt_num(duration_min)} دقیقه</b>\n"
-        f"🎯 تعداد دور: <b>{fmt_num(total_rounds)}</b>\n"
-        f"👥 بازیکنان: <b>{fmt_num(len(players))}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🎉 ممنون از بازیِ شما! برای دور جدید: /apex"
-    )
+        lines += [
+            ds_sep("⋆"),
+            f"│  🏆 MVP بازی: {mention_user(potg_uid, potg_name)}",
+            f"│  ⭐ با <b>{pnum(potg_score)}</b> امتیاز — <b>+۲۵ XP و +۱۵ سکه</b>",
+        ]
+    lines += [
+        ds_sep("⋆"),
+        ds_row("⏱ مدت بازی", f"{pnum(duration_min)} دقیقه"),
+        ds_row("🎯 تعداد دور", pnum(total_rounds)),
+        ds_row("👥 بازیکنان", pnum(len(players))),
+        ds_close("🏆"),
+        "",
+        "🎉 ممنون از بازیِ شما! برای دور جدید: /apex",
+    ]
+    text = "\n".join(lines)
     # ثبت در تاریخچه بازی هر بازیکن
     try:
         for p in players:
@@ -5055,7 +5377,8 @@ async def end_game_flow(context, game: dict, query=None, reason: str = "manual")
     except Exception:
         pass
     try:
-        await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+        # سکانس سینمایی کانفتی + اعلام نتایج روی همان پیام
+        await cinematic(context.bot, chat_id, confetti_frames(), delay=1.2, final_text=text)
         if query is not None:
             await safe_answer_query(query, "بازی تمام شد 🏁")
     except Exception:
@@ -5501,17 +5824,23 @@ async def cmd_apextop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         key=lambda x: -x[1],
     )[:10]
     wk_lines = "\n".join(
-        f"{['🥇','🥈','🥉'][i] if i < 3 else f'{fmt_num(i+1)}.'} {mention_user(u, name_of(u))} · ⭐ {fmt_num(xp)}"
+        podium_line(['🥇','🥈','🥉'][i] if i < 3 else f"{pnum(i+1)}.", mention_user(u, name_of(u)), xp)
         for i, (u, xp) in enumerate(weekly)
-    ) or "هنوز کسی این هفته XP نگرفته."
+    ) or "│  هنوز کسی این هفته XP نگرفته — اولین باش!"
     at_lines = "\n".join(
-        f"{['🥇','🥈','🥉'][i] if i < 3 else f'{fmt_num(i+1)}.'} {mention_user(u, name_of(u))} · ⭐ {fmt_num(xp)}"
+        podium_line(['🥇','🥈','🥉'][i] if i < 3 else f"{pnum(i+1)}.", mention_user(u, name_of(u)), xp)
         for i, (u, xp) in enumerate(alltime)
-    ) or "هنوز کسی بازی نکرده."
+    ) or "│  هنوز کسی بازی نکرده — تو اولین قهرمان باش!"
     await msg.reply_text(
-        "🏆 <b>رتبه‌بندی</b>\n━━━━━━━━━━━━━━━━━━\n"
-        f"📅 <b>این هفته</b>\n{wk_lines}\n\n"
-        f"♾ <b>همه‌ی زمان‌ها</b>\n{at_lines}",
+        f"{ds_top('🏆')}\n"
+        f"│  🏆 <b>تالار قهرمانان</b>\n"
+        f"│  <i>بهترین‌های بهترین‌ها</i>\n"
+        f"{ds_sep()}\n"
+        f"│  ▎📅 <b>این هفته</b>\n{wk_lines}\n"
+        f"{ds_sep('⋆')}\n"
+        f"│  ▎♾ <b>همه‌ی زمان‌ها</b>\n{at_lines}\n"
+        f"{ds_close('🏆')}\n\n"
+        "📊 کلی: /apextop_all · ماهانه: /apextop_month",
         parse_mode=ParseMode.HTML,
     )
 
@@ -5563,7 +5892,11 @@ async def cmd_apexdice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if msg is None or user is None or not started_or_allowed(update):
         return
     n = random.randint(1, 6)
-    await msg.reply_text(f"🎲 {mention_user(int(user.id), user.first_name)} تاس انداخت: <b>{fmt_num(n)}</b>", parse_mode=ParseMode.HTML)
+    faces = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
+    await msg.reply_text(
+        f"🎲 {mention_user(int(user.id), user.first_name)} تاس انداخت...\n\n"
+        f"<b>{faces[n]}  ←  {pnum(n)}</b>",
+        parse_mode=ParseMode.HTML)
 
 
 async def cmd_apexcoin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -5572,7 +5905,11 @@ async def cmd_apexcoin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if msg is None or user is None or not started_or_allowed(update):
         return
     side = random.choice(["شیر 🦁", "خط 🪙"])
-    await msg.reply_text(f"🪙 سکه در هوا چرخید... <b>{side}</b>", parse_mode=ParseMode.HTML)
+    await msg.reply_text(
+        f"🪙 سکه در هوا چرخید...\n"
+        f"🌀 انگشت‌ها سکه رو گرفتن...\n\n"
+        f"<b>{side}</b>",
+        parse_mode=ParseMode.HTML)
 
 
 async def cmd_apex8ball(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -5584,7 +5921,12 @@ async def cmd_apex8ball(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not q:
         await msg.reply_text("🔮 سوالت را بپرس: <code>/apex8ball امشب شانسم خوبه؟</code>", parse_mode=ParseMode.HTML)
         return
-    await msg.reply_text(f"🔮 «{escape(q[:120])}»\n\n<b>{random.choice(EIGHT_BALL)}</b>", parse_mode=ParseMode.HTML)
+    await msg.reply_text(
+        f"🔮 «{escape(q[:120])}»\n\n"
+        f"{ds_top('🔮')}\n"
+        f"│  <b>{random.choice(EIGHT_BALL)}</b>\n"
+        f"{ds_close('🔮')}",
+        parse_mode=ParseMode.HTML)
 
 
 async def cmd_apexname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -5622,7 +5964,24 @@ async def cmd_apexping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     t0 = time.time()
     m = await msg.reply_text("🏓 ...")
     dt = (time.time() - t0) * 1000
-    await m.edit_text(f"🏓 <b>پونگ!</b>\n📡 تاخیر: <b>{dt:.0f}ms</b>\n⏱ آپ‌تایم: <b>{uptime_text()}</b>", parse_mode=ParseMode.HTML)
+    ping_text = (
+        f"{ds_top('🏓')}\n"
+        f"│  🏓 <b>پونگ!</b>\n"
+        f"│  <i>ضربان قلب ربات</i>\n"
+        f"{ds_sep()}\n"
+    )
+    try:
+        ping_text += ds_row("📡 تأخیر", f"{fa(int(dt))}ms") + "\n"
+    except Exception:
+        pass
+    ping_text += ds_row("⏱ آپ‌تایم", uptime_text()) + "\n" + ds_close('🏓')
+    try:
+        await m.edit_text(ping_text, parse_mode=ParseMode.HTML)
+    except Exception:
+        try:
+            await msg.reply_text(ping_text, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
 
 
 async def cmd_apexabout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -5632,13 +5991,18 @@ async def cmd_apexabout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     users = len(DATA.get("users", {}))
     groups = len(DATA.get("groups", {}))
     await msg.reply_text(
-        f"⚔️ <b>{BOT_NAME}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"📦 نسخه: <b>{VERSION}</b> (بازنویسی کامل)\n"
-        f"📚 بانک سوالات: <b>{fmt_num(BANKS_TOTAL)}</b> سوال در <b>{fmt_num(len(BANKS))}</b> بانک\n"
-        f"👥 کاربران: <b>{fmt_num(users)}</b> · گروه‌ها: <b>{fmt_num(groups)}</b>\n"
-        "🛡 سازگار کامل با داده‌های قبلی\n\n"
-        "ساخته‌شده برای شب‌های بی‌خوابی گروه‌های فارسی‌زبان 🌙",
+        f"{ds_top()}\n"
+        f"│  ⚔️ <b>{BOT_NAME}</b>\n"
+        f"│  <i>{DS_VER} — بازنویسی کامل</i>\n"
+        f"{ds_sep()}\n"
+        + ds_row("📦 نسخه", f"{fa(VERSION)} پرایم") + "\n"
+        + ds_row("📚 بانک سوالات", f"{pnum(BANKS_TOTAL)} سوال در {pnum(len(BANKS))} بانک") + "\n"
+        + ds_row("👥 کاربران", pnum(users)) + "\n"
+        + ds_row("👥 گروه‌ها", pnum(groups)) + "\n"
+        + ds_row("🛡 داده‌های قبلی", "سازگار کامل ✅") + "\n"
+        + f"{ds_sep('⋆')}\n"
+        + "│  💫 ساخته‌شده برای شب‌های بی‌خوابی گروه‌های فارسی‌زبان 🌙\n"
+        + ds_close(),
         parse_mode=ParseMode.HTML,
     )
 
@@ -5677,7 +6041,7 @@ async def cmd_apexlive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     active = sum(1 for g in games.values() if isinstance(g, dict) and str(g.get("status")) == "active")
     await msg.reply_text(
         f"📡 <b>تله‌متری زنده‌ی {BOT_NAME}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"{ds_sep('⋆')}\n"
         f"⏱ آپ‌تایم: <b>{uptime_text()}</b>\n"
         f"🧠 حافظه: <b>{rss_mb()} MB</b>\n"
         f"📦 نسخه: <b>{VERSION}</b>\n"
@@ -5705,7 +6069,7 @@ async def cmd_apexluck(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     last = float(st["luck"].get(user_key(uid), 0) or 0)
     if time.time() - last < LUCK_COOLDOWN:
         remain = int((LUCK_COOLDOWN - (time.time() - last)) / 3600)
-        await msg.reply_text(f"⏳ گردونه برای تو تا <b>{fmt_num(max(1, remain))} ساعت</b> دیگر خسته است!", parse_mode=ParseMode.HTML)
+        await msg.reply_text(f"⏳ گردونه برای تو تا <b>{pnum(max(1, remain))} ساعت</b> دیگه خسته‌ه — یه کم صبر کن! 🎡", parse_mode=ParseMode.HTML)
         return
     st["luck"][user_key(uid)] = time.time()
     st["stats"]["luck_spins"] = int(st["stats"].get("luck_spins", 0)) + 1
@@ -6010,7 +6374,7 @@ async def love2_ask(update: Update, context: ContextTypes.DEFAULT_TYPE, code: in
     _, question = LOVE2_QUESTIONS[idx]
     await update.message.reply_text(
         f"💌 <b>سوال {fmt_num(idx + 1)} از {fmt_num(len(LOVE2_QUESTIONS))}</b> (مخفیانه)\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"{ds_sep('⋆')}\n"
         f"<b>{escape(question)}</b>\n\n"
         "✍️ جوابت را همین‌جا بنویس (یک پیام).",
         parse_mode=ParseMode.HTML,
@@ -6173,8 +6537,9 @@ async def cmd_apexpunish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     save_data(force=True)
     audit("punish_issue", uid, int(chat.id), f"target={tid}")
     await msg.reply_text(
-        "⚖️ <b>مجازات هوشمند صادر شد!</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"{ds_top('⚖️')}\n"
+        "│  ⚖️ <b>مجازات هوشمند صادر شد!</b>\n"
+        f"{ds_sep()}\n"
         f"🧑‍⚖️ قاضی: {mention_user(uid, user.first_name)}\n"
         f"🎯 محکوم: {mention_user(tid, target.first_name)}\n"
         f"📜 حکم: <b>{escape(verdict)}</b>\n\n"
@@ -6468,21 +6833,32 @@ def duel_round_text(duel: dict, code: int) -> str:
             champ = mention_user(b, name_of(b))
         else:
             champ = "هیچ‌کس — مساوی!"
-        return (
-            "🏁 <b>پایان دوئل</b>\n━━━━━━━━━━━━━━━━━━\n"
-            f"{mention_user(a, name_of(a))} <b>{fmt_num(int(duel.get('score_a', 0)))}</b> — "
-            f"<b>{fmt_num(int(duel.get('score_b', 0)))}</b> {mention_user(b, name_of(b))}\n\n"
-            f"🏆 قهرمان: {champ}"
-        )
+        lines = [
+            ds_top("🏁"),
+            "│  🏁 <b>پایان دوئل — نتیجه نهایی</b>",
+            ds_sep(),
+            f"│  ⚔️ {mention_user(a, name_of(a))} <b>{pnum(int(duel.get('score_a', 0)))}</b> — "
+            f"<b>{pnum(int(duel.get('score_b', 0)))}</b> {mention_user(b, name_of(b))}",
+            ds_sep("⋆"),
+            f"│  🏆 قهرمان دوئل: {champ}",
+            ds_close("🏁"),
+        ]
+        return "\n".join(lines)
     turn_is_a = (rnd % 2 == 0)
     current = a if turn_is_a else b
-    return (
-        f"🤺 <b>دوئل</b> — راند <b>{fmt_num(rnd + 1)}</b> از {fmt_num(DUEL_ROUNDS)}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"⚔️ {mention_user(a, name_of(a))} <b>{fmt_num(int(duel.get('score_a', 0)))}</b> — "
-        f"<b>{fmt_num(int(duel.get('score_b', 0)))}</b> {mention_user(b, name_of(b))}\n\n"
-        f"🎯 نوبت انتخاب موضوع: {mention_user(current, name_of(current))}"
-    )
+    lines = [
+        ds_top("🤺"),
+        f"│  🤺 <b>دوئل آتشین</b> — راند <b>{pnum(rnd + 1)}</b> از {pnum(DUEL_ROUNDS)}",
+        "│  <i>شمشیرها رو بکشید!</i>",
+        ds_sep(),
+        f"│  ⚔️ {mention_user(a, name_of(a))} <b>{pnum(int(duel.get('score_a', 0)))}</b> — "
+        f"<b>{pnum(int(duel.get('score_b', 0)))}</b> {mention_user(b, name_of(b))}",
+        f"│  {pbar(rnd, DUEL_ROUNDS, 12, pct=False)} پیشرفت دوئل",
+        ds_sep("⋆"),
+        f"│  🎯 نوبت انتخاب موضوع: {mention_user(current, name_of(current))}",
+        ds_close("🤺"),
+    ]
+    return "\n".join(lines)
 
 
 def duel_round_markup(duel: dict, code: int, uid: int) -> InlineKeyboardMarkup:
@@ -6569,7 +6945,7 @@ async def duel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_edit(
             query,
             f"🤺 <b>راند {fmt_num(rnd + 1)}</b> — {MODE_LABELS.get(mode, mode)}\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_sep('⋆')}\n"
             f"<b>{escape(question)}</b>\n\n"
             f"✍️ {mention_user(uid, name_of(uid))}، جوابت را بنویس (یک پیام).\n"
             "⏱ ۱۲۰ ثانیه وقت داری!",
@@ -6935,18 +7311,27 @@ async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg is None:
         return
-    await shop_send_home(msg.chat_id if msg.chat else None, update, context)
+    try:
+        target_chat = int(msg.chat.id) if msg.chat else None
+    except Exception:
+        target_chat = None
+    await shop_send_home(target_chat, update, context)
 
 
 async def shop_send_home(chat_id, update, context, query=None) -> None:
     uid = int((query.from_user.id if query is not None else (update.effective_user.id if update and update.effective_user else 0)))
     coins = int(get_user(uid).get("coins", 0)) if uid else 0
-    text = (
-        "🛍 <b>فروشگاه ApexRival</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"🪙 موجودی تو: <b>{fmt_num(coins)} سکه</b>\n\n"
-        "دسته‌ی موردنظر را انتخاب کن:"
-    )
+    lines = [
+        ds_top("🛍"),
+        "│  🛍 <b>فروشگاه پرایم</b>",
+        "│  <i>با سکه‌هات بدرخش!</i>",
+        ds_sep(),
+        ds_row("🪙 موجودی تو", f"{pnum(coins)} سکه"),
+        ds_sep("⋆"),
+        "│  ▎📂 دسته‌ی موردنظر رو انتخاب کن 👇",
+        ds_close("🛍"),
+    ]
+    text = "\n".join(lines)
     rows = [[btn(f"{label}", f"S|CAT|{key}")] for key, label in SHOP_CATEGORIES]
     rows.append([btn("🎒 موجودی من", "S|INV")])
     markup = kb(rows)
@@ -7110,7 +7495,7 @@ async def achievements_show(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     mine = sum(1 for k in got if k in ACHIEVEMENTS_BASE or k in ACHIEVEMENTS_V11)
     text = (
         f"🎖 <b>دستاوردهای من</b> — {fmt_num(mine)}/{fmt_num(total)}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"{ds_sep('⋆')}\n"
         + "\n".join(lines)
     )
     markup = kb([
@@ -7208,43 +7593,50 @@ def profile_text(uid: int) -> str:
     best_season_rank = int(u.get("best_season_rank", 999))
     season_rank_disp = f"#{best_season_rank}" if best_season_rank < 999 else "—"
     _lines = [
-        f"{border}",
-        f"🪪 <b>پروفایل {escape(str(u.get('name') or 'بازیکن'))}</b>",
-        f"{border}",
-        "",
-        f"🏷 لقب: <b>{escape(title_disp)}</b>",
-        f"🖼 قاب: <b>{frame_name}</b>" + (f" · 🎖 {badge_name}" if badge_name else ""),
-        f"🎯 سطح <b>{fmt_num(level)}</b> · {lv_tier}",
-        f"⭐ XP: <b>{fmt_num(xp)}</b> {progress_bar(xp - floor_xp, 100, 10)} ({fmt_num(xp - floor_xp)}/۱۰۰)",
-        f"{rank_icon} رتبه: <b>{rank_name}</b>",
-        f"🪙 سکه: <b>{fmt_num(int(u.get('coins', 0)))}</b>",
-        "",
-        f"━━━ آمار بازی ━━━",
-        f"🎮 بازی‌ها: <b>{fmt_num(games)}</b> · 🏆 برد: <b>{fmt_num(wins)}</b> · 💔 باخت: <b>{fmt_num(losses)}</b>",
-        f"📊 درصد موفقیت: <b>{success_rate}%</b>",
-        f"🔥 بهترین استریک: <b>{fmt_num(int(u.get('best_streak', 0)))}</b>",
-        f"🤝 دوئل‌ها: <b>{fmt_num(int(u.get('duels', 0)))}</b> · 🗳 رأی‌ها: <b>{fmt_num(int(u.get('votes', 0)))}</b>",
-        f"🤫 مأموریت‌ها: <b>{fmt_num(int(u.get('missions', 0)))}</b> · 👑 باس‌ها: <b>{fmt_num(int(u.get('boss', 0)))}</b>",
-        "",
-        f"━━━ مسابقات خصوصی ━━━",
-        f"🎮 بازی خصوصی: <b>{fmt_num(private_games)}</b> · 🏆 برد: <b>{fmt_num(private_wins)}</b>",
-        f"🏆 مسابقات: <b>{fmt_num(tournaments_joined)}</b> · 🥇 قهرمانی: <b>{fmt_num(tournaments_won)}</b>",
-        f"🔥 بهترین Survival: <b>{fmt_num(survival_best)}</b>",
-        "",
-        f"━━━ اجتماعی ━━━",
-        f"👥 دوستان: <b>{fmt_num(friends_count)}</b> · ⚔️ رقبا: <b>{fmt_num(rivals_count)}</b>",
-        f"🎁 دعوت‌شده‌ها: <b>{fmt_num(referrals_count)}</b>",
-        f"📚 موضوع محبوب: <b>{fav}</b>",
-        f"🎒 کالاها: <b>{fmt_num(inv_count)}</b> · 🎖 دستاوردها: <b>{fmt_num(ach_count)}/{fmt_num(ach_total)}</b>",
-        "",
-        f"━━━ فصل و فعالیت ━━━",
-        f"🌐 XP فصل: <b>{fmt_num(season_xp)}</b> · 🏆 بهترین رتبه: <b>{season_rank_disp}</b>",
-        f"📅 استریک روزانه: <b>{fmt_num(daily_streak)}</b> روز · ⏰ آخرین: <b>{last_active_str}</b>",
+        ds_top(),
+        f"│  🪪 <b>کارت بازیکن — {escape(str(u.get('name') or 'بازیکن'))}</b>",
+        f"│  {gender_icon(uid)} {escape(title_disp)}"
+        + (f" · {frame_name}" if frame_name else "")
+        + (f" · 🎖 {badge_name}" if badge_name else ""),
+        ds_sep(),
+        f"│  🔥 سطح <b>{pnum(level)}</b> · {lv_tier}",
+        f"│  {pbar(xp - floor_xp, 100, 12)} <i>({pnum(xp - floor_xp)}/۱۰۰)</i>",
+        f"│  {rank_icon} رنک <b>{rank_name}</b> · ⭐ {pnum(xp)} XP",
+        ds_row("🪙 سکه", pnum(int(u.get('coins', 0)))),
+        ds_sep("⋆"),
+        "│  ▎🎮 <b>آمار بازی</b>",
+        ds_row("🎮 بازی‌ها", pnum(games)),
+        ds_row("🏆 برد / 💔 باخت", f"{pnum(wins)} / {pnum(losses)}"),
+        f"│  📊 نرخ موفقیت {pbar(success_rate, 100, 10, pct=False)} <b>{fa(success_rate)}٪</b>",
+        ds_row("🔥 بهترین استریک", pnum(int(u.get('best_streak', 0)))),
+        ds_row("🤝 دوئل", pnum(int(u.get('duels', 0)))),
+        ds_row("👑 باس‌ها", pnum(int(u.get('boss', 0)))),
+        ds_sep("⋆"),
+        "│  ▎🎯 <b>مسابقات</b>",
+        ds_row("🎮 خصوصی (برد)", f"{pnum(private_games)} ({pnum(private_wins)})"),
+        ds_row("🏆 مسابقات (قهرمانی)", f"{pnum(tournaments_joined)} ({pnum(tournaments_won)})"),
+        ds_row("🔥 رکورد بقا", pnum(survival_best)),
+        ds_sep("⋆"),
+        "│  ▎💞 <b>اجتماعی</b>",
+        ds_row("👥 دوستان", pnum(friends_count)),
+        ds_row("⚔️ رقبا", pnum(rivals_count)),
+        ds_row("🎁 دعوت‌شده‌ها", pnum(referrals_count)),
+        ds_row("📚 موضوع محبوب", fav),
+        ds_row("🎒 کالاها", pnum(inv_count)),
+        ds_row("🎖 دستاوردها", f"{pnum(ach_count)}/{pnum(ach_total)}"),
+        ds_sep("⋆"),
+        "│  ▎🌐 <b>فصل و فعالیت</b>",
+        ds_row("⭐ XP فصل", pnum(season_xp)),
+        ds_row("🏆 بهترین رتبه", fa(season_rank_disp)),
+        ds_row("📅 استریک روزانه", f"{pnum(daily_streak)} روز"),
+        ds_row("⏰ آخرین فعالیت", last_active_str),
     ]
     if age:
-        _lines.append(f"📅 {age}")
-    _lines.append("━━━━━━━━━━━━━━━━━━")
-    _lines.append(f"📦 ApexRival نسخه {VERSION}")
+        _lines.append(f"│  🎂 {age}")
+    _lines += [
+        ds_close(),
+        f"📦 <i>ApexRival نسخه {fa(VERSION)} — {DS_VER}</i>",
+    ]
     return "\n".join(_lines)
 
 
@@ -7427,12 +7819,16 @@ async def cmd_apexhelp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if msg is None:
         return
     text = (
-        f"❓ <b>راهنمای کامل {BOT_NAME}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"{ds_top('❓')}\n"
+        f"│  ❓ <b>راهنمای کامل {BOT_NAME}</b>\n"
+        f"│  <i>همه‌چیزهایی که لازمه بدونی</i>\n"
+        f"{ds_sep()}\n"
     )
     for title, cmds in HELP_SECTIONS:
-        text += f"\n<b>{title}</b>\n" + "\n".join(escape(c) for c in cmds) + "\n"
-    text += "\n🎯 نکته: دستورهای (Reply) باید روی پیام نفر دیگری اجرا شوند."
+        text += f"\n│  ▎{escape(title)}\n" + "\n".join(f"│  {escape(c)}" for c in cmds) + "\n"
+    text += f"\n{ds_sep('⋆')}\n"
+    text += "│  🎯 نکته: دستورهای (Reply) باید روی پیام نفر دیگری اجرا بشن.\n"
+    text += ds_close('❓')
     await msg.reply_text(text, parse_mode=ParseMode.HTML)
 
 
@@ -7906,11 +8302,21 @@ _BC_STATE: dict = {"mode": "", "text": "", "photo": None, "url": "", "url_label"
 async def admin_bc_home(query) -> None:
     await safe_answer_query(query)
     users_count = len(DATA.get("users", {}))
+    lines = [
+        ds_top("📡"),
+        "│  📡 <b>پیام همگانی</b>",
+        "│  <i>مخابرات مرکزی — ارسال به همه</i>",
+        ds_sep(),
+        ds_row("👥 گیرندگان", f"{pnum(users_count)} کاربر"),
+        ds_sep("⋆"),
+        "│  🧭 مسیر ویزارد:",
+        "│  متن ← عکس (اختیاری) ← دکمه لینک (اختیاری)",
+        "│  ← پیش‌نمایش ← ارسال",
+        ds_close("📡"),
+    ]
     await safe_edit(
         query,
-        "📡 <b>پیام همگانی</b>\n━━━━━━━━━━━━━━━━━━\n"
-        f"👥 گیرندگان: <b>{fmt_num(users_count)}</b> کاربر\n\n"
-        "ویزارد: متن ← عکس (اختیاری) ← دکمه لینک (اختیاری) ← پیش‌نمایش ← ارسال",
+        "\n".join(lines),
         kb([
             [btn("✍️ شروع پیام جدید", "A|BCNEW")],
             [btn("📜 تاریخچه", "A|BCHIST")],
@@ -7988,7 +8394,11 @@ async def bc_render_preview(context, admin_id: int, query=None) -> None:
     except Exception:
         await context.bot.send_message(admin_id, text, parse_mode=ParseMode.HTML)
     if query is not None:
-        await safe_edit(query, "👁 <b>پیش‌نمایش بالا رفت.</b> ارسال نهایی؟",
+        await safe_edit(query,
+            f"{ds_top('👁')}\n"
+            f"│  👁 <b>پیش‌نمایش بالا رفت!</b>\n"
+            f"│  <i>همین شکلی به کاربرا می‌رسه</i>\n"
+            f"{ds_close('👁')}",
                         kb([[btn("🚀 ارسال به همه", "A|BCSEND")], [btn("✏️ از اول", "A|BCNEW")], nav_row("A|BC")]))
 
 
@@ -8014,8 +8424,23 @@ async def bc_send_all(update, context, query) -> None:
     markup = None
     if _BC_STATE.get("url"):
         markup = kb([[InlineKeyboardButton(str(_BC_STATE.get("url_label") or "باز کن"), url=str(_BC_STATE["url"]))]])
+    total = len(recipients)
+    # پیام پیشرفت زنده — با نوار پیشرفت گرادیانی
+    progress_msg = None
+    try:
+        progress_msg = await context.bot.send_message(
+            int(query.from_user.id),
+            f"{ds_top('📡')}\n"
+            f"│  📡 <b>ارسال همگانی شروع شد...</b>\n"
+            f"│  {pbar(0, max(1, total), 14)}\n"
+            f"│  ✅ ۰ · ❌ ۰ · مجموع ۰/{pnum(total)}\n"
+            f"{ds_close('📡')}",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        progress_msg = None
     sent = failed = 0
-    for uid in recipients:
+    for i, uid in enumerate(recipients, 1):
         try:
             if _BC_STATE.get("photo"):
                 await context.bot.send_photo(uid, _BC_STATE["photo"], caption=text,
@@ -8026,6 +8451,19 @@ async def bc_send_all(update, context, query) -> None:
             sent += 1
         except Exception:
             failed += 1
+        # به‌روزرسانی زنده‌ی نوار پیشرفت هر ۲۵ گیرنده
+        if progress_msg is not None and (i % 25 == 0 or i == total):
+            try:
+                await progress_msg.edit_text(
+                    f"{ds_top('📡')}\n"
+                    f"│  📡 <b>در حال ارسال...</b>\n"
+                    f"│  {pbar(i, max(1, total), 14)}\n"
+                    f"│  ✅ {pnum(sent)} · ❌ {pnum(failed)} · مجموع {pnum(i)}/{pnum(total)}\n"
+                    f"{ds_close('📡')}",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
         await asyncio.sleep(0.05)
     with LOCK:
         DATA.setdefault("broadcast_log", []).append({
@@ -8040,8 +8478,15 @@ async def bc_send_all(update, context, query) -> None:
     try:
         await context.bot.send_message(
             int(query.from_user.id),
-            f"📊 <b>گزارش ارسال</b>\n━━━━━━━━━━━━━━━━━━\n"
-            f"✅ موفق: <b>{fmt_num(sent)}</b>\n❌ ناموفق: <b>{fmt_num(failed)}</b>",
+            f"{ds_top('📊')}\n"
+            f"│  📊 <b>گزارش نهایی ارسال</b>\n"
+            f"│  <i>عملیات مخابراتی کامل شد!</i>\n"
+            f"{ds_sep()}\n"
+            + ds_row("✅ موفق", pnum(sent)) + "\n"
+            + ds_row("❌ ناموفق", pnum(failed)) + "\n"
+            + ds_row("👥 کل گیرندگان", pnum(total)) + "\n"
+            + ds_row("📈 نرخ موفقیت", f"{fa(int(sent * 100 / max(1, total)))}٪") + "\n"
+            + ds_close("📊"),
             parse_mode=ParseMode.HTML,
         )
     except Exception:
@@ -8568,7 +9013,7 @@ async def on_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await context.bot.send_message(
                 int(chat.id),
                 f"⚔️ <b>{BOT_NAME} به گروه پیوست!</b>\n"
-                "━━━━━━━━━━━━━━━━━━\n"
+                f"{ds_sep('⋆')}\n"
                 "من میزبانِ بازیِ جرئت و حقیقت با <b>۸۲۸۱ سوال</b> هستم 🎯\n\n"
                 "🚀 برای شروع: /apex\n"
                 "❓ راهنما: /apexhelp\n"
@@ -8615,15 +9060,17 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 except Exception:
                     pass
                 await msg.reply_text(
-                    f"👋 خوش اومدی {mention_user(int(user.id), user.first_name)}!\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"⚔️ من <b>{BOT_NAME}</b> هستم — ربات بازی جرئت و حقیقت!\n\n"
-                    f"🎮 برای شروع بازی: <code>/apex</code>\n"
-                    f"⚡ بازی سریع: <code>/apexquick</code>\n"
-                    f"📜 قوانین: <code>/apexrules</code>\n"
-                    f"❓ راهنما: <code>/apexhelp</code>\n\n"
-                    f"📊 آمار این گروه: <b>{fmt_num(games_count)}</b> بازی\n"
-                    f"🏆 لِگ گروه: <b>{league_name}</b>",
+                    f"{ds_top()}\n"
+                    f"│  👋 <b>یه قهرمان تازه رسید!</b>\n"
+                    f"│  {mention_user(int(user.id), user.first_name)} به <b>{escape(str(chat.title or 'این گروه'))}</b> خوش اومدی!\n"
+                    f"{ds_sep()}\n"
+                    f"│  ⚔️ من <b>{BOT_NAME}</b> هستم — جرئت و حقیقت نسل جدید!\n"
+                    f"│  🎮 بازی‌های این گروه: <b>{pnum(games_count)}</b> · {league_name}\n"
+                    f"{ds_sep('⋆')}\n"
+                    f"│  🚀 شروع بازی: <code>/apex</code>\n"
+                    f"│  ⚡ بازی سریع: <code>/apexquick</code>\n"
+                    f"│  📜 راهنما: <code>/apexhelp</code>\n"
+                    f"{ds_close()}",
                     parse_mode=ParseMode.HTML,
                 )
         except Exception:
@@ -8818,13 +9265,18 @@ async def cmd_apexsettings(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def settings_render(msg, chat_id: int, query=None) -> None:
     cfg = group_cfg_of(chat_id)
-    text = (
-        f"⚙️ <b>تنظیمات گروه</b>\n━━━━━━━━━━━━━━━━━━\n"
-        f"👋 خوش‌آمدگویی: {'✅' if cfg['welcome'] else '❌'}\n"
-        f"🎉 جشن ارتقای سطح: {'✅' if cfg['levelup'] else '❌'}\n"
-        f"📢 تبلیغات: {'✅' if cfg['ads'] else '❌'}\n\n"
-        "📚 موضوعات فعال:"
-    )
+    lines = [
+        ds_top("⚙️"),
+        "│  ⚙️ <b>تنظیمات گروه</b>",
+        "│  <i>میز کنترل سرگروه</i>",
+        ds_sep(),
+        ds_row("👋 خوش‌آمدگویی", "روشن ✅" if cfg['welcome'] else "خاموش ❌"),
+        ds_row("🎉 جشن ارتقای سطح", "روشن ✅" if cfg['levelup'] else "خاموش ❌"),
+        ds_row("📢 تبلیغات", "روشن ✅" if cfg['ads'] else "خاموش ❌"),
+        ds_sep("⋆"),
+        "│  ▎📚 موضوعات فعال — روی هرکدوم بزن تا روشن/خاموش بشه:",
+    ]
+    text = "\n".join(lines)
     off = set(topics_off())
     rows = [
         [btn(f"👋 خوش‌آمد: {'روشن' if cfg['welcome'] else 'خاموش'}", "ST|WELCOME"),
@@ -8904,7 +9356,10 @@ async def celebrate_levelup(update: Update, uid: int) -> None:
         if not group_cfg_of(int(chat.id)).get("levelup", True):
             return
         await context_message_reply(update, (
-            f"🎉 {mention_user(uid, name_of(uid))} به سطح <b>{fmt_num(int(lvl))}</b> رسید! 🚀"
+            f"{ds_top('🎉')}\n"
+            f"│  🎉 <b>ارتقای سطح!</b>\n"
+            f"│  {mention_user(uid, name_of(uid))} به سطح <b>{pnum(int(lvl))}</b> رسید! 🚀\n"
+            f"{ds_close('🎉')}"
         ))
     except Exception:
         pass
@@ -9002,21 +9457,23 @@ async def pm_send_home(query, uid: int) -> None:
             if m.get("status") in ("waiting", "active") and (int(m.get("p1", 0)) == int(uid) or int(m.get("p2", 0)) == int(uid)):
                 active.append(m)
         lines = [
-            "🎮 <b>مسابقه خصوصی</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            "یک بازی دو نفره با دوستت در PV ربات بساز!",
-            "",
-            "📋 <b>مسابقات فعال تو:</b>",
+            ds_top("🎮"),
+            "│  🎮 <b>مسابقه خصوصی</b>",
+            "│  <i>دوئل دوستانه در چت خصوصی</i>",
+            ds_sep(),
+            "│  یه بازی دو نفره با دوستت در PV ربات بساز!",
+            ds_sep("⋆"),
+            "│  ▎📋 <b>مسابقات فعال تو:</b>",
         ]
         if not active:
-            lines.append("— فعلاً مسابقه‌ای نداری.")
+            lines.append("│  فعلاً مسابقه‌ای نداری — یه تازه بساز!")
         else:
             for m in active[:5]:
                 status_emoji = "⏳" if m.get("status") == "waiting" else "🎮"
                 p2 = m.get("p2", 0)
                 opp = name_of(int(p2)) if p2 else "در انتظار حریف..."
-                lines.append(f"{status_emoji} #{m['id']} · vs {escape(opp)} · {m.get('score_p1', 0)}-{m.get('score_p2', 0)} · راند {m.get('current_round', 0)}/{m.get('rounds', 10)}")
-        lines.append("━━━━━━━━━━━━━━━━━━")
+                lines.append(f"│  {status_emoji} #{fa(m['id'])} · vs {escape(opp)} · {pnum(m.get('score_p1', 0))}-{pnum(m.get('score_p2', 0))} · راند {pnum(m.get('current_round', 0))}/{pnum(m.get('rounds', 10))}")
+        lines.append(ds_sep())
         lines.append("📊 آمار تو:")
         lines.append(f"🎮 بازی خصوصی: <b>{fmt_num(int(user.get('private_games', 0)))}</b> · 🏆 برد: <b>{fmt_num(int(user.get('private_wins', 0)))}</b>")
         rows = [
@@ -9086,8 +9543,9 @@ async def pm_send_setup(query, uid: int) -> None:
     """نمایش پنل تنظیمات مسابقه جدید."""
     try:
         lines = [
-            "🎮 <b>ساخت مسابقه خصوصی</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🎮"),
+            "│  🎮 <b>ساخت مسابقه خصوصی</b>",
+            ds_sep(),
             "<b>نوع بازی را انتخاب کن:</b>",
             "🕵️ اعتراف — فقط سوالات اعتراف",
             "🔥 جرئت — فقط جرئت",
@@ -9125,8 +9583,9 @@ async def pm_create_match(query, uid: int, mode: str, rounds: int) -> None:
         log_user_activity(int(uid), f"pm_create:{mid}", f"mode={mode} rounds={rounds}")
         analytics_bump("private_matches")
         lines = [
-            "🎮 <b>مسابقه خصوصی ساخته شد!</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🎮"),
+            "│  🎮 <b>مسابقه خصوصی ساخته شد!</b>",
+            ds_sep(),
             f"🆔 شناسه: <b>#{mid}</b>",
             f"🎲 نوع: <b>{'ترکیبی' if mode == 'mixed' else ('اعتراف' if mode == 'truth' else 'جرئت')}</b>",
             f"🎯 راند: <b>{rounds}</b>",
@@ -9158,10 +9617,11 @@ async def pm_share_invite(query, uid: int, mid: int) -> None:
         bot_username = BOT_USERNAME_CACHE.get("u", "") or "ApexRivalBot"
         link = private_match_invite_link(mid, bot_username)
         text = (
-            "🎮 <b>دعوت مسابقه خصوصی</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_top('🎮')}\n"
+            "│  🎮 <b>دعوت مسابقه خصوصی</b>\n"
+            f"{ds_sep()}\n"
             f"📨 لینک دعوت:\n<code>{link}</code>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_sep('⋆')}\n"
             "این لینک رو برای دوستت بفرست."
         )
         await safe_answer_query(query, "لینک کپی شد! ✅")
@@ -9190,7 +9650,7 @@ async def pm_view_match(query, uid: int, mid: int) -> None:
         opp_name = name_of(opp_uid) if opp_uid else "در انتظار..."
         lines = [
             f"🎮 <b>مسابقه #{mid}</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             f"👤 تو: <b>{escape(name_of(uid))}</b>",
             f"👤 حریف: <b>{escape(opp_name)}</b>",
             f"📊 وضعیت: <b>{status_disp}</b>",
@@ -9273,15 +9733,15 @@ async def pm_play_round(update: Update, context: ContextTypes.DEFAULT_TYPE, uid:
         opp_uid = int(match.get("p2", 0)) if int(match.get("p1", 0)) == int(uid) else int(match.get("p1", 0))
         lines = [
             f"🎮 <b>مسابقه #{mid}</b> · راند {round_n}/{total}",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             f"👤 نوبت: <b>{escape(name_of(uid))}</b>",
             f"👤 حریف: <b>{escape(name_of(opp_uid))}</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             f"{'🕵️ اعتراف' if mode == 'truth' else '🔥 جرئت'}:",
             "",
             f"<b>{escape(question)}</b>",
             "",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             "✅ انجام دادم (+ امتیاز کامل)",
             "❌ انجام ندادم (حریف امتیاز می‌گیره)",
         ]
@@ -9590,25 +10050,29 @@ async def fr_send_home(query, uid: int) -> None:
         friends = user.get("friends", [])
         reqs_in = user.get("friend_reqs_in", [])
         lines = [
-            "👥 <b>دوستان من</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"👥 تعداد دوستان: <b>{fmt_num(len(friends))}</b>",
-            f"📨 درخواست‌های دریافتی: <b>{fmt_num(len(reqs_in))}</b>",
-            "",
+            ds_top("👥"),
+            "│  👥 <b>دوستان من</b>",
+            "│  <i>هم‌بازی‌های همیشگی</i>",
+            ds_sep(),
+            ds_row("👥 تعداد دوستان", pnum(len(friends))),
+            ds_row("📨 درخواست‌های دریافتی", pnum(len(reqs_in))),
         ]
         if friends:
-            lines.append("━ دوستانت ━")
+            lines += [ds_sep("⋆"), "│  ▎👤 <b>دوستانت</b>"]
             for fid in friends[:10]:
                 try:
                     fn = name_of(int(fid))
                     fu = get_user(int(fid))
                     fl = int(fu.get("level", 1))
-                    lines.append(f"👤 {escape(fn)} · 🔥 سطح {fmt_num(fl)}")
+                    lines.append(f"│  👤 {escape(fn)} · 🔥 سطح {pnum(fl)}")
                 except Exception:
                     pass
         else:
-            lines.append("— هنوز دوستی نداری!")
-            lines.append("با /apexinvite دوستت رو دعوت کن.")
+            lines += [
+                ds_sep("⋆"),
+                "│  هنوز دوستی نداری — با /apexinvite دعوتشون کن!",
+            ]
+        lines.append(ds_close())
         rows = [
             [btn("📨 درخواست‌های دریافتی", "FR|REQS")],
             [btn("➕ اضافه کردن دوست", "FR|ADD")],
@@ -9675,8 +10139,9 @@ async def fr_show_reqs(query, uid: int) -> None:
         user = get_user(int(uid))
         reqs = user.get("friend_reqs_in", [])
         lines = [
-            "📨 <b>درخواست‌های دوستی</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("📨"),
+            "│  📨 <b>درخواست‌های دوستی</b>",
+            ds_sep(),
         ]
         if not reqs:
             lines.append("— درخواستی نداری.")
@@ -9750,13 +10215,14 @@ async def rv_send_home(query, uid: int) -> None:
         user = get_user(int(uid))
         rivals = user.get("rivals", [])
         lines = [
-            "⚔️ <b>رقبای من</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"⚔️ تعداد رقبا: <b>{fmt_num(len(rivals))}</b>",
-            "",
+            ds_top("⚔️"),
+            "│  ⚔️ <b>رقبای من</b>",
+            "│  <i>دشمن‌ن شایسته‌ی یه قهرمان!</i>",
+            ds_sep(),
+            ds_row("⚔️ تعداد رقبا", pnum(len(rivals))),
         ]
         if rivals:
-            lines.append("━ رقبایت ━")
+            lines += [ds_sep("⋆"), "│  ▎⚔️ <b>رقبایت</b>"]
             for rid in rivals[:10]:
                 try:
                     rn = name_of(int(rid))
@@ -9866,7 +10332,7 @@ async def rv_view_rival(query, uid: int, other: int) -> None:
         opp_rank, _, _ = rank_for_xp(opp_xp)
         lines = [
             f"⚔️ <b>رقیب: {escape(name_of(int(other)))}</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             f"🔥 سطح: <b>{fmt_num(opp_level)}</b>",
             f"⭐ XP: <b>{fmt_num(opp_xp)}</b>",
             f"🏆 رتبه: <b>{opp_rank}</b>",
@@ -9923,8 +10389,9 @@ async def rf_send_home(query, uid: int) -> None:
         bot_username = BOT_USERNAME_CACHE.get("u", "") or "ApexRivalBot"
         link = referral_link(int(uid), bot_username)
         lines = [
-            "🎁 <b>دعوت دوستان</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🎁"),
+            "│  🎁 <b>دعوت دوستان</b>",
+            ds_sep(),
             "برای هر کاربر جدیدی که با لینک تو وارد ربات بشه،",
             "<b>+50 سکه</b> پاداش می‌گیری!",
             "",
@@ -10015,26 +10482,28 @@ async def cmd_apexinvite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 #  سیستم مأموریت‌های روزانه (Daily Missions) — فاز ۲
 # ================================================================
 async def dm_send_home(query, uid: int) -> None:
-    """نمایش پنل مأموریت‌های روزانه."""
+    """نمایش پنل مأموریت‌های روزانه — طراحی پرایم با نوار پیشرفت."""
     try:
         missions = user_daily_missions(int(uid))
         lines = [
-            "🎯 <b>مأموریت‌های روزانه</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"📅 روز: <b>{today_key()}</b>",
-            "",
+            ds_top("🎯"),
+            "│  🎯 <b>مأموریت‌های روزانه</b>",
+            "│  <i>هر روز، چالش‌های تازه</i>",
+            ds_sep(),
         ]
         if not missions:
-            lines.append("— امروز مأموریتی نداری (شاید سیستم در حال بارگذاری باشد).")
+            lines.append("│  امروز مأموریتی نیست — یه استراحت موقت! ☕")
         else:
             for m in missions:
                 status = "✅" if m.get("completed", False) else "⏳"
                 progress = int(m.get("progress", 0))
                 target = int(m.get("target", 1))
                 claimed = m.get("key", "") in (get_user(int(uid)).get("daily_missions", {}).get("claimed", []))
-                claim_emoji = "🎁" if m.get("completed", False) and not claimed else ""
-                lines.append(f"{status} {m.get('name', '')}")
-                lines.append(f"   پیشرفت: <b>{progress}/{target}</b> · پاداش: ⭐{m.get('reward_xp', 0)} 🪙{m.get('reward_coins', 0)} {claim_emoji}")
+                claim_emoji = " 🎁" if m.get("completed", False) and not claimed else ""
+                lines.append(f"│  {status} <b>{m.get('name', '')}</b>{claim_emoji}")
+                lines.append(f"│  {pbar(progress, target, 10, pct=False)} {pnum(progress)}/{pnum(target)}")
+                lines.append(f"│  🎁 پاداش: ⭐{pnum(m.get('reward_xp', 0))} + 🪙{pnum(m.get('reward_coins', 0))}")
+        lines.append(ds_close("🎯"))
         rows = []
         for m in missions:
             if m.get("completed", False) and m.get("key", "") not in (get_user(int(uid)).get("daily_missions", {}).get("claimed", [])):
@@ -10134,8 +10603,9 @@ async def tm_send_home(query, uid: int) -> None:
             if t.get("status") in ("open", "started"):
                 open_tourneys.append(t)
         lines = [
-            "🏆 <b>مسابقات ApexRival</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🏆"),
+            "│  🏆 <b>مسابقات ApexRival</b>",
+            ds_sep(),
         ]
         if not open_tourneys:
             lines.append("— فعلاً مسابقه‌ای باز نیست.")
@@ -10222,7 +10692,7 @@ async def tm_view(query, uid: int, tid: int) -> None:
             return
         lines = [
             f"🏆 <b>مسابقه #{tid}</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             f"📝 عنوان: <b>{escape(t.get('title', ''))}</b>",
             f"👤 سازنده: <b>{escape(name_of(int(t.get('host', 0))))}</b>",
             f"🪙 جایزه: <b>{fmt_num(t.get('prize', 0))}</b> سکه",
@@ -10278,14 +10748,16 @@ async def se_send_home(query, uid: int) -> None:
                 season_rank = f"#{i}"
                 break
         lines = [
-            "🌐 <b>فصل و رویداد</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"🏆 فصل جاری: <b>{sid}</b>",
-            f"⏳ روزهای باقی‌مانده: <b>{fmt_num(days_left)}</b>",
-            f"⭐ XP فصل تو: <b>{fmt_num(season_xp)}</b>",
-            f"🏆 رتبه‌ی تو: <b>{season_rank}</b>",
-            "",
-            "━ رتبه‌بندی فصل (۱۰ نفر اول) ━",
+            ds_top("🌐"),
+            "│  🌐 <b>فصل و رویداد</b>",
+            "│  <i>مسابقه‌ی فصلی قهرمانان</i>",
+            ds_sep(),
+            ds_row("🏆 فصل جاری", str(sid) or "—"),
+            ds_row("⏳ روزهای باقی‌مانده", pnum(days_left)),
+            ds_row("⭐ XP فصل تو", pnum(season_xp)),
+            ds_row("🏆 رتبه‌ی تو", fa(season_rank)),
+            ds_sep("⋆"),
+            "│  ▎🏅 <b>رتبه‌بندی فصل (۱۰ نفر اول)</b>",
         ]
         if lb:
             for i, (ouid, xp, wins, games) in enumerate(lb, start=1):
@@ -10333,20 +10805,23 @@ async def nt_send_home(query, uid: int) -> None:
         user = get_user(int(uid))
         inbox = user.get("notify_inbox", [])
         lines = [
-            "🔔 <b>اعلان‌های تو</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🔔"),
+            "│  🔔 <b>اعلان‌های تو</b>",
+            "│  <i>چه خبرا شده؟</i>",
+            ds_sep(),
         ]
         if not inbox:
-            lines.append("— صندوق اعلان‌هایت خالی است.")
+            lines.append("│  صندوق اعلان‌هات خالیه — آرامش خوش!")
         else:
             for n in inbox[:15]:
                 ts = int(n.get("ts", 0))
                 time_str = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
-                lines.append(f"📬 <b>{escape(n.get('title', ''))}</b> · {time_str}")
+                lines.append(f"│  📬 <b>{escape(n.get('title', ''))}</b> · {fa(time_str)}")
                 body = n.get("body", "")
                 if body:
-                    lines.append(f"   {escape(body)}")
+                    lines.append(f"│     {escape(body)}")
                 lines.append("")
+        lines.append(ds_close())
         rows = [
             [btn("⬅️ بازگشت", "H|HOME")],
         ]
@@ -10402,8 +10877,9 @@ async def us_send_home(query, uid: int) -> None:
         badge = str(user.get("badge", "") or "")
         badge_name = BADGES_SHOP.get(badge, {}).get("name", "—") if badge else "—"
         lines = [
-            "⚙️ <b>تنظیمات من</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("⚙️"),
+            "│  ⚙️ <b>تنظیمات من</b>",
+            ds_sep(),
             "━ شخصی‌سازی پروفایل ━",
             f"🏷 لقب فعلی: <b>{escape(title_name)}</b>",
             f"🖼 قاب فعلی: <b>{escape(frame_name)}</b>",
@@ -10636,8 +11112,9 @@ async def us_show_notif_settings(query, uid: int) -> None:
         user = get_user(int(uid))
         prefs = user.get("notifications", {})
         lines = [
-            "🔔 <b>تنظیمات اعلان</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🔔"),
+            "│  🔔 <b>تنظیمات اعلان</b>",
+            ds_sep(),
             "روی هر مورد بزن تا روشن/خاموش بشه.",
         ]
         rows = []
@@ -10663,8 +11140,9 @@ async def us_show_privacy_settings(query, uid: int) -> None:
         user = get_user(int(uid))
         priv = user.get("privacy", {})
         lines = [
-            "🔒 <b>حریم خصوصی</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🔒"),
+            "│  🔒 <b>حریم خصوصی</b>",
+            ds_sep(),
             "روی هر مورد بزن تا روشن/خاموش بشه.",
         ]
         rows = []
@@ -10701,18 +11179,21 @@ async def cmd_apexsettings_me(update: Update, context: ContextTypes.DEFAULT_TYPE
 #  سیستم بازخورد (Feedback) — فاز ۴
 # ================================================================
 async def fb_send_home(query, uid: int) -> None:
-    """نمایش پنل بازخورد."""
+    """نمایش پنل بازخورد — طراحی پرایم."""
     try:
         user = get_user(int(uid))
         feedbacks = [f for f in DATA.get("feedback", []) if int(f.get("uid", 0)) == int(uid)]
         lines = [
-            "📝 <b>بازخورد و گزارش</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            "اگر مشکلی هست یا پیشنهادی داری، برامون بفرست!",
-            "همچنین می‌تونی با Reply روی پیام یک سوال،",
-            "اون سوال رو گزارش بدی.",
-            "",
-            f"📊 تعداد بازخوردهای تو: <b>{fmt_num(len(feedbacks))}</b>",
+            ds_top("📮"),
+            "│  📮 <b>بازخورد و گزارش</b>",
+            "│  <i>صدایت رو می‌شنویم!</i>",
+            ds_sep(),
+            "│  💬 مشکلی هست یا پیشنهادی داری؟ برامون بفرست.",
+            "│  📌 با Reply روی پیام یه سوال، می‌تونی اون",
+            "│  سوال رو گزارش بدی تا بررسی بشه.",
+            ds_sep("⋆"),
+            ds_row("📊 بازخوردهای تو", pnum(len(feedbacks))),
+            ds_close("📮"),
         ]
         rows = [
             [btn("📝 ارسال بازخورد", "FB|NEW")],
@@ -10866,24 +11347,30 @@ async def dr_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def dr_send_home(query, uid: int) -> None:
-    """پنل پاداش روزانه."""
+    """پنل پاداش روزانه — طراحی پرایم."""
     try:
         eligible = daily_reward_eligible(int(uid))
         user = get_user(int(uid))
         streak = int(user.get("daily_streak", 1))
+        next_reward = 20 + min(streak * 5, 100)
+        next_xp = 10 + min(streak * 2, 30)
         lines = [
-            "🎁 <b>پاداش روزانه</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"📅 استریک فعلی: <b>{fmt_num(streak)} روز</b>",
-            f"📊 پاداش امروز: <b>20 + {min(streak * 5, 100)} سکه</b>",
-            f"⭐ XP امروز: <b>+{10 + min(streak * 2, 30)}</b>",
-            "",
+            ds_top("🎁"),
+            "│  🎁 <b>پاداش روزانه</b>",
+            "│  <i>هر روز سری بزن، استریک بساز!</i>",
+            ds_sep(),
+            ds_row("📅 استریک فعلی", f"{pnum(streak)} روز 🔥"),
+            ds_row("🪙 پاداش امروز", f"{pnum(next_reward)} سکه"),
+            ds_row("⭐ XP امروز", f"+{pnum(next_xp)}"),
+            ds_sep("⋆"),
+            f"│  {pbar(min(streak, 7), 7, 10, pct=False)} مسیر هفته",
         ]
         if eligible:
-            lines.append("✅ امروز می‌تونی پاداش بگیری!")
+            lines.append("│  ✅ پاداشت امروز آماده‌ی دریافته — بزن بره!")
         else:
-            lines.append("✅ امروز پاداش رو گرفتی!")
-            lines.append("فردا برگرد تا استریک حفظ بشه.")
+            lines.append("│  ✔️ امروز پاداشت رو گرفتی — فردا برگرد!")
+            lines.append("│  📆 استریکت حفظ می‌شه، از دستش نده")
+        lines.append(ds_close("🎁"))
         rows = []
         if eligible:
             rows.append([btn("🎁 دریافت پاداش", "DR|CLAIM")])
@@ -10987,36 +11474,58 @@ async def admin_dashboard_show(query) -> None:
             season_players = len(s.get("leaderboard", {})) if isinstance(s, dict) else 0
         except Exception:
             pass
-        top_border = "╭" + "━" * 22 + "╮"
-        sep = "├" + "━" * 22 + "┤"
-        bot_border = "╰" + "━" * 22 + "╯"
+        top_border = ds_top("✦")
+        sep = ds_sep()
+        sep_j = ds_sep("⋆")
+        bot_border = ds_close("✦")
+        try:
+            up = uptime_text()
+        except Exception:
+            up = "—"
         lines = [
-            f"{top_border}",
-            f"│  🛡 <b>پنل مدیریت</b>",
-            f"{sep}",
-            f"│  👥 کاربران: <b>{fmt_num(len(users))}</b>  │  🔥 فعال: <b>{fmt_num(today.get('active_users', 0))}</b>",
-            f"│  🚫 مسدود: <b>{fmt_num(banned)}</b>  │  ✅ تأییدشده: <b>{fmt_num(verified)}</b>",
-            f"{sep}",
-            f"│  🎮 بازی فعال: <b>{fmt_num(active_games)}</b>  │  📊 کل: <b>{fmt_num(len(games))}</b>",
-            f"│  🎯 مسابقه خصوصی: <b>{fmt_num(pm_count)}</b>",
-            f"{sep}",
-            f"│  👥 گروه‌ها: <b>{fmt_num(len(groups))}</b>",
-            f"{sep}",
-            f"│  🪙 مجموع سکه: <b>{fmt_num(total_coins)}</b>",
-            f"│  📈 درآمد امروز: <b>{fmt_num(today.get('coins_earned', 0))}</b>",
-            f"│  📉 مصرف امروز: <b>{fmt_num(today.get('coins_spent', 0))}</b>",
-            f"{sep}",
-            f"│  🌐 فصل: <b>{sid}</b>  │  👥 بازیکنان: <b>{fmt_num(season_players)}</b>",
-            f"│  🔧 تعمیرات: {'✅' if maintenance else '❌'}  │  💾 <b>{fmt_num(size_kb)}</b>KB",
-            f"{bot_border}",
+            top_border,
+            "│  🛡 <b>مرکز فرماندهی</b>",
+            "│  <i>پنل مدیریت پرایم — " + DS_VER + "</i>",
+            sep,
+            "│  ▎📡 <b>وضعیت سیستم</b>",
+            ds_row("🟢 وضعیت", "آنلاین ✅"),
+            ds_row("⏱ آپتایم", up),
+            ds_row("💾 حجم دیتا", f"{pnum(size_kb)} KB"),
+            ds_row("🔧 تعمیرات", "فعال ⚠️" if maintenance else "غیرفعال ✅"),
+            sep_j,
+            "│  ▎👥 <b>جامعه‌ی بازیکنان</b>",
+            ds_row("👥 کاربران", pnum(len(users))),
+            ds_row("🔥 فعال امروز", pnum(today.get('active_users', 0))),
+            ds_row("🚫 مسدود", pnum(banned)),
+            ds_row("✅ تأییدشده", pnum(verified)),
+            ds_row("👥 گروه‌ها", pnum(len(groups))),
+            sep_j,
+            "│  ▎🎮 <b>میدان بازی</b>",
+            ds_row("🎮 بازی فعال", pnum(active_games)),
+            ds_row("📊 کل بازی‌ها", pnum(len(games))),
+            ds_row("🎯 مسابقه خصوصی", pnum(pm_count)),
+            sep_j,
+            "│  ▎💰 <b>اقتصاد</b>",
+            ds_row("🪙 مجموع سکه", pnum(total_coins)),
+            ds_row("📈 درآمد امروز", pnum(today.get('coins_earned', 0))),
+            ds_row("📉 مصرف امروز", pnum(today.get('coins_spent', 0))),
+            sep_j,
+            "│  ▎🌐 <b>فصل جاری</b>",
+            ds_row("🏅 فصل", str(sid) or "—"),
+            ds_row("👥 بازیکنان فصل", pnum(season_players)),
+            bot_border,
         ]
         rows = [
-            [btn("👥 کاربران", "A|USERS"), btn("🎮 بازی‌ها", "A|GAMES"), btn("📢 تبلیغات", "A|ADS")],
-            [btn("📡 پیام همگانی", "A|BC"), btn("🏦 بانک", "A|BANK"), btn("📊 آمار", "A|STATS")],
-            [btn("🏆 دستاوردها", "A|ACHM"), btn("🪙 اقتصاد", "A|ECON"), btn("🎁 جوایز", "A|REWARD")],
-            [btn("👥 گروه‌ها", "A|GROUPS"), btn("⚙️ تنظیمات", "A|SETTINGS"), btn("🛠 تعمیرات", "A|MAINT")],
-            [btn("💾 بکاپ", "A|BACKUP"), btn("📤 خروجی", "A|EXPORT"), btn("📝 لاگ‌ها", "A|LOGS")],
-            [btn("📊 Analytics", "A|ANALYTICS"), btn("📨 بازخوردها", "A|FEEDBACK"), btn("🩺 دکتر", "A|DOCTOR")],
+            [btn("🔄 تازه‌سازی وضعیت", "A|HOME")],
+            [btn("👥 کاربران", "A|USERS"), btn("🎮 بازی‌ها", "A|GAMES")],
+            [btn("📢 تبلیغات", "A|ADS"), btn("📡 پیام همگانی", "A|BC")],
+            [btn("🏦 بانک", "A|BANK"), btn("📊 آمار", "A|STATS")],
+            [btn("📈 Analytics", "A|ANALYTICS"), btn("📨 بازخوردها", "A|FEEDBACK")],
+            [btn("🏆 دستاوردها", "A|ACHM"), btn("🪙 اقتصاد", "A|ECON")],
+            [btn("🎁 جوایز", "A|REWARD"), btn("👥 گروه‌ها", "A|GROUPS")],
+            [btn("⚙️ تنظیمات", "A|SETTINGS"), btn("🛠 تعمیرات", "A|MAINT")],
+            [btn("💾 بکاپ", "A|BACKUP"), btn("📤 خروجی", "A|EXPORT")],
+            [btn("📝 لاگ‌ها", "A|LOGS"), btn("🩺 دکتر", "A|DOCTOR")],
             [btn("⬅️ منوی اصلی", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
@@ -11034,15 +11543,20 @@ async def admin_analytics_show(query) -> None:
             from datetime import timedelta
             d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
             days.append(d)
-        lines = ["📊 <b>Analytics (۷ روز اخیر)</b>", "━━━━━━━━━━━━━━━━━━"]
+        lines = [
+            ds_top("📈"),
+            "│  📈 <b>Analytics — ۷ روز اخیر</b>",
+            "│  <i>نبض ربات به روایت اعداد</i>",
+            ds_sep(),
+        ]
         for d in days:
             info = DATA.get("analytics_daily", {}).get(d, {})
-            lines.append(f"📅 {d}:")
-            lines.append(f"   👥 فعال: {info.get('active_users', 0)} · 🎮 بازی: {info.get('games_started', 0)}")
-            lines.append(f"   🪙 درآمد: {info.get('coins_earned', 0)} · 📉 مصرف: {info.get('coins_spent', 0)}")
+            lines.append(f"│  📅 {fa(d)}:")
+            lines.append(f"│     👥 فعال: <b>{pnum(info.get('active_users', 0))}</b> · 🎮 بازی: <b>{pnum(info.get('games_started', 0))}</b>")
+            lines.append(f"│     🪙 درآمد: <b>{pnum(info.get('coins_earned', 0))}</b> · 📉 مصرف: <b>{pnum(info.get('coins_spent', 0))}</b>")
         # رشد کاربران (۳۰ روز)
         total_users = len(DATA.get("users", {}))
-        lines.extend(["", "━ کلیات ━", f"👥 کل کاربران: <b>{fmt_num(total_users)}</b>"])
+        lines += [ds_sep("⋆"), ds_row("👥 کل کاربران", pnum(total_users))]
         # محبوب‌ترین مود بازی
         mode_count = {}
         for g in DATA.get("games", {}).values():
@@ -11063,18 +11577,24 @@ async def admin_feedback_show(query) -> None:
     """نمایش بازخوردها برای ادمین."""
     try:
         feedbacks = DATA.get("feedback", [])[:20]
-        lines = ["📨 <b>بازخوردهای کاربران</b>", "━━━━━━━━━━━━━━━━━━"]
+        lines = [
+            ds_top("📨"),
+            "│  📨 <b>صندوق بازخوردها</b>",
+            "│  <i>صدای بازیکنان</i>",
+            ds_sep(),
+        ]
         if not feedbacks:
-            lines.append("— هنوز بازخوردی ثبت نشده.")
+            lines.append("│  هنوز بازخوردی ثبت نشده — صندقه منتظره!")
         else:
             for f in feedbacks:
                 ts = int(f.get("ts", 0))
                 time_str = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
-                lines.append(f"📝 [{time_str}] از {escape(name_of(int(f.get('uid', 0))))}")
-                lines.append(f"   {escape(f.get('text', '')[:100])}")
+                lines.append(f"│  📝 [{fa(time_str)}] از {escape(name_of(int(f.get('uid', 0))))}")
+                lines.append(f"│     {escape(f.get('text', '')[:100])}")
                 if f.get("reply"):
-                    lines.append(f"   💬 پاسخ: {escape(f.get('reply', '')[:80])}")
+                    lines.append(f"│     💬 پاسخ: {escape(f.get('reply', '')[:80])}")
                 lines.append("")
+        lines.append(ds_close())
         rows = [[btn("⬅️ بازگشت", "A|HOME")]]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -11100,16 +11620,19 @@ async def admin_export_data(query) -> None:
         await safe_answer_query(query, "📤 در حال آماده‌سازی خروجی...")
         # فقط نمایش خلاصه — فایل واقعی به‌صورت جداگانه
         lines = [
-            "📤 <b>خروجی اطلاعات</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"👥 کاربران: <b>{fmt_num(len(DATA.get('users', {})))}</b>",
-            f"🎮 بازی‌ها: <b>{fmt_num(len(DATA.get('games', {})))}</b>",
-            f"👥 گروه‌ها: <b>{fmt_num(len(DATA.get('groups', {})))}</b>",
-            f"🎮 مسابقات خصوصی: <b>{fmt_num(len(DATA.get('private_matches', {})))}</b>",
-            f"🏆 تورنمنت‌ها: <b>{fmt_num(len(DATA.get('tournaments', {})))}</b>",
-            f"📨 بازخوردها: <b>{fmt_num(len(DATA.get('feedback', [])))}</b>",
-            "",
-            "برای خروجی کامل، از پنل «💾 بکاپ» استفاده کنید.",
+            ds_top("📤"),
+            "│  📤 <b>خروجی اطلاعات</b>",
+            "│  <i>عکس جامع از دیتای ربات</i>",
+            ds_sep(),
+            ds_row("👥 کاربران", pnum(len(DATA.get('users', {})))),
+            ds_row("🎮 بازی‌ها", pnum(len(DATA.get('games', {})))),
+            ds_row("👥 گروه‌ها", pnum(len(DATA.get('groups', {})))),
+            ds_row("🎯 مسابقات خصوصی", pnum(len(DATA.get('private_matches', {})))),
+            ds_row("🏆 تورنمنت‌ها", pnum(len(DATA.get('tournaments', {})))),
+            ds_row("📨 بازخوردها", pnum(len(DATA.get('feedback', [])))),
+            ds_sep("⋆"),
+            "│  💾 برای خروجی کامل، از پنل «بکاپ» استفاده کن.",
+            ds_close(),
         ]
         rows = [[btn("💾 ساخت بکاپ", "A|BACKUP")], [btn("⬅️ بازگشت", "A|HOME")]]
         await safe_edit(query, "\n".join(lines), kb(rows))
@@ -11121,9 +11644,14 @@ async def admin_logs_show(query) -> None:
     """نمایش لاگ‌های اخیر."""
     try:
         audit = DATA.get("audit", [])[-30:]
-        lines = ["📝 <b>لاگ‌های اخیر</b>", "━━━━━━━━━━━━━━━━━━"]
+        lines = [
+            ds_top("📝"),
+            "│  📝 <b>لاگ‌های اخیر</b>",
+            "│  <i>تاریخچه‌ی اتفاقات</i>",
+            ds_sep(),
+        ]
         if not audit:
-            lines.append("— لاگی ثبت نشده.")
+            lines.append("│  لاگی ثبت نشده — سکوت مطلق!")
         else:
             for entry in reversed(audit):
                 if isinstance(entry, dict):
@@ -11132,10 +11660,13 @@ async def admin_logs_show(query) -> None:
                     level = entry.get("level", "info")
                     cat = entry.get("category", "")
                     msg = entry.get("message", "")[:80]
-                    lines.append(f"[{time_str}] {level}/{cat}: {escape(msg)}")
+                    lvl_icon = "🔴" if level == "error" else ("🟡" if level == "warn" else "🔵")
+                    lines.append(f"│  {lvl_icon} [{fa(time_str)}] {level}/{cat}")
+                    lines.append(f"│     {escape(msg)}")
                 else:
                     # قدیمی — فقط string
-                    lines.append(f"• {escape(str(entry)[:80])}")
+                    lines.append(f"│  • {escape(str(entry)[:80])}")
+        lines.append(ds_close())
         rows = [[btn("⬅️ بازگشت", "A|HOME")]]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -11161,13 +11692,16 @@ async def admin_users_manager_show(query, page: int = 0) -> None:
         verified_count = len(DATA.get("verified_users", []))
         vip_count = sum(1 for u in users.values() if isinstance(u, dict) and int(u.get("vip_until", 0)) > now_ts())
         lines = [
-            "╭" + "━" * 22 + "╮",
+            ds_top("👥"),
             "│  👥 <b>مدیریت کاربران</b>",
-            "├" + "━" * 22 + "┤",
-            f"│  📊 کل: <b>{fmt_num(len(users))}</b>  │  🚫 مسدود: <b>{fmt_num(banned_count)}</b>",
-            f"│  ✅ تأییدشده: <b>{fmt_num(verified_count)}</b>  │  👑 وی‌آی‌پی: <b>{fmt_num(vip_count)}</b>",
-            f"│  📄 صفحه: <b>{fmt_num(page + 1)}/{fmt_num(total_pages)}</b>",
-            "├" + "━" * 22 + "┤",
+            "│  <i>دیتابیس بازیکنان</i>",
+            ds_sep(),
+            ds_row("📊 کل", pnum(len(users))),
+            ds_row("🚫 مسدود", pnum(banned_count)),
+            ds_row("✅ تأییدشده", pnum(verified_count)),
+            ds_row("👑 وی‌آی‌پی", pnum(vip_count)),
+            ds_row("📄 صفحه", f"{pnum(page + 1)}/{pnum(total_pages)}"),
+            ds_sep(),
         ]
         for uid_str, u in current:
             try:
@@ -11177,11 +11711,11 @@ async def admin_users_manager_show(query, page: int = 0) -> None:
                 coins = int(u.get("coins", 0))
                 status = "🚫" if u.get("banned") else "✅"
                 vip = "👑" if int(u.get("vip_until", 0)) > now_ts() else ""
-                ver = "✅" if u.get("verified") else ""
-                lines.append(f"│  {status} #{uid_int} · {name} · 🔥{level} · 🪙{coins} {vip}{ver}")
+                ver = "✔️" if u.get("verified") else ""
+                lines.append(f"│  {status} #{fa(uid_int)} · {name} · 🔥{pnum(level)} · 🪙{pnum(coins)} {vip}{ver}")
             except Exception:
                 pass
-        lines.append("╰" + "━" * 22 + "╯")
+        lines.append(ds_close())
         rows = []
         for uid_str, _ in current[:6]:
             try:
@@ -11222,7 +11756,7 @@ async def admin_user_detail_show(query, target_uid: int) -> None:
         rank_name, _, _ = rank_for_xp(xp)
         lines = [
             f"👤 <b>کاربر #{target_uid}</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             f"🏷 نام: <b>{name}</b>",
             f"🔥 سطح: <b>{fmt_num(level)}</b>",
             f"⭐ XP: <b>{fmt_num(xp)}</b>",
@@ -11331,27 +11865,29 @@ async def admin_games_manager_show(query) -> None:
         active = [(k, g) for k, g in games.items() if isinstance(g, dict) and g.get("status") == "active"]
         finished = sum(1 for g in games.values() if isinstance(g, dict) and str(g.get("status")) == "finished")
         lines = [
-            "╭" + "━" * 22 + "╮",
+            ds_top("🎮"),
             "│  🎮 <b>مدیریت بازی‌ها</b>",
-            "├" + "━" * 22 + "┤",
-            f"│  📊 کل: <b>{fmt_num(len(games))}</b>  │  🔥 فعال: <b>{fmt_num(len(active))}</b>",
-            f"│  ✅ پایان‌یافته: <b>{fmt_num(finished)}</b>",
+            "│  <i>میدان‌های نبرد</i>",
+            ds_sep(),
+            ds_row("📊 کل بازی‌ها", pnum(len(games))),
+            ds_row("🔥 فعال", pnum(len(active))),
+            ds_row("✅ پایان‌یافته", pnum(finished)),
         ]
         if active:
-            lines.append("├" + "━" * 22 + "┤")
-            lines.append("│  🎯 بازی‌های فعال:")
+            lines.append(ds_sep("⋆"))
+            lines.append("│  ▎🎯 بازی‌های فعال:")
             for k, g in active[:6]:
                 try:
                     chat_id = int(g.get("chat_id", 0))
                     players = len(g.get("players", []))
                     started = int(g.get("started_at", 0))
                     age_min = (now_ts() - started) // 60 if started else 0
-                    lines.append(f"│  · #{str(k)[:12]} · 👥{players} · ⏱{age_min}m")
+                    lines.append(f"│  · #{str(k)[:12]} · 👥{pnum(players)} · ⏱{pnum(age_min)}m")
                 except Exception:
                     pass
         else:
             lines.append("│  ❌ فعلاً بازی فعالی نیست")
-        lines.append("╰" + "━" * 22 + "╯")
+        lines.append(ds_close())
         rows = []
         for k, g in active[:5]:
             rows.append([btn(f"👁 {str(k)[:15]}", f"A|GAME|{k}")])
@@ -11442,15 +11978,18 @@ async def admin_achievements_manager_show(query) -> None:
             for a in u.get("achievements", []):
                 owner_count[a] = owner_count.get(a, 0) + 1
         lines = [
-            "🎖 <b>مدیریت دستاوردها</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"🎖 کل دستاوردها: <b>{fmt_num(len(all_achs))}</b>",
-            "",
-            "━ آمار دارندگان ━",
+            ds_top("🎖"),
+            "│  🎖 <b>مدیریت دستاوردها</b>",
+            "│  <i>نشان‌های افتخار</i>",
+            ds_sep(),
+            ds_row("🎖 کل دستاوردها", pnum(len(all_achs))),
+            ds_sep("⋆"),
+            "│  ▎📊 <b>آمار دارندگان</b>",
         ]
         for key, (name, desc, coins) in list(all_achs.items())[:15]:
             count = owner_count.get(key, 0)
-            lines.append(f"🎖 {escape(name[:25])} · 👥{count} · 🪙{coins}")
+            lines.append(f"│  🎖 {escape(name[:25])} · 👥{pnum(count)} · 🪙{pnum(coins)}")
+        lines.append(ds_close())
         rows = [
             [btn("➕ ساخت دستاورد سفارشی", "A|ACHNEW")],
             [btn("⬅️ بازگشت", "A|HOME")],
@@ -11474,25 +12013,27 @@ async def admin_economy_manager_show(query) -> None:
         economy_log = DATA.get("economy_log", [])[:10]
         today = analytics_day()
         lines = [
-            "🪙 <b>مدیریت اقتصاد</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"💰 مجموع سکه کاربران: <b>{fmt_num(total_coins)}</b>",
-            f"📈 درآمد امروز: <b>{fmt_num(today.get('coins_earned', 0))}</b>",
-            f"📉 مصرف امروز: <b>{fmt_num(today.get('coins_spent', 0))}</b>",
-            f"⚖️ تراز امروز: <b>{fmt_num(int(today.get('coins_earned', 0)) - int(today.get('coins_spent', 0)))}</b>",
-            "",
-            "━ ۱۰ ثروتمندترین ━",
+            ds_top("🪙"),
+            "│  🪙 <b>مدیریت اقتصاد</b>",
+            "│  <i>خزانه‌ی مرکزی</i>",
+            ds_sep(),
+            ds_row("💰 مجموع سکه کاربران", pnum(total_coins)),
+            ds_row("📈 درآمد امروز", pnum(today.get('coins_earned', 0))),
+            ds_row("📉 مصرف امروز", pnum(today.get('coins_spent', 0))),
+            ds_row("⚖️ تراز امروز", pnum(int(today.get('coins_earned', 0)) - int(today.get('coins_spent', 0)))),
+            ds_sep("⋆"),
+            "│  ▎💰 <b>۱۰ ثروتمندترین</b>",
         ]
         for uid, coins in top_rich:
-            lines.append(f"🪙 {escape(name_of(uid)[:20])}: <b>{fmt_num(coins)}</b>")
-        lines.extend(["", "━ تراکنش‌های اخیر ━"])
+            lines.append(f"│  🪙 {escape(name_of(uid)[:20])} ···· <b>{pnum(coins)}</b>")
+        lines += [ds_sep("⋆"), "│  ▎📊 <b>تراکنش‌های اخیر</b>"]
         for entry in economy_log:
             ts = int(entry.get("ts", 0))
             time_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else ""
             etype = entry.get("type", "")
             amount = int(entry.get("amount", 0))
             emoji = "📈" if etype == "earn" else "📉"
-            lines.append(f"{time_str} {emoji} {name_of(int(entry.get('uid', 0)))[:15]}: {amount}")
+            lines.append(f"│  {time_str} {emoji} {escape(name_of(int(entry.get('uid', 0)))[:15])} ··· {pnum(amount)}")
         rows = [
             [btn("💸 تورم (سکه به همه)", "A|ECON|infl8"),
              btn("💎 توزیع (سکه به همه)", "A|ECON|distrib")],
@@ -11552,11 +12093,13 @@ async def admin_groups_manager_show(query) -> None:
     try:
         groups = DATA.get("groups", {})
         lines = [
-            "👥 <b>مدیریت گروه‌ها</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            f"👥 کل گروه‌ها: <b>{fmt_num(len(groups))}</b>",
-            "",
-            "━ گروه‌ها ━",
+            ds_top("👥"),
+            "│  👥 <b>مدیریت گروه‌ها</b>",
+            "│  <i>قلمروهای ربات</i>",
+            ds_sep(),
+            ds_row("👥 کل گروه‌ها", pnum(len(groups))),
+            ds_sep("⋆"),
+            "│  ▎🗺 <b>نقشه‌ی گروه‌ها</b>",
         ]
         for gid, g in list(groups.items())[:15]:
             if not isinstance(g, dict):
@@ -11566,9 +12109,10 @@ async def admin_groups_manager_show(query) -> None:
                 games_count = int(g.get("created_games", 0))
                 active = "🔥" if g.get("active_game") else "💤"
                 adult = "🔞" if g.get("adult_mode") else ""
-                lines.append(f"{active} <code>{gid_int}</code> · 🎮{games_count} {adult}")
+                lines.append(f"│  {active} <code>{fa(gid_int)}</code> · 🎮{pnum(games_count)} {adult}")
             except Exception:
                 pass
+        lines.append(ds_close())
         rows = [
             [btn("⬅️ بازگشت", "A|HOME")],
         ]
@@ -11584,29 +12128,26 @@ async def admin_reward_manager_show(query) -> None:
         # نمایش جوایز فعلی
         level_rewards = LEVEL_REWARDS
         lines = [
-            "🎁 <b>مدیریت جوایز</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            "━ جوایز سطح (Level Up) ━",
+            ds_top("🎁"),
+            "│  🎁 <b>مدیریت جوایز</b>",
+            "│  <i>پاداش‌های مسیر قهرمانی</i>",
+            ds_sep(),
+            "│  ▎🔥 <b>جوایز سطح (Level Up)</b>",
         ]
         for lv, reward in sorted(level_rewards.items()):
             coins = int(reward.get("coins", 0))
             item = reward.get("item", "—")
-            lines.append(f"🔥 سطح {fmt_num(lv)}: 🪙{coins} · 🎲{item}")
-        lines.extend([
-            "",
-            "━ جوایز فصل ━",
-        ])
+            lines.append(f"│  🔥 سطح {pnum(lv)} ···· 🪙{pnum(coins)} · 🎲{escape(str(item))}")
+        lines += [ds_sep("⋆"), "│  ▎🏆 <b>جوایز فصل</b>"]
         for rank, reward in SEASON_REWARD_TIERS:
             coins = int(reward.get("coins", 0))
-            lines.append(f"🏆 رتبه #{rank}: 🪙{coins}")
-        lines.extend([
-            "",
-            "━ جوایز استریک لاگین ━",
-        ])
+            lines.append(f"│  🏆 رتبه #{pnum(rank)} ···· 🪙{pnum(coins)}")
+        lines += [ds_sep("⋆"), "│  ▎📅 <b>جوایز استریک لاگین</b>"]
         for streak, reward in sorted(LOGIN_STREAK_REWARDS.items()):
             coins = int(reward.get("coins", 0))
             xp = int(reward.get("xp", 0))
-            lines.append(f"📅 {fmt_num(streak)} روز: 🪙{coins} · ⭐{xp}")
+            lines.append(f"│  📅 {pnum(streak)} روز ···· 🪙{pnum(coins)} · ⭐{pnum(xp)}")
+        lines.append(ds_close())
         rows = [
             [btn("⬅️ بازگشت", "A|HOME")],
         ]
@@ -11666,8 +12207,9 @@ async def admin_settings_show(query) -> None:
         adult_default = bool(settings.get("adult_default", False))
         required_ch = REQUIRED_CHANNEL
         lines = [
-            "⚙️ <b>تنظیمات سیستم</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("⚙️"),
+            "│  ⚙️ <b>تنظیمات سیستم</b>",
+            ds_sep(),
             f"🔧 حالت تعمیرات: {'✅ روشن' if maintenance else '❌ خاموش'}",
             f"📝 پیام تعمیرات: {escape(maintenance_msg[:50])}",
             f"⭐ ضریب XP: <b>{xp_mult}x</b>",
@@ -11806,8 +12348,9 @@ async def ai_send_suggestion(query, uid: int) -> None:
         suggestion = ai_game_master_suggest(int(uid))
         style = ai_player_style(int(uid))
         lines = [
-            "🤖 <b>پیشنهاد AI Game Master</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🤖"),
+            "│  🤖 <b>پیشنهاد AI Game Master</b>",
+            ds_sep(),
             f"👤 سبک بازی تو: <b>{style.get('style', 'نامشخص')}</b>",
             f"📊 تعداد پاسخ‌ها: <b>{fmt_num(style.get('total_answers', 0))}</b>",
             "",
@@ -11847,7 +12390,7 @@ async def ai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             # نمایش راهنمای شروع بازی
             await safe_edit(query,
                 f"🎮 <b>شروع بازی با حالت {MODE_LABELS.get(mode, mode)}</b>\n"
-                "━━━━━━━━━━━━━━━━━━\n"
+                f"{ds_sep('⋆')}\n"
                 "برای شروع بازی:\n"
                 "۱) ربات رو به گروهت اضافه کن\n"
                 "۲) در گروه دستور /apex رو بفرست\n"
@@ -11991,23 +12534,25 @@ async def sv_send_home(query, uid: int) -> None:
         best = int(user.get("survival_best", 0))
         active = survival_active_session(int(uid))
         lines = [
-            "🔥 <b>حالت بقا (Survival)</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            "در این حالت، تا زمانی که جواب بدی ادامه می‌دهی!",
-            "هر سوال سختی‌تر می‌شود و پاداش بیشتر می‌شود.",
-            "اگر رد کنی، بازی تمام می‌شود!",
-            "",
-            f"🏆 بهترین استریک تو: <b>{fmt_num(best)}</b>",
+            ds_top("🔥"),
+            "│  🔥 <b>حالت بقا — Survival</b>",
+            "│  <i>تا کجا جواب می‌دی؟!</i>",
+            ds_sep(),
+            "│  هر سوال از قبلی سخت‌تر می‌شه و پاداش",
+            "│  بیشتر می‌شه — ولی یه بار رد کنی، تمومه!",
+            ds_sep("⋆"),
+            ds_row("🏆 بهترین استریک تو", pnum(best)),
         ]
         if active:
             streak = int(active.get("streak", 0))
-            lines.extend([
-                "",
-                "━ بازی فعال ━",
-                f"🔥 استریک فعلی: <b>{fmt_num(streak)}</b>",
-                f"⭐ ایکس‌پی کل: <b>{fmt_num(active.get('total_xp', 0))}</b>",
-                f"🪙 سکه کل: <b>{fmt_num(active.get('total_coins', 0))}</b>",
-            ])
+            lines += [
+                ds_sep("⋆"),
+                "│  ▎🎮 <b>بازی فعال</b>",
+                ds_row("🔥 استریک فعلی", pnum(streak)),
+                ds_row("⭐ ایکس‌پی کل", pnum(active.get('total_xp', 0))),
+                ds_row("🪙 سکه کل", pnum(active.get('total_coins', 0))),
+            ]
+        lines.append(ds_close("🔥"))
         rows = []
         if active:
             rows.append([btn("▶️ ادامه بازی", f"SV|CONT")])
@@ -12088,7 +12633,7 @@ async def sv_show_question(query, session: dict, question: str) -> None:
         mode = str(session.get("current_mode", ""))
         lines = [
             f"🔥 <b>حالت بقا — استریک {fmt_num(streak)}</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             f"🌶 سختی: <b>{heat_label}</b>",
             f"📊 پاداش بعدی: ⭐+{5 + streak + 1} 🪙+{2 + (streak + 1) // 2}",
             "",
@@ -12132,8 +12677,9 @@ async def sv_finish(update: Update, context: ContextTypes.DEFAULT_TYPE, session:
         award_achievement_v11(int(uid), "v11_first_survival")
         log_user_activity(int(uid), f"survival_end", f"streak={streak} xp={total_xp}")
         lines = [
-            "🏁 <b>پایان بازی بقا!</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🏁"),
+            "│  🏁 <b>پایان بازی بقا!</b>",
+            ds_sep(),
             f"🔥 استریک نهایی: <b>{fmt_num(streak)}</b>",
             f"🏆 بهترین استریک: <b>{fmt_num(best)}</b>",
             f"⭐ ایکس‌پی کل: <b>+{fmt_num(total_xp)}</b>",
@@ -12226,15 +12772,16 @@ async def tb_send_home(query, uid: int) -> None:
         user = get_user(int(uid))
         team_battles = int(user.get("team_battles", 0))
         lines = [
-            "🤝 <b>نبرد تیمی</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            "بازی تیمی! دو تیم مقابل هم.",
-            "",
-            f"📊 تعداد بازی‌های تیمی تو: <b>{fmt_num(team_battles)}</b>",
-            "",
-            "🆚 تیم الف در مقابل تیم ب",
-            "🎯 هر تیم با همکاری امتیاز جمع می‌کنه",
-            "🏆 تیم برنده پاداش ویژه می‌گیره!",
+            ds_top("🤝"),
+            "│  🤝 <b>نبرد تیمی</b>",
+            "│  <i>یک برای همه، همه برای یک!</i>",
+            ds_sep(),
+            "│  🆚 دو تیم مقابل هم قرار می‌گیرن",
+            "│  🎯 هر تیم با همکاری امتیاز جمع می‌کنه",
+            "│  🏆 تیم برنده پاداش ویژه می‌گیره!",
+            ds_sep("⋆"),
+            ds_row("📊 بازی‌های تیمی تو", pnum(team_battles)),
+            ds_close("🤝"),
         ]
         rows = [
             [btn("🎮 ساخت نبرد تیمی", "TB|NEW")],
@@ -12250,7 +12797,7 @@ async def tb_view_session(query, session: dict) -> None:
     try:
         lines = [
             f"🤝 <b>نبرد تیمی #{session['id']}</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             f"🔴 تیم الف: <b>{session.get('score_a', 0)}</b>",
             f"🔵 تیم ب: <b>{session.get('score_b', 0)}</b>",
             f"👥 اندازه تیم: <b>{session.get('team_size', 2)}</b>",
@@ -12355,16 +12902,23 @@ async def cmd_apextop_all(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     try:
         lb = leaderboard_global(20)
-        lines = ["🏆 <b>Leaderboard کلی (All-time)</b>", "━━━━━━━━━━━━━━━━━━"]
+        lines = [
+            ds_top("🏆"),
+            "│  🏆 <b>تالار قهرمانان — کل تاریخ</b>",
+            "│  <i>افسانه‌های همیشگی</i>",
+            ds_sep(),
+        ]
         if not lb:
-            lines.append("— هنوز کسی ثبت نشده.")
+            lines.append("│  هنوز کسی ثبت نشده — تو اولین افسانه باش!")
         else:
             for i, (uid, xp, wins, games) in enumerate(lb, start=1):
-                medal = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}."))
-                lines.append(f"{medal} {escape(name_of(uid)[:20])} · ⭐{fmt_num(xp)} · 🏆{wins}")
-        lines.append("━━━━━━━━━━━━━━━━━━")
-        lines.append("برای Leaderboard هفتگی: /apextop")
-        lines.append("برای Leaderboard ماهانه: /apextop_month")
+                medal = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{pnum(i)}."))
+                lines.append(f"│  {medal} {escape(name_of(uid)[:20])} · ⭐{pnum(xp)} · 🏆{pnum(wins)}")
+        lines += [
+            ds_close("🏆"),
+            "",
+            "📅 هفتگی: /apextop · 🌐 ماهانه: /apextop_month",
+        ]
         await msg.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
     except Exception as exc:
         log_event("error", "system", f"cmd_apextop_all failed: {exc!r}")
@@ -12394,6 +12948,10 @@ async def cmd_apextop_month(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # ================================================================
 #  فاز ۱۲ — Daily Reward + Player of the Day + Social Wall
 # ================================================================
+# نام مستعار برای سازگاری و قابل‌کشف بودن هندلر پاداش روزانه
+cmd_apexdailyreward = cmd_apexdaily_reward
+
+
 def daily_reward_eligible(uid: int) -> bool:
     """آیا کاربر برای پاداش روزانه واجد است؟"""
     try:
@@ -12447,12 +13005,13 @@ async def cmd_apexdaily_reward(update: Update, context: ContextTypes.DEFAULT_TYP
         xp = result.get("xp", 0)
         streak = result.get("streak", 1)
         await msg.reply_text(
-            "🎁 <b>پاداش روزانه!</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_top('🎁')}\n"
+            "│  🎁 <b>پاداش روزانه!</b>\n"
+            f"{ds_sep()}\n"
             f"📅 استریک: <b>{fmt_num(streak)} روز</b>\n"
             f"🪙 سکه: <b>+{fmt_num(coins)}</b>\n"
             f"⭐ XP: <b>+{fmt_num(xp)}</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_sep('⋆')}\n"
             "فردا هم بیا تا استریکت حفظ بشه! 🔥",
             parse_mode=ParseMode.HTML)
     except Exception as exc:
@@ -12906,8 +13465,9 @@ async def qs_send_home(query, uid: int) -> None:
         daily_done = sum(1 for q in daily if q.get("completed", False))
         weekly_done = sum(1 for q in weekly if q.get("completed", False))
         lines = [
-            "🎯 <b>Quest Center</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🎯"),
+            "│  🎯 <b>Quest Center</b>",
+            ds_sep(),
             "📅 <b>Quest های روزانه</b>",
             f"✅ تکمیل‌شده: <b>{daily_done}/{len(daily)}</b>",
             "",
@@ -13152,8 +13712,9 @@ async def sp_send_home(query, uid: int) -> None:
         claimed = user.get("season_pass_claimed", [])
         xp_in_tier = xp % SEASON_PASS_XP_PER_TIER
         lines = [
-            "🎫 <b>Season Pass / Battle Pass</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🎫"),
+            "│  🎫 <b>Season Pass / Battle Pass</b>",
+            ds_sep(),
             f"📊 Tier فعلی: <b>{tier}/{SEASON_PASS_TIERS}</b>",
             f"⭐ XP در Pass: <b>{fmt_num(xp)}</b>",
             f"📊 پیشرفت Tier: <b>{xp_in_tier}/{SEASON_PASS_XP_PER_TIER}</b>",
@@ -13441,8 +14002,9 @@ async def mm_send_home(query, uid: int) -> None:
         in_queue = any(int(e.get("uid", 0)) == int(uid) for e in queue if isinstance(e, dict))
         queue_size = len(queue)
         lines = [
-            "🎯 <b>Matchmaking رقیب</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🎯"),
+            "│  🎯 <b>Matchmaking رقیب</b>",
+            ds_sep(),
             f"⭐ ELO تو: <b>{fmt_num(elo)}</b>",
             f"🏆 برد: <b>{fmt_num(mm_wins)}</b> · ❌ باخت: <b>{fmt_num(mm_losses)}</b> · 🤝 مساوی: <b>{fmt_num(mm_draws)}</b>",
             "",
@@ -13523,8 +14085,9 @@ async def gh_send_home(query, uid: int) -> None:
         user = get_user(int(uid))
         history = user.get("game_history", [])
         lines = [
-            "📜 <b>تاریخچه بازی‌های من</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("📜"),
+            "│  📜 <b>تاریخچه بازی‌های من</b>",
+            ds_sep(),
             f"📊 آخرین بازی‌ها: <b>{fmt_num(len(history))}</b>",
             "",
         ]
@@ -13559,8 +14122,9 @@ async def gh_view_entry(query, uid: int, idx: int) -> None:
         ts = int(entry.get("ts", 0))
         time_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else ""
         lines = [
-            "📜 <b>جزئیات بازی</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("📜"),
+            "│  📜 <b>جزئیات بازی</b>",
+            ds_sep(),
             f"⏱ زمان: <b>{time_str}</b>",
             f"🎮 نوع: <b>{escape(str(entry.get('mode', '')))}</b>",
             f"📊 نتیجه: <b>{escape(str(entry.get('result', '')))}</b>",
@@ -13649,8 +14213,9 @@ async def ba_send_home(query, uid: int) -> None:
         user = get_user(int(uid))
         appeals = user.get("ban_appeals", [])
         lines = [
-            "⚖️ <b>درخواست لغو مسدودیت</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("⚖️"),
+            "│  ⚖️ <b>درخواست لغو مسدودیت</b>",
+            ds_sep(),
             f"📊 تعداد درخواست‌های تو: <b>{fmt_num(len(appeals))}</b>",
         ]
         if not appeals:
@@ -13789,8 +14354,9 @@ async def ms_send_home(query, uid: int) -> None:
         user = get_user(int(uid))
         claimed = user.get("milestones_claimed", [])
         lines = [
-            "🎯 <b>Milestone Rewards</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🎯"),
+            "│  🎯 <b>Milestone Rewards</b>",
+            ds_sep(),
             f"✅ دریافت‌شده: <b>{fmt_num(len(claimed))}/{fmt_num(len(MILESTONES))}</b>",
             "",
             "━ همه‌ی Milestone ها ━",
@@ -13963,8 +14529,9 @@ async def sd_send_home(query, uid: int) -> None:
         # گروه‌های بازی‌کرده
         groups_played = stats_ext.get("groups_played_in", [])
         lines = [
-            "📊 <b>Stats Dashboard</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("📊"),
+            "│  📊 <b>Stats Dashboard</b>",
+            ds_sep(),
             "━ آمار کلی ━",
             f"🎮 بازی: <b>{fmt_num(games)}</b> · 🏆 برد: <b>{fmt_num(wins)}</b> · 💔 باخت: <b>{fmt_num(losses)}</b>",
             f"📊 درصد برد: <b>{win_rate}%</b>",
@@ -14259,7 +14826,7 @@ async def tt_show_step(query, uid: int, step: int) -> None:
         s = TUTORIAL_STEPS[step]
         lines = [
             f"🎓 <b>Tutorial</b> — مرحله {step + 1}/{len(TUTORIAL_STEPS)}",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_sep("⋆"),
             f"<b>{escape(s['title'])}</b>",
             "",
             escape(s['body']),
@@ -14493,8 +15060,9 @@ async def vp_send_home(query, uid: int) -> None:
         user = get_user(int(uid))
         coins = int(user.get("coins", 0))
         lines = [
-            "👑 <b>ApexRival VIP</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("👑"),
+            "│  👑 <b>ApexRival VIP</b>",
+            ds_sep(),
             "🎨 مزایای VIP:",
             "• 🏆 بج ویژه‌ی VIP",
             "• 🖼 قاب افسانه‌ای",
@@ -14854,8 +15422,9 @@ async def mg_send_home(query, uid: int) -> None:
         won = int(user.get("mini_games_won", 0))
         win_rate = (won * 100 // played) if played > 0 else 0
         lines = [
-            "🎮 <b>Mini-Games Center</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🎮"),
+            "│  🎮 <b>Mini-Games Center</b>",
+            ds_sep(),
             f"🎮 بازی‌کرده: <b>{fmt_num(played)}</b>",
             f"🏆 برده: <b>{fmt_num(won)}</b> · 📊 درصد برد: <b>{win_rate}%</b>",
             "",
@@ -14886,8 +15455,9 @@ async def mg_play_trivia(query, uid: int) -> None:
         context = query.bot_data if hasattr(query, "bot_data") else None
         # استفاده از global
         lines = [
-            "🧠 <b>Trivia</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🧠"),
+            "│  🧠 <b>Trivia</b>",
+            ds_sep(),
             f"<b>{escape(trivia['question'])}</b>",
             "",
             "گزینه‌ها:",
@@ -14933,8 +15503,9 @@ async def mg_play_wordgame(query, uid: int) -> None:
             return
         DATA.setdefault("_temp_wordgame", {})[str(uid)] = word_data["original"]
         lines = [
-            "📝 <b>Word Game</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("📝"),
+            "│  📝 <b>Word Game</b>",
+            ds_sep(),
             "این کلمه به‌هم‌ریخته رو مرتب کن:",
             "",
             f"<b>{escape(word_data['scrambled'])}</b>",
@@ -14978,8 +15549,9 @@ async def mg_play_numberguess(query, uid: int) -> None:
         game = mini_game_numberguess_new()
         DATA.setdefault("_temp_numberguess", {})[str(uid)] = game
         lines = [
-            "🔢 <b>Number Guess</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🔢"),
+            "│  🔢 <b>Number Guess</b>",
+            ds_sep(),
             "یک عدد بین ۱ تا ۱۰۰ انتخاب شده.",
             "تو ۷ فرصت داری تا حدس بزنی!",
             "",
@@ -15024,8 +15596,9 @@ async def mg_numberguess_check(query, uid: int, guess: int) -> None:
             await mg_send_home(query, uid)
             return
         lines = [
-            "🔢 <b>Number Guess</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🔢"),
+            "│  🔢 <b>Number Guess</b>",
+            ds_sep(),
             f"🎯 حدس: <b>{guess}</b> — {hint}",
             f"⏳ تلاش‌های باقی‌مانده: <b>{remaining}</b>",
             "",
@@ -15048,8 +15621,9 @@ async def mg_play_memory(query, uid: int) -> None:
         DATA.setdefault("_temp_memory", {})[str(uid)] = game
         seq_str = " - ".join(str(x) for x in game["sequence"])
         lines = [
-            "🃏 <b>Memory Game</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🃏"),
+            "│  🃏 <b>Memory Game</b>",
+            ds_sep(),
             "این دنباله رو به خاطر بسپار:",
             "",
             f"<b>{seq_str}</b>",
@@ -15071,8 +15645,9 @@ async def mg_play_reaction(query, uid: int) -> None:
         DATA.setdefault("_temp_reaction", {})[str(uid)] = game
         wait = int(game["target_ts"]) - int(game["start_ts"])
         lines = [
-            "⚡ <b>Reaction Game</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("⚡"),
+            "│  ⚡ <b>Reaction Game</b>",
+            ds_sep(),
             f"⏳ صبر کن... در <b>{wait} ثانیه</b> دکمه ظاهر می‌شه!",
             "زودتر بزنی = باخت!",
             "",
@@ -15378,8 +15953,9 @@ async def tr_send_home(query, uid: int) -> None:
         completed = int(user.get("trades_completed", 0))
         cooldown = int(user.get("trade_cooldown_until", 0)) - now_ts()
         lines = [
-            "🔄 <b>Trade Center</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🔄"),
+            "│  🔄 <b>Trade Center</b>",
+            ds_sep(),
             f"✅ تجارت‌های انجام‌شده: <b>{fmt_num(completed)}</b>",
             f"📨 دریافتی: <b>{fmt_num(len(user.get('trades_received', [])))}</b>",
             f"📤 ارسالی: <b>{fmt_num(len(user.get('trades_sent', [])))}</b>",
@@ -15639,8 +16215,9 @@ async def ln_send_home(query, uid: int) -> None:
         wins = int(user.get("lucky_number_wins", 0))
         total_won = int(user.get("lucky_number_total_won", 0))
         lines = [
-            "🎰 <b>Lucky Number روزانه</b>",
-            "━━━━━━━━━━━━━━━━━━",
+            ds_top("🎰"),
+            "│  🎰 <b>Lucky Number روزانه</b>",
+            ds_sep(),
             "یک عدد بین ۱ تا ۱۰۰ انتخاب کن!",
             "🎯 اگر دقیقاً درست بگویی: +500 سکه +200 XP",
             "🎯 اگر فاصله ≤ ۵ باشد: +20 تا 90 سکه",
@@ -15732,8 +16309,9 @@ async def cmd_apexcompare(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return "🔴"
         return "🟡"
     lines = [
-        "⚖️ <b>مقایسه بازیکنان</b>",
-        "━━━━━━━━━━━━━━━━━━",
+        ds_top("⚖️"),
+        "│  ⚖️ <b>مقایسه بازیکنان</b>",
+        ds_sep(),
         f"👤 تو: <b>{my_name}</b>  VS  👤 حریف: <b>{their_name}</b>",
         "",
         f"🔥 سطح: <b>{me.get('level', 1)}</b> {compare(int(me.get('level', 1)), int(them.get('level', 1)))} <b>{them.get('level', 1)}</b>",
@@ -15746,7 +16324,7 @@ async def cmd_apexcompare(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"🔥 استریک: <b>{fmt_num(int(me.get('daily_streak', 0)))}</b> {compare(int(me.get('daily_streak', 0)), int(them.get('daily_streak', 0)))} <b>{fmt_num(int(them.get('daily_streak', 0)))}</b>",
         f"🎖 دستاوردها: <b>{fmt_num(len(me.get('achievements', [])))}</b> {compare(len(me.get('achievements', [])), len(them.get('achievements', [])))} <b>{fmt_num(len(them.get('achievements', [])))}</b>",
         "",
-        "━━━━━━━━━━━━━━━━━━",
+        ds_sep("⋆"),
         "🟢 = تو بهتری · 🔴 = حریف بهتر · 🟡 = مساوی",
     ]
     await msg.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
@@ -16560,8 +17138,9 @@ async def cmd_apexrules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if msg is None:
         return
     text = (
-        "📜 <b>قوانین بازی ApexRival</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"{ds_top('📜')}\n"
+        "│  📜 <b>قوانین بازی ApexRival</b>\n"
+        f"{ds_sep()}\n"
         "🎮 <b>نحوه‌ی بازی:</b>\n"
         "۱) ربات رو به گروه اضافه کن\n"
         "۲) دستور /apex رو بفرست تا لابی ساخته بشه\n"
@@ -16614,7 +17193,7 @@ async def cmd_apexrules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "/apexteams — تیم‌های رقابتی\n"
         "/apexdaily — چالش روزانه\n"
         "/apexhelp — راهنمای کامل\n\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"{ds_sep('⋆')}\n"
         "🎯 بازی کن و لذت ببر! ⚔️"
     )
     await msg.reply_text(text, parse_mode=ParseMode.HTML)
@@ -16704,8 +17283,9 @@ async def cmd_apexquick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception:
         pass
     await msg.reply_text(
-        "⚡ <b>بازی سریع شروع شد!</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"{ds_top('⚡')}\n"
+        "│  ⚡ <b>بازی سریع شروع شد!</b>\n"
+        f"{ds_sep()}\n"
         f"👑 سرگروه: {mention_user(int(user.id), name)}\n"
         "🎮 بازی شروع شد! بقیه می‌تونن با /apexjoin وارد بشن.\n"
         "🎯 اولین نوبت شروع می‌شه!",
@@ -16824,8 +17404,9 @@ async def cmd_apexbroadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     args = list(getattr(context, "args", None) or [])
     if not args:
         await msg.reply_text(
-            "📢 <b>پیام همگانی</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_top('📢')}\n"
+            "│  📢 <b>پیام همگانی</b>\n"
+            f"{ds_sep()}\n"
             "برای ارسال پیام به همه‌ی کاربران:\n"
             "<code>/apexbroadcast متن پیام</code>",
             parse_mode=ParseMode.HTML,
@@ -17147,8 +17728,9 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_answer_query(query)
         await safe_edit(
             query,
-            "📋 <b>بیشتر...</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_top('📋')}\n"
+            "│  📋 <b>بیشتر...</b>\n"
+            f"{ds_sep()}\n"
             "🎯 <b>پیشرفت:</b> مأموریت، پاس فصل، قدم‌های میل\n"
             "🎮 <b>بازی:</b> مینی‌بازی، عدد شانسی، جفت‌یابی\n"
             "👥 <b>اجتماعی:</b> معامله، دعوت، تالار افتخار",
@@ -17176,8 +17758,9 @@ async def love_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await safe_answer_query(query)
     await safe_edit(
         query,
-        "❤️ <b>عشق‌سنج ApexRival</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"{ds_top('❤️')}\n"
+        "│  ❤️ <b>عشق‌سنج ApexRival</b>\n"
+        f"{ds_sep()}\n"
         "💘 <b>/apexlove</b> — روی پیام طرف Reply کن؛ گزارش ۴ بُعدی + حکم نهایی\n"
         "💌 <b>/apexlove2</b> — دو نفره؛ هر دو جواب مخفیانه می‌دهید و درصد هم‌صدایی می‌گیرید\n\n"
         "💡 برای استفاده، در گروه روی پیام کسی Reply کن و دستور رو بفرست.",
@@ -17270,8 +17853,9 @@ async def fun_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await safe_answer_query(query)
         await safe_edit(
             query,
-            "🎉 <b>بازی‌های مهمانی</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_top('🎉')}\n"
+            "│  🎉 <b>بازی‌های مهمانی</b>\n"
+            f"{ds_sep()}\n"
             "این بازی‌ها در <b>گروه</b> اجرا می‌شوند:\n\n"
             "🎰 <code>/apexspin</code> — گردونه‌ی بطری\n"
             "🤔 <code>/apexwyr</code> — می‌کردی؟ (رأی زنده)\n"
@@ -17289,8 +17873,9 @@ async def fun_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await safe_answer_query(query)
         await safe_edit(
             query,
-            "🎮 <b>بازی‌های بیشتر</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{ds_top('🎮')}\n"
+            "│  🎮 <b>بازی‌های بیشتر</b>\n"
+            f"{ds_sep()}\n"
             "🎲 <code>/apexdice</code> — تاس\n"
             "🪙 <code>/apexcoin</code> — شیر یا خط\n"
             "🎱 <code>/apex8ball</code> — هشت‌گوی جادویی\n"
