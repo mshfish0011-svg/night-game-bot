@@ -172,6 +172,24 @@
 #   • کد رنگی بخش‌ها در هاب‌ها: بازی‌ها=قرمز، پروفایل=آبی، پیشرفت=سبز،
 #     اجتماعی=بنفش، راهنما=مشکی — همیشه از رنگ می‌فهمی کجایی هستی
 #
+# بهبود در نسخه ۶.۵ — 🎬 منوی زنده (انیمیشن آیکون‌ها):
+#   • نکته‌ی صادقانه: تلگرام به هیچ باتی اجازه‌ی CSS/HTML/@keyframes
+#     روی دکمه‌های کیبورد را نمی‌دهد — دکمه‌ها متن+ایموجی خالص‌اند و
+#     کلاینت تلگرام خودشان را رندر می‌کند. «انیمیشن واقعی» در تلگرام
+#     یعنی ویرایش دوره‌ای همان پیام؛ همین کار ساخته شد:
+#   • موتور منوی زنده (home_living_tick): هر «فاصله‌ی تنظیمی» فریم
+#     آیکون‌های منوی خصوصی را جلو می‌برد — 🎮↔🕹️ 🪪↔🆔 🏆↔🥇 👥↔🫂
+#     🛍↔🛒 🔔↔📣 ⚙️↔🔧 🎓↔📖 و پالس قرمزِ دکمه‌ی ادمین 🔴↔🟠؛
+#     مربع‌های رنگی (هویت بخش‌ها) همیشه ثابت می‌مانند
+#   • نبض زنده در متن منو: نشانگر چرخان ◐◓◑◒ + برچسب «منوی زنده»
+#   • نگهبان home_live_guard (گروه -96): به محض خروج کاربر از منوی
+#     اصلی، انیمیشن متوقف می‌شود — هیچ صفحه‌ای نمی‌پرد (سازگار با
+#     سیستم تک‌پیام)؛ پیام مرده خودکار از فهرست پاک می‌شود
+#   • تنظیم صفر تا صد از پنل ادمین (A|SYSCFG): سوییچ روشن/خاموش +
+#     پیچ سرعت ۳ تا ۶۰ ثانیه (پیش‌فرض ۵ ثانیه — ملایم، مطابق سلیقه)
+#   • فلود-کنترل کامل: مکث سراسری مشترک با موتور پنل گروه، RetryAfter
+#     با backoff، بلعیدن «Message is not modified»
+#
 #  راه‌اندازی:  BOT_TOKEN=... ADMIN_ID=... python bot.py
 # ================================================================
 
@@ -403,7 +421,7 @@ from telegram.ext import (
     filters,
 )
 from telegram.request import HTTPXRequest
-from telegram.error import RetryAfter  # ۶.۳ — پشتیبانی از فلود-کنترل تلگرام در رفرش زنده
+from telegram.error import RetryAfter, BadRequest  # ۶.۳/۶.۵ — فلود-کنترل و خطاهای ویرایش تلگرام
 
 
 # ================================================================
@@ -926,6 +944,9 @@ SYSCFG_DEFAULTS = {
     # — اعلان فوری ادمین‌ها —
     "admin_notify_report": True,   # گزارش‌های اولویت بالا فوری پیام بدهند؟
     "admin_notify_feedback": False,  # بازخوردهای عادی هم اعلان بدهند؟
+    # — 🎬 منوی زنده (۶.۵) — پالس آیکون‌های منوی اصلی —
+    "home_anim": True,            # انیمیشن منوی خصوصی روشن باشد؟
+    "home_anim_interval": 5,      # هر چند ثانیه فریم آیکون‌ها عوض شود (۳-۶۰)
 }
 
 
@@ -936,9 +957,11 @@ def syscfg() -> dict:
         merged = dict(SYSCFG_DEFAULTS)
         merged.update({k: v for k, v in store.items() if k in SYSCFG_DEFAULTS})
         for b in ("panel_refresh", "panel_countdown", "rate_enabled",
-                  "antispam_enabled", "admin_notify_report", "admin_notify_feedback"):
+                  "antispam_enabled", "admin_notify_report", "admin_notify_feedback",
+                  "home_anim"):
             merged[b] = bool(merged[b])
         merged["panel_interval"] = max(3, min(60, int(merged["panel_interval"])))
+        merged["home_anim_interval"] = max(3, min(60, int(merged["home_anim_interval"])))
         merged["rate_max"] = max(4, min(60, int(merged["rate_max"])))
         merged["rate_window"] = max(5, min(300, int(merged["rate_window"])))
         for k in ("as_pm_hour", "as_tour_day", "as_fb_day", "as_fr_hour"):
@@ -3331,6 +3354,72 @@ def panel_stale(uid: int, message_id: int) -> bool:
 
 
 # ================================================================
+#  🎬 منوی زنده (۶.۵) — رجیستری انیمیشن منوی خصوصی
+#  تلگرام به هیچ باتی اجازه‌ی CSS/HTML روی دکمه‌ها نمی‌دهد؛ نزدیک‌ترین
+#  معادلِ واقعیِ «انیمیشن آیکون‌ها»، تعویض نرم فریم‌ها با ویرایش دوره‌ای
+#  همان پیام است. این رجیستری می‌گوید منوی کدام کاربر هنوز «خانه» است.
+# ================================================================
+_home_live: dict[int, dict] = {}   # uid -> {"chat_id", "msg_id", "frame", "due"}
+
+
+def home_live_mark(uid: int, chat_id: int, message_id: int) -> None:
+    """ثبت منوی اصلی کاربر برای انیمیشن زنده (فقط چت خصوصی — شناسه‌ی مثبت)."""
+    try:
+        if int(chat_id) < 0 or not message_id:
+            return
+        interval = max(3, min(60, int(syscfg().get("home_anim_interval", 5))))
+        _home_live[int(uid)] = {
+            "chat_id": int(chat_id),
+            "msg_id": int(message_id),
+            "frame": 1,
+            "due": time.time() + interval,
+        }
+    except Exception:
+        pass
+
+
+def home_live_drop(uid: int) -> None:
+    """حذف کاربر از موتور منوی زنده (وقتی از منوی اصلی خارج شد)."""
+    try:
+        _home_live.pop(int(uid), None)
+    except Exception:
+        pass
+
+
+def home_live_is_tracked(uid: int, chat_id: int, message_id: int) -> bool:
+    """آیا این پیامِ خصوصی، همان پیام منوی زنده‌ی این کاربر است؟"""
+    try:
+        info = _home_live.get(int(uid))
+        return bool(info and int(info.get("msg_id", 0)) == int(message_id)
+                    and int(info.get("chat_id", 0)) == int(chat_id))
+    except Exception:
+        return False
+
+
+async def home_live_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """🎬 نگهبان منوی زنده — قبل از همه‌ی هندلرها اجرا می‌شود.
+
+    به محض این‌که کاربر با دکمه‌ای غیر از «منوی اصلی» از خانه خارج شود،
+    انیمیشن همان پیام متوقف می‌شود تا موتور هرگز صفحه‌ی فعلی کاربر را
+    نپرد و با سیستم تک‌پیام در تضاد نیفتد.
+    """
+    try:
+        q = update.callback_query
+        if q is None or q.message is None or q.from_user is None:
+            return
+        chat = q.message.chat
+        if chat is None or chat.type != "private":
+            return
+        data = str(q.data or "")
+        if data in ("H|HOME", "H|MORE"):
+            return  # این دو خودشان منوی اصلی را برمی‌گردانند
+        if home_live_is_tracked(int(q.from_user.id), int(chat.id), int(q.message.message_id)):
+            home_live_drop(int(q.from_user.id))
+    except Exception:
+        pass
+
+
+# ================================================================
 #  🧹 سیستم تک‌پیام (UI Ledger) — «همه‌چی با یک پیام پیش بره»
 #  هر دستور جدید، پیام‌های قبلیِ ربات را در همان چت پاک می‌کند؛
 #  هم در PV و هم در گروه. پیام‌های ارسالی ربات خودکار ردیابی می‌شوند
@@ -3705,7 +3794,32 @@ async def onb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # ================================================================
 #  پنل خانه — خصوصی و گروهی
 # ================================================================
-def private_home_text(uid: int) -> str:
+# 🎬 فریم‌های انیمیشن منوی زنده (۶.۵) — تلگرام CSS روی دکمه‌ها نمی‌پذیرد؛
+# «پالس/چرخش» واقعی با تعویض نرم آیکون‌ها بین دو فریم ساخته می‌شود.
+# مربع‌های رنگی (هویت دکمه‌ها) در هر دو فریم ثابت می‌مانند.
+HOME_ICON_ANIM = {
+    "games":    ("🎮", "🕹️"),
+    "profile":  ("🪪", "🆔"),
+    "progress": ("🏆", "🥇"),
+    "social":   ("👥", "🫂"),
+    "shop":     ("🛍", "🛒"),
+    "notify":   ("🔔", "📣"),
+    "settings": ("⚙️", "🔧"),
+    "help":     ("🎓", "📖"),
+    "admin_dot": ("🔴", "🟠"),
+}
+HOME_ANIM_SPIN = "◐◓◑◒"   # نبضِ زنده‌ی منو — با هر فریم می‌چرخد
+
+
+def _anim_icon(key: str, frame: int) -> str:
+    """آیکون فریم n — مربع رنگی جدا ست می‌شود و این فقط آیکون دوم است."""
+    pair = HOME_ICON_ANIM.get(key)
+    if not pair:
+        return ""
+    return str(pair[int(frame) % 2])
+
+
+def private_home_text(uid: int, frame: int = 0) -> str:
     """صفحه‌ی اصلی ربات — زیبا، جذاب، با طراحی حرفه‌ای."""
     u = get_user(uid)
     level = int(u.get("level", 1))
@@ -3771,33 +3885,42 @@ def private_home_text(uid: int) -> str:
     if ev_line:
         text += ev_line
     text += tip_footer()
+    # 🎬 ۶.۵ — نبض منوی زنده: وقتی انیمیشن روشن است، نشانگر چرخان می‌چرخد
+    try:
+        if syscfg().get("home_anim", True):
+            text += f"\n{HOME_ANIM_SPIN[int(frame) % 4]} 🎬 منوی زنده"
+    except Exception:
+        pass
     return text
 
 
-def private_home_markup(uid: int) -> InlineKeyboardMarkup:
-    """منوی اصلی نسل ۵ (۶.۴) — ۸ دکمه‌ی رنگی + ورود مستقیم پنل مدیریت برای ادمین.
+def private_home_markup(uid: int, frame: int = 0) -> InlineKeyboardMarkup:
+    """منوی اصلی نسل ۶ (۶.۵) — ۸ دکمه‌ی رنگی + پالس زنده‌ی آیکون‌ها.
 
-    درخواست صریح کاربر (۶.۴):
-    • دکمه‌ها «رنگی و توپر» شوند → هر دکمه مربعِ رنگیِ اختصاصی خودش را دارد
-      (تلگرام پس‌زمینه‌ی دکمه را رنگی نمی‌کند؛ رنگِ توپر با مربع‌های رنگی ساخته می‌شود)
-    • دکمه‌ی «پنل مدیریت» مستقیماً روی منوی اصلی برگشت — تمام‌عرض، فقط برای ادمین.
-    کاربر عادی دقیقاً همان ۸ دکمه را می‌بیند؛ ادمین ۸ دکمه + ستون فرمان.
+    درخواست‌های صریح کاربر:
+    • (۶.۴) دکمه‌ها «رنگی و توپر» — هر دکمه مربعِ رنگیِ اختصاصی دارد +
+      دکمه‌ی «پنل مدیریت» مستقیم روی منوی اصلی (فقط ادمین).
+    • (۶.۵) آیکون‌ها «زنده و پویا» — چون تلگرام CSS/@keyframes روی
+      دکمه‌ها را نمی‌پذیرد، پالس با تعویض نرم دو فریمِ آیکون ساخته می‌شود
+      (مثلاً 🎮↔🕹️ و ⚙️↔🔧) و موتورِ منوی زنده هر «فاصله‌ی تنظیمی» فریم
+      را جلو می‌برد. مربع‌های رنگی ثابت می‌مانند (هویت بخش‌ها).
     """
     unread = unread_notifications(uid)
-    notify_label = f"🟧🔔 اعلان‌ها ({unread})" if unread else "🟧🔔 اعلان‌ها"
+    f = int(frame) % 2
+    notify_label = f"🟧{_anim_icon('notify', f)} اعلان‌ها ({unread})" if unread else f"🟧{_anim_icon('notify', f)} اعلان‌ها"
     rows = [
         # ردیف ۱: بازی و هویت
-        [btn("🟥🎮 بازی‌ها", "H|GAMES"), btn("🟦🪪 پروفایل", "H|PROFILE")],
+        [btn(f"🟥{_anim_icon('games', f)} بازی‌ها", "H|GAMES"), btn(f"🟦{_anim_icon('profile', f)} پروفایل", "H|PROFILE")],
         # ردیف ۲: پیشرفت و اجتماع
-        [btn("🟩🏆 پیشرفت", "H|PROGRESS"), btn("🟪👥 اجتماعی", "H|SOCIAL")],
+        [btn(f"🟩{_anim_icon('progress', f)} پیشرفت", "H|PROGRESS"), btn(f"🟪{_anim_icon('social', f)} اجتماعی", "H|SOCIAL")],
         # ردیف ۳: اقتصاد و پیام‌ها
-        [btn("🟨🛍 فروشگاه", "S|HOME"), btn(notify_label, "NT|HOME")],
+        [btn(f"🟨{_anim_icon('shop', f)} فروشگاه", "S|HOME"), btn(notify_label, "NT|HOME")],
         # ردیف ۴: ابزار
-        [btn("⬜⚙️ تنظیمات", "US|HOME"), btn("⬛🎓 راهنما", "H|HELP")],
+        [btn(f"⬜{_anim_icon('settings', f)} تنظیمات", "US|HOME"), btn(f"⬛{_anim_icon('help', f)} راهنما", "H|HELP")],
     ]
-    # 🛡 دکمه‌ی ورود مستقیم به ستون فرمان — تمام‌عرض، فقط برای ادمین‌ها
+    # 🛡 دکمه‌ی ورود مستقیم به ستون فرمان — تمام‌عرض، فقط برای ادمین‌ها + پالس قرمز
     if has_permission(int(uid), "admin"):
-        rows.append([btn("🔴🛡 پنل مدیریت", "A|HOME")])
+        rows.append([btn(f"{_anim_icon('admin_dot', f)}🛡 پنل مدیریت", "A|HOME")])
     return kb(rows)
 
 
@@ -3941,9 +4064,14 @@ async def show_private_home(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     if fresh_message and update.message is not None:
         m = await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup, disable_web_page_preview=True)
         panel_register(uid, int(chat.id), m.message_id, "home")
+        # 🎬 ۶.۵ — ثبت برای انیمیشن زنده (فقط چت خصوصی)
+        home_live_mark(uid, int(chat.id), int(m.message_id))
     else:
         try:
-            await context.bot.send_message(int(chat.id), text, parse_mode=ParseMode.HTML, reply_markup=markup, disable_web_page_preview=True)
+            m2 = await context.bot.send_message(int(chat.id), text, parse_mode=ParseMode.HTML, reply_markup=markup, disable_web_page_preview=True)
+            if m2 is not None:
+                panel_register(uid, int(chat.id), int(m2.message_id), "home")
+                home_live_mark(uid, int(chat.id), int(m2.message_id))
         except Exception:
             pass
 
@@ -13650,6 +13778,7 @@ async def admin_qreports_show(query) -> None:
 #  نسخه ۶.۲ — ⚙️ مرکز کنترل «سیستم و ضداسپم» (صفر تا صد)
 # ================================================================
 SYSCFG_TOGGLES = [
+    ("home_anim",          "🎬 منوی زنده",              "پالس آیکون‌های منوی خصوصی — انیمیشن زنده (۶.۵)"),
     ("panel_refresh",      "⏱ رفرش خودکار پنل گروه",   "پنل بازی/لابی هر چند ثانیه خودش تازه می‌شود"),
     ("panel_countdown",    "🔢 ثانیه‌شمار زنده",          "شمارش معکوس رفرش روی پنل نمایش داده شود"),
     ("rate_enabled",       "🛡 محافظ کلیک سریع",         "جلوی کلیک‌های پی‌درپی غیرانسانی را می‌گیرد"),
@@ -13659,6 +13788,8 @@ SYSCFG_TOGGLES = [
 ]
 
 SYSCFG_STEPPERS = [
+    ("home_anim_interval", "🎬 سرعت انیمیشن منو", "ثانیه", 3, 60, 1,
+     "هر چند ثانیه فریم آیکون‌های منوی خصوصی عوض شود"),
     ("panel_interval", "⏱ فاصله‌ی رفرش پنل", "ثانیه", 3, 60, 1,
      "هر چند ثانیه محتوای پنل گروه کامل تازه شود"),
     ("rate_max", "🛡 سقف کلیک", "کلیک", 4, 60, 2,
@@ -13688,6 +13819,10 @@ async def admin_syscfg_show(query) -> None:
             og_top("⚙️"),
             og_head("⚙️", "سیستم و ضداسپم", "تنظیم صفر تا صد — همه‌ی عقربه‌ها دست خودت"),
             og_sep(),
+            og_section("🎬", "منوی زنده‌ی خصوصی (۶.۵)"),
+            og_row("انیمیشن آیکون‌ها", "روشن ✅" if cfg["home_anim"] else "خاموش ❌"),
+            og_row("سرعت پالس", f"هر {pnum(cfg['home_anim_interval'])} ثانیه"),
+            og_sep("◈"),
             og_section("⏱", "رفرش زنده‌ی پنل گروه"),
             og_row("وضعیت موتور", "روشن ✅" if cfg["panel_refresh"] else "خاموش ❌"),
             og_row("فاصله‌ی رفرش", f"{pnum(cfg['panel_interval'])} ثانیه"),
@@ -20173,6 +20308,9 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 pass
         else:
             await safe_edit(query, private_home_text(uid), private_home_markup(uid))
+            # 🎬 ۶.۵ — برگشت به خانه: منوی زنده دوباره فعال شود
+            if chat is not None and query.message is not None:
+                home_live_mark(uid, int(chat.id), int(query.message.message_id))
         return
 
     # --- 🗂 هاب‌های منوی ۸ دکمه‌ای (۶.۳) ---
@@ -20212,6 +20350,9 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # پنل‌های قدیمی که هنوز این دکمه را دارند، به منوی جدید ۸ دکمه‌ای هدایت می‌شوند.
         await safe_answer_query(query)
         await safe_edit(query, private_home_text(uid), private_home_markup(uid))
+        # 🎬 ۶.۵ — این مسیر هم منوی اصلی را برمی‌گرداند: منوی زنده فعال شود
+        if chat is not None and query.message is not None:
+            home_live_mark(uid, int(chat.id), int(query.message.message_id))
         return
 
     await safe_answer_query(query)
@@ -20868,6 +21009,58 @@ async def auto_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> None:
         pass
 
 
+async def home_living_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """🎬 موتور منوی زنده (۶.۵) — پالس آیکون‌های منوی خصوصی.
+
+    • هر تیک ۱ ثانیه اجرا می‌شود؛ هر «فاصله‌ی تنظیمی» (پیش‌فرض ۵ ثانیه)
+      فریم آیکون‌های منوی اصلی جلو می‌رود (مثلاً 🎮↔🕹️).
+    • مربع‌های رنگی ثابت می‌مانند — هویت بخش‌ها همیشه پایدار است.
+    • فقط پیامِ منوی اصلیِ «همین حالا باز» را ویرایش می‌کند؛ به محض
+      خروج کاربر از خانه، نگهبانِ home_live_guard آن را از فهرست خارج
+      کرده و موتور دیگر به پیام دست نمی‌زند (سازگار با سیستم تک‌پیام).
+    • فلود-کنترل تلگرام: در مکثِ سراسری هیچ ویرایشی نمی‌کند؛ RetryAfter
+      مکث هوشمند می‌دهد؛ پیام مرده خودکار از فهرست پاک می‌شود.
+    """
+    global _PANEL_FLOOD_UNTIL
+    try:
+        if time.time() < _PANEL_FLOOD_UNTIL:
+            return
+        cfg = syscfg()
+        if not cfg.get("home_anim", True):
+            return
+        interval = max(3, min(60, int(cfg.get("home_anim_interval", 5))))
+        now = time.time()
+        for uid, info in list(_home_live.items()):
+            try:
+                if now < float(info.get("due", 0)):
+                    continue  # هنوز وقت فریم بعدی نرسیده
+                info["due"] = now + interval
+                frame = int(info.get("frame", 1)) % 4
+                info["frame"] = (frame + 1) % 4
+                await context.bot.edit_message_text(
+                    chat_id=info["chat_id"],
+                    message_id=info["msg_id"],
+                    text=private_home_text(uid, frame),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=private_home_markup(uid, frame),
+                    disable_web_page_preview=True,
+                )
+            except RetryAfter as exc:
+                # فلود-کنترل تلگرام: مکث هوشمند کل موتور
+                _PANEL_FLOOD_UNTIL = time.time() + float(getattr(exc, "retry_after", 3) or 3) + 1.5
+                break
+            except BadRequest as exc:
+                msg = str(exc).lower()
+                if "not modified" in msg:
+                    continue  # محتوا تفاوتی نکرده — بی‌صدا رد شو
+                # پیام حذف شده / قدیمی / غیرقابل ویرایش → از فهرست پاک شو
+                _home_live.pop(uid, None)
+            except Exception:
+                _home_live.pop(uid, None)
+    except Exception:
+        pass
+
+
 async def periodic_maintenance(context: ContextTypes.DEFAULT_TYPE) -> None:
     """هر ۳ دقیقه: ذخیره + نگهبان نوبت + بازیابی بازی گیرکرده + چالش روزانه."""
     try:
@@ -21246,6 +21439,7 @@ def _start_fallback_scheduler(app) -> None:
             ("maintenance", periodic_maintenance, 180, 60),
             ("backup", backup_job, 6 * 3600, 300),
             ("panel_refresh", auto_refresh_group_panels, 1, 10),
+            ("home_anim", home_living_tick, 1, 8),
         ):
             _FALLBACK_TASKS.append(
                 loop.create_task(_fallback_job_loop(name, job, ctx, interval, first))
@@ -21421,6 +21615,9 @@ def build_application() -> Application:
     # --- 🧹 سیستم تک‌پیام: قبل از همه‌ی هندلرها، با هر دستور جدید پیام‌های قبلی پاک شوند ---
     app.add_handler(TypeHandler(Update, ui_command_sweeper), group=-95)
 
+    # --- 🎬 ۶.۵ — نگهبان منوی زنده: خروج از منوی اصلی، انیمیشن را متوقف می‌کند ---
+    app.add_handler(TypeHandler(Update, home_live_guard), group=-96)
+
     # --- 🧹 سیستم تک‌پیام: هر پیام ارسالی ربات (زیرکلاس _ApexTrackedBot)
     #     خودکار در لجر ردیابی می‌شود — بدون هیچ پچِ runtime ---
     _ui_ledger_load()
@@ -21450,6 +21647,8 @@ def build_application() -> Application:
             app.job_queue.run_repeating(backup_job, interval=6 * 3600, first=300)
             # ⏱ ۶.۲ — موتور رفرش زنده: تیک ۱ ثانیه‌ای؛ رفرش کامل هر «فاصله‌ی تنظیمی»
             app.job_queue.run_repeating(auto_refresh_group_panels, interval=1, first=10)
+            # 🎬 ۶.۵ — موتور منوی زنده: پالس آیکون‌های منوی خصوصی
+            app.job_queue.run_repeating(home_living_tick, interval=1, first=8)
         else:
             print("ApexRival: job_queue unavailable — built-in asyncio scheduler will start in post_init")
     except Exception as exc:
