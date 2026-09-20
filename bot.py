@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ================================================================
 #  ApexRival — ربات بازی گروهی جرئت و حقیقت
-#  نسخه‌ی ۱.۲.۰ — Advanced Edition (Extended) — Ultimate Build VII
+#  نسخه‌ی ۱.۲.۰ — Advanced Edition (Extended) — Ultimate Build VIII
 #  توسعه‌یافته روی نسخه‌ی ۱.۰.۰ (معماری تخت، بدون لایه‌بندی)
 #
 #  این فایل یک برنامه‌ی واحد و تمیز است:
@@ -3686,8 +3686,24 @@ async def lobby_remove_player(context, game: dict, uid: int, query=None, kicked:
 # ================================================================
 
 def current_questioner(game: dict) -> int | None:
+    """پرسشگر فعلی — اول از current_questioner، اگر نبود از turn_order/turn_index محاسبه کن."""
     try:
-        return int(game["current_questioner"])
+        cq = game.get("current_questioner")
+        if cq is not None:
+            return int(cq)
+    except Exception:
+        pass
+    # Fallback: محاسبه از turn_order و turn_index
+    try:
+        order = [int(x) for x in game.get("turn_order", [])]
+        alive = [p for p in order if p in [int(x) for x in game.get("players", [])]]
+        if not alive:
+            return None
+        idx = int(game.get("turn_index", 0) or 0)
+        if idx > 0:
+            # turn_index already advanced, so current is idx-1
+            return alive[(idx - 1) % len(alive)]
+        return None
     except Exception:
         return None
 
@@ -3749,17 +3765,24 @@ def turn_announcement(game: dict, questioner: int) -> str:
 
 
 def turn_markup(game: dict, viewer_uid: int) -> InlineKeyboardMarkup:
+    """دکمه‌های نوبت — ساده و واضح.
+    پرسشگر: ۴ مود اصلی + بیشتر + ناوبری
+    دیگران: وضعیت + امتیازها (بدون پایان بازی برای غیر سرگروه)
+    """
     q = current_questioner(game)
     if q is None:
         return kb([[btn("📊 وضعیت بازی", "G|STATUS")]])
     if int(viewer_uid) == int(q):
+        # پرسشگر: انتخاب موضوع
+        off = set(topics_off())
+        adult_ok = get_group(int(game["chat_id"])).get("adult_mode", False)
+        # مودهای اصلی (۴ تا)
+        main_modes = [("truth", "🕵️ اعتراف"), ("dare", "🔥 جرئت"),
+                      ("scenario", "🎭 سناریو"), ("flirty", "💘 فلرت")]
         rows = []
         pair = []
-        off = set(topics_off())
-        for key, label in MODE_ORDER:
-            if key in off and key not in ("truth", "dare"):
-                continue
-            if key == "adult" and not get_group(int(game["chat_id"])).get("adult_mode", False):
+        for key, label in main_modes:
+            if key in off:
                 continue
             pair.append(btn(label, f"G|MODE|{key}"))
             if len(pair) == 2:
@@ -3767,14 +3790,30 @@ def turn_markup(game: dict, viewer_uid: int) -> InlineKeyboardMarkup:
                 pair = []
         if pair:
             rows.append(pair)
-        rows.append([btn("🎲 تغییر نوبت", "G|SKIP"), btn("ℹ️ راهنما", "G|HELP")])
-        rows.append([btn("📊 امتیازها", "G|SCORES"), btn("🏁 پایان بازی", "G|END")])
+        # مودهای بیشتر
+        more_modes = []
+        for key, label in MODE_ORDER:
+            if key in [m[0] for m in main_modes]:
+                continue
+            if key in off:
+                continue
+            if key == "adult" and not adult_ok:
+                continue
+            more_modes.append((key, label))
+        if more_modes:
+            rows.append([btn("📋 موضوعات بیشتر", "G|MOREMODES")])
+        rows.append([btn("🎲 رد کردن نوبت", "G|SKIP"), btn("📊 امتیازها", "G|SCORES")])
+        is_leader = int(viewer_uid) == int(game.get("leader_id", 0))
+        if is_leader or has_permission(int(viewer_uid), "admin"):
+            rows.append([btn("🏁 پایان بازی", "G|END")])
     else:
+        # غیر پرسشگر: فقط مشاهده
+        is_leader = int(viewer_uid) == int(game.get("leader_id", 0))
         rows = [
-            [btn("📊 وضعیت نوبت", "G|STATUS")],
             [btn("📊 امتیازها", "G|SCORES")],
-            [btn("🏁 پایان بازی", "G|END")],
         ]
+        if is_leader or has_permission(int(viewer_uid), "admin"):
+            rows.append([btn("🏁 پایان بازی", "G|END")])
     return kb(rows)
 
 
@@ -3886,12 +3925,19 @@ def game_home_markup(game: dict, viewer_uid: int) -> InlineKeyboardMarkup:
 
 
 async def game_show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, game: dict, uid: int) -> None:
+    """نمایش پنل بازی — اگر از دکمه صدا زده شده، پیام را ویرایش می‌کند."""
     chat_id = int(game.get("chat_id", 0))
-    try:
-        await context.bot.send_message(chat_id, game_home_text(game), parse_mode=ParseMode.HTML,
-                                       reply_markup=game_home_markup(game, uid))
-    except Exception:
-        pass
+    text = game_home_text(game)
+    markup = game_home_markup(game, uid)
+    # اگر callback_query داریم، پیام را ویرایش کن
+    if update.callback_query:
+        await safe_edit(update.callback_query, text, markup)
+    else:
+        # در غیر این صورت، پیام جدید بفرست
+        try:
+            await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            pass
 
 
 async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3916,6 +3962,39 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await safe_edit(query, game_home_text(game), game_home_markup(game, uid))
             return
         await safe_edit(query, turn_announcement(game, int(q)), turn_markup(game, uid))
+        return
+
+    if action == "MOREMODES":
+        # نمایش مودهای بیشتر
+        q = current_questioner(game)
+        if q is None or int(q) != uid:
+            await safe_answer_query(query, "فقط پرسشگر فعلی می‌تواند موضوع انتخاب کند.", True)
+            return
+        off = set(topics_off())
+        adult_ok = get_group(chat_id).get("adult_mode", False)
+        main_keys = {"truth", "dare", "scenario", "flirty"}
+        rows = []
+        pair = []
+        for key, label in MODE_ORDER:
+            if key in main_keys:
+                continue
+            if key in off:
+                continue
+            if key == "adult" and not adult_ok:
+                continue
+            pair.append(btn(label, f"G|MODE|{key}"))
+            if len(pair) == 2:
+                rows.append(pair)
+                pair = []
+        if pair:
+            rows.append(pair)
+        rows.append([btn("⬅️ بازگشت به موضوع‌ها", "G|TURN")])
+        await safe_answer_query(query)
+        await safe_edit(query,
+            "📋 <b>موضوعات بیشتر</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "یک موضوع انتخاب کن:",
+            kb(rows))
         return
 
     if action == "MODE":
@@ -3970,19 +4049,18 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if action == "HELP":
         await safe_answer_query(query)
-        text = (
-            f"{breadcrumb('بازی', 'راهنما')}\n\n"
-            + card("ℹ️ چطور بازی کنیم؟",
-                   "۱) نوبت فعلی یک نفر مشخص می‌شود.",
-                   "۲) همان نفر یک حالت را انتخاب می‌کند.",
-                   "۳) سپس یک بازیکن از لیست انتخاب می‌کند.",
-                   "۴) ربات سوال را کاملاً تصادفی می‌سازد.",
-                   "۵) هدف باید با Reply به همان پیام جواب بدهد.",
-                   "۶) بعد از ثبت جواب، نوبت به نفر بعدی می‌رسد.",
-                   "🔞 حالت بالغ فقط با تایید سن باز است؛ سوال‌هایش بر اساس جنسیت پاسخ‌دهنده ساخته می‌شوند.",
-                   "☠️ حکم‌ها کاملاً تصادفی هستند.")
-        )
-        await safe_edit(query, text, kb([nav_row("G|TURN")]))
+        await safe_edit(query,
+            "ℹ️ <b>راهنمای بازی</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "۱) پرسشگر یک موضوع انتخاب می‌کنه\n"
+            "۲) سپس یک بازیکن هدف انتخاب می‌کنه\n"
+            "۳) ربات سوال رو می‌فرسته\n"
+            "۴) هدف با Reply به سوال جواب می‌ده\n"
+            "۵) نوبت بعدی شروع می‌شه\n\n"
+            "🌶 هرچه بازی جلوتر بره، سوال‌ها داغ‌تر می‌شن\n"
+            "☠️ گاهی به‌جای سوال، حکم صادر می‌شه\n"
+            "🎁 جواب دادن: +۵ تا +۸ ایکس‌پی و سکه",
+            kb([[btn("⬅️ بازگشت", "G|TURN")]]))
         return
 
     if action == "SKIP":
@@ -4011,6 +4089,7 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def game_show_targets(query, game: dict, mode: str) -> None:
+    """نمایش لیست اهداف با اطلاعات بازیکن."""
     q = current_questioner(game)
     players = [int(x) for x in game.get("players", [])]
     others = [p for p in players if p != q]
@@ -4019,13 +4098,21 @@ async def game_show_targets(query, game: dict, mode: str) -> None:
     rows = []
     for p in others:
         icon = gender_icon(p)
-        rows.append([btn(f"{icon} {name_of(p, game)}", f"G|TARGET|{p}")])
-    rows.append([btn("🔙 انتخاب موضوع", "G|TURN")])
+        # اضافه کردن سطح بازیکن
+        try:
+            pu = get_user(int(p))
+            p_level = int(pu.get("level", 1))
+            label = f"{icon} {name_of(p, game)} · 🔥{p_level}"
+        except Exception:
+            label = f"{icon} {name_of(p, game)}"
+        rows.append([btn(label, f"G|TARGET|{p}")])
+    rows.append([btn("⬅️ بازگشت به موضوع‌ها", "G|TURN")])
     await safe_edit(query,
-                    f"{breadcrumb('بازی', 'انتخاب هدف')}\n\n"
-                    + card(f"🎯 {MODE_LABELS.get(mode, mode)} — هدف را انتخاب کن",
-                           "پرسشگر عزیز، حالا نوبت انتخاب قربانی است! 😈"),
-                    kb(rows))
+        f"🎯 <b>{MODE_LABELS.get(mode, mode)} — هدف را انتخاب کن</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"پرسشگر عزیز، حالا نوبت انتخاب قربانی است! 😈\n"
+        f"💡 روی نام بازیکن مورد نظرت بزن.",
+        kb(rows))
 
 
 async def game_ask_question(context, game: dict, questioner: int, target: int, mode: str, query=None) -> None:
@@ -4197,26 +4284,42 @@ async def game_show_penalty(context, game: dict, target: int, questioner: int, q
 
 
 async def game_boss_round(context, game: dict, questioner: int, query=None) -> None:
+    """Boss Round — چالش ویژه برای همه‌ی بازیکنان. بعد از اجرا، نوبت بعدی."""
     chat_id = int(game.get("chat_id", 0))
     challenge = random.choice(BOSS_CHALLENGES)
-    await safe_answer_query(query, "👑 Boss Round!")
+    await safe_answer_query(query, "👑 دور باس!")
     try:
         await context.bot.send_message(
             chat_id,
-            "👑 <b>BOSS ROUND!</b>\n━━━━━━━━━━━━━━━━━━\n"
+            "👑 <b>دور باس (Boss Round)!</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
             f"{escape(challenge)}\n\n"
-            "اولین نفری که چالش را انجام دهد پاداش می‌گیرد! 🏃",
+            "اولین نفری که چالش را انجام دهد پاداش می‌گیرد! 🏃\n"
+            "💡 با Reply به همین پیام، انجام چالش را ثبت کن.",
             parse_mode=ParseMode.HTML,
         )
         for p in [int(x) for x in game.get("players", [])]:
             get_user(p)["boss"] = int(get_user(p).get("boss", 0)) + 1
+        # ثبت آمار
+        try:
+            game_stats = game.setdefault("_question_stats", {})
+            game_stats["boss_rounds"] = int(game_stats.get("boss_rounds", 0)) + 1
+        except Exception:
+            pass
         touch_game(game)
         save_data()
     except Exception:
         pass
+    # پیشروی نوبت بعد از Boss Round
+    game.pop("reply_prompt", None)
+    nxt = advance_turn(game)
+    save_data(force=True)
+    if nxt is not None:
+        await game_send_turn_card(context, game)
 
 
 async def game_random_event(context, game: dict, questioner: int, query=None) -> None:
+    """رویداد تصادفی — بعد از اجرا، نوبت بعدی."""
     chat_id = int(game.get("chat_id", 0))
     title, desc = random.choice(RANDOM_EVENTS)
     players = [int(x) for x in game.get("players", [])]
@@ -4224,19 +4327,62 @@ async def game_random_event(context, game: dict, questioner: int, query=None) ->
     try:
         await context.bot.send_message(
             chat_id,
-            f"✨ <b>رویداد تصادفی: {escape(title)}</b>\n━━━━━━━━━━━━━━━━━━\n{escape(desc)}",
+            f"✨ <b>رویداد تصادفی: {escape(title)}</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"{escape(desc)}",
             parse_mode=ParseMode.HTML,
         )
     except Exception:
         pass
-    if title.startswith("💰") and players:
-        for p in random.sample(players, k=min(3, len(players))):
-            add_coins(p, 3, name_of(p, game))
-    elif title.startswith("🛡") and players:
-        lucky = random.choice(players)
-        grant_item(lucky, "shield", 1)
+    # اجرای افکت رویداد
+    try:
+        if title.startswith("💰") and players:
+            for p in random.sample(players, k=min(3, len(players))):
+                add_coins(p, 3, name_of(p, game))
+                try:
+                    await context.bot.send_message(
+                        chat_id,
+                        f"💰 {mention_user(p, name_of(p, game))} +۳ سکه گرفت!",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+        elif title.startswith("🛡") and players:
+            lucky = random.choice(players)
+            grant_item(lucky, "shield", 1)
+            try:
+                await context.bot.send_message(
+                    chat_id,
+                    f"🛡 {mention_user(lucky, name_of(lucky, game))} یک سپر دریافت کرد!",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+        elif title.startswith("✨") and players:
+            # دو برابر XP برای نوبت بعدی
+            game.setdefault("settings", {})["_double_xp_next"] = True
+        elif title.startswith("🔥") and players:
+            # نوبت بعدی به حالت سرعت تبدیل می‌شود
+            game["_speed_round_next"] = True
+        elif title.startswith("🎲") and players:
+            # حالت بازی تصادفی برای نوبت بعدی
+            game["_random_mode_next"] = True
+    except Exception:
+        pass
+    # ثبت آمار
+    try:
+        game_stats = game.setdefault("_question_stats", {})
+        game_stats["random_events"] = int(game_stats.get("random_events", 0)) + 1
+    except Exception:
+        pass
     touch_game(game)
     save_data()
+    # پیشروی نوبت بعد از رویداد
+    game.pop("reply_prompt", None)
+    nxt = advance_turn(game)
+    save_data(force=True)
+    if nxt is not None:
+        await game_send_turn_card(context, game)
 
 
 REPLY_REWARDS = {"truth": (6, 2), "dare": (7, 3), "mind": (5, 2), "scenario": (6, 2),
@@ -11000,6 +11146,44 @@ async def admin_groups_manager_show(query) -> None:
         log_event("error", "system", f"admin_groups_manager_show failed: {exc!r}")
 
 
+async def admin_reward_manager_show(query) -> None:
+    """پنل مدیریت جوایز."""
+    try:
+        settings = DATA.get("settings", {})
+        # نمایش جوایز فعلی
+        level_rewards = LEVEL_REWARDS
+        lines = [
+            "🎁 <b>مدیریت جوایز</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            "━ جوایز سطح (Level Up) ━",
+        ]
+        for lv, reward in sorted(level_rewards.items()):
+            coins = int(reward.get("coins", 0))
+            item = reward.get("item", "—")
+            lines.append(f"🔥 سطح {fmt_num(lv)}: 🪙{coins} · 🎲{item}")
+        lines.extend([
+            "",
+            "━ جوایز فصل ━",
+        ])
+        for rank, reward in SEASON_REWARD_TIERS:
+            coins = int(reward.get("coins", 0))
+            lines.append(f"🏆 رتبه #{rank}: 🪙{coins}")
+        lines.extend([
+            "",
+            "━ جوایز استریک لاگین ━",
+        ])
+        for streak, reward in sorted(LOGIN_STREAK_REWARDS.items()):
+            coins = int(reward.get("coins", 0))
+            xp = int(reward.get("xp", 0))
+            lines.append(f"📅 {fmt_num(streak)} روز: 🪙{coins} · ⭐{xp}")
+        rows = [
+            [btn("⬅️ بازگشت", "A|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_reward_manager_show failed: {exc!r}")
+
+
 async def admin_settings_show(query) -> None:
     """پنل تنظیمات کلی سیستم."""
     try:
@@ -16149,15 +16333,15 @@ async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if action == "ACHM":
             await admin_achievements_manager_show(query)
             return
+        # ECON: اگر parts بیشتر از 2 باشه، یعنی اکشن اقتصادی هست (مثل ECON|infl8)
+        if action == "ECON" and len(parts) > 2:
+            econ_action = parts[2]
+            await admin_economy_action(query, econ_action)
+            return
         if action == "ECON":
             await admin_economy_manager_show(query)
             return
         if action == "ECONACT" and len(parts) > 2:
-            econ_action = parts[2]
-            await admin_economy_action(query, econ_action)
-            return
-        # اطمینان از کار کردن دکمه‌های ECON با فرمت قدیمی
-        if action == "ECON" and len(parts) > 2:
             econ_action = parts[2]
             await admin_economy_action(query, econ_action)
             return
@@ -16177,6 +16361,9 @@ async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         if action == "ACHNEW":
             await safe_answer_query(query, "🎖 ساخت دستاورد سفارشی به‌زودی!")
+            return
+        if action == "REWARD":
+            await admin_reward_manager_show(query)
             return
         # مسیرهای قدیمی — ارسال به admin_callback اصلی
         # برای حفظ Backward Compatibility
@@ -16342,24 +16529,23 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if action == "MORE":
-        # منوی ثانویه — قابلیت‌های کمتر استفاده‌شده
+        # منوی ثانویه — ساده و دسته‌بندی‌شده
         await safe_answer_query(query)
         await safe_edit(
             query,
             "📋 <b>بیشتر...</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "قابلیت‌های بیشتر ربات:",
+            "🎯 <b>پیشرفت:</b> مأموریت، پاس فصل، قدم‌های میل\n"
+            "🎮 <b>بازی:</b> مینی‌بازی، عدد شانسی، جفت‌یابی\n"
+            "👥 <b>اجتماعی:</b> معامله، دعوت، تالار افتخار",
             kb([
                 [btn("🎯 مأموریت‌های ویژه", "QS|HOME"), btn("🎫 پاس فصل", "SP|HOME")],
-                [btn("🎯 جفت‌یابی حریف", "MM|HOME"), btn("📜 تاریخچه بازی", "GH|HOME")],
-                [btn("🎯 قدم‌های میل", "MS|HOME"), btn("👑 تالار افتخار", "HF|HOME")],
-                [btn("🔄 مرکز معامله", "TR|HOME"), btn("🎰 عدد شانسی", "LN|HOME")],
-                [btn("🎮 مینی‌بازی‌ها", "MG|HOME"), btn("🤝 نبرد تیمی", "TB|HOME")],
-                [btn("🤖 پیشنهاد هوشمند", "AI|HOME"), btn("🌐 فصل و رویداد", "SE|HOME")],
-                [btn("🎁 دعوت دوستان", "RF|HOME"), btn("🏆 مسابقات", "TM|HOME")],
-                [btn("📝 بازخورد", "FB|HOME"), btn("👑 وی‌آی‌پی", "VP|HOME")],
-                [btn("🎓 راهنمای آموزش", "TT|START"), btn("🌐 دیوار اجتماعی", "DR|WALL")],
-                [btn("🏆 بازیکن روز", "DR|POTD"), btn("❤️ عشق‌سنج", "LV|HOME")],
+                [btn("🎯 قدم‌های میل", "MS|HOME"), btn("📜 تاریخچه بازی", "GH|HOME")],
+                [btn("🎮 مینی‌بازی‌ها", "MG|HOME"), btn("🎰 عدد شانسی", "LN|HOME")],
+                [btn("🎯 جفت‌یابی حریف", "MM|HOME"), btn("🤝 نبرد تیمی", "TB|HOME")],
+                [btn("🔄 مرکز معامله", "TR|HOME"), btn("🎁 دعوت دوستان", "RF|HOME")],
+                [btn("👑 تالار افتخار", "HF|HOME"), btn("👑 وی‌آی‌پی", "VP|HOME")],
+                [btn("📝 بازخورد", "FB|HOME"), btn("🌐 دیوار اجتماعی", "DR|WALL")],
                 [btn("🏠 منوی اصلی", "H|HOME")],
             ]),
         )
@@ -16369,16 +16555,21 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def love_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """پنل عشق‌سنج — نمایش راهنمای استفاده."""
     query = update.callback_query
     if query is None:
         return
     await safe_answer_query(query)
     await safe_edit(
         query,
-        "❤️ <b>عشق‌سنج ApexRival</b>\n━━━━━━━━━━━━━━━━━━\n"
-        "💘 /apexlove — روی پیام طرف Reply کن؛ گزارش ۴ بُعدی + حکم نهایی\n"
-        "💌 /apexlove2 — دو نفره؛ هر دو جواب مخفیانه می‌دهید و درصد هم‌صدایی می‌گیرید",
-        kb([nav_row("H|HOME")]),
+        "❤️ <b>عشق‌سنج ApexRival</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "💘 <b>/apexlove</b> — روی پیام طرف Reply کن؛ گزارش ۴ بُعدی + حکم نهایی\n"
+        "💌 <b>/apexlove2</b> — دو نفره؛ هر دو جواب مخفیانه می‌دهید و درصد هم‌صدایی می‌گیرید\n\n"
+        "💡 برای استفاده، در گروه روی پیام کسی Reply کن و دستور رو بفرست.",
+        kb([
+            [btn("🏠 منوی اصلی", "H|HOME")],
+        ]),
     )
 
 
