@@ -190,6 +190,22 @@
 #   • فلود-کنترل کامل: مکث سراسری مشترک با موتور پنل گروه، RetryAfter
 #     با backoff، بلعیدن «Message is not modified»
 #
+# بهبود در نسخه ۶.۶ — 🎨 رنگ واقعی دکمه‌ها (Bot API 9.4):
+#   • تصحیح مهم: تلگرام از Bot API 9.4 (فوریه ۲۰۲۶) فیلد style را به
+#     InlineKeyboardButton اضافه کرده — پس‌زمینه‌ی رنگیِ واقعی که خودِ
+#     کلاینت تلگرام رندر می‌کند (مثل عکس مرجع کاربر)؛ «مربع‌های رنگی»
+#     نسخه‌های قبل جایگزین شدند چون رنگ واقعی حالا ممکن است
+#   • سه رنگ رسمی: "danger" قرمز / "success" سبز / "primary" آبی —
+#     کلاینت‌های قدیمی که style را نمی‌شناسند دکمه‌ی ساده می‌بینند (عقب‌ایمن)
+#   • منوی اصلی مطابق عکس مرجع: تمام‌عرض و تک‌ستونی — بازی‌ها=آبی،
+#     پیشرفت و فروشگاه=سبز، اعلان‌ها و پنل مدیریت=قرمز،
+#     پروفایل/تنظیمات/راهنما=خنثی
+#   • هاب‌ها با همان رنگِ دکمه‌ی مادرشان: بازی‌ها و اجتماعی=آبی،
+#     پیشرفت=سبز، پروفایل و راهنما=خنثی، دکمه‌ی ادمین در راهنما=قرمز
+#   • پالس زنده‌ی آیکون‌ها (۶.۵) حفظ شد — رنگ‌ها در هر دو فریم ثابت‌اند؛
+#     دکمه‌ی ادمین هم حالا 🛡↔🚨 می‌تپد؛ گارد btn() مقدار style را
+#     فقط به همان سه رنگ رسمی محدود می‌کند
+#
 #  راه‌اندازی:  BOT_TOKEN=... ADMIN_ID=... python bot.py
 # ================================================================
 
@@ -3197,8 +3213,16 @@ def data_doctor() -> list:
 #  ابزارهای رابط کاربری — دکمه، کارت، ارسال/ویرایش امن
 # ================================================================
 
-def btn(label: str, data: str) -> InlineKeyboardButton:
-    return InlineKeyboardButton(str(label), callback_data=str(data)[:64])
+def btn(label: str, data: str, style: str | None = None) -> InlineKeyboardButton:
+    """دکمه‌ی استاندارد + رنگ واقعی (۶.۶).
+
+    style فقط یکی از سه رنگ رسمی Bot API 9.4 است:
+    "danger" (قرمز) / "success" (سبز) / "primary" (آبی)؛
+    یا None برای دکمه‌ی خنثی. مقدار ناشناخته برای ایمنی حذف می‌شود.
+    """
+    if style is not None and style not in ("danger", "success", "primary"):
+        style = None
+    return InlineKeyboardButton(str(label), callback_data=str(data)[:64], style=style)
 
 
 def kb(rows: list) -> InlineKeyboardMarkup | None:
@@ -3796,7 +3820,7 @@ async def onb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # ================================================================
 # 🎬 فریم‌های انیمیشن منوی زنده (۶.۵) — تلگرام CSS روی دکمه‌ها نمی‌پذیرد؛
 # «پالس/چرخش» واقعی با تعویض نرم آیکون‌ها بین دو فریم ساخته می‌شود.
-# مربع‌های رنگی (هویت دکمه‌ها) در هر دو فریم ثابت می‌مانند.
+# (۶.۶) رنگِ واقعی دکمه‌ها (style) در هر دو فریم ثابت می‌ماند.
 HOME_ICON_ANIM = {
     "games":    ("🎮", "🕹️"),
     "profile":  ("🪪", "🆔"),
@@ -3806,13 +3830,13 @@ HOME_ICON_ANIM = {
     "notify":   ("🔔", "📣"),
     "settings": ("⚙️", "🔧"),
     "help":     ("🎓", "📖"),
-    "admin_dot": ("🔴", "🟠"),
+    "admin":    ("🛡", "🚨"),
 }
 HOME_ANIM_SPIN = "◐◓◑◒"   # نبضِ زنده‌ی منو — با هر فریم می‌چرخد
 
 
 def _anim_icon(key: str, frame: int) -> str:
-    """آیکون فریم n — مربع رنگی جدا ست می‌شود و این فقط آیکون دوم است."""
+    """آیکون فریم n — رنگ واقعی دکمه جداگانه در private_home_markup ست می‌شود."""
     pair = HOME_ICON_ANIM.get(key)
     if not pair:
         return ""
@@ -3895,32 +3919,35 @@ def private_home_text(uid: int, frame: int = 0) -> str:
 
 
 def private_home_markup(uid: int, frame: int = 0) -> InlineKeyboardMarkup:
-    """منوی اصلی نسل ۶ (۶.۵) — ۸ دکمه‌ی رنگی + پالس زنده‌ی آیکون‌ها.
+    """منوی اصلی نسل ۷ (۶.۶) — دکمه‌های رنگیِ واقعی، مطابق عکس مرجع کاربر.
 
-    درخواست‌های صریح کاربر:
-    • (۶.۴) دکمه‌ها «رنگی و توپر» — هر دکمه مربعِ رنگیِ اختصاصی دارد +
-      دکمه‌ی «پنل مدیریت» مستقیم روی منوی اصلی (فقط ادمین).
-    • (۶.۵) آیکون‌ها «زنده و پویا» — چون تلگرام CSS/@keyframes روی
-      دکمه‌ها را نمی‌پذیرد، پالس با تعویض نرم دو فریمِ آیکون ساخته می‌شود
-      (مثلاً 🎮↔🕹️ و ⚙️↔🔧) و موتورِ منوی زنده هر «فاصله‌ی تنظیمی» فریم
-      را جلو می‌برد. مربع‌های رنگی ثابت می‌مانند (هویت بخش‌ها).
+    (۶.۶) Bot API 9.4 فیلد style را به دکمه‌ها اضافه کرد: "danger" قرمز /
+    "success" سبز / "primary" آبی — پس‌زمینه‌ی رنگی واقعی که خود کلاینت
+    تلگرام رندر می‌کند (مثل ربات‌های مدرن). دکمه‌ها مطابق عکس مرجع،
+    تمام‌عرض و تک‌ستونی شدند. نگاشت رنگ: بازی‌ها=آبی، پیشرفت و فروشگاه=سبز،
+    اعلان‌ها و پنل مدیریت=قرمز؛ پروفایل/تنظیمات/راهنما=خنثی (سفید).
+    (۶.۴) دکمه‌ی «پنل مدیریت» مستقیم روی منوی اصلی (فقط ادمین) حفظ شد.
+    (۶.۵) پالس زنده‌ی آیکون‌ها (تعویض نرم دو فریم) حفظ شد — رنگ‌ها در
+    هر دو فریم ثابت‌اند؛ کلاینت‌های قدیمی بدون پشتیبانی style، دکمه‌ی
+    ساده می‌بینند (عقب‌ایمن).
     """
     unread = unread_notifications(uid)
     f = int(frame) % 2
-    notify_label = f"🟧{_anim_icon('notify', f)} اعلان‌ها ({unread})" if unread else f"🟧{_anim_icon('notify', f)} اعلان‌ها"
+    notify_label = f"{_anim_icon('notify', f)} اعلان‌ها ({unread})" if unread else f"{_anim_icon('notify', f)} اعلان‌ها"
     rows = [
-        # ردیف ۱: بازی و هویت
-        [btn(f"🟥{_anim_icon('games', f)} بازی‌ها", "H|GAMES"), btn(f"🟦{_anim_icon('profile', f)} پروفایل", "H|PROFILE")],
-        # ردیف ۲: پیشرفت و اجتماع
-        [btn(f"🟩{_anim_icon('progress', f)} پیشرفت", "H|PROGRESS"), btn(f"🟪{_anim_icon('social', f)} اجتماعی", "H|SOCIAL")],
-        # ردیف ۳: اقتصاد و پیام‌ها
-        [btn(f"🟨{_anim_icon('shop', f)} فروشگاه", "S|HOME"), btn(notify_label, "NT|HOME")],
-        # ردیف ۴: ابزار
-        [btn(f"⬜{_anim_icon('settings', f)} تنظیمات", "US|HOME"), btn(f"⬛{_anim_icon('help', f)} راهنما", "H|HELP")],
+        # 🎨 تمام‌عرض و رنگی — مثل ربات‌های مدرن (عکس مرجع کاربر)
+        [btn(f"{_anim_icon('games', f)} بازی‌ها", "H|GAMES", "primary")],
+        [btn(f"{_anim_icon('profile', f)} پروفایل", "H|PROFILE")],
+        [btn(f"{_anim_icon('progress', f)} پیشرفت", "H|PROGRESS", "success")],
+        [btn(f"{_anim_icon('social', f)} اجتماعی", "H|SOCIAL", "primary")],
+        [btn(f"{_anim_icon('shop', f)} فروشگاه", "S|HOME", "success")],
+        [btn(notify_label, "NT|HOME", "danger")],
+        [btn(f"{_anim_icon('settings', f)} تنظیمات", "US|HOME")],
+        [btn(f"{_anim_icon('help', f)} راهنما", "H|HELP")],
     ]
-    # 🛡 دکمه‌ی ورود مستقیم به ستون فرمان — تمام‌عرض، فقط برای ادمین‌ها + پالس قرمز
+    # 🛡 دکمه‌ی ورود مستقیم به ستون فرمان — تمام‌عرض قرمز، فقط برای ادمین‌ها + پالس
     if has_permission(int(uid), "admin"):
-        rows.append([btn(f"{_anim_icon('admin_dot', f)}🛡 پنل مدیریت", "A|HOME")])
+        rows.append([btn(f"{_anim_icon('admin', f)} پنل مدیریت", "A|HOME", "danger")])
     return kb(rows)
 
 
@@ -3954,10 +3981,10 @@ def hub_games_view(uid: int = 0) -> tuple:
         + "\n" + _hub_foot("🎮", "برای بازی گروهی، ربات را در گروه add کن و /apex بزن")
     )
     markup = kb([
-        [btn("🟥⚔️ بازی گروهی", "H|GUIDE"), btn("🟥🎮 مسابقه خصوصی", "PM|HOME")],
-        [btn("🟥🎲 بازی‌های مهمانی", "FY|HOME"), btn("🟥🔥 حالت بقا", "SV|HOME")],
-        [btn("🟥🎮 مینی‌بازی‌ها", "MG|HOME"), btn("🟥🎰 عدد شانسی", "LN|HOME")],
-        [btn("🟥🎯 جفت‌یابی حریف", "MM|HOME"), btn("🟥🤝 نبرد تیمی", "TB|HOME")],
+        [btn("⚔️ بازی گروهی", "H|GUIDE", "primary"), btn("🎮 مسابقه خصوصی", "PM|HOME", "primary")],
+        [btn("🎲 بازی‌های مهمانی", "FY|HOME", "primary"), btn("🔥 حالت بقا", "SV|HOME", "primary")],
+        [btn("🎮 مینی‌بازی‌ها", "MG|HOME", "primary"), btn("🎰 عدد شانسی", "LN|HOME", "primary")],
+        [btn("🎯 جفت‌یابی حریف", "MM|HOME", "primary"), btn("🤝 نبرد تیمی", "TB|HOME", "primary")],
         [btn("🏠 منوی اصلی", "H|HOME")],
     ])
     return text, markup
@@ -3974,8 +4001,8 @@ def hub_profile_view(uid: int = 0) -> tuple:
         + "\n" + _hub_foot("🪪")
     )
     markup = kb([
-        [btn("🟦🪪 پروفایل من", "P|PROFILE"), btn("🟦📜 تاریخچه بازی", "GH|HOME")],
-        [btn("🟦👑 تالار افتخار", "HF|HOME"), btn("🟦💎 وی‌آی‌پی", "VP|HOME")],
+        [btn("🪪 پروفایل من", "P|PROFILE"), btn("📜 تاریخچه بازی", "GH|HOME")],
+        [btn("👑 تالار افتخار", "HF|HOME"), btn("💎 وی‌آی‌پی", "VP|HOME")],
         [btn("🏠 منوی اصلی", "H|HOME")],
     ])
     return text, markup
@@ -3995,10 +4022,10 @@ def hub_progress_view(uid: int = 0) -> tuple:
         + "\n" + _hub_foot("🏆")
     )
     markup = kb([
-        [btn("🟩🎯 مأموریت‌ها", "DM|HOME"), btn("🟩🎁 پاداش روزانه", "DR|CLAIM")],
-        [btn("🟩🌟 مأموریت‌های ویژه", "QS|HOME"), btn("🟩🎫 پاس فصل", "SP|HOME")],
-        [btn("🟩🎯 قدم‌های میل", "MS|HOME"), btn("🟩🏆 رتبه‌بندی", "P|TOP")],
-        [btn("🟩⚔️ رقبا", "RV|HOME")],
+        [btn("🎯 مأموریت‌ها", "DM|HOME", "success"), btn("🎁 پاداش روزانه", "DR|CLAIM", "success")],
+        [btn("🌟 مأموریت‌های ویژه", "QS|HOME", "success"), btn("🎫 پاس فصل", "SP|HOME", "success")],
+        [btn("🎯 قدم‌های میل", "MS|HOME", "success"), btn("🏆 رتبه‌بندی", "P|TOP", "success")],
+        [btn("⚔️ رقبا", "RV|HOME", "success")],
         [btn("🏠 منوی اصلی", "H|HOME")],
     ])
     return text, markup
@@ -4015,8 +4042,8 @@ def hub_social_view(uid: int = 0) -> tuple:
         + "\n" + _hub_foot("👥")
     )
     markup = kb([
-        [btn("🟪👥 دوستان", "FR|HOME"), btn("🟪🔄 مرکز معامله", "TR|HOME")],
-        [btn("🟪🎁 دعوت دوستان", "RF|HOME"), btn("🟪🌐 دیوار اجتماعی", "DR|WALL")],
+        [btn("👥 دوستان", "FR|HOME", "primary"), btn("🔄 مرکز معامله", "TR|HOME", "primary")],
+        [btn("🎁 دعوت دوستان", "RF|HOME", "primary"), btn("🌐 دیوار اجتماعی", "DR|WALL", "primary")],
         [btn("🏠 منوی اصلی", "H|HOME")],
     ])
     return text, markup
@@ -4034,13 +4061,13 @@ def hub_help_view(uid: int = 0) -> tuple:
         + "\n" + _hub_foot("🎓", "سریع‌ترین راه بازخورد: روی پیام موردنظر Reply کن و بنویس «بازخورد»")
     )
     rows = [
-        [btn("⬛🎓 راهنمای بازی (۱۲ صفحه)", "H|GUIDE|0"), btn("⬛📚 راهنمای بخش‌ها", "GD|INDEX")],
-        [btn("⬛📜 قوانین", "L|RULES"), btn("⬛📝 بازخورد", "FB|HOME")],
-        [btn("⬛ℹ️ درباره ربات", "H|ABOUT")],
+        [btn("🎓 راهنمای بازی (۱۲ صفحه)", "H|GUIDE|0"), btn("📚 راهنمای بخش‌ها", "GD|INDEX")],
+        [btn("📜 قوانین", "L|RULES"), btn("📝 بازخورد", "FB|HOME")],
+        [btn("ℹ️ درباره ربات", "H|ABOUT")],
     ]
     # ادمین‌ها علاوه بر دکمه‌ی تمام‌عرضِ منوی اصلی، از این‌جا هم به ستون فرمان می‌رسند
     if has_permission(int(uid), "admin"):
-        rows.append([btn("🔴🛡 پنل مدیریت", "A|HOME")])
+        rows.append([btn("🛡 پنل مدیریت", "A|HOME", "danger")])
     rows.append([btn("🏠 منوی اصلی", "H|HOME")])
     return text, kb(rows)
 
@@ -21014,7 +21041,7 @@ async def home_living_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     • هر تیک ۱ ثانیه اجرا می‌شود؛ هر «فاصله‌ی تنظیمی» (پیش‌فرض ۵ ثانیه)
       فریم آیکون‌های منوی اصلی جلو می‌رود (مثلاً 🎮↔🕹️).
-    • مربع‌های رنگی ثابت می‌مانند — هویت بخش‌ها همیشه پایدار است.
+    • رنگ‌های واقعی دکمه‌ها (۶.۶ — Bot API 9.4) ثابت می‌مانند — هویت بخش‌ها همیشه پایدار است.
     • فقط پیامِ منوی اصلیِ «همین حالا باز» را ویرایش می‌کند؛ به محض
       خروج کاربر از خانه، نگهبانِ home_live_guard آن را از فهرست خارج
       کرده و موتور دیگر به پیام دست نمی‌زند (سازگار با سیستم تک‌پیام).
