@@ -148,6 +148,20 @@
 #   • شمارش صحیح کل دستاوردها (BASE + V11)
 #   • ناوبری کامل بین پنل‌ها
 #
+# بهبود در نسخه ۶.۳ — لابی زنده + منوی ۸ دکمه‌ای:
+#   • FIX بحرانی: رفرش خودکار در فاز لابی، دکمه‌های لابی را می‌بلعید
+#     (چک غلط status=="lobby"؛ درست: phase=="lobby") — حالا لابی با همان
+#     فرمت و همان دکمه‌ها، هر فاصله‌ی تنظیمی تازه می‌شود (بازیکن/آماده/قفل...)
+#   • FIX: خروج/اخراج از لابی، پنل را تازه نمی‌کرد (همان چک غلط status)
+#   • FIX: /apex در لابیِ باز، پیام لابیِ تکراری می‌ساخت — حالا پنل زنده را
+#     ویرایش می‌کند (بدون انباشت پیام)
+#   • FIX: نمای پنل بازی آگاه از فاز شد (game_show_panel با _panel_views_for)
+#   • فلود-کنترل تلگرام: RetryAfter در رفرش زنده → مکث هوشمند کل موتور
+#   • منوی خصوصی نسل ۴: دقیقاً ۸ دکمه‌ی اصلی (بازی‌ها، پروفایل، پیشرفت،
+#     اجتماعی، فروشگاه، اعلان‌ها، تنظیمات، راهنما) — بقیه‌ی ۱۶+ بخش به‌صورت
+#     زیرمجموعه در ۵ هابِ مرتب (H|GAMES / H|PROFILE / H|PROGRESS / H|SOCIAL / H|HELP)
+#   • دکمه‌ی «بیشتر...» حذف شد — همه‌چیز زیرمجموعه‌ی ۸ دکمه‌ی اصلی است
+#
 #  راه‌اندازی:  BOT_TOKEN=... ADMIN_ID=... python bot.py
 # ================================================================
 
@@ -379,6 +393,7 @@ from telegram.ext import (
     filters,
 )
 from telegram.request import HTTPXRequest
+from telegram.error import RetryAfter  # ۶.۳ — پشتیبانی از فلود-کنترل تلگرام در رفرش زنده
 
 
 # ================================================================
@@ -3750,31 +3765,156 @@ def private_home_text(uid: int) -> str:
 
 
 def private_home_markup(uid: int) -> InlineKeyboardMarkup:
-    """منوی اصلی ساده و واضح — ۸ ردیف منطقی به‌جای ۱۷ ردیف گیج‌کننده."""
+    """منوی اصلی نسل ۴ (۶.۳) — دقیقاً ۸ دکمه.
+
+    درخواست صریح کاربر: به‌جای ۱۶+ دکمه و منوی «بیشتر...»، فقط ۸ دکمه‌ی اصلی
+    نمایش داده شود و بقیه‌ی بخش‌ها به‌صورت زیرمجموعه (هاب) مرتب شوند.
+    هیچ قابلیتی حذف نشده — همه در ۵ هاب زیرمجموعه شدند.
+    """
     unread = unread_notifications(uid)
     notify_label = f"🔔 اعلان‌ها ({unread})" if unread else "🔔 اعلان‌ها"
     rows = [
-        # ردیف ۱: بازی‌های اصلی
-        [btn("🎮 شروع بازی گروهی", "H|GUIDE"), btn("🎮 مسابقه خصوصی", "PM|HOME")],
-        # ردیف ۲: مینی‌بازی‌ها و سرگرمی
-        [btn("🎲 بازی‌های مهمانی", "FY|HOME"), btn("🔥 حالت بقا", "SV|HOME")],
-        # ردوف ۳: پیشرفت
-        [btn("🪪 پروفایل من", "P|PROFILE"), btn("🏆 رتبه‌بندی", "P|TOP")],
-        # ردیف ۴: مأموریت‌ها و پاداش‌ها
-        [btn("🎯 مأموریت‌ها", "DM|HOME"), btn("🎁 پاداش روزانه", "DR|CLAIM")],
-        # ردیف ۵: اجتماعی
-        [btn("👥 دوستان", "FR|HOME"), btn("⚔️ رقبا", "RV|HOME")],
-        # ردیف ۶: فروشگاه و شخصی‌سازی
-        [btn("🛍 فروشگاه", "S|HOME"), btn("⚙️ تنظیمات من", "US|HOME")],
-        # ردیف ۷: اعلان‌ها و راهنما
-        [btn(notify_label, "NT|HOME"), btn("🎓 راهنما", "H|GUIDE")],
-        # ردیف ۸: بیشتر (منوی ثانویه)
-        [btn("✨ بیشتر...", "H|MORE")],
+        # ردیف ۱: بازی و هویت
+        [btn("🎮 بازی‌ها", "H|GAMES"), btn("🪪 پروفایل", "H|PROFILE")],
+        # ردیف ۲: پیشرفت و اجتماع
+        [btn("🏆 پیشرفت", "H|PROGRESS"), btn("👥 اجتماعی", "H|SOCIAL")],
+        # ردیف ۳: اقتصاد و پیام‌ها
+        [btn("🛍 فروشگاه", "S|HOME"), btn(notify_label, "NT|HOME")],
+        # ردیف ۴: ابزار
+        [btn("⚙️ تنظیمات", "US|HOME"), btn("🎓 راهنما", "H|HELP")],
     ]
-    # ادمین‌ها دکمه‌ی پنل مدیریت می‌بینند
+    return kb(rows)
+
+
+# ================================================================
+#  🗂 هاب‌های منوی اصلی (۶.۳) — زیرمجموعه‌های مرتبِ ۸ دکمه‌ی اصلی
+# ================================================================
+def _hub_head(icon: str, title: str, subtitle: str) -> str:
+    """سربرگ مشترک هاب‌ها با طراحی اومگا."""
+    return (f"{og_top(icon)}\n"
+            f"┃  {icon} <b>{title}</b>\n"
+            f"┃  <i>{subtitle}</i>\n"
+            f"{og_sep()}\n")
+
+
+def _hub_foot(icon: str, hint: str = "با ⬅️ هر وقت خواستی برگرد") -> str:
+    return f"{og_close(icon)}\n┃  💡 {hint}"
+
+
+def hub_games_view(uid: int = 0) -> tuple:
+    """🎮 هاب بازی‌ها — همه‌ی شیوه‌های بازی در یک جا."""
+    text = (
+        _hub_head("🎮", "مرکز بازی‌ها", "هر نوع بازی که دلت خواست — همین‌جا")
+        + og_row("⚔️ بازی گروهی", "در گروه، با دوستان") + "\n"
+        + og_row("🎮 مسابقه خصوصی", "دو نفره و حرفه‌ای") + "\n"
+        + og_row("🎲 بازی‌های مهمانی", "بازی‌های فوری و شاد") + "\n"
+        + og_row("🔥 حالت بقا", "تا آخرین نفس بجنگ") + "\n"
+        + og_row("🎮 مینی‌بازی‌ها", "کوتاه و پرمحتوا") + "\n"
+        + og_row("🎰 عدد شانسی", "شانست را بسنج") + "\n"
+        + og_row("🎯 جفت‌یابی حریف", "حریف مناسب پیدا کن") + "\n"
+        + og_row("🤝 نبرد تیمی", "تیم بساز، بجنگ")
+        + "\n" + _hub_foot("🎮", "برای بازی گروهی، ربات را در گروه add کن و /apex بزن")
+    )
+    markup = kb([
+        [btn("⚔️ بازی گروهی", "H|GUIDE"), btn("🎮 مسابقه خصوصی", "PM|HOME")],
+        [btn("🎲 بازی‌های مهمانی", "FY|HOME"), btn("🔥 حالت بقا", "SV|HOME")],
+        [btn("🎮 مینی‌بازی‌ها", "MG|HOME"), btn("🎰 عدد شانسی", "LN|HOME")],
+        [btn("🎯 جفت‌یابی حریف", "MM|HOME"), btn("🤝 نبرد تیمی", "TB|HOME")],
+        [btn("🏠 منوی اصلی", "H|HOME")],
+    ])
+    return text, markup
+
+
+def hub_profile_view(uid: int = 0) -> tuple:
+    """🪪 هاب پروفایل — هویت، سابقه و افتخارات."""
+    text = (
+        _hub_head("🪪", "پروفایل و افتخارات", "پرونده‌ی قهرمانی تو")
+        + og_row("🪪 پروفایل من", "کارت شناسایی کامل") + "\n"
+        + og_row("📜 تاریخچه بازی", "بازی‌های گذشته") + "\n"
+        + og_row("👑 تالار افتخار", "بهترین‌های همیشگی") + "\n"
+        + og_row("💎 وی‌آی‌پی", "مزایای ویژه")
+        + "\n" + _hub_foot("🪪")
+    )
+    markup = kb([
+        [btn("🪪 پروفایل من", "P|PROFILE"), btn("📜 تاریخچه بازی", "GH|HOME")],
+        [btn("👑 تالار افتخار", "HF|HOME"), btn("💎 وی‌آی‌پی", "VP|HOME")],
+        [btn("🏠 منوی اصلی", "H|HOME")],
+    ])
+    return text, markup
+
+
+def hub_progress_view(uid: int = 0) -> tuple:
+    """🏆 هاب پیشرفت — مأموریت‌ها، پاداش‌ها و رتبه‌ها."""
+    text = (
+        _hub_head("🏆", "مرکز پیشرفت", "مأموریت بده، پاداش بگیر، بالا برو")
+        + og_row("🎯 مأموریت‌ها", "مأموریت‌های روزانه") + "\n"
+        + og_row("🎁 پاداش روزانه", "استریک را نشکن") + "\n"
+        + og_row("🌟 مأموریت‌های ویژه", "کوئست‌های خاص") + "\n"
+        + og_row("🎫 پاس فصل", "پاداش‌های فصلی") + "\n"
+        + og_row("🎯 قدم‌های میل", "نقاط عطف پروفایل") + "\n"
+        + og_row("🏆 رتبه‌بندی", "جدول نخبگان") + "\n"
+        + og_row("⚔️ رقبا", "حریف‌های هم‌سطح تو")
+        + "\n" + _hub_foot("🏆")
+    )
+    markup = kb([
+        [btn("🎯 مأموریت‌ها", "DM|HOME"), btn("🎁 پاداش روزانه", "DR|CLAIM")],
+        [btn("🌟 مأموریت‌های ویژه", "QS|HOME"), btn("🎫 پاس فصل", "SP|HOME")],
+        [btn("🎯 قدم‌های میل", "MS|HOME"), btn("🏆 رتبه‌بندی", "P|TOP")],
+        [btn("⚔️ رقبا", "RV|HOME")],
+        [btn("🏠 منوی اصلی", "H|HOME")],
+    ])
+    return text, markup
+
+
+def hub_social_view(uid: int = 0) -> tuple:
+    """👥 هاب اجتماعی — دوستان، معامله و دعوت."""
+    text = (
+        _hub_head("👥", "مرکز اجتماعی", "بازی با دوستان، دوبرابر می‌چسبد")
+        + og_row("👥 دوستان", "لایف و پارتی") + "\n"
+        + og_row("🔄 مرکز معامله", "خرید و فروش آیتم") + "\n"
+        + og_row("🎁 دعوت دوستان", "جایزه‌ی معرفی") + "\n"
+        + og_row("🌐 دیوار اجتماعی", "دنیای مشترک بازیکنان")
+        + "\n" + _hub_foot("👥")
+    )
+    markup = kb([
+        [btn("👥 دوستان", "FR|HOME"), btn("🔄 مرکز معامله", "TR|HOME")],
+        [btn("🎁 دعوت دوستان", "RF|HOME"), btn("🌐 دیوار اجتماعی", "DR|WALL")],
+        [btn("🏠 منوی اصلی", "H|HOME")],
+    ])
+    return text, markup
+
+
+def hub_help_view(uid: int = 0) -> tuple:
+    """🎓 هاب راهنما — آموزش، قوانین، بازخورد و ابزار ادمین."""
+    text = (
+        _hub_head("🎓", "راهنما و پشتیبانی", "هر چیزی که لازم داری")
+        + og_row("🎓 راهنمای بازی", "۱۲ صفحه‌ی کامل") + "\n"
+        + og_row("📚 راهنمای بخش‌ها", "آموزش تک‌تک قسمت‌ها") + "\n"
+        + og_row("📜 قوانین", "قوانین بازی و لابی") + "\n"
+        + og_row("📝 بازخورد", "نظر، پیشنهاد، گزارش") + "\n"
+        + og_row("ℹ️ درباره ربات", "نسخه و سازندگان")
+        + "\n" + _hub_foot("🎓", "سریع‌ترین راه بازخورد: روی پیام موردنظر Reply کن و بنویس «بازخورد»")
+    )
+    rows = [
+        [btn("🎓 راهنمای بازی (۱۲ صفحه)", "H|GUIDE|0"), btn("📚 راهنمای بخش‌ها", "GD|INDEX")],
+        [btn("📜 قوانین", "L|RULES"), btn("📝 بازخورد", "FB|HOME")],
+        [btn("ℹ️ درباره ربات", "H|ABOUT")],
+    ]
+    # ادمین‌ها از همین‌جا به ستون فرمان می‌رسند (تا منوی ۸ دکمه‌ای برای همه یکسان بماند)
     if has_permission(int(uid), "admin"):
         rows.append([btn("🛠 پنل مدیریت", "A|HOME")])
-    return kb(rows)
+    rows.append([btn("🏠 منوی اصلی", "H|HOME")])
+    return text, kb(rows)
+
+
+HUB_VIEWS = {
+    "GAMES": hub_games_view,
+    "PROFILE": hub_profile_view,
+    "PROGRESS": hub_progress_view,
+    "SOCIAL": hub_social_view,
+    "HELP": hub_help_view,
+}
+
 
 
 async def show_private_home(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: int, fresh_message: bool = False) -> None:
@@ -4786,13 +4926,32 @@ async def cmd_apex(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     game = active_game(int(chat.id))
     if game:
-        if str(game.get("status")) == "active" and game.get("phase") in ("topic", "playing", "question"):
-            # نمایش پنل بازی به‌جای کارت نوبت تکراری
-            await game_show_panel(update, context, game, uid)
+        if str(game.get("phase")) == "lobby":
+            # ۶.۳ — لابی فعال: «پنل زنده» را تازه کن (ویرایش همان پیام)؛
+            # اگر پیام پنل در دسترس نبود، پیام جدید + ردیابی برای رفرش خودکار.
+            pmid = int(game.get("_panel_msg_id", 0) or 0)
+            refreshed = False
+            if pmid:
+                try:
+                    await context.bot.edit_message_text(
+                        int(chat.id), pmid, lobby_text(game),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=lobby_markup(game),
+                        disable_web_page_preview=True,
+                    )
+                    panel_reset_timer(game)
+                    refreshed = True
+                except Exception:
+                    refreshed = False
+            if not refreshed:
+                m = await context.bot.send_message(int(chat.id), lobby_text(game),
+                                                   parse_mode=ParseMode.HTML,
+                                                   reply_markup=lobby_markup(game))
+                game["_panel_msg_id"] = int(m.message_id)
+                panel_reset_timer(game)
         else:
-            # لابی فعال — پنل لابی (کیبورد جهانی: همه دکمه‌ی پیوستن را می‌بینند)
-            await context.bot.send_message(int(chat.id), lobby_text(game), parse_mode=ParseMode.HTML,
-                                           reply_markup=lobby_markup(game))
+            # بازی فعال — نمایش پنل آگاه از فاز (۶.۳: دکمه‌ها زنده می‌مانند)
+            await game_show_panel(update, context, game, uid)
         return
 
     # بازی فعالی نیست — منوی گروه
@@ -4850,6 +5009,9 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 reply_markup=lobby_markup(game),
             )
             game["_panel_msg_id"] = int(m.message_id)
+            # ⏱ ۶.۳ — شمارنده‌ی رفرش از همین لحظه شروع شود (اولین رفرش زنده
+            # بعد از «فاصله‌ی تنظیمی» بیاید، نه بلافاصله)
+            panel_reset_timer(game)
             try:
                 panel_register(uid, chat_id, int(m.message_id), "lobby")
             except Exception:
@@ -5280,7 +5442,9 @@ async def lobby_remove_player(context, game: dict, uid: int, query=None, kicked:
     touch_game(game)
     save_data()
     await safe_answer_query(query, "خارج شدی 🚪" if not kicked else "اخراج شد 🦵")
-    if str(game.get("status")) == "lobby" and query is not None:
+    # ۶.۳ FIX: چک قدیمی status=="lobby" هرگز صادق نبود (در لابی status="active"
+    # و phase="lobby" است) — پنل بعد از خروج/اخراج هرگز تازه نمی‌شد!
+    if str(game.get("phase")) == "lobby" and query is not None:
         await lobby_refresh(None, context, game, query=query)
 
 
@@ -5562,10 +5726,17 @@ def game_home_markup(game: dict, viewer_uid: int) -> InlineKeyboardMarkup:
 
 
 async def game_show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, game: dict, uid: int) -> None:
-    """نمایش پنل بازی — اگر از دکمه صدا زده شده، پیام را ویرایش می‌کند."""
+    """نمایش پنل بازی — اگر از دکمه صدا زده شده، پیام را ویرایش می‌کند.
+
+    ۶.۳: نمای «آگاه از فاز» (همان موتور رفرش زنده) — در فاز لابی، نمای لابی
+    با دکمه‌های پیوستن/آماده؛ در فاز موضوع، کارت نوبت با دکمه‌های موضوع و...
+    دیگر هیچ فازی دکمه‌های خود را از دست نمی‌دهد.
+    """
     chat_id = int(game.get("chat_id", 0))
-    text = game_home_text(game)
-    markup = game_home_markup(game, uid)
+    try:
+        text, markup = _panel_views_for(game)
+    except Exception:
+        text, markup = game_home_text(game), game_home_markup(game, uid)
     if update.callback_query:
         await safe_edit(update.callback_query, text, markup)
         game["_panel_msg_id"] = int(update.callback_query.message.message_id)
@@ -19989,28 +20160,43 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await safe_edit(query, private_home_text(uid), private_home_markup(uid))
         return
 
-    if action == "MORE":
-        # منوی ثانویه — ساده و دسته‌بندی‌شده
+    # --- 🗂 هاب‌های منوی ۸ دکمه‌ای (۶.۳) ---
+    if action in HUB_VIEWS:
         await safe_answer_query(query)
-        await safe_edit(
-            query,
-            f"{ds_top('📋')}\n"
-            "│  📋 <b>بیشتر...</b>\n"
+        text, markup = HUB_VIEWS[action](uid)
+        await safe_edit(query, text, markup)
+        return
+
+    if action == "ABOUT":
+        # ℹ️ درباره ربات — به‌صورت کالبک برای هاب راهنما (۶.۳)
+        await safe_answer_query(query)
+        users = len(DATA.get("users", {}))
+        groups = len(DATA.get("groups", {}))
+        text = (
+            f"{ds_top()}\n"
+            f"│  ⚔️ <b>{BOT_NAME}</b>\n"
+            f"│  <i>{DS_VER} — بازنویسی کامل · هزارلولی</i>\n"
             f"{ds_sep()}\n"
-            "🎯 <b>پیشرفت:</b> مأموریت، پاس فصل، قدم‌های میل\n"
-            "🎮 <b>بازی:</b> مینی‌بازی، عدد شانسی، جفت‌یابی\n"
-            "👥 <b>اجتماعی:</b> معامله، دعوت، تالار افتخار",
-            kb([
-                [btn("🎯 مأموریت‌های ویژه", "QS|HOME"), btn("🎫 پاس فصل", "SP|HOME")],
-                [btn("🎯 قدم‌های میل", "MS|HOME"), btn("📜 تاریخچه بازی", "GH|HOME")],
-                [btn("🎮 مینی‌بازی‌ها", "MG|HOME"), btn("🎰 عدد شانسی", "LN|HOME")],
-                [btn("🎯 جفت‌یابی حریف", "MM|HOME"), btn("🤝 نبرد تیمی", "TB|HOME")],
-                [btn("🔄 مرکز معامله", "TR|HOME"), btn("🎁 دعوت دوستان", "RF|HOME")],
-                [btn("👑 تالار افتخار", "HF|HOME"), btn("👑 وی‌آی‌پی", "VP|HOME")],
-                [btn("📝 بازخورد", "FB|HOME"), btn("🌐 دیوار اجتماعی", "DR|WALL")],
-                [btn("🏠 منوی اصلی", "H|HOME")],
-            ]),
+            + ds_row("📦 نسخه", f"{fa(VERSION)} پرایم") + "\n"
+            + ds_row("📚 بانک سوالات", f"{pnum(BANKS_TOTAL)} سوال در {pnum(len(BANKS))} بانک") + "\n"
+            + ds_row("👥 کاربران", pnum(users)) + "\n"
+            + ds_row("👥 گروه‌ها", pnum(groups)) + "\n"
+            + ds_row("🛡 داده‌های قبلی", "سازگار کامل ✅") + "\n"
+            + f"{ds_sep('⋆')}\n"
+            + "│  💫 ساخته‌شده برای شب‌های بی‌خوابی گروه‌های فارسی‌زبان 🌙\n"
+            + ds_close()
         )
+        await safe_edit(query, text, kb([
+            [btn("🎓 راهنما", "H|HELP")],
+            [btn("🏠 منوی اصلی", "H|HOME")],
+        ]))
+        return
+
+    if action == "MORE":
+        # ۶.۳ — دکمه‌ی «بیشتر...» بازنشسته شد؛ همه‌ی بخش‌ها زیرمجموعه‌ی ۸ دکمه‌ی اصلی‌اند.
+        # پنل‌های قدیمی که هنوز این دکمه را دارند، به منوی جدید ۸ دکمه‌ای هدایت می‌شوند.
+        await safe_answer_query(query)
+        await safe_edit(query, private_home_text(uid), private_home_markup(uid))
         return
 
     await safe_answer_query(query)
@@ -20480,6 +20666,8 @@ async def _legacy_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> No
 PANEL_TICK_EDIT_CAP = 12          # حداکثر ویرایش پنل در هر تیکِ ۱ ثانیه (ضد محدودیت نرخ تلگرام)
 _panel_tick_cursor = 0            # نشانگر گردشی برای انصاف بین گروه‌ها
 PANEL_SPIN_ICONS = "◐◓◑◒"         # آیکون چرخان ثانیه‌شمار
+# ۶.۳ — فلود-کنترل تلگرام: وقتی RetryAfter می‌آید، کل موتور تا این زمان مکث می‌کند
+_PANEL_FLOOD_UNTIL = 0.0
 
 
 def _panel_counter_line(remaining: int) -> str:
@@ -20546,11 +20734,14 @@ def _panel_views_for(game: dict) -> tuple:
 
     FIX بحرانی: رفرش قدیمی همیشه نمای «وضعیت» می‌ساخت و دکمه‌های
     انتخاب موضوعِ پرسشگر را روی کارت نوبت می‌بلعید!
+    ۶.۳ FIX بحرانی‌تر: در لابی status همیشه "active" و phase=="lobby" است؛
+    چکِ status=="lobby" هرگز صادق نبود و رفرش، دکمه‌های لابی (پیوستن/آماده/
+    شروع) را می‌بلعید و لابی را عملاً می‌کشت. حالا فازِ لابی هم چک می‌شود.
     """
     status = str(game.get("status", ""))
-    if status == "lobby":
-        return lobby_text(game), lobby_markup(game)
     phase = str(game.get("phase", ""))
+    if status == "lobby" or phase == "lobby":
+        return lobby_text(game), lobby_markup(game)
     q = current_questioner(game)
     if phase == "topic" and q is not None:
         # کارت نوبت با دکمه‌های خودش — مجوزها در لحظه‌ی کلیک چک می‌شوند
@@ -20564,7 +20755,7 @@ def _panel_views_for(game: dict) -> tuple:
 
 async def _panel_apply_edit(bot, game: dict, chat_id: int, message_id: int,
                            counter_remaining=None) -> bool:
-    """اعمال ویرایش پنل با مدیریت خطاهای تلگرام (۶.۲)."""
+    """اعمال ویرایش پنل با مدیریت خطاهای تلگرام (۶.۲ + فلود-کنترل ۶.۳)."""
     try:
         text, markup = _panel_views_for(game)
         if counter_remaining is not None:
@@ -20578,6 +20769,15 @@ async def _panel_apply_edit(bot, game: dict, chat_id: int, message_id: int,
             disable_web_page_preview=True,
         )
         return True
+    except RetryAfter as ra:
+        # ۶.۳ — تلگرام گفت: آهسته‌تر! کل موتور رفرش چند ثانیه مکث می‌کند
+        global _PANEL_FLOOD_UNTIL
+        try:
+            wait_s = float(getattr(ra, "retry_after", 5) or 5)
+        except Exception:
+            wait_s = 5.0
+        _PANEL_FLOOD_UNTIL = time.time() + wait_s + 1.5
+        return False
     except Exception as exc:
         msg = str(exc).lower()
         if "not modified" in msg:
@@ -20602,6 +20802,9 @@ async def auto_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     global _panel_tick_cursor
     try:
+        # ۶.۳ — احترام به فلود-کنترل تلگرام: در زمان مکث، هیچ ویرایشی نکن
+        if time.time() < _PANEL_FLOOD_UNTIL:
+            return
         cfg = syscfg()
         if not cfg.get("panel_refresh", True):
             return
