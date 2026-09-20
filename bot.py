@@ -3250,6 +3250,210 @@ def panel_stale(uid: int, message_id: int) -> bool:
 
 
 # ================================================================
+#  🧹 سیستم تک‌پیام (UI Ledger) — «همه‌چی با یک پیام پیش بره»
+#  هر دستور جدید، پیام‌های قبلیِ ربات را در همان چت پاک می‌کند؛
+#  هم در PV و هم در گروه. پیام‌های ارسالی ربات خودکار ردیابی می‌شوند
+#  و کارت سوالِ در انتظار Reply هرگز پاک نمی‌شود.
+# ================================================================
+UI_LEDGER_CAP = 8            # سقف پیام‌های ردیابی‌شده در هر چت (ضد انباشت)
+UI_TAG_PANEL = "panel"       # منو/پنل — با دستور بعدی پاک می‌شود
+UI_TAG_TURN = "turn"         # کارت نوبت — با کارت نوبت بعدی جایگزین می‌شود
+UI_TAG_QUESTION = "question"  # کارت سوال/حکم — تا وقتی Reply نخورده محافظت می‌شود
+UI_LEDGER: dict[str, list] = {}   # chat_id -> [[message_id, tag], ...]
+
+
+def _ui_ledger_sync() -> None:
+    """همگام‌سازی لجر با DATA تا بعد از ری‌استارت هم ادامه داشته باشد."""
+    try:
+        DATA["_ui_ledger"] = {k: v for k, v in UI_LEDGER.items() if v}
+    except Exception:
+        pass
+
+
+def _ui_ledger_load() -> None:
+    """بازیابی لجر پس از ری‌استارت (ضد crash)."""
+    try:
+        saved = DATA.get("_ui_ledger", {})
+        if isinstance(saved, dict):
+            for k, v in saved.items():
+                if isinstance(v, list):
+                    UI_LEDGER[str(k)] = [[int(e[0]), str(e[1]) if len(e) > 1 else UI_TAG_PANEL]
+                                         for e in v if isinstance(e, (list, tuple)) and len(e) >= 1]
+    except Exception:
+        pass
+
+
+def ui_is_protected(chat_id: int, message_id: int) -> bool:
+    """آیا این پیام نباید پاک شود؟
+    ۱) کارت سوال/حکمی که منتظر Reply است؛
+    ۲) پنل اصلی بازی وقتی لابی باز است یا کارت نوبت منتظر انتخاب موضوع/هدف است.
+    """
+    try:
+        game = active_game(int(chat_id))
+        if game:
+            if isinstance(game.get("reply_prompt"), dict):
+                rp = game["reply_prompt"]
+                if int(rp.get("message_id", -1)) == int(message_id) and time.time() < float(rp.get("expires", 0)):
+                    return True
+            if (str(game.get("phase")) in ("lobby", "topic", "target")
+                    and int(game.get("_panel_msg_id", 0) or 0) == int(message_id)):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _ui_registry_forget(chat_id: int, message_id: int) -> None:
+    """حذف پیامِ پاک‌شده از رجیستری رفرش خودکار گروه."""
+    try:
+        reg = DATA.get("_panel_registry")
+        if isinstance(reg, dict):
+            reg.pop(f"{int(chat_id)}_{int(message_id)}", None)
+    except Exception:
+        pass
+
+
+async def _ui_delete_quiet(bot, chat_id: int, message_id: int) -> None:
+    """حذف بی‌صدا — هر خطایی نادیده گرفته می‌شود."""
+    try:
+        await bot.delete_message(int(chat_id), int(message_id))
+    except Exception:
+        pass
+
+
+async def ui_after_send(bot, chat_id: int, message_id: int) -> None:
+    """بعد از هر ارسال: ثبت در لجر + مدیریت سقف (قدیمی‌ترین غیرمحافظت‌شده پاک می‌شود)."""
+    try:
+        cid = str(int(chat_id))
+        lst = UI_LEDGER.setdefault(cid, [])
+        mid = int(message_id)
+        if not any(e[0] == mid for e in lst):
+            lst.append([mid, UI_TAG_PANEL])
+        # سقف: بیش از UI_LEDGER_CAP پیام در یک چت انباشته نشود
+        while len(lst) > UI_LEDGER_CAP:
+            victim = None
+            for e in lst:
+                if not ui_is_protected(chat_id, e[0]):
+                    victim = e
+                    break
+            if victim is None:
+                break
+            lst.remove(victim)
+            await _ui_delete_quiet(bot, chat_id, victim[0])
+            _ui_registry_forget(chat_id, victim[0])
+        _ui_ledger_sync()
+    except Exception:
+        pass
+
+
+def ui_retag(chat_id: int, message_id: int, tag: str) -> None:
+    """تغییر برچسب پیام (مثلاً turn/question) برای پاک‌سازی هوشمندتر."""
+    try:
+        cid = str(int(chat_id))
+        mid = int(message_id)
+        for e in UI_LEDGER.get(cid, []):
+            if e[0] == mid:
+                e[1] = str(tag)
+                _ui_ledger_sync()
+                return
+        UI_LEDGER.setdefault(cid, []).append([mid, str(tag)])
+        _ui_ledger_sync()
+    except Exception:
+        pass
+
+
+def ui_hold(chat_id: int, message_id: int) -> None:
+    """پیام مهم (همگانی/پاسخ پشتیبانی/DM ادمین) از چرخه‌ی پاک‌سازی خارج می‌شود."""
+    try:
+        cid = str(int(chat_id))
+        mid = int(message_id)
+        UI_LEDGER[cid] = [e for e in UI_LEDGER.get(cid, []) if e[0] != mid]
+        _ui_ledger_sync()
+    except Exception:
+        pass
+
+
+def ui_forget(chat_id: int, message_id: int) -> None:
+    """حذف یک پیام از لجر (مثلاً بعد از TTL خودکار)."""
+    ui_hold(chat_id, message_id)
+
+
+async def ui_sweep_chat(bot, chat_id: int) -> None:
+    """🧹 پاک‌سازی همه‌ی پیام‌های ردیابی‌شده‌ی این چت — به‌جز کارت سوالِ در انتظار."""
+    try:
+        cid = str(int(chat_id))
+        lst = UI_LEDGER.pop(cid, [])
+        keep = []
+        for e in lst:
+            if ui_is_protected(chat_id, e[0]):
+                keep.append(e)
+                continue
+            await _ui_delete_quiet(bot, chat_id, e[0])
+            _ui_registry_forget(chat_id, e[0])
+        if keep:
+            UI_LEDGER[cid] = keep
+        _ui_ledger_sync()
+    except Exception:
+        pass
+
+
+async def ui_sweep_tags(bot, chat_id: int, tags) -> None:
+    """پاک‌سازی انتخابی — فقط پیام‌هایی با برچسب‌های مشخص (مثلاً کارت‌های نوبت/سوال)."""
+    try:
+        cid = str(int(chat_id))
+        want = set(tags)
+        lst = UI_LEDGER.get(cid, [])
+        rest = []
+        for e in lst:
+            if e[1] in want and not ui_is_protected(chat_id, e[0]):
+                await _ui_delete_quiet(bot, chat_id, e[0])
+                _ui_registry_forget(chat_id, e[0])
+            else:
+                rest.append(e)
+        UI_LEDGER[cid] = rest
+        _ui_ledger_sync()
+    except Exception:
+        pass
+
+
+async def ui_notice(bot, chat_id: int, text: str, ttl: int = 45, **kw) -> None:
+    """📢 اعلان موقت — بعد از ttl ثانیه خودش پاک می‌شود (ضد انباشت در گروه)."""
+    try:
+        m = await bot.send_message(chat_id, text, **kw)
+    except Exception:
+        return
+
+    async def _later():
+        try:
+            await asyncio.sleep(int(ttl))
+            await _ui_delete_quiet(bot, chat_id, m.message_id)
+            ui_forget(chat_id, m.message_id)
+        except Exception:
+            pass
+    try:
+        asyncio.get_running_loop().create_task(_later())
+    except Exception:
+        pass
+
+
+async def ui_command_sweeper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """🧹 فراتر از همه‌ی هندلرها (گروه -95): با هر دستورِ جدید،
+    پیام‌های قبلیِ ربات در همان چت پاک می‌شوند (هم PV و هم گروه)
+    و در PV خودِ پیام دستور هم بلافاصله پاک می‌شود — تجربه‌ی «تک‌پیام»."""
+    msg = update.message
+    chat = update.effective_chat
+    if msg is None or chat is None or not (msg.text or "").startswith("/"):
+        return
+    cid = int(chat.id)
+    # ۱) همه‌ی پیام‌های قبلیِ ردیابی‌شده‌ی ربات در این چت پاک شوند
+    await ui_sweep_chat(context.bot, cid)
+    # ۲) گروه: حذفِ خود دستور توسط گیتِ -88 (delcmd) انجام می‌شود؛
+    #    در PV همین‌جا پاک می‌شود تا همیشه فقط یک پیام زنده بماند
+    if chat.type == "private":
+        await safe_delete(msg)
+
+
+# ================================================================
 #  آنبوردینگ — جنسیت + سن + دروازه‌ی بزرگسال
 # ================================================================
 GENDER_ICONS = {"male": "👦 پسر", "female": "👧 دختر"}
@@ -3592,15 +3796,14 @@ async def show_group_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         ds_close(),
     ]
     text = "\n".join(lines)
-    is_leader = int(uid) == int(g.get("group_owner", 0)) or has_permission(int(uid), "admin")
+    # 🌍 دکمه‌ی تنظیمات برای همه نمایش داده می‌شود (کنترل مجوز در لحظه‌ی کلیک انجام می‌شود)
     rows = [
         [btn("🎮 ساخت لابی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
         [btn("🔞 +۱۸ روشن/خاموش", "L|ADULT"), btn("🌟 تم شب", "L|THEME")],
         [btn("📊 آمار گروه", "L|STATS"), btn("🏆 رتبه‌بندی", "L|TOP")],
         [btn("📜 قوانین", "L|RULES"), btn("❓ راهنما", "H|GUIDE")],
+        [btn("⚙️ تنظیمات گروه", "L|SETTINGS")],
     ]
-    if is_leader or has_permission(int(uid), "mod"):
-        rows.append([btn("⚙️ تنظیمات گروه", "L|SETTINGS")])
     # اگر از callback صدا زده شده، پیام را ویرایش کن
     if update.callback_query:
         await safe_edit(update.callback_query, text, kb(rows))
@@ -3860,39 +4063,45 @@ def lobby_text(game: dict) -> str:
     return "\n".join(lines)
 
 
-def lobby_markup(game: dict, uid: int) -> InlineKeyboardMarkup:
-    """دکمه‌های لابی — تمیز و واضح."""
+def lobby_markup(game: dict, uid: int = 0) -> InlineKeyboardMarkup:
+    """دکمه‌های لابی — 🌍 جهانی و مشترک بین همه‌ی اعضا.
+
+    FIX بحرانی: پیام‌های گروهی در تلگرام فقط «یک» کیبورد مشترک دارند که
+    همه‌ی اعضا یکسان می‌بینند؛ رندر وابسته به کاربر باعث می‌شد اعضای غیر
+    سازنده هیچ دکمه‌ی پیوستنی نبینند و لابی عملاً قفل می‌شد. حالا کیبورد
+    برای همه یکسان است و مجوزها «در لحظه‌ی کلیک» در lobby_callback چک
+    می‌شوند (همان چک‌های موجود: عضویت، سرگروهی، ظرفیت و قفل).
+    """
     players = [int(x) for x in game.get("players", [])]
     ready = [int(x) for x in game.get("ready", [])]
-    is_leader = int(uid) == int(game.get("leader_id", 0))
+    group = get_group(int(game["chat_id"]))
+    mn = max(2, int(group.get("min_players", 2)))
+    mx = max(mn, int(group.get("max_players", 20)))
+    locked = bool(game.get("lobby_locked"))
     rows = []
-    if uid in players:
-        if uid in ready:
-            rows.append([btn("⏳ لغو آماده‌باش", "L|UNREADY")])
-        else:
-            rows.append([btn("✅ آماده‌ام", "L|READY")])
-        rows.append([btn("🚪 خروج از بازی", "L|LEAVE")])
+    # ردیف ۱ — پیوستن: همیشه برای همه قابل دیدن (کنترل ظرفیت/قفل در لحظه‌ی کلیک)
+    if locked:
+        rows.append([btn("🔒 لابی قفل است — سرگروه باید بازش کند", "L|NOP")])
+    elif len(players) >= mx:
+        rows.append([btn(f"👥 ظرفیت تکمیل است ({pnum(len(players))}/{pnum(mx)})", "L|NOP")])
     else:
-        if not game.get("lobby_locked"):
-            rows.append([btn("➕ پیوستن به بازی", "L|JOIN")])
-        else:
-            rows.append([btn("🔒 لابی قفل است", "L|NOP")])
-    if is_leader:
-        can_start = len(players) >= int(get_group(int(game["chat_id"])).get("min_players", 2))
-        all_ready = len(ready) == len(players) and len(players) >= 2
-        if can_start and all_ready:
-            rows.append([btn("🚀 شروع بازی!", "L|START")])
-        elif can_start:
-            rows.append([btn(f"⏳ همه آماده بشن ({fmt_num(len(ready))}/{fmt_num(len(players))})", "L|NOP")])
-        else:
-            rows.append([btn(f"🚀 شروع ({fmt_num(len(players))}/{fmt_num(int(get_group(int(game['chat_id'])).get('min_players', 2)))})", "L|NOP")])
-        if len(players) >= 3:
-            rows.append([
-                btn("🔐 قفل" if not game.get("lobby_locked") else "🔓 باز کردن", "L|LOCK"),
-                btn("🦵 اخراج", "L|KICK"),
-                btn("👑 انتقال", "L|HOST"),
-            ])
-        rows.append([btn("❌ لغو بازی", "L|CANCEL")])
+        rows.append([btn(f"➕ پیوستن به بازی ({pnum(len(players))}/{pnum(mx)})", "L|JOIN")])
+    # ردیف ۲ — آماده‌سازی / خروج (وضعیت آمادی هر نفر کنار اسمش در متن لابیست)
+    rows.append([btn("✅ آماده‌ام / لغو آماده", "L|READYTOGGLE"), btn("🚪 خروج", "L|LEAVE")])
+    # ردیف ۳ — شروع: همیشه قابل کلیک؛ کنترلِ حداقل بازیکن و سرگروهی در لحظه‌ی کلیک
+    all_ready = len(ready) >= len(players) and len(players) >= 2
+    if len(players) >= mn and all_ready:
+        rows.append([btn("🚀 شروع بازی!", "L|START")])
+    else:
+        rows.append([btn(f"🚀 شروع بازی ({pnum(len(ready))}/{pnum(len(players))} آماده · حداقل {pnum(mn)} نفر)", "L|START")])
+    # ردیف ۴ — ابزارهای سرگروه (کنترل مجوز در لحظه‌ی کلیک)
+    rows.append([
+        btn("🔐 قفل" if not locked else "🔓 باز کردن", "L|LOCK"),
+        btn("🦵 اخراج", "L|KICK"),
+        btn("👑 انتقال", "L|HOST"),
+    ])
+    # ردیف ۵ — لغو
+    rows.append([btn("❌ لغو بازی", "L|CANCEL")])
     return kb(rows)
 
 
@@ -3900,13 +4109,13 @@ async def lobby_refresh(update_or_none, context, game: dict, query=None, chat_id
     """به‌روزرسانی پنل لابی (ویرایش همان پیام)."""
     try:
         if query is not None:
-            await safe_edit(query, lobby_text(game), lobby_markup(game, int(query.from_user.id)))
+            await safe_edit(query, lobby_text(game), lobby_markup(game))
             game["_panel_msg_id"] = int(query.message.message_id)
             return
         cid = int(chat_id or game.get("chat_id", 0))
         if cid:
             m = await context.bot.send_message(cid, lobby_text(game), parse_mode=ParseMode.HTML,
-                                           reply_markup=lobby_markup(game, 0))
+                                           reply_markup=lobby_markup(game))
             game["_panel_msg_id"] = int(m.message_id)
     except Exception as exc:
         audit("lobby_refresh_error", 0, int(game.get("chat_id", 0) or 0), repr(exc)[:200])
@@ -3952,9 +4161,9 @@ async def cmd_apex(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             # نمایش پنل بازی به‌جای کارت نوبت تکراری
             await game_show_panel(update, context, game, uid)
         else:
-            # لابی فعال — پنل لابی
+            # لابی فعال — پنل لابی (کیبورد جهانی: همه دکمه‌ی پیوستن را می‌بینند)
             await context.bot.send_message(int(chat.id), lobby_text(game), parse_mode=ParseMode.HTML,
-                                           reply_markup=lobby_markup(game, uid))
+                                           reply_markup=lobby_markup(game))
         return
 
     # بازی فعالی نیست — منوی گروه
@@ -4009,7 +4218,7 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             m = await context.bot.send_message(
                 chat_id, lobby_text(game),
                 parse_mode=ParseMode.HTML,
-                reply_markup=lobby_markup(game, uid),
+                reply_markup=lobby_markup(game),
             )
             game["_panel_msg_id"] = int(m.message_id)
             try:
@@ -4045,7 +4254,7 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 analytics_bump("games_started")
                 audit("quick_game_start", uid, chat_id)
                 save_data(force=True)
-                await context.bot.send_message(
+                qm = await context.bot.send_message(
                     chat_id,
                     f"{ds_top('⚡')}\n"
                     "│  ⚡ <b>بازی سریع شروع شد!</b>\n"
@@ -4055,6 +4264,8 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "🎯 اولین نوبت شروع می‌شه!",
                     parse_mode=ParseMode.HTML,
                 )
+                # 🧹 تک‌پیام: کارت بازی سریع با اولین کارت نوبت جایگزین می‌شود
+                ui_retag(chat_id, qm.message_id, UI_TAG_TURN)
                 await game_send_turn_card(context, game)
             else:
                 await safe_answer_query(query, UX_MSG["error_generic"], True)
@@ -4248,6 +4459,23 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await lobby_refresh(None, context, game, query=query)
         return
 
+    if action == "READYTOGGLE":
+        # 🌍 دکمه‌ی جهانی آماده‌سازی — وضعیت هر کاربر در لحظه‌ی کلیک معکوس می‌شود
+        if uid not in players:
+            await safe_answer_query(query, "اول با دکمه‌ی «➕ پیوستن به بازی» وارد شو! 🙂", True)
+            return
+        ready_now = [int(x) for x in game.get("ready", [])]
+        if uid in ready_now:
+            game["ready"] = [x for x in ready_now if x != uid]
+            await safe_answer_query(query, "لغو آماده‌باش ⏳")
+        else:
+            game["ready"] = ready_now + [uid]
+            await safe_answer_query(query, "آماده‌باش ثبت شد ✅")
+        touch_game(game)
+        save_data()
+        await lobby_refresh(None, context, game, query=query)
+        return
+
     if uid not in players and action not in ("NOP",):
         await safe_answer_query(query, "تو داخل این بازی نیستی! اول پیوستن بزن.", True)
         return
@@ -4346,9 +4574,9 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             touch_game(game)
             save_data()
             await safe_answer_query(query, "سرگروهی منتقل شد 👑")
-            await context.bot.send_message(chat_id,
-                                           f"👑 سرگروهی به {mention_user(target, name_of(target, game))} منتقل شد!",
-                                           parse_mode=ParseMode.HTML)
+            await ui_notice(context.bot, chat_id,
+                            f"👑 سرگروهی به {mention_user(target, name_of(target, game))} منتقل شد!",
+                            ttl=60, parse_mode=ParseMode.HTML)
             await lobby_refresh(None, context, game, query=query)
         return
 
@@ -4400,9 +4628,9 @@ async def lobby_remove_player(context, game: dict, uid: int, query=None, kicked:
     chat_id = int(game.get("chat_id", 0))
     label = name_of(uid, game)
     if kicked:
-        await context.bot.send_message(chat_id, f"🦵 {mention_user(uid, label)} از بازی اخراج شد.", parse_mode=ParseMode.HTML)
+        await ui_notice(context.bot, chat_id, f"🦵 {mention_user(uid, label)} از بازی اخراج شد.", ttl=60, parse_mode=ParseMode.HTML)
     else:
-        await context.bot.send_message(chat_id, f"🚪 {mention_user(uid, label)} بازی را ترک کرد.", parse_mode=ParseMode.HTML)
+        await ui_notice(context.bot, chat_id, f"🚪 {mention_user(uid, label)} بازی را ترک کرد.", ttl=60, parse_mode=ParseMode.HTML)
     if not players:
         game["status"] = "finished"
         game["finish_reason"] = "empty"
@@ -4417,7 +4645,9 @@ async def lobby_remove_player(context, game: dict, uid: int, query=None, kicked:
     if int(game.get("leader_id", 0)) == uid:
         game["leader_id"] = players[0]
         game["leader_name"] = name_of(players[0], game)
-        await context.bot.send_message(chat_id, f"👑 سرگروه جدید: {mention_user(players[0], game['leader_name'])}", parse_mode=ParseMode.HTML)
+        await ui_notice(context.bot, chat_id,
+                        f"👑 سرگروه جدید: {mention_user(players[0], game['leader_name'])}",
+                        ttl=60, parse_mode=ParseMode.HTML)
     touch_game(game)
     save_data()
     await safe_answer_query(query, "خارج شدی 🚪" if not kicked else "اخراج شد 🦵")
@@ -4567,12 +4797,18 @@ async def game_send_turn_card(context, game: dict) -> None:
         return
     chat_id = int(game.get("chat_id", 0))
     try:
-        await context.bot.send_message(
+        m = await context.bot.send_message(
             chat_id,
             turn_announcement(game, int(q)),
             parse_mode=ParseMode.HTML,
             reply_markup=turn_markup(game, int(q)),
         )
+        # 🧹 تک‌پیام: کارت نوبت جدید، کارت نوبت/سوالِ حل‌شده‌ی قبلی را پاک می‌کند
+        await ui_sweep_tags(context.bot, chat_id, (UI_TAG_TURN, UI_TAG_QUESTION))
+        ui_retag(chat_id, m.message_id, UI_TAG_TURN)
+        # کارت نوبت جدید = پنل زنده‌ی بازی (محافظت‌شده تا انتخاب موضوع/هدف)
+        game["phase"] = "topic"
+        game["_panel_msg_id"] = int(m.message_id)
     except Exception as exc:
         audit("turn_send_error", 0, chat_id, repr(exc)[:200])
 
@@ -4623,6 +4859,8 @@ async def game_start(context, game: dict, query=None) -> None:
             await safe_answer_query(query, "بازی شروع شد! 🚀")
             await safe_edit(query, text, kb([[btn("🎤 دیدن نوبت", "G|TURN")]]))
         else:
+            # 🧹 تک‌پیام: قبل از اعلام شروع، پیام‌های قبلی ربات (لابی/منو) پاک می‌شوند
+            await ui_sweep_chat(context.bot, chat_id)
             # سکانس سینمایی شمارش معکوس + اعلام شروع روی همان پیام
             await cinematic(context.bot, chat_id, countdown_frames(), delay=0.9,
                             final_text=text)
@@ -4996,6 +5234,8 @@ async def game_ask_question(context, game: dict, questioner: int, target: int, m
     try:
         m = await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
         game["phase"] = "question"
+        # 🧹 تک‌پیام: کارت سوال تا وقتی Reply نخورده محافظت می‌شود
+        ui_retag(chat_id, m.message_id, UI_TAG_QUESTION)
         game["reply_prompt"] = {
             "message_id": m.message_id,
             "questioner_uid": int(questioner),
@@ -5072,6 +5312,8 @@ async def game_show_penalty(context, game: dict, target: int, questioner: int, q
     try:
         m = await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
         game["phase"] = "question"
+        # 🧹 تک‌پیام: کارت حکم تا وقتی Reply نخورده محافظت می‌شود
+        ui_retag(chat_id, m.message_id, UI_TAG_QUESTION)
         game["pending_penalties"][str(target)] = {
             "text": penalty,
             "ts": now_ts(),
@@ -8664,8 +8906,10 @@ async def bc_send_all(update, context, query) -> None:
                 await context.bot.send_photo(uid, _BC_STATE["photo"], caption=text,
                                              parse_mode=ParseMode.HTML, reply_markup=markup)
             else:
-                await context.bot.send_message(uid, text, parse_mode=ParseMode.HTML,
+                bc_m = await context.bot.send_message(uid, text, parse_mode=ParseMode.HTML,
                                                reply_markup=markup, disable_web_page_preview=True)
+                # 🧹 تک‌پیام: نامه‌ی همگانی هرگز با دستور بعدی کاربر پاک نمی‌شود
+                ui_hold(uid, bc_m.message_id)
             sent += 1
         except Exception:
             failed += 1
@@ -8764,7 +9008,9 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return True
         if ua == "UDM" and text:
             try:
-                await context.bot.send_message(tid, f"📩 <b>پیام از پشتیبانی:</b>\n\n{escape(text[:3500])}", parse_mode=ParseMode.HTML)
+                dm_m = await context.bot.send_message(tid, f"📩 <b>پیام از پشتیبانی:</b>\n\n{escape(text[:3500])}", parse_mode=ParseMode.HTML)
+                # 🧹 تک‌پیام: نامه‌ی پشتیبانی هرگز خودکار پاک نمی‌شود
+                ui_hold(tid, dm_m.message_id)
                 await msg.reply_text("✅ پیام достав شد.")
             except Exception as exc:
                 await msg.reply_text(f"⚠️ ارسال ناموفق: {str(exc)[:80]}")
@@ -8787,7 +9033,7 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             fb_snippet = str(fb.get("text", ""))[:180]
             sent_ok = False
             try:
-                await context.bot.send_message(
+                fb_m = await context.bot.send_message(
                     int(fb.get("uid", 0)),
                     f"{ds_top('💬')}\n"
                     "│  💬 <b>پاسخ پشتیبانی رسید!</b>\n"
@@ -8800,6 +9046,8 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     "💗 از اینکه با ما هم‌صدا شدی ممنونیم!",
                     parse_mode=ParseMode.HTML,
                 )
+                # 🧹 تک‌پیام: پاسخ پشتیبانی هرگز خودکار پاک نمی‌شود
+                ui_hold(int(fb.get("uid", 0)), fb_m.message_id)
                 sent_ok = True
             except Exception:
                 sent_ok = False
@@ -19179,6 +19427,23 @@ def build_application() -> Application:
 
     # --- کالبک‌ها: یک روتر واحد + محافظ اسپم قبل از همه ---
     app.add_handler(CallbackQueryHandler(route_callback), group=0)
+
+    # --- 🧹 سیستم تک‌پیام: قبل از همه‌ی هندلرها، با هر دستور جدید پیام‌های قبلی پاک شوند ---
+    app.add_handler(TypeHandler(Update, ui_command_sweeper), group=-95)
+
+    # --- 🧹 پچ send_message: هر پیام ارسالی ربات خودکار در لجر ردیابی می‌شود ---
+    _orig_send_message = app.bot.send_message
+
+    async def _tracked_send_message(*args, **kwargs):
+        m = await _orig_send_message(*args, **kwargs)
+        try:
+            await ui_after_send(app.bot, int(m.chat_id), int(m.message_id))
+        except Exception:
+            pass
+        return m
+
+    app.bot.send_message = _tracked_send_message
+    _ui_ledger_load()
 
     # --- عضویت ربات در گروه (فعال‌سازی) ---
     app.add_handler(TypeHandler(Update, on_my_chat_member), group=-90)
