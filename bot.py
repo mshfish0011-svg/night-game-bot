@@ -373,10 +373,12 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    ExtBot,
     MessageHandler,
     TypeHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 
 # ================================================================
@@ -19275,6 +19277,77 @@ async def cmd_apexid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+# ================================================================
+#  🧹 ربات ردیاب‌دار — جایگزینِ امنِ پچِ runtime
+#  (در PTB v22+ ست‌کردنِ صفت روی instance ممنوع است؛ زیرکلاسِ رسمی ExtBot
+#   تنها راهِ سازگار است و رفتارِ send_message/reply_text را کامل حفظ می‌کند)
+# ================================================================
+class _ApexTrackedBot(ExtBot):
+    """ExtBot با ردیاب داخلی: هر پیامِ ارسالی خودکار در لجرِ سیستم تک‌پیام ثبت می‌شود."""
+
+    async def send_message(self, *args, **kwargs) -> Any:
+        m = await super().send_message(*args, **kwargs)
+        try:
+            await ui_after_send(self, int(m.chat_id), int(m.message_id))
+        except Exception:
+            pass
+        return m
+
+
+# ================================================================
+#  🕐 زمان‌بند جایگزین (Render بدون بسته‌ی job-queue)
+#  اگر APScheduler نصب نباشد، همین‌جا با asyncio همان سه کارِ زمان‌بندی‌شده
+#  اجرا می‌شوند تا رفرش پنل‌های لابی، نگهداری و بکاپ هرگز خاموش نمانند.
+# ================================================================
+_FALLBACK_TASKS: list = []
+
+
+class _MiniJobContext:
+    """زمینه‌ی سبک برای زمان‌بند جایگزین — bot و application واقعی."""
+
+    __slots__ = ("bot", "application")
+
+    def __init__(self, bot, application) -> None:
+        self.bot = bot
+        self.application = application
+
+
+async def _fallback_job_loop(name: str, job, context, interval: float, first: float) -> None:
+    """اجرای تکرارشونده‌ی یک کار زمان‌بندی‌شده بدون APScheduler — هرگز نمی‌میرد."""
+    try:
+        await asyncio.sleep(max(1.0, float(first)))
+        while True:
+            try:
+                await job(context)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"ApexRival job[{name}] warning: {exc!r}")
+            await asyncio.sleep(max(1.0, float(interval)))
+    except asyncio.CancelledError:
+        pass
+
+
+def _start_fallback_scheduler(app) -> None:
+    """راه‌اندازی کارهای زمان‌بندی‌شده با asyncio (فقط وقتی job_queue غایب باشد)."""
+    if _FALLBACK_TASKS or app.job_queue is not None:
+        return
+    try:
+        ctx = _MiniJobContext(app.bot, app)
+        loop = asyncio.get_running_loop()
+        for name, job, interval, first in (
+            ("maintenance", periodic_maintenance, 180, 60),
+            ("backup", backup_job, 6 * 3600, 300),
+            ("panel_refresh", auto_refresh_group_panels, 5, 10),
+        ):
+            _FALLBACK_TASKS.append(
+                loop.create_task(_fallback_job_loop(name, job, ctx, interval, first))
+            )
+        print("ApexRival: built-in asyncio scheduler active (job-queue package not installed)")
+    except Exception as exc:
+        print(f"ApexRival fallback-scheduler warning: {exc!r}")
+
+
 async def post_init(app) -> None:
     """بعد از ساخت اپلیکیشن: منوها، یوزرنیم، بکاپ بوت."""
     try:
@@ -19304,19 +19377,29 @@ async def post_init(app) -> None:
         backup_data("boot")
     except Exception:
         pass
+    # 🕐 زمان‌بند جایگزین: بدون بسته‌ی job-queue هم کارهای زمان‌بندی‌شده اجرا شوند
+    _start_fallback_scheduler(app)
     print(f"ApexRival {VERSION} ready | banks={BANKS_TOTAL} | shop={SHOP_COUNT} | admin={'OK' if ADMIN_ID else 'off'}")
 
 
 def build_application() -> Application:
     """ساخت و پیکربندی کامل اپلیکیشن — همه‌ی هندلرها."""
-    builder = ApplicationBuilder().token(BOT_TOKEN)
-    proxy = os.getenv("PROXY_URL", "").strip()
-    if proxy:
-        try:
-            builder = builder.proxy(proxy).get_updates_proxy(proxy)
-        except Exception:
-            pass
-    app = builder.build()
+    # --- 🧹 FIX (Render/PTB v22+): ست‌کردنِ متد روی instance ربات ممنوع است و
+    # باعث کرشِ "Attribute `send_message` of class `ExtBot` can't be set!" می‌شود.
+    # راهِ رسمی: زیرکلاسِ ExtBot — هر پیامِ ارسالی (چه bot.send_message و چه
+    # reply_text که از همان مسیر می‌گذرد) خودکار در لجرِ سیستم تک‌پیام ثبت می‌شود. ---
+    proxy = os.getenv("PROXY_URL", "").strip() or None
+    try:
+        tracked_bot = _ApexTrackedBot(
+            BOT_TOKEN,
+            request=HTTPXRequest(connection_pool_size=256, proxy=proxy, http_version="1.1"),
+            get_updates_request=HTTPXRequest(connection_pool_size=1, proxy=proxy, http_version="1.1"),
+        )
+        app = ApplicationBuilder().bot(tracked_bot).build()
+    except Exception as exc:
+        # پروکسی نامعتبر یا محیط خاص → ادامه با تنظیمات پیش‌فرض (بدون پروکسی)
+        print(f"ApexRival tracked-bot warning: {exc!r} — continuing with defaults")
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # --- دستورات ---
     command_map = {
@@ -19431,18 +19514,8 @@ def build_application() -> Application:
     # --- 🧹 سیستم تک‌پیام: قبل از همه‌ی هندلرها، با هر دستور جدید پیام‌های قبلی پاک شوند ---
     app.add_handler(TypeHandler(Update, ui_command_sweeper), group=-95)
 
-    # --- 🧹 پچ send_message: هر پیام ارسالی ربات خودکار در لجر ردیابی می‌شود ---
-    _orig_send_message = app.bot.send_message
-
-    async def _tracked_send_message(*args, **kwargs):
-        m = await _orig_send_message(*args, **kwargs)
-        try:
-            await ui_after_send(app.bot, int(m.chat_id), int(m.message_id))
-        except Exception:
-            pass
-        return m
-
-    app.bot.send_message = _tracked_send_message
+    # --- 🧹 سیستم تک‌پیام: هر پیام ارسالی ربات (زیرکلاس _ApexTrackedBot)
+    #     خودکار در لجر ردیابی می‌شود — بدون هیچ پچِ runtime ---
     _ui_ledger_load()
 
     # --- عضویت ربات در گروه (فعال‌سازی) ---
@@ -19471,7 +19544,7 @@ def build_application() -> Application:
             # رفرش خودکار پنل‌های گروه هر ۵ ثانیه
             app.job_queue.run_repeating(auto_refresh_group_panels, interval=5, first=10)
         else:
-            print("ApexRival warning: job_queue unavailable (install python-telegram-bot[job-queue])")
+            print("ApexRival: job_queue unavailable — built-in asyncio scheduler will start in post_init")
     except Exception as exc:
         print(f"ApexRival job-queue warning: {exc!r}")
 
