@@ -879,51 +879,6 @@ ANTI_SPAM_LIMITS = {
 # محدودیت طول callback_data تلگرام
 CALLBACK_DATA_MAX_LEN = 64
 
-# ================================================================
-#  نسخه ۶.۲ — ⚙️ مرکز تنظیمات سیستم (صفر تا صد از پنل مدیریت)
-#  ثانیه‌شمار، رفرش پنل، محافظ کلیک، ضداسپم و اعلان‌ها — همه قابل تنظیم
-# ================================================================
-SYSCFG_DEFAULTS = {
-    # — رفرش خودکار پنل گروه —
-    "panel_refresh": True,        # رفرش خودکار پنل بازی/لابی روشن؟
-    "panel_interval": 5,          # هر چند ثانیه محتوای پنل تازه شود (۳ تا ۶۰)
-    "panel_countdown": True,      # ثانیه‌شمار زنده روی پنل نمایش داده شود؟
-    # — محافظ کلیک (Rate Guard) —
-    "rate_enabled": True,        # محافظ کلیک سریع روشن؟
-    "rate_max": 16,               # حداکثر کلیک در پنجره
-    "rate_window": 15,            # پنجره‌ی محافظ بر حسب ثانیه
-    # — ضداسپم پیشرفته (سقف‌های روزانه/ساعتی) —
-    "antispam_enabled": True,     # کل سیستم ضداسپم روشن؟
-    "as_pm_hour": 5,              # حداکثر مسابقه خصوصی در ساعت
-    "as_tour_day": 3,             # حداکثر مسابقه/تورنمنت در روز
-    "as_fb_day": 8,               # حداکثر بازخورد/گزارش در روز
-    "as_fr_hour": 20,             # حداکثر درخواست دوستی در ساعت
-    # — اعلان فوری ادمین‌ها —
-    "admin_notify_report": True,   # گزارش‌های اولویت بالا فوری پیام بدهند؟
-    "admin_notify_feedback": False,  # بازخوردهای عادی هم اعلان بدهند؟
-}
-
-
-def syscfg() -> dict:
-    """تنظیمات سیستم با merge روی پیش‌فرض‌ها + محدوده‌های امن."""
-    try:
-        store = DATA.setdefault("syscfg", {})
-        merged = dict(SYSCFG_DEFAULTS)
-        merged.update({k: v for k, v in store.items() if k in SYSCFG_DEFAULTS})
-        for b in ("panel_refresh", "panel_countdown", "rate_enabled",
-                  "antispam_enabled", "admin_notify_report", "admin_notify_feedback"):
-            merged[b] = bool(merged[b])
-        merged["panel_interval"] = max(3, min(60, int(merged["panel_interval"])))
-        merged["rate_max"] = max(4, min(60, int(merged["rate_max"])))
-        merged["rate_window"] = max(5, min(300, int(merged["rate_window"])))
-        for k in ("as_pm_hour", "as_tour_day", "as_fb_day", "as_fr_hour"):
-            merged[k] = max(1, min(100, int(merged[k])))
-        store.clear()
-        store.update(merged)
-        return merged
-    except Exception:
-        return dict(SYSCFG_DEFAULTS)
-
 # پیام‌های حرفه‌ای (UX بهبودیافته)
 UX_MSG = {
     "match_created":   "🎮 مسابقه خصوصی ساخته شد!\nآماده باش — دعوت در راهه... 🔥",
@@ -1292,12 +1247,12 @@ def bank_integrity_badge() -> str:
     """نشان سلامت بانک سوالات — پاسدار متن سوالات.
     فقط وضعیت را نمایش می‌دهد؛ هرگز محتوا را تغییر نمی‌دهد."""
     try:
-        banks_n = len(BANKS)
-        total_q = sum(len(v) for v in BANKS.values())
-        digest = bank_hash(json.dumps(BANKS, ensure_ascii=False, sort_keys=True))
-        short = str(digest)[:10]
+        banks_n = len(BANKS_FACTORY)
+        total_q = sum(len(v) for v in BANKS_FACTORY.values())
+        short = str(BANKS_FACTORY_DIGEST)[:10]
+        state = "دست‌نخورده" if bank_is_intact() else "نیازمند بررسی"
         return (f"🛡 بانک: <b>{pnum(banks_n)}</b> دسته · <b>{pnum(total_q)}</b> سوال\n"
-                f"🔒 مهر سلامت: <code>{short}…</code> — دست‌نخورده")
+                f"🔒 مهر سلامت: <code>{short}…</code> — {state}")
     except Exception:
         return "🛡 بانک سوالات: فعال"
 
@@ -1687,6 +1642,22 @@ def list_backups():
 BANKS: dict[str, list[str]] = {k: list(v) for k, v in BANKS_FACTORY.items()}
 BANKS_PERSIST_VERSION = 1
 
+# بانک اصلیِ سوالات یک قرارداد غیرقابل‌تغییر است. تمام مسیرهای اجرایی فقط از
+# همین snapshot می‌خوانند؛ پیشنهادها و گزارش‌ها جداگانه ثبت می‌شوند و هرگز به
+# متن، ترتیب یا تعداد سوال‌های بانک وارد نمی‌شوند.
+BANKS_FACTORY_DIGEST = hashlib.sha256(
+    json.dumps(BANKS_FACTORY, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+
+
+def bank_is_intact() -> bool:
+    """صحت بایت‌به‌بایت بانک سوالاتِ کارخانه را بدون اعمال هیچ تغییری بررسی می‌کند."""
+    try:
+        payload = json.dumps(BANKS_FACTORY, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest() == BANKS_FACTORY_DIGEST
+    except Exception:
+        return False
+
 
 def bank_hash(text: str) -> str:
     return hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:16]
@@ -1704,47 +1675,14 @@ def editor_store() -> dict:
 
 
 def apply_bank_admin_changes() -> None:
-    """تغییرات ذخیره‌شده‌ی ادمین (سوال سفارشی/ویرایش/حذف/موضوع خاموش) را
-    روی بانک زنده اعمال می‌کند. هر بار بعد از تغییر مدیریتی هم اجرا می‌شود."""
-    st = editor_store()
-    # ۱) سوالات سفارشی V16 و V18
-    for store_key in ("v16_custom_prompts", "v18_custom_prompts"):
-        customs = DATA.get(store_key, {})
-        if isinstance(customs, dict):
-            for key, items in customs.items():
-                if not isinstance(items, list):
-                    continue
-                bank = BANKS.setdefault(str(key), [])
-                existing = set(bank)
-                for raw in items:
-                    text = str(raw).strip()
-                    if text and text not in existing:
-                        bank.append(text)
-                        existing.add(text)
-    # ۲) ویرایش‌ها (override بر اساس هش متن اصلی)
-    overrides = st.get("overrides", {})
-    for key, mapping in overrides.items():
-        if not isinstance(mapping, dict):
-            continue
-        bank = BANKS.get(str(key))
-        if not bank:
-            continue
-        hashes = {bank_hash(x): i for i, x in enumerate(bank)}
-        for orig_h, new_text in mapping.items():
-            idx = hashes.get(str(orig_h))
-            if idx is not None and str(new_text).strip():
-                bank[idx] = str(new_text).strip()
-    # ۳) حذف‌شده‌ها
-    disabled = st.get("disabled", {})
-    for key, items in disabled.items():
-        if not isinstance(items, list):
-            continue
-        bank = BANKS.get(str(key))
-        if not bank:
-            continue
-        removed = {str(e.get("h")) for e in items if isinstance(e, dict)}
-        BANKS[str(key)] = [x for x in bank if bank_hash(x) not in removed]
-    # ۴) موضوعات خاموش فقط در منو اثر دارند؛ بانک دست‌نخورده می‌ماند
+    """سازگاری با داده‌ی نسخه‌های قدیمی، بدون تغییر دادن بانک سوالات.
+
+    ویرایش، حذف و ورودی بانک در نسخه‌های قبلی متن‌های اصلی را تغییر می‌دادند.
+    اکنون داده‌ی تاریخی فقط برای گزارش و بازیابی نگه داشته می‌شود و منبع اجرای
+    بازی همیشه نسخه‌ی کارخانه‌ایِ تغییرناپذیر است.
+    """
+    global BANKS
+    BANKS = {k: list(v) for k, v in BANKS_FACTORY.items()}
 
 
 apply_bank_admin_changes()
@@ -2091,6 +2029,17 @@ def is_moderator_in_group(uid: int, chat_id: int) -> bool:
         return False
 
 
+async def can_manage_group(context, uid: int, chat_id: int) -> bool:
+    """مجوز تغییر تنظیمات گروه؛ نقش ربات، مدیر ذخیره‌شده یا مدیر تلگرام."""
+    if is_admin(int(uid)) or is_moderator_in_group(int(uid), int(chat_id)):
+        return True
+    try:
+        member = await context.bot.get_chat_member(int(chat_id), int(uid))
+        return member.status in ("administrator", "creator", "owner")
+    except Exception:
+        return False
+
+
 def maintenance_active() -> bool:
     """آیا ربات در حالت تعمیرات است؟"""
     try:
@@ -2277,7 +2226,6 @@ def analytics_day(day: str = "") -> dict:
         d.setdefault("coins_earned", 0)
         d.setdefault("coins_spent", 0)
         d.setdefault("feedback_sent", 0)
-        d.setdefault("reports_sent", 0)
         return d
     except Exception:
         return {}
@@ -3125,16 +3073,9 @@ def data_doctor() -> list:
                         fixes.append(f"analytics-set-fix:{dkey}:{k}")
         except Exception:
             pass
-        # ۶) بانک‌ها: هیچ بانکی None یا پر از موارد خالی نباشد
-        for key, bank in list(BANKS.items()):
-            if not isinstance(bank, list):
-                BANKS[key] = []
-                fixes.append(f"bank-reset:{key}")
-            else:
-                before = len(bank)
-                bank[:] = [x for x in bank if isinstance(x, str) and x.strip()]
-                if len(bank) != before:
-                    fixes.append(f"bank-clean:{key}:{before}->{len(bank)}")
+        # ۶) بانک سوالات: فقط بررسی؛ داده‌ی اصلی هرگز تعمیر/فیلتر/بازنویسی نمی‌شود.
+        if not bank_is_intact():
+            fixes.append("bank-integrity-warning")
         if fixes:
             save_data(force=True)
     except Exception as exc:
@@ -3150,7 +3091,10 @@ def data_doctor() -> list:
 # ================================================================
 
 def btn(label: str, data: str) -> InlineKeyboardButton:
-    return InlineKeyboardButton(str(label), callback_data=str(data)[:64])
+    payload = str(data)
+    if not payload or len(payload.encode("utf-8")) > 64:
+        raise ValueError("callback_data نامعتبر یا طولانی است")
+    return InlineKeyboardButton(str(label), callback_data=payload)
 
 
 def kb(rows: list) -> InlineKeyboardMarkup | None:
@@ -3239,19 +3183,11 @@ _rate_warned: set = set()
 
 
 def rate_check(uid: int) -> bool:
-    """محافظ کلیک سریع — سقف و پنجره از پنل مدیریت قابل تنظیم است (۶.۲)."""
-    try:
-        cfg = syscfg()
-        if not cfg.get("rate_enabled", True):
-            return True
-        rmax = int(cfg.get("rate_max", RATE_MAX_CLICKS))
-        rwin = float(cfg.get("rate_window", RATE_WINDOW))
-    except Exception:
-        rmax, rwin = RATE_MAX_CLICKS, RATE_WINDOW
+    """اگر کاربر در پنجره‌ی ۱۵ ثانیه بیش از حد مجاز کلیک کرده باشد False."""
     now = time.time()
     hist = _rate_clicks.setdefault(int(uid), [])
-    hist[:] = [t for t in hist if now - t < rwin]
-    if len(hist) >= rmax:
+    hist[:] = [t for t in hist if now - t < RATE_WINDOW]
+    if len(hist) >= RATE_MAX_CLICKS:
         return False
     hist.append(now)
     return True
@@ -4012,16 +3948,15 @@ SECTION_GUIDES = {
         "icon": "📮", "title": "بازخورد و گزارش", "sub": "سریع‌ترین راه رسیدن صدات به تیم ربات",
         "back": "FB|HOME", "back_label": "بازخورد",
         "steps": [
-            "سریع‌ترین راه: پیامت را بفرست، روی همان پیام Reply بزن و فقط بنویس «بازخورد»",
-            "یا دکمه‌ی «📝 ارسال بازخورد» را بزن و متن را مستقیم بفرست",
+            "دکمه‌ی «📝 ارسال بازخورد» را بزن — صفحه به حالت نوشتن می‌رود",
+            "متن، پیشنهاد یا مشکلت را به‌صورت یک پیام معمولی بفرست",
             "کارت تأیید با شماره‌ی پیگیری می‌رسد — ثبت شد!",
             "پاسخ تیم اگر لازم باشد، همین‌جا برایت ارسال می‌شود",
         ],
         "tips": [
-            "روش Reply هم در خصوصی ربات کار می‌کند هم در گروه — روی هر پیامی",
-            "برای «گزارش» هم همان کار را بکن: Reply + کلمه‌ی «گزارش» — اولویت بالا دارد و زودتر بررسی می‌شود 🔴",
-            "برای گزارش یک سوال خاص، روی کارت سوال دکمه‌ی «🚩 گزارش این سوال» را بزن",
             "هر متن آزادی در خصوصی بفرستی، خودم می‌پرسم بازخورد است یا نه — چیزی گم نمی‌شود",
+            "برای گزارش یک سوال خاص، روی کارت سوال دکمه‌ی «🚩 گزارش این سوال» را بزن",
+            "یا روی کارت سوال Reply کن و کلمه‌ی «گزارش» را اول متن بنویس",
             "وضعیت همه‌ی بازخوردهایت را از «📜 بازخوردهای من» دنبال کن",
         ],
         "cmds": ["/apexfeedback"],
@@ -4041,8 +3976,6 @@ SECTION_GUIDES = {
             "جواب‌های بلندتر پاداش بیشتری دارند (تا +۳ ایکس‌پی اضافه)",
             "نگهبان نوبت، بازیکن بی‌جواب را خودکار رد می‌کند",
             "موتور گرما سوال‌ها را با پیشرفت بازی داغ‌تر می‌کند (۵ سطح)",
-            "پنل بازی گروه هر چند ثانیه خودکار تازه می‌شود و ثانیه‌شمار دارد",
-            "گزارش/بازخورد سریع: روی هر پیام Reply کن و بنویس «گزارش» یا «بازخورد»",
         ],
         "cmds": ["/apex", "/apexquick", "/apexend", "/apexstatus"],
     },
@@ -4738,14 +4671,12 @@ async def lobby_refresh(update_or_none, context, game: dict, query=None, chat_id
         if query is not None:
             await safe_edit(query, lobby_text(game), lobby_markup(game))
             game["_panel_msg_id"] = int(query.message.message_id)
-            panel_reset_timer(game)
             return
         cid = int(chat_id or game.get("chat_id", 0))
         if cid:
             m = await context.bot.send_message(cid, lobby_text(game), parse_mode=ParseMode.HTML,
                                            reply_markup=lobby_markup(game))
             game["_panel_msg_id"] = int(m.message_id)
-            panel_reset_timer(game)
     except Exception as exc:
         audit("lobby_refresh_error", 0, int(game.get("chat_id", 0) or 0), repr(exc)[:200])
 
@@ -4815,6 +4746,9 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     action = parts[1] if len(parts) > 1 else ""
     uid = int(query.from_user.id)
     chat = query.message.chat
+    if is_banned(uid) and not is_admin(uid):
+        await safe_answer_query(query, "🚫 دسترسی شما به ApexRival مسدود شده است.", True)
+        return
     if chat.type not in ("group", "supergroup"):
         await safe_answer_query(query, "این دکمه فقط در گروه کار می‌کند.")
         return
@@ -4970,7 +4904,7 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             else:
                 try:
                     member = await context.bot.get_chat_member(chat_id, uid)
-                    allowed = member.status in ("administrator", "creator")
+                    allowed = member.status in ("administrator", "creator", "owner")
                 except Exception:
                     allowed = False
         if not allowed:
@@ -4986,6 +4920,9 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if action == "THEME":
         # نمایش منوی تم شب
+        if not await can_manage_group(context, uid, chat_id):
+            await safe_answer_query(query, "🌟 فقط ادمین‌های گروه می‌توانند تم شب را تغییر دهند.", True)
+            return
         await safe_answer_query(query)
         theme_lines = ["🌟 <b>تم شب گروه</b>", "━━━━━━━━━━━━━━━━━━", ""]
         current_theme = ""
@@ -5005,6 +4942,9 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await safe_edit(query, "\n".join(theme_lines), kb(rows))
         return
     if action == "THEMESET" and len(parts) > 2:
+        if not await can_manage_group(context, uid, chat_id):
+            await safe_answer_query(query, "🌟 فقط ادمین‌های گروه می‌توانند تم شب را تغییر دهند.", True)
+            return
         theme_key = parts[2]
         if theme_key == "off":
             theme_night_set(int(chat_id), "")
@@ -5023,7 +4963,7 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             allowed = False
             try:
                 member = await context.bot.get_chat_member(chat_id, uid)
-                allowed = member.status in ("administrator", "creator")
+                allowed = member.status in ("administrator", "creator", "owner")
             except Exception:
                 allowed = False
             if not allowed:
@@ -5059,6 +4999,10 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await safe_edit(query, "🪦 این لابی بسته شده است. با /apex یک لابی تازه بساز.")
         except Exception:
             pass
+        return
+
+    if str(game.get("phase", "")) != "lobby":
+        await safe_answer_query(query, "⏳ لابی بسته شده؛ بازی شروع شده است.", True)
         return
 
     players = [int(x) for x in game.get("players", [])]
@@ -5236,6 +5180,10 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if len(players) < mn:
             await safe_answer_query(query, f"حداقل {fmt_num(mn)} نفر لازم است!", True)
             return
+        not_ready = [p for p in players if p not in [int(x) for x in game.get("ready", [])]]
+        if not_ready:
+            await safe_answer_query(query, "⏳ همه‌ی بازیکنان باید آماده‌باش را تأیید کنند.", True)
+            return
         await game_start(context, game, query)
         return
 
@@ -5280,7 +5228,7 @@ async def lobby_remove_player(context, game: dict, uid: int, query=None, kicked:
     touch_game(game)
     save_data()
     await safe_answer_query(query, "خارج شدی 🚪" if not kicked else "اخراج شد 🦵")
-    if str(game.get("status")) == "lobby" and query is not None:
+    if str(game.get("phase")) == "lobby" and query is not None:
         await lobby_refresh(None, context, game, query=query)
 
 
@@ -5379,43 +5327,35 @@ def turn_announcement(game: dict, questioner: int) -> str:
 
 
 def turn_markup(game: dict, viewer_uid: int) -> InlineKeyboardMarkup:
-    """دکمه‌های نوبت — +۱۸ در صدر، مودهای اصلی و بیشتر."""
+    """دکمه‌های نوبت با کیبورد مشترکِ قابل‌استفاده در پیام گروه.
+
+    تلگرام برای یک پیام گروه فقط یک کیبورد دارد؛ بنابراین دکمه‌ها هرگز با
+    شناسه‌ی بیننده پنهان نمی‌شوند. مجوز تمام اکشن‌های حساس در game_callback
+    و در لحظه‌ی کلیک کنترل می‌شود.
+    """
     q = current_questioner(game)
     if q is None:
         return kb([[btn("📊 وضعیت بازی", "G|STATUS")]])
-    if int(viewer_uid) == int(q):
-        off = set(topics_off())
-        adult_ok = get_group(int(game["chat_id"])).get("adult_mode", False)
-        rows = []
-        # ردیف ۱: +۱۸ در صدر اگر فعال باشه
-        if adult_ok and "adult" not in off:
-            rows.append([btn("🔞 +۱۸ 🔥", "G|MODE|adult")])
-        # ردیف ۲: مودهای اصلی
-        main_modes = [("truth", "🕵️ اعتراف"), ("dare", "🔥 جرئت"),
-                      ("flirty", "💘 فلرت"), ("drama", "😈 جنجال")]
-        pair = []
-        for key, label in main_modes:
-            if key in off:
-                continue
-            pair.append(btn(label, f"G|MODE|{key}"))
-            if len(pair) == 2:
-                rows.append(pair)
-                pair = []
-        if pair:
+    off = set(topics_off())
+    adult_ok = get_group(int(game["chat_id"])).get("adult_mode", False)
+    rows = []
+    if adult_ok and "adult" not in off:
+        rows.append([btn("🔞 +۱۸ 🔥", "G|MODE|adult")])
+    main_modes = [("truth", "🕵️ اعتراف"), ("dare", "🔥 جرئت"),
+                  ("flirty", "💘 فلرت"), ("drama", "😈 جنجال")]
+    pair = []
+    for key, label in main_modes:
+        if key in off:
+            continue
+        pair.append(btn(label, f"G|MODE|{key}"))
+        if len(pair) == 2:
             rows.append(pair)
-        # ردیف موضوعات بیشتر
-        rows.append([btn("📋 موضوعات بیشتر", "G|MOREMODES")])
-        rows.append([btn("🎲 رد کردن نوبت", "G|SKIP"), btn("📊 امتیازها", "G|SCORES")])
-        is_leader = int(viewer_uid) == int(game.get("leader_id", 0))
-        if is_leader or has_permission(int(viewer_uid), "admin"):
-            rows.append([btn("🏁 پایان بازی", "G|END")])
-    else:
-        is_leader = int(viewer_uid) == int(game.get("leader_id", 0))
-        rows = [
-            [btn("📊 امتیازها", "G|SCORES")],
-        ]
-        if is_leader or has_permission(int(viewer_uid), "admin"):
-            rows.append([btn("🏁 پایان بازی", "G|END")])
+            pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([btn("📋 موضوعات بیشتر", "G|MOREMODES")])
+    rows.append([btn("🎲 رد کردن نوبت", "G|SKIP"), btn("📊 امتیازها", "G|SCORES")])
+    rows.append([btn("🏁 پایان بازی", "G|END")])
     return kb(rows)
 
 
@@ -5438,8 +5378,6 @@ async def game_send_turn_card(context, game: dict) -> None:
         # کارت نوبت جدید = پنل زنده‌ی بازی (محافظت‌شده تا انتخاب موضوع/هدف)
         game["phase"] = "topic"
         game["_panel_msg_id"] = int(m.message_id)
-        # ⏱ ۶.۲ — شمارنده‌ی رفرش از همین لحظه شروع شود
-        panel_reset_timer(game)
     except Exception as exc:
         audit("turn_send_error", 0, chat_id, repr(exc)[:200])
 
@@ -5448,13 +5386,26 @@ async def game_start(context, game: dict, query=None) -> None:
     """شروع بازی از لابی — پیام زیبا با جعبه."""
     chat_id = int(game.get("chat_id", 0))
     players = [int(x) for x in game.get("players", [])]
+    if str(game.get("status")) != "active" or str(game.get("phase")) != "lobby":
+        if query is not None:
+            await safe_answer_query(query, "این بازی قبلاً شروع شده یا بسته شده است.", True)
+        return
+    if len(players) < 2:
+        if query is not None:
+            await safe_answer_query(query, "حداقل دو بازیکن برای شروع لازم است.", True)
+        return
+    ready = {int(x) for x in game.get("ready", [])}
+    if any(player not in ready for player in players):
+        if query is not None:
+            await safe_answer_query(query, "همه‌ی بازیکنان باید آماده‌باش را تأیید کنند.", True)
+        return
     random.shuffle(players)
     game["turn_order"] = players
     game["turn_index"] = 0
     game["turn_number"] = 0
     game["round"] = 0
     game["status"] = "active"
-    game["phase"] = "topic"
+    game["phase"] = "starting"
     game["started_at"] = now_ts()
     game["round_scores"] = {str(p): 0 for p in players}
     for p in players:
@@ -5569,12 +5520,10 @@ async def game_show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, ga
     if update.callback_query:
         await safe_edit(update.callback_query, text, markup)
         game["_panel_msg_id"] = int(update.callback_query.message.message_id)
-        panel_reset_timer(game)
     else:
         try:
             m = await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup)
             game["_panel_msg_id"] = int(m.message_id)
-            panel_reset_timer(game)
         except Exception:
             pass
 
@@ -5589,6 +5538,9 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     uid = int(query.from_user.id)
     chat = query.message.chat
     chat_id = int(chat.id)
+    if is_banned(uid) and not is_admin(uid):
+        await safe_answer_query(query, "🚫 دسترسی شما به ApexRival مسدود شده است.", True)
+        return
     game = active_game(chat_id)
     if game is None:
         await safe_answer_query(query, "بازی فعالی در این گروه نیست. با /apex بساز. 🔄")
@@ -5596,7 +5548,6 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if action == "TURN" or action == "STATUS":
         await safe_answer_query(query)
-        panel_reset_timer(game)
         q = current_questioner(game)
         if q is None:
             await safe_edit(query, game_home_text(game), game_home_markup(game, uid))
@@ -5606,6 +5557,9 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if action == "MOREMODES":
         # نمایش مودهای بیشتر
+        if str(game.get("phase", "")) != "topic":
+            await safe_answer_query(query, "⏳ این مرحله تمام شده است؛ نوبت فعلی را دنبال کن.", True)
+            return
         q = current_questioner(game)
         if q is None or int(q) != uid:
             await safe_answer_query(query, "فقط پرسشگر فعلی می‌تواند موضوع انتخاب کند.", True)
@@ -5639,6 +5593,9 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if action == "MODE":
+        if str(game.get("phase", "")) != "topic":
+            await safe_answer_query(query, "⏳ انتخاب موضوع برای این نوبت بسته شده است.", True)
+            return
         q = current_questioner(game)
         if q is None or int(q) != uid:
             await safe_answer_query(query, "فقط پرسشگر فعلی می‌تواند موضوع را انتخاب کند.", True)
@@ -5651,9 +5608,11 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             if not get_group(chat_id).get("adult_mode", False):
                 await safe_answer_query(query, "حالت ۱۸+ در این گروه فعال نیست.", True)
                 return
+            if not adult_allowed(uid):
+                await safe_answer_query(query, "🔞 این موضوع فقط برای کاربران ۱۸+ در دسترس است.", True)
+                return
         game["selected_mode"] = mode
         game["phase"] = "target"
-        panel_reset_timer(game)
         touch_game(game)
         save_data()
         await safe_answer_query(query, f"{MODE_LABELS[mode]} انتخاب شد")
@@ -5662,6 +5621,9 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if action == "SPIN":
         # 🍾 چرخش شیشه‌ی سرنوشت — انتخاب هدف تصادفی با انیمیشن سینمایی
+        if str(game.get("phase", "")) != "target":
+            await safe_answer_query(query, "⏳ ابتدا یک موضوع انتخاب کن.", True)
+            return
         q = current_questioner(game)
         if q is None or int(q) != uid:
             await safe_answer_query(query, "فقط پرسشگر فعلی می‌تواند شیشه را بچرخاند.", True)
@@ -5669,6 +5631,9 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         mode = parts[2] if len(parts) > 2 else str(game.get("selected_mode") or "truth")
         if mode not in MODE_LABELS:
             mode = "truth"
+        if mode == "adult" and (not get_group(chat_id).get("adult_mode", False) or not adult_allowed(uid)):
+            await safe_answer_query(query, "🔞 این موضوع فقط برای کاربران ۱۸+ و گروه‌های مجاز است.", True)
+            return
         players = [int(x) for x in game.get("players", [])]
         others = [p for p in players if p != int(q) and not punishment_blocks_turn(p)]
         others = [p for p in others if not (mode == "adult" and not adult_allowed(p))]
@@ -5686,6 +5651,9 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if action == "TARGET":
+        if str(game.get("phase", "")) != "target":
+            await safe_answer_query(query, "⏳ انتخاب هدف برای این نوبت بسته شده است.", True)
+            return
         q = current_questioner(game)
         if q is None or int(q) != uid:
             await safe_answer_query(query, "فقط پرسشگر فعلی می‌تواند هدف را انتخاب کند.", True)
@@ -5699,14 +5667,90 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
         mode = str(game.get("selected_mode") or "truth")
         # محافظت بزرگسال
-        if mode == "adult" and not adult_allowed(target):
-            await safe_answer_query(query, "هدف، سن خود را تایید نکرده است! 🛡", True)
-            return
+        if mode == "adult":
+            if not adult_allowed(uid) or not adult_allowed(target):
+                await safe_answer_query(query, "🔞 این موضوع فقط برای دو کاربرِ تأییدشده‌ی ۱۸+ در دسترس است.", True)
+                return
         # قفل مجازات
         if punishment_blocks_turn(target):
             await safe_answer_query(query, "⚖️ این بازیکن در حال انجام مجازات است!", True)
             return
         await game_ask_question(context, game, int(q), target, mode, query)
+        return
+
+    if action == "VOTESTART":
+        prompt = game.get("reply_prompt")
+        if not isinstance(prompt, dict) or str(game.get("phase", "")) != "question":
+            await safe_answer_query(query, "⌛ این کارت دیگر فعال نیست.", True)
+            return
+        if int(prompt.get("message_id", 0)) != int(query.message.message_id):
+            await safe_answer_query(query, "این دکمه مربوط به کارت فعال نیست.", True)
+            return
+        if str(prompt.get("mode", "")) == "penalty":
+            await safe_answer_query(query, "برای حکم رأی رد وجود ندارد.", True)
+            return
+        players = {int(x) for x in game.get("players", [])}
+        target = int(prompt.get("target_uid", 0))
+        if uid not in players or uid == target:
+            await safe_answer_query(query, "فقط دیگر بازیکنانِ همین بازی می‌توانند رأی‌گیری را شروع کنند.", True)
+            return
+        if not bool(game.get("settings", {}).get("allow_vote", True)):
+            await safe_answer_query(query, "رأی‌گیری در تنظیمات این گروه غیرفعال است.", True)
+            return
+        current_vote = game.get("_vote_skip")
+        if isinstance(current_vote, dict) and current_vote.get("active"):
+            await safe_answer_query(query, "🗳 رأی‌گیری همین سوال از قبل باز است.", True)
+            return
+        vote_skip_init(game, target)
+        needed = (max(1, len(players - {target})) // 2) + 1
+        save_data(force=True)
+        await safe_answer_query(query, "🗳 رأی‌گیری شروع شد.")
+        await context.bot.send_message(
+            chat_id,
+            f"🗳 <b>رأی برای رد سوال</b>\n"
+            f"🎯 پاسخ‌دهنده: {mention_user(target, name_of(target, game))}\n"
+            f"برای رد شدن سوال، <b>{fmt_num(needed)}</b> رأی موافق لازم است.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb([[btn("✅ موافق رد", "G|VOTE|YES"), btn("❌ مخالف رد", "G|VOTE|NO")]]),
+        )
+        return
+
+    if action == "VOTE" and len(parts) > 2:
+        vote_state = game.get("_vote_skip")
+        prompt = game.get("reply_prompt")
+        if not isinstance(vote_state, dict) or not vote_state.get("active") or not isinstance(prompt, dict):
+            await safe_answer_query(query, "⌛ این رأی‌گیری تمام شده است.", True)
+            return
+        if uid not in {int(x) for x in game.get("players", [])}:
+            await safe_answer_query(query, "فقط بازیکنان همین بازی می‌توانند رأی بدهند.", True)
+            return
+        if uid == int(vote_state.get("target_uid", 0)):
+            await safe_answer_query(query, "پاسخ‌دهنده نمی‌تواند به سوال خودش رأی بدهد.", True)
+            return
+        prior = {int(x) for x in vote_state.get("yes", []) + vote_state.get("no", [])}
+        if uid in prior:
+            await safe_answer_query(query, "رأی تو قبلاً ثبت شده است.", True)
+            return
+        result = vote_skip_cast(game, uid, parts[2] == "YES")
+        save_data(force=True)
+        if not result.get("ended"):
+            await safe_answer_query(
+                query,
+                f"رأی ثبت شد · موافق {fmt_num(result['yes_count'])} / مخالف {fmt_num(result['no_count'])}",
+            )
+            return
+        vote_skip_clear(game)
+        if result.get("skipped"):
+            game.pop("reply_prompt", None)
+            next_q = advance_turn(game)
+            save_data(force=True)
+            await safe_answer_query(query, "✅ رأی تصویب شد؛ سوال رد شد.")
+            await safe_delete(query.message)
+            if next_q is not None:
+                await game_send_turn_card(context, game)
+        else:
+            await safe_answer_query(query, "❌ رأی رد سوال تصویب نشد.")
+            await safe_delete(query.message)
         return
 
     if action == "SCORES":
@@ -5735,13 +5779,15 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if action == "SKIP":
+        if str(game.get("phase", "")) not in ("topic", "target"):
+            await safe_answer_query(query, "⏳ این نوبت در حال پاسخ‌گویی است و قابل رد کردن نیست.", True)
+            return
         q = current_questioner(game)
         if q is None or int(q) != uid:
             await safe_answer_query(query, "👑 فقط پرسشگر فعلی می‌تواند نوبت را رد کند.", True)
             return
         game.pop("reply_prompt", None)
         nxt = advance_turn(game)
-        panel_reset_timer(game)
         save_data(force=True)
         await safe_answer_query(query, "نوبت رد شد 🎲")
         if nxt is not None:
@@ -5760,16 +5806,15 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await safe_answer_query(query)
 
 
-def targets_view(game: dict) -> tuple:
-    """نمای «انتخاب هدف» — سازنده‌ی متن و دکمه‌ها (۶.۲: برای نمایش و رفرش خودکار)."""
-    mode = str(game.get("selected_mode") or "truth")
-    if mode not in MODE_LABELS:
-        mode = "truth"
+async def game_show_targets(query, game: dict, mode: str) -> None:
+    """نمایش لیست اهداف — کارت بازیکنان + چرخش شیشه‌ی سرنوشت."""
     q = current_questioner(game)
     players = [int(x) for x in game.get("players", [])]
     others = [p for p in players if p != q]
     # حذف بازیکنان قفل‌شده توسط مجازات از لیست هدف
     others = [p for p in others if not punishment_blocks_turn(p)]
+    if mode == "adult":
+        others = [p for p in others if adult_allowed(p)]
     # دکمه‌های دوستونه بازیکنان
     rows = []
     pair = []
@@ -5798,17 +5843,27 @@ def targets_view(game: dict) -> tuple:
     ]
     rows.append([btn("🍾 چرخش شیشه (تصادفی)", f"G|SPIN|{mode}")])
     rows.append([btn("⬅️ بازگشت به موضوع‌ها", "G|TURN")])
-    return "\n".join(lines), kb(rows)
+    await safe_edit(query, "\n".join(lines), kb(rows))
 
 
-async def game_show_targets(query, game: dict, mode: str) -> None:
-    """نمایش لیست اهداف — کارت بازیکنان + چرخش شیشه‌ی سرنوشت."""
-    text, markup = targets_view(game)
-    await safe_edit(query, text, markup)
+def question_card_markup(mode: str) -> InlineKeyboardMarkup:
+    """دکمه‌های کارت سوال؛ رأی‌گیری فقط برای سوال فعال است، نه حکم."""
+    rows = [[btn("🚩 گزارش این سوال", "QG|REPORT")]]
+    if mode != "penalty":
+        rows.append([btn("🗳 درخواست رأی برای رد سوال", "G|VOTESTART")])
+    return kb(rows)
 
 
 async def game_ask_question(context, game: dict, questioner: int, target: int, mode: str, query=None) -> None:
     chat_id = int(game.get("chat_id", 0))
+    if mode == "adult" and (
+        not get_group(chat_id).get("adult_mode", False)
+        or not adult_allowed(questioner)
+        or not adult_allowed(target)
+    ):
+        if query is not None:
+            await safe_answer_query(query, "🔞 این موضوع برای این بازیکنان یا گروه مجاز نیست.", True)
+        return
     # گاهی به‌جای سوال، حکم یا رویداد یا باس‌راند صادر می‌شود
     special = None
     settings = game.get("settings", {})
@@ -5881,11 +5936,9 @@ async def game_ask_question(context, game: dict, questioner: int, target: int, m
         m = await context.bot.send_message(
             chat_id, text,
             parse_mode=ParseMode.HTML,
-            reply_markup=kb([[btn("🚩 گزارش این سوال", "QG|REPORT")]]),
+            reply_markup=question_card_markup(mode),
         )
         game["phase"] = "question"
-        # ⏱ ۶.۲ — نمای «در انتظار پاسخ» بلافاصله روی پنل بیاید
-        panel_reset_timer(game)
         # 🧹 تک‌پیام: کارت سوال تا وقتی Reply نخورده محافظت می‌شود
         ui_retag(chat_id, m.message_id, UI_TAG_QUESTION)
         game["reply_prompt"] = {
@@ -5970,8 +6023,6 @@ async def game_show_penalty(context, game: dict, target: int, questioner: int, q
             reply_markup=kb([[btn("🚩 گزارش این حکم", "QG|REPORT")]]),
         )
         game["phase"] = "question"
-        # ⏱ ۶.۲ — شمارنده‌ی رفرش از همین لحظه شروع شود
-        panel_reset_timer(game)
         # 🧹 تک‌پیام: کارت حکم تا وقتی Reply نخورده محافظت می‌شود
         ui_retag(chat_id, m.message_id, UI_TAG_QUESTION)
         game["pending_penalties"][str(target)] = {
@@ -6242,11 +6293,16 @@ async def handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return False
     if time.time() > float(prompt.get("expires", 0)):
         game.pop("reply_prompt", None)
+        vote_skip_clear(game)
+        game.pop("_q_remind_count", None)
+        next_q = advance_turn(game)
         save_data(force=True)
         try:
-            await msg.reply_text("⌛ این نوبت تمام شده است؛ نوبت بعدی را از منوی بازی دنبال کنید.")
+            await msg.reply_text("⌛ این نوبت تمام شد؛ نوبت بعدی شروع شد.")
         except Exception:
             pass
+        if next_q is not None:
+            await game_send_turn_card(context, game)
         return True
     # 🚩 نسخه ۶ — گزارش کارت با Reply: متن شروع‌شده با «گزارش» به‌عنوان گزارش ثبت می‌شود
     rtext = str(msg.text or "").strip()
@@ -6267,30 +6323,9 @@ async def handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         else:
             question_report(rep_uid, qtext, rtext[:200])
             save_data()
-            # ۶.۲ — گزارش کارت سوال هم یک پیام اولویت‌بالا در صندوق است
-            try:
-                entry = {
-                    "id": next_id("feedback"),
-                    "uid": rep_uid,
-                    "text": f"🚩 سوال: {qtext}" + (f" | یادداشت: {rtext[:120]}" if rtext else ""),
-                    "ts": now_ts(),
-                    "status": "new",
-                    "reply": "",
-                    "kind": "report",
-                    "priority": "high",
-                    "source": "question_card",
-                    "origin": "کارت سوال در گروه",
-                }
-                DATA.setdefault("feedback", []).append(entry)
-                analytics_bump("reports_sent")
-                save_data()
-                await admin_notify_inbox(context.bot, entry)
-            except Exception:
-                pass
             try:
                 await msg.reply_text(
                     "🚩 <b>گزارش ثبت شد!</b>\n"
-                    "🔴 اولویت: بالا — زودتر بررسی می‌شود\n"
                     "⚡ تیم ربات این سوال رو بررسی می‌کنه — ممنون که مراقب کیفیت بازی هستی 🙏",
                     parse_mode=ParseMode.HTML,
                 )
@@ -6320,7 +6355,7 @@ async def handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     answer_text = str(msg.text or "").strip()
     answer_len = len(answer_text)
 
-    # --- تکمیل حکم: پاداش کوچک، بدون پیشروی نوبت ---
+    # --- تکمیل حکم: پاداش کوچک و سپس شروع نوبت بعد ---
     if kind == "penalty":
         pending = game.get("pending_penalties", {}).get(str(uid))
         if pending and not pending.get("done") and not pending.get("skipped"):
@@ -6331,12 +6366,17 @@ async def handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             if str(pending.get("source", "")).startswith("🤫"):
                 get_user(uid)["missions"] = int(get_user(uid).get("missions", 0)) + 1
         game.pop("reply_prompt", None)
+        vote_skip_clear(game)
+        game.pop("_q_remind_count", None)
+        next_q = advance_turn(game)
         touch_game(game)
         save_data(force=True)
         try:
             await msg.reply_text("✅ <b>حکم انجام شد و ثبت شد.</b>\n🎁 +۴ ایکس‌پی و +۲ سکه", parse_mode=ParseMode.HTML)
         except Exception:
             pass
+        if next_q is not None:
+            await game_send_turn_card(context, game)
         return True
 
     # محاسبه پاداش بر اساس کیفیت پاسخ
@@ -6374,6 +6414,8 @@ async def handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except Exception:
         pass
     game.pop("reply_prompt", None)
+    vote_skip_clear(game)
+    game.pop("_q_remind_count", None)
     next_q = advance_turn(game)
     save_data(force=True)
     # پیام تأیید غنی
@@ -6451,9 +6493,16 @@ async def cmd_apexend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def end_game_flow(context, game: dict, query=None, reason: str = "manual") -> None:
     chat_id = int(game.get("chat_id", 0))
+    if str(game.get("status")) != "active":
+        if query is not None:
+            await safe_answer_query(query, "این بازی قبلاً بسته شده است.")
+        return
     game["status"] = "finished"
+    game["phase"] = "finished"
     game["finish_reason"] = str(reason)
     game["finished_at"] = now_ts()
+    game.pop("reply_prompt", None)
+    game.pop("_vote_skip", None)
     scores = game.get("round_scores", {})
     players = [int(x) for x in game.get("players", [])]
     ranked = sorted(players, key=lambda p: -int(scores.get(str(p), 0)))
@@ -6630,6 +6679,7 @@ async def stall_guard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                         except Exception:
                             pass
                     game.pop("reply_prompt", None)
+                    vote_skip_clear(game)
                     game.pop("_q_reminded", None)
                     game.pop("_q_remind_count", None)
                     nxt = advance_turn(game)
@@ -9806,40 +9856,12 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if _ADS_INPUT.get("mode") == "bank_add" and text:
         _ADS_INPUT["mode"] = ""
-        key = str(_ADS_INPUT.get("bank", ""))
-        if key and key in BANKS:
-            clean = text.strip()
-            if clean and clean not in BANKS[key]:
-                BANKS[key].append(clean)
-                store = DATA.setdefault("v18_custom_prompts", {})
-                store.setdefault(key, [])
-                if clean not in store[key]:
-                    store[key].append(clean)
-                editor_store()["stats"]["adds"] = int(editor_store()["stats"].get("adds", 0)) + 1
-                save_data(force=True)
-                await msg.reply_text(f"✅ به بانک <code>{escape(key)}</code> اضافه شد.", parse_mode=ParseMode.HTML)
-            else:
-                await msg.reply_text("⚠️ خالی یا تکراری است.")
-        else:
-            await msg.reply_text("⚠️ بانک نامعتبر است.")
+        await msg.reply_text("🔒 افزودن انجام نشد؛ بانک سوالات تغییرناپذیر است.")
         return True
 
     if _ADS_INPUT.get("mode") == "bank_edit" and text:
         _ADS_INPUT["mode"] = ""
-        key = str(_ADS_INPUT.get("bank", ""))
-        idx = int(_ADS_INPUT.get("idx", -1))
-        bank = BANKS.get(key, [])
-        if key and 0 <= idx < len(bank) and text.strip():
-            current = bank[idx]
-            h = bank_hash(current)
-            editor_store()["overrides"].setdefault(key, {})[h] = text.strip()
-            bank[idx] = text.strip()
-            editor_store()["stats"]["edits"] = int(editor_store()["stats"].get("edits", 0)) + 1
-            award_achievement(int(user.id), "v18_bank_editor")
-            save_data(force=True)
-            await msg.reply_text("✅ سوال ویرایش شد.", parse_mode=ParseMode.HTML)
-        else:
-            await msg.reply_text("⚠️ ویرایش ناموفق بود.")
+        await msg.reply_text("🔒 ویرایش انجام نشد؛ بانک سوالات تغییرناپذیر است.")
         return True
 
     # --- پیام همگانی ---
@@ -9972,61 +9994,17 @@ async def bank_export(update, context, query) -> None:
 async def bank_import_start(update, context, query) -> None:
     await safe_answer_query(query)
     await query.message.reply_text(
-        "📥 <b>ورودی بانک</b>\n"
-        "فایل JSON خروجی را (به‌صورت فایل) برایم بفرست.\n"
-        "سوالات تکراری حذف می‌شوند و فقط سوالات جدید اضافه می‌شوند.",
+        "🔒 <b>بانک سوالات قفل است</b>\n"
+        "طبق سیاست ApexRival، بانک اصلی سوالات تغییر نمی‌کند.\n"
+        "برای حفظ سلامت نسخه، ورودی فایل غیرفعال است.",
         parse_mode=ParseMode.HTML,
     )
-    _ADS_INPUT["mode"] = "bank_import"
 
 
 async def bank_import_apply(json_text: str, admin_uid: int) -> str:
-    """اعمال ورودی JSON: فقط اضافه‌کردن سوال جدید (merge + dedupe)."""
-    try:
-        payload = json.loads(json_text)
-        if not isinstance(payload, dict):
-            return "⚠️ ساختار فایل معتبر نیست (باید object باشد)."
-    except Exception as exc:
-        return f"⚠️ JSON نامعتبر: {str(exc)[:80]}"
-    added = 0
-    skipped = 0
-    bad = 0
-    for key, items in payload.items():
-        key = str(key)
-        if not isinstance(items, list):
-            bad += 1
-            continue
-        bank = BANKS.setdefault(key, [])
-        existing = set(bank)
-        for raw in items:
-            text = str(raw).strip()
-            if not text:
-                bad += 1
-                continue
-            if text in existing:
-                skipped += 1
-                continue
-            bank.append(text)
-            existing.add(text)
-            added += 1
-        # ذخیره‌ی سفارشی‌ها برای ماندگاری بعد از ری‌استارت
-        if added:
-            store = DATA.setdefault("v18_custom_prompts", {})
-            store.setdefault(key, [])
-            sset = set(store[key])
-            for raw in items:
-                text = str(raw).strip()
-                if text and text not in sset:
-                    store[key].append(text)
-    v24_store()["stats"]["imports"] = int(v24_store()["stats"].get("imports", 0)) + 1
-    save_data(force=True)
-    audit("bank_import", admin_uid, None, f"added={added} skipped={skipped}")
-    return (
-        f"✅ <b>ورودی اعمال شد</b>\n"
-        f"➕ سوال جدید: <b>{fmt_num(added)}</b>\n"
-        f"♻️ تکراری (رد شد): <b>{fmt_num(skipped)}</b>\n"
-        f"❌ نامعتبر: <b>{fmt_num(bad)}</b>"
-    )
+    """عمداً بدون اثر: مسیر قدیمی ورودی بانک برای حفظ تغییرناپذیری بسته است."""
+    audit("bank_import_blocked", admin_uid, None, "immutable-bank")
+    return "🔒 <b>ورودی انجام نشد.</b> بانک سوالات ApexRival قفل و تغییرناپذیر است."
 
 
 # -----------------------------
@@ -10048,7 +10026,7 @@ async def editor_callback(update, context, query, parts) -> None:
         await safe_edit(
             query,
             "✏️ <b>ویرایشگر سوالات</b>\n━━━━━━━━━━━━━━━━━━\n"
-            "یک بانک را انتخاب کن:",
+            "بانک اصلی قفل است؛ فقط مرور و روشن/خاموش‌کردن موضوع‌ها در دسترس است:",
             kb(rows),
         )
         return
@@ -10068,11 +10046,7 @@ async def editor_callback(update, context, query, parts) -> None:
         return
 
     if action == "ADD":
-        key = parts[2] if len(parts) > 2 else ""
-        await safe_answer_query(query)
-        await query.message.reply_text(f"➕ سوال جدید برای بانک <code>{escape(key)}</code> را بفرست:", parse_mode=ParseMode.HTML)
-        _ADS_INPUT["mode"] = "bank_add"
-        _ADS_INPUT["bank"] = key
+        await safe_answer_query(query, "🔒 افزودن سوال غیرفعال است؛ بانک تغییرناپذیر است.", True)
         return
 
     if action == "TOG":
@@ -10088,55 +10062,17 @@ async def editor_callback(update, context, query, parts) -> None:
         return
 
     if action == "DEL":
-        key = parts[2] if len(parts) > 2 else ""
-        idx = parts[3] if len(parts) > 3 else ""
-        try:
-            i = int(idx)
-            bank = BANKS.get(key, [])
-            if 0 <= i < len(bank):
-                text = bank.pop(i)
-                v18_disabled = editor_store()["disabled"].setdefault(key, [])
-                v18_disabled.append({"h": bank_hash(text), "text": text})
-                save_data(force=True)
-                await safe_answer_query(query, "حذف شد 🗑")
-        except Exception:
-            await safe_answer_query(query, "نامعتبر.", True)
-        await editor_bank_page(query, key, 0)
+        await safe_answer_query(query, "🔒 حذف سوال غیرفعال است؛ بانک تغییرناپذیر است.", True)
         return
 
     if action == "RESET":
-        key = parts[2] if len(parts) > 2 else ""
-        if key in BANKS_FACTORY:
-            BANKS[key] = list(BANKS_FACTORY[key])
-            editor_store()["overrides"].pop(key, None)
-            editor_store()["disabled"].pop(key, None)
-            DATA.get("v16_custom_prompts", {}).pop(key, None)
-            DATA.get("v18_custom_prompts", {}).pop(key, None)
-            save_data(force=True)
-            apply_bank_admin_changes()
-            await safe_answer_query(query, "بانک به حالت کارخانه برگشت ♻️")
-        else:
-            await safe_answer_query(query, "نامعتبر.", True)
+        apply_bank_admin_changes()
+        await safe_answer_query(query, "✅ بانک تغییرناپذیرِ کارخانه فعال است.")
         await editor_callback(update, context, query, ["x", "EDHOME"])
         return
 
     if action == "EDIT":
-        key = parts[2] if len(parts) > 2 else ""
-        idx = parts[3] if len(parts) > 3 else ""
-        await safe_answer_query(query)
-        try:
-            i = int(idx)
-            bank = BANKS.get(key, [])
-            if 0 <= i < len(bank):
-                await query.message.reply_text(
-                    f"✏️ متن جدید برای سوال زیر را بفرست:\n\n«{escape(str(bank[i])[:120])}»",
-                    parse_mode=ParseMode.HTML,
-                )
-                _ADS_INPUT["mode"] = "bank_edit"
-                _ADS_INPUT["bank"] = key
-                _ADS_INPUT["idx"] = i
-        except Exception:
-            pass
+        await safe_answer_query(query, "🔒 ویرایش سوال غیرفعال است؛ بانک تغییرناپذیر است.", True)
         return
 
     await safe_answer_query(query)
@@ -10155,8 +10091,6 @@ async def editor_bank_page(query, key: str, page: int) -> None:
     for i, q in enumerate(chunk):
         idx = start + i
         lines.append(f"<b>{fmt_num(idx + 1)}.</b> {escape(str(q)[:90])}")
-        rows.append([btn(f"✏️ ویرایش #{fmt_num(idx + 1)}", f"ED|EDIT|{key}|{idx}"),
-                     btn(f"🗑 حذف #{fmt_num(idx + 1)}", f"ED|DEL|{key}|{idx}")])
     nav = []
     if page > 0:
         nav.append(btn("◀️", f"ED|PAGE|{key}|{page-1}"))
@@ -10165,8 +10099,7 @@ async def editor_bank_page(query, key: str, page: int) -> None:
         nav.append(btn("▶️", f"ED|PAGE|{key}|{page+1}"))
     if nav:
         rows.append(nav)
-    rows.append([btn("➕ سوال جدید", f"ED|ADD|{key}")])
-    rows.append([btn("🌑 روشن/خاموش", f"ED|TOG|{key}"), btn("♻️ ریست بانک", f"ED|RESET|{key}")])
+    rows.append([btn("🌑 روشن/خاموش", f"ED|TOG|{key}"), btn("🔒 بانک قفل است", "ED|RESET|immutable")])
     rows.append([btn("⬅️ بانک‌ها", "ED|EDHOME")])
     await safe_answer_query(query)
     await safe_edit(
@@ -10470,7 +10403,7 @@ async def cmd_apexsettings(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # فقط ادمین‌های گروه
     try:
         member = await context.bot.get_chat_member(int(chat.id), int(user.id))
-        if member.status not in ("administrator", "creator") and not is_admin(int(user.id)):
+        if member.status not in ("administrator", "creator", "owner") and not is_admin(int(user.id)):
             await msg.reply_text("👑 فقط ادمین‌های گروه می‌توانند تنظیمات را تغییر دهند.")
             return
     except Exception:
@@ -10527,7 +10460,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     is_group_admin = False
     try:
         member = await context.bot.get_chat_member(chat_id, uid)
-        is_group_admin = member.status in ("administrator", "creator")
+        is_group_admin = member.status in ("administrator", "creator", "owner")
     except Exception:
         pass
     if not (is_group_admin or is_admin(uid)):
@@ -12409,12 +12342,7 @@ async def fb_send_home(query, uid: int) -> None:
             og_top("📮"),
             og_head("📮", "بازخورد و گزارش", "صدات مستقیم به تیم ربات می‌رسه — قول!"),
             og_sep(),
-            "┃  🎯 <b>سریع‌ترین راه (۲ ثانیه‌ای!)</b>",
-            "┃  ▸ روی پیامت <b>Reply</b> کن و بنویس: <b>بازخورد</b>",
-            "┃  ▸ همین! پیام ریپلای‌شده ثبت می‌شه ✅",
-            "┃  ▸ برای گزارشِ فوری هم بنویس: <b>گزارش</b> (اولویت بالا 🔴)",
-            og_sep("⋆"),
-            "┃  📝 <b>راه کامل (فرم)</b>",
+            "┃  🎯 <b>چطور کار می‌کنه؟ (۳ قدم ساده)</b>",
             "┃  ▸ ۱) دکمه‌ی «📝 ارسال بازخورد» رو بزن",
             "┃  ▸ ۲) متن، پیشنهاد یا مشکلت رو بنویس و بفرست",
             "┃  ▸ ۳) جواب تیم همین‌جا برات میاد ✅",
@@ -12636,234 +12564,6 @@ async def pv_free_text_helper(update: Update, context: ContextTypes.DEFAULT_TYPE
         log_event("error", "system", f"pv_free_text_helper failed: {exc!r}", actor=uid)
 
 
-# ================================================================
-#  نسخه ۶.۲ — 🪄 هوشمندِ ریپلای: بازخورد و گزارش در یک کلمه
-#  روی «هر پیامی» Reply کن و دقیقاً بنویس:
-#      بازخورد  →  همان پیام به‌عنوان بازخورد ثبت می‌شود
-#      گزارش   →  همان پیام به‌عنوان گزارش با «اولویت بالا» ثبت می‌شود
-#  هم در خصوصی ربات، هم در گروه — بدون هیچ منویی.
-# ================================================================
-FB_REPLY_WORDS = {"بازخورد", "/بازخورد"}
-RP_REPLY_WORDS = {"گزارش", "/گزارش"}
-
-
-def reply_trigger_kind(text: str) -> str:
-    """اگر متنِ پیام دقیقاً کلمه‌ی ماشه باشد: feedback | report | ''"""
-    t = str(text or "").strip()
-    # پاک‌سازی نقطه/تعجب/فاصله‌ی اضافی آخر کلمه
-    t = t.rstrip("!.؟?،, ")
-    if not t:
-        return ""
-    if t in FB_REPLY_WORDS or t.replace(" ", "") in FB_REPLY_WORDS:
-        return "feedback"
-    if t in RP_REPLY_WORDS or t.replace(" ", "") in RP_REPLY_WORDS:
-        return "report"
-    return ""
-
-
-def reply_target_content(msg) -> tuple[str, str, int, bool]:
-    """استخراج محتوای پیامِ ریپلای‌شده → (متن، نام نویسنده، آیدی نویسنده، از ربات؟)"""
-    r = getattr(msg, "reply_to_message", None)
-    if r is None:
-        return "", "", 0, False
-    body = str(getattr(r, "text", "") or getattr(r, "caption", "") or "").strip()
-    if not body:
-        # پیام رسانه‌ای بدون کپشن — توصیف نوع
-        for attr, fa_name in (("photo", "عکس"), ("video", "ویدیو"), ("sticker", "استیکر"),
-                              ("voice", "ویس"), ("audio", "آهنگ"), ("animation", "گیف"),
-                              ("document", "فایل"), ("location", "موقعیت"), ("poll", "نظرسنجی")):
-            if getattr(r, attr, None):
-                body = f"[{fa_name}]"
-                break
-        if not body:
-            body = "[پیام بدون متن]"
-    author = getattr(getattr(r, "from_user", None), "first_name", "") or ""
-    last = getattr(getattr(r, "from_user", None), "last_name", "") or ""
-    if last:
-        author = f"{author} {last}".strip()
-    author_uid = int(getattr(getattr(r, "from_user", None), "id", 0) or 0)
-    is_bot = bool(getattr(getattr(r, "from_user", None), "is_bot", False))
-    return body[:500], author[:60], author_uid, is_bot
-
-
-async def admin_notify_inbox(bot, entry: dict) -> None:
-    """ارسال اعلان فوریِ گزارش/بازخورد برای همه‌ی ادمین‌ها (اولویت بالا = همیشه)."""
-    try:
-        cfg = syscfg()
-        kind = str(entry.get("kind", "feedback"))
-        if kind == "report" and not cfg.get("admin_notify_report", True):
-            return
-        if kind != "report" and not cfg.get("admin_notify_feedback", False):
-            return
-        admins = set()
-        try:
-            if ADMIN_ID:
-                admins.add(int(ADMIN_ID))
-        except Exception:
-            pass
-        try:
-            for k, role in DATA.get("permissions", {}).items():
-                if str(role) in ("admin", "mod"):
-                    try:
-                        admins.add(int(str(k).replace("g", "").replace("-", ""))
-                                   if str(k).lstrip("g-").isdigit() else int(k))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        is_report = kind == "report"
-        icon = "🚨" if is_report else "📮"
-        title = "گزارش با اولویت بالا" if is_report else "بازخورد جدید"
-        body = str(entry.get("text", ""))[:150]
-        origin = str(entry.get("origin", "") or "")
-        who = name_of(int(entry.get("uid", 0)))
-        text = (
-            f"{icon} <b>{title}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"👤 ارسال‌کننده: {escape(who)}\n"
-            f"📇 شماره پیگیری: <b>#{pnum(int(entry.get('id', 0)))}</b>\n"
-            + (f"📌 منبع: {escape(origin[:80])}\n" if origin else "")
-            + f"━━━━━━━━━━━━━━━━━━\n"
-            f"▸ {escape(body)}\n\n"
-            f"🛡 پاسخ از: پنل مدیریت → 📨 بازخوردها"
-        )
-        for auid in admins:
-            try:
-                m = await bot.send_message(auid, text, parse_mode=ParseMode.HTML,
-                                           disable_web_page_preview=True)
-                ui_hold(auid, m.message_id)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-
-def _reply_origin_label(chat, author: str, author_uid: int) -> str:
-    """برچسب منبع برای ثبت در بازخورد: چه کسی و کجا."""
-    try:
-        if chat is not None and getattr(chat, "type", "") in ("group", "supergroup"):
-            cname = str(getattr(chat, "title", "") or "گروه")
-            who = author or name_of(author_uid) if author_uid else author
-            return f"{who or 'نامشخص'} در «{cname}»"
-        return author or (name_of(author_uid) if author_uid else "خصوصی")
-    except Exception:
-        return "نامشخص"
-
-
-async def universal_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """🪄 موتور «هوشمندِ ریپلای» — بازخورد/گزارش با یک کلمه (PV + گروه).
-
-    فقط وقتی مصرف می‌کند که:
-      • پیام، ریپلای به یک پیام دیگر باشد، و
-      • متنِ آن دقیقاً «بازخورد» یا «گزارش» باشد.
-    بقیه‌ی پیام‌ها دست‌نخورده رد می‌شوند.
-    """
-    try:
-        msg = update.message
-        user = update.effective_user
-        chat = update.effective_chat
-        if msg is None or user is None or chat is None:
-            return False
-        if msg.reply_to_message is None:
-            return False
-        text = str(msg.text or "").strip()
-        kind = reply_trigger_kind(text)
-        if not kind:
-            return False
-        uid = int(user.id)
-        # کاربر مسدود؟
-        if is_banned(uid):
-            return False
-        # محتوای پیامِ ریپلای‌شده
-        body, author, author_uid, _is_bot = reply_target_content(msg)
-        if not body:
-            await msg.reply_text("⚠️ روی این پیام چیزی برای ثبت نیست — متنی ریپلای کن.")
-            return True
-        # کاربر ناشناس در PV؟
-        if str(uid) not in DATA.get("users", {}):
-            await msg.reply_text(
-                "👋 سلام! اول حساب بساز: /start بزن تا بازخوردت هم ثبت بشه!"
-            )
-            return True
-        # ضداسپم
-        if not anti_spam_check(uid, "feedback"):
-            await msg.reply_text(
-                "🐢 آرام‌تر! سقف ارسال بازخورد/گزارش امروزت پر شده — فردا دوباره می‌تونی."
-            )
-            return True
-        is_group = chat.type in ("group", "supergroup")
-        origin = _reply_origin_label(chat, author, author_uid)
-        entry = fb_submit(
-            uid, body,
-            kind=("report" if kind == "report" else "feedback"),
-            priority=("high" if kind == "report" else "normal"),
-            source="reply",
-            origin=origin,
-        )
-        if entry is None:
-            await msg.reply_text("❌ خطا در ثبت — چند لحظه بعد دوباره بفرست.")
-            return True
-        fid = int(entry.get("id", 0))
-        if kind == "report":
-            card = (
-                f"{og_top('🚨')}\n"
-                f"{og_head('🚨', 'گزارش ثبت شد!', 'با اولویت بالا — همین حالا پیش تیمه')}\n"
-                f"{og_sep()}\n"
-                f"┃  📇 شماره‌ی پیگیری: <b>#{pnum(fid)}</b>\n"
-                f"┃  🔴 اولویت: <b>بالا</b>\n"
-                f"┃  📌 منبع: {escape(origin[:90])}\n"
-                f"{og_sep('◈')}\n"
-                f"┃  ▸ {escape(body[:160])}\n"
-                f"{og_sep('⋆')}\n"
-                f"┃  ⚡ گزارش‌ها همیشه زودتر از همه بررسی می‌شوند\n"
-                f"┃  💡 پاسخ تیم از «📜 بازخوردهای من» قابل پیگیریه\n"
-                f"{og_close('🚨')}"
-            )
-        else:
-            card = (
-                f"{og_top('📮')}\n"
-                f"{og_head('📮', 'بازخورد ثبت شد!', 'همان پیامی که ریپلای کردی، رسید')}\n"
-                f"{og_sep()}\n"
-                f"┃  📇 شماره‌ی پیگیری: <b>#{pnum(fid)}</b>\n"
-                f"┃  🟢 وضعیت: <b>در صف بررسی</b>\n"
-                f"┃  📌 منبع: {escape(origin[:90])}\n"
-                f"{og_sep('◈')}\n"
-                f"┃  ▸ {escape(body[:160])}\n"
-                f"{og_sep('⋆')}\n"
-                f"┃  💡 دفعه بعد هم همین‌طور: روی پیامت Reply کن و بنویس «بازخورد»\n"
-                f"{og_close('📮')}"
-            )
-        try:
-            await msg.reply_text(card, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        except Exception:
-            pass
-        # اعلان فوری ادمین‌ها
-        try:
-            await admin_notify_inbox(context.bot, entry)
-        except Exception:
-            pass
-        # بهداشت حالت‌ها: ثبت با روش ریپلای، حالت «در حال نوشتن» را هم می‌بندد
-        try:
-            ud = context.application.user_data.get(uid, {})
-            ud.pop("await_feedback", None)
-            ud.pop("await_feedback_ts", None)
-            ud.pop("last_free_text", None)
-        except Exception:
-            pass
-        log_event("info", "system", f"reply_{kind}_submitted id={fid}", actor=uid,
-                  details=f"origin={origin[:60]}")
-        # در گروه، پیامِ ماشه پاک شود (نظم چت)
-        try:
-            if is_group and chat_cfg(int(chat.id)).get("delcmd", True):
-                await safe_delete(msg)
-        except Exception:
-            pass
-        return True
-    except Exception as exc:
-        log_event("error", "system", f"universal_reply_router failed: {exc!r}")
-        return False
-
-
 async def fb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None:
@@ -12956,19 +12656,9 @@ async def fb_show_mine(query, uid: int) -> None:
         log_event("error", "system", f"fb_show_mine failed: {exc!r}", actor=uid)
 
 
-def fb_submit(uid: int, text: str, kind: str = "feedback", priority: str = "normal",
-               source: str = "panel", origin: str = "") -> dict | None:
-    """ثبت بازخورد/گزارش — ورودی ثبت‌شده را برمی‌گرداند.
-
-    نسخه ۶.۲:
-      kind:     feedback (بازخورد) | report (گزارش)
-      priority: normal | high  ← گزارش‌ها همیشه high هستند
-      source:   panel (فرم) | reply (روش ریپلای) | smart (fallback هوشمند)
-      origin:   توضیح منبع (مثلاً نام نویسنده‌ی پیامِ ریپلای‌شده)
-    """
+def fb_submit(uid: int, text: str) -> dict | None:
+    """ثبت بازخورد — ورودی ثبت‌شده را برمی‌گرداند (نسخه ۶)."""
     try:
-        if kind == "report":
-            priority = "high"
         fid = next_id("feedback")
         entry = {
             "id": fid,
@@ -12977,18 +12667,12 @@ def fb_submit(uid: int, text: str, kind: str = "feedback", priority: str = "norm
             "ts": now_ts(),
             "status": "new",
             "reply": "",
-            "kind": str(kind),
-            "priority": str(priority),
-            "source": str(source),
-            "origin": str(origin or "")[:200],
         }
         DATA.setdefault("feedback", []).append(entry)
         user = get_user(int(uid))
         user["feedback_sent"] = int(user.get("feedback_sent", 0)) + 1
         award_achievement_v11(int(uid), "v11_feedback")
         analytics_bump("feedback_sent")
-        if kind == "report":
-            analytics_bump("reports_sent")
         save_data()
         return entry
     except Exception:
@@ -13150,7 +12834,7 @@ async def dr_send_potd(query, uid: int) -> None:
         log_event("error", "system", f"dr_send_potd failed: {exc!r}", actor=uid)
 
 
-async def cmd_apexdaily_reward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_apexdaily_reward_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """دستور /apexdailyreward — پاداش روزانه."""
     msg = update.message
     user = update.effective_user
@@ -13162,7 +12846,7 @@ async def cmd_apexdaily_reward(update: Update, context: ContextTypes.DEFAULT_TYP
         fq = _FakeQuery(m, user)
         await dr_send_home(fq, int(user.id))
     except Exception as exc:
-        log_event("error", "system", f"cmd_apexdaily_reward failed: {exc!r}", actor=int(user.id))
+        log_event("error", "system", f"cmd_apexdaily_reward_panel failed: {exc!r}", actor=int(user.id))
 
 
 # ================================================================
@@ -13259,7 +12943,6 @@ async def admin_dashboard_show(query) -> None:
             [btn("🪙 اقتصاد", "A|ECON"), btn("🏆 دستاوردها", "A|ACHM")],
             [btn("🎁 جوایز", "A|REWARD"), btn("👪 گروه‌ها", "A|GROUPS")],
             [btn("⚙️ تنظیمات", "A|SETTINGS"), btn("🛠 تعمیرات", "A|MAINT")],
-            [btn("🎛 سیستم و ضداسپم", "A|SYSCFG"), btn("🚩 گزارش‌ها", "A|QREPORTS")],
             [btn("💾 بکاپ", "A|BACKUP"), btn("📤 خروجی", "A|EXPORT")],
             [btn("📝 لاگ‌ها", "A|LOGS"), btn("🩺 دکتر", "A|DOCTOR")],
             [btn("🔄 تازه‌سازی", "A|HOME"), btn("⬅️ منوی اصلی", "H|HOME")],
@@ -13343,70 +13026,46 @@ _FB_REPLY_INPUT = {"active": False, "idx": -1}
 
 
 async def admin_feedback_show(query) -> None:
-    """صندوق بازخورد اومگا — ۶.۲: گزارش‌های اولویت بالا همیشه صدرنشین‌اند."""
+    """صندوق بازخورد اومگا — با پاسخ مستقیم و وضعیت رسیدگی."""
     try:
         feedbacks = DATA.get("feedback", [])
         total = len(feedbacks)
         open_count = sum(1 for f in feedbacks if isinstance(f, dict) and not f.get("reply"))
-        reports = [f for f in feedbacks if isinstance(f, dict)
-                   and str(f.get("kind", "feedback")) == "report"]
-        reports_open = sum(1 for f in reports if not f.get("reply"))
         qreports = DATA.get("question_reports", [])
         qpending = sum(1 for r in qreports if isinstance(r, dict) and str(r.get("status", "")) == "pending")
         lines = [
             og_top("📨"),
-            og_head("📨", "صندوق بازخورد و گزارش", "گزارش‌ها اولویت بالا دارند — اول همان‌ها"),
+            og_head("📨", "صندوق بازخوردها", "صدای بازیکنان — پاسخ بده، قهرمان شو"),
             og_sep(),
             og_stat_grid([
-                ("📩", "کل پیام‌ها", pnum(total)),
+                ("📩", "کل بازخوردها", pnum(total)),
                 ("🟢", "در انتظار پاسخ", pnum(open_count)),
-                ("🚨", "گزارش (اولویت بالا)", pnum(reports_open)),
-                ("🚩", "گزارش سوال", pnum(qpending)),
+                ("🚩", "گزارش سوال", pnum(len(qreports))),
+                ("⏳", "گزارش باز", pnum(qpending)),
             ]),
             og_sep("◈"),
         ]
         rows: list = []
+        # ۸ بازخورد آخر — جدیدترین‌ها بالا
         if not feedbacks:
             lines.append("┃  صندوق خالی است — سکوت پیش از طوفان! 🌙")
         else:
-            # ۶.۲ — مرتب‌سازی: گزارش‌های باز (جدیدترین) → بازخوردهای باز → جواب‌داده‌شده‌ها
-            def _sort_key(f):
-                if not isinstance(f, dict):
-                    return (9, 0)
-                is_report = str(f.get("kind", "feedback")) == "report"
-                answered = bool(f.get("reply"))
-                return ((0 if (is_report and not answered) else
-                         1 if not answered else 2), -int(f.get("ts", 0)))
-            ordered = sorted(range(total), key=lambda i: _sort_key(feedbacks[i]))
-            shown = 0
-            for abs_idx in ordered[:8]:
+            start = max(0, total - 8)
+            for abs_idx in range(total - 1, start - 1, -1):
                 f = feedbacks[abs_idx]
                 if not isinstance(f, dict):
                     continue
-                shown += 1
                 ts = int(f.get("ts", 0))
                 time_str = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
-                is_report = str(f.get("kind", "feedback")) == "report"
-                status = "✅" if f.get("reply") else ("🚨" if is_report else "🟢")
-                badge = "🔴 اولویت بالا" if (is_report and not f.get("reply")) else ""
-                src_tag = {"reply": "🪄 ریپلای", "question_card": "🚩 کارت سوال",
-                           "smart": "🧠 هوشمند"}.get(str(f.get("source", "")), "📝 فرم")
-                lines.append(
-                    f"┃  {status} <b>#{pnum(abs_idx + 1)}</b> — {escape(name_of(int(f.get('uid', 0))))}"
-                    f" <i>[{fa(time_str)}]</i> {src_tag}" + (f" · <b>{badge}</b>" if badge else ""))
+                status = "✅" if f.get("reply") else "🟢"
+                lines.append(f"┃  {status} <b>#{pnum(abs_idx + 1)}</b> — {escape(name_of(int(f.get('uid', 0))))} <i>[{fa(time_str)}]</i>")
                 lines.append(f"┃  ▸ {escape(str(f.get('text', ''))[:110])}")
-                origin = str(f.get("origin") or "")
-                if origin:
-                    lines.append(f"┃  📌 منبع: <i>{escape(origin[:70])}</i>")
                 if f.get("reply"):
                     lines.append(f"┃  💬 پاسخ داده شد: <i>{escape(str(f.get('reply'))[:60])}</i>")
                 lines.append("")
-                rows.append([btn(
-                    ("🚨" if is_report and not f.get("reply") else "✍️")
-                    + f" پاسخ به #{pnum(abs_idx + 1)}",
-                    f"A|FBREPLY|{abs_idx}")])
+                rows.append([btn(f"✍️ پاسخ به #{pnum(abs_idx + 1)}", f"A|FBREPLY|{abs_idx}")])
             if total > 8:
-                lines.append(f"┃  <i>و {pnum(total - 8)} پیام قدیمی‌تر...</i>")
+                lines.append(f"┃  <i>و {pnum(total - 8)} بازخورد قدیمی‌تر...</i>")
         lines.append(og_close("📨"))
         if qreports:
             rows.append([btn(f"🚩 گزارش سوالات ({pnum(len(qreports))})", "A|QREPORTS")])
@@ -13458,179 +13117,6 @@ async def admin_qreports_show(query) -> None:
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"admin_qreports_show failed: {exc!r}")
-
-
-# ================================================================
-#  نسخه ۶.۲ — ⚙️ مرکز کنترل «سیستم و ضداسپم» (صفر تا صد)
-# ================================================================
-SYSCFG_TOGGLES = [
-    ("panel_refresh",      "⏱ رفرش خودکار پنل گروه",   "پنل بازی/لابی هر چند ثانیه خودش تازه می‌شود"),
-    ("panel_countdown",    "🔢 ثانیه‌شمار زنده",          "شمارش معکوس رفرش روی پنل نمایش داده شود"),
-    ("rate_enabled",       "🛡 محافظ کلیک سریع",         "جلوی کلیک‌های پی‌درپی غیرانسانی را می‌گیرد"),
-    ("antispam_enabled",   "🐢 ضداسپم پیشرفته",          "سقف روزانه/ساعتی بازخورد، مسابقه، دوستی و..."),
-    ("admin_notify_report",   "🚨 اعلان فوری گزارش‌ها",   "گزارش‌های اولویت بالا فوری به ادمین‌ها پیام می‌آید"),
-    ("admin_notify_feedback", "📮 اعلان بازخوردهای عادی", "هر بازخورد عادی هم برای ادمین‌ها پیام بدهد"),
-]
-
-SYSCFG_STEPPERS = [
-    ("panel_interval", "⏱ فاصله‌ی رفرش پنل", "ثانیه", 3, 60, 1,
-     "هر چند ثانیه محتوای پنل گروه کامل تازه شود"),
-    ("rate_max", "🛡 سقف کلیک", "کلیک", 4, 60, 2,
-     "حداکثر کلیک روی دکمه‌ها در پنجره‌ی محافظ"),
-    ("rate_window", "🛡 پنجره‌ی محافظ", "ثانیه", 5, 300, 5,
-     "طول پنجره‌ی شمارش کلیک‌ها"),
-    ("as_pm_hour", "🎯 سقف مسابقه خصوصی", "در ساعت", 1, 100, 1,
-     "حداکثر ساخت مسابقه خصوصی برای هر کاربر در یک ساعت"),
-    ("as_tour_day", "🏆 سقف تورنمنت", "در روز", 1, 100, 1,
-     "حداکثر ساخت مسابقه/تورنمنت برای هر کاربر در روز"),
-    ("as_fb_day", "📮 سقف بازخورد/گزارش", "در روز", 1, 100, 1,
-     "حداکثر ارسال بازخورد/گزارش برای هر کاربر در روز"),
-    ("as_fr_hour", "👥 سقف درخواست دوستی", "در ساعت", 1, 100, 1,
-     "حداکثر درخواست دوستی برای هر کاربر در یک ساعت"),
-]
-
-
-def _syscfg_val(key: str):
-    return syscfg().get(key)
-
-
-async def admin_syscfg_show(query) -> None:
-    """⚙️ مرکز کنترل سیستم و ضداسپم — همه‌چیز از همین‌جا تنظیم می‌شود (۶.۲)."""
-    try:
-        cfg = syscfg()
-        lines = [
-            og_top("⚙️"),
-            og_head("⚙️", "سیستم و ضداسپم", "تنظیم صفر تا صد — همه‌ی عقربه‌ها دست خودت"),
-            og_sep(),
-            og_section("⏱", "رفرش زنده‌ی پنل گروه"),
-            og_row("وضعیت موتور", "روشن ✅" if cfg["panel_refresh"] else "خاموش ❌"),
-            og_row("فاصله‌ی رفرش", f"{pnum(cfg['panel_interval'])} ثانیه"),
-            og_row("ثانیه‌شمار زنده", "روشن ✅" if cfg["panel_countdown"] else "خاموش ❌"),
-            og_sep("◈"),
-            og_section("🛡", "محافظ کلیک سریع (Rate Guard)"),
-            og_row("وضعیت", "روشن ✅" if cfg["rate_enabled"] else "خاموش ❌"),
-            og_row("سقف کلیک", f"{pnum(cfg['rate_max'])} کلیک در {pnum(cfg['rate_window'])} ثانیه"),
-            og_sep("◈"),
-            og_section("🐢", "ضداسپم پیشرفته (سقف‌های کاربر)"),
-            og_row("وضعیت", "روشن ✅" if cfg["antispam_enabled"] else "خاموش ❌"),
-            og_row("📮 بازخورد/گزارش", f"{pnum(cfg['as_fb_day'])} در روز"),
-            og_row("🎯 مسابقه خصوصی", f"{pnum(cfg['as_pm_hour'])} در ساعت"),
-            og_row("🏆 تورنمنت", f"{pnum(cfg['as_tour_day'])} در روز"),
-            og_row("👥 درخواست دوستی", f"{pnum(cfg['as_fr_hour'])} در ساعت"),
-            og_sep("◈"),
-            og_section("🚨", "اعلان‌های ادمین"),
-            og_row("گزارش (اولویت بالا)", "روشن ✅" if cfg["admin_notify_report"] else "خاموش ❌"),
-            og_row("بازخورد عادی", "روشن ✅" if cfg["admin_notify_feedback"] else "خاموش ❌"),
-            og_sep("⋆"),
-            "┃  💡 تغییرات <b>فوری</b> اعمال می‌شوند — بدون ری‌استارت",
-            og_close("⚙️"),
-        ]
-        rows = []
-        # — سوییچ‌ها: دو در یک ردیف —
-        toggles = list(SYSCFG_TOGGLES)
-        for i in range(0, len(toggles), 2):
-            row = []
-            for key, label, _d in toggles[i:i + 2]:
-                on = bool(cfg.get(key))
-                row.append(btn(f"{'🟢' if on else '⚪️'} {label}", f"A|SYST|{key}"))
-            rows.append(row)
-        # — پیچ‌های عددی: هرکدام [+ | مقدار | −] —
-        rows.append([btn("🔢 تنظیم عددها (پیچ‌ها)", "A|SYSNUM")])
-        rows.append([btn("♻️ بازنشانی به پیش‌فرض", "A|SYSRESET"), btn("🔄 تازه‌سازی", "A|SYSCFG")])
-        rows.append([btn("🛡 داشبورد", "A|HOME")])
-        await safe_edit(query, "\n".join(lines), kb(rows))
-    except Exception as exc:
-        log_event("error", "system", f"admin_syscfg_show failed: {exc!r}")
-        await safe_answer_query(query, UX_MSG["error_generic"])
-
-
-async def admin_syscfg_numbers_show(query) -> None:
-    """🔢 صفحه‌ی پیچ‌های عددی — هر تنظیم با دکمه‌ی + و − قابل تغییر است (۶.۲)."""
-    try:
-        cfg = syscfg()
-        lines = [
-            og_top("🔢"),
-            og_head("🔢", "پیچ‌های عددی سیستم", "روی + یا − بزن تا همان لحظه تغییر کند"),
-            og_sep(),
-        ]
-        for key, label, unit, mn, mx, _st, _d in SYSCFG_STEPPERS:
-            lines.append(og_row(label, f"{pnum(cfg.get(key, mn))} {unit}"))
-        lines += [
-            og_sep("⋆"),
-            "┃  💡 مقدارها بلافاصله ذخیره و اعمال می‌شوند",
-            og_close("🔢"),
-        ]
-        rows = []
-        for key, label, unit, mn, mx, step, _d in SYSCFG_STEPPERS:
-            cur = int(cfg.get(key, mn))
-            can_up = cur + step <= mx
-            can_dn = cur - step >= mn
-            rows.append([
-                btn(f"➖ {label}", f"A|SYSN|{key}|-") if can_dn else btn("▫️", "A|SYNOP"),
-                btn(f"{pnum(cur)} {unit}", "A|SYNOP"),
-                btn(f"{label} ➕", f"A|SYSN|{key}|+") if can_up else btn("▫️", "A|SYNOP"),
-            ])
-        rows.append([btn("⬅️ بازگشت به سیستم", "A|SYSCFG")])
-        await safe_edit(query, "\n".join(lines), kb(rows))
-    except Exception as exc:
-        log_event("error", "system", f"admin_syscfg_numbers_show failed: {exc!r}")
-        await safe_answer_query(query, UX_MSG["error_generic"])
-
-
-async def admin_syscfg_action(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                              query, action: str, parts: list) -> None:
-    """اجرای تغییرات تنظیمات سیستم: سوییچ / پیچ عددی / بازنشانی (۶.۲)."""
-    try:
-        uid = int(query.from_user.id)
-        if action == "SYST" and len(parts) > 2:
-            key = parts[2]
-            if key not in SYSCFG_DEFAULTS or not isinstance(SYSCFG_DEFAULTS.get(key), bool):
-                await safe_answer_query(query, "⚠️ تنظیم نامعتبر است.")
-                return
-            store = DATA.setdefault("syscfg", {})
-            store[key] = not bool(syscfg().get(key))
-            save_data(force=True)
-            audit("syscfg_toggle", uid, None, f"{key}={store[key]}")
-            label = dict((k, l) for k, l, _ in SYSCFG_TOGGLES).get(key, key)
-            await safe_answer_query(query, f"✅ {label}: {'روشن' if store[key] else 'خاموش'}")
-            await admin_syscfg_show(query)
-            return
-        if action == "SYSN" and len(parts) > 3:
-            key, direction = parts[2], parts[3]
-            stepper = next((s for s in SYSCFG_STEPPERS if s[0] == key), None)
-            if stepper is None:
-                await safe_answer_query(query, "⚠️ تنظیم نامعتبر است.")
-                return
-            _key, label, unit, mn, mx, step, _d = stepper
-            cur = int(syscfg().get(key, mn))
-            nxt = cur + (step if direction == "+" else -step)
-            nxt = max(mn, min(mx, nxt))
-            store = DATA.setdefault("syscfg", {})
-            store[key] = nxt
-            save_data(force=True)
-            audit("syscfg_set", uid, None, f"{key}={nxt}")
-            await safe_answer_query(query, f"✅ {label}: {pnum(nxt)} {unit}")
-            await admin_syscfg_numbers_show(query)
-            return
-        if action == "SYSNUM":
-            await safe_answer_query(query)
-            await admin_syscfg_numbers_show(query)
-            return
-        if action == "SYNOP":
-            await safe_answer_query(query, "این مقدار در مرز خودش است ⚙️")
-            return
-        if action == "SYSRESET":
-            DATA["syscfg"] = dict(SYSCFG_DEFAULTS)
-            save_data(force=True)
-            audit("syscfg_reset", uid)
-            await safe_answer_query(query, "♻️ همه‌ی تنظیمات سیستم به پیش‌فرض برگشت")
-            await admin_syscfg_show(query)
-            return
-        await safe_answer_query(query)
-    except Exception as exc:
-        log_event("error", "system", f"admin_syscfg_action failed: {action} {exc!r}",
-                  actor=int(query.from_user.id))
-        await safe_answer_query(query, UX_MSG["error_generic"])
 
 
 async def admin_maintenance_toggle(query) -> None:
@@ -15122,10 +14608,6 @@ async def cmd_apextop_month(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # ================================================================
 #  فاز ۱۲ — Daily Reward + Player of the Day + Social Wall
 # ================================================================
-# نام مستعار برای سازگاری و قابل‌کشف بودن هندلر پاداش روزانه
-cmd_apexdailyreward = cmd_apexdaily_reward
-
-
 def daily_reward_eligible(uid: int) -> bool:
     """آیا کاربر برای پاداش روزانه واجد است؟"""
     try:
@@ -15152,6 +14634,7 @@ def daily_reward_claim(uid: int) -> dict:
         add_xp(int(uid), total_xp)
         user["_last_daily_reward"] = today_key()
         log_user_activity(int(uid), "daily_reward", f"+{total_coins}c +{total_xp}xp")
+        save_data(force=True)
         return {"ok": True, "coins": total_coins, "xp": total_xp, "streak": streak}
     except Exception as exc:
         log_event("error", "system", f"daily_reward_claim failed: {exc!r}")
@@ -15170,7 +14653,7 @@ async def cmd_apexdaily_reward(update: Update, context: ContextTypes.DEFAULT_TYP
             if result.get("reason") == "already_claimed":
                 await msg.reply_text(
                     "🎁 <b>پاداش روزانه</b>\n━━━━━━━━━━━━━━━━━━\n"
-                    "今日 فردا پاداش بگیر!",
+                    "فردا دوباره برای پاداش روزانه برگرد!",
                     parse_mode=ParseMode.HTML)
             else:
                 await msg.reply_text(UX_MSG["error_generic"])
@@ -15190,6 +14673,10 @@ async def cmd_apexdaily_reward(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode=ParseMode.HTML)
     except Exception as exc:
         log_event("error", "system", f"cmd_apexdaily_reward failed: {exc!r}")
+
+
+# نام آشنای قدیمی برای سازگاری با تنظیمات و ارجاع‌های بیرونی.
+cmd_apexdailyreward = cmd_apexdaily_reward
 
 
 def player_of_the_day() -> tuple[int, str, int] | None:
@@ -15346,22 +14833,15 @@ def anti_spam_check(uid: int, action: str) -> bool:
     try:
         uid = int(uid)
         now = now_ts()
-        # ۶.۲ — کل سیستم ضداسپم از پنل مدیریت قابل خاموش‌کردن است
-        try:
-            _scfg = syscfg()
-        except Exception:
-            _scfg = {}
-        if not _scfg.get("antispam_enabled", True):
-            return True
         # کلید ذخیره‌سازی
         store = DATA.setdefault("anti_spam", {})
         user_store = store.setdefault(user_key(uid), {})
-        # انتخاب محدودیت — سقف‌ها از پنل مدیریت قابل تغییرند (۶.۲)
+        # انتخاب محدودیت
         limits = {
-            "private_match": (int(_scfg.get("as_pm_hour", ANTI_SPAM_LIMITS["private_match_per_hour"])), 3600),
-            "tournament": (int(_scfg.get("as_tour_day", ANTI_SPAM_LIMITS["tournament_per_day"])), 86400),
-            "feedback": (int(_scfg.get("as_fb_day", ANTI_SPAM_LIMITS["feedback_per_day"])), 86400),
-            "friend_req": (int(_scfg.get("as_fr_hour", ANTI_SPAM_LIMITS["friend_req_per_hour"])), 3600),
+            "private_match": (ANTI_SPAM_LIMITS["private_match_per_hour"], 3600),
+            "tournament": (ANTI_SPAM_LIMITS["tournament_per_day"], 86400),
+            "feedback": (ANTI_SPAM_LIMITS["feedback_per_day"], 86400),
+            "friend_req": (ANTI_SPAM_LIMITS["friend_req_per_hour"], 3600),
         }
         if action not in limits:
             return True
@@ -17928,18 +17408,15 @@ def question_report(uid: int, question: str, reason: str) -> bool:
 
 
 def question_submissions_approve(submission_id: int, admin_uid: int) -> bool:
-    """تأیید سوال پیشنهادی توسط ادمین."""
+    """بستن امن پیشنهاد کاربر بدون وارد کردن آن به بانک تغییرناپذیر."""
     try:
         subs = DATA.get("question_submissions", [])
         for s in subs:
             if isinstance(s, dict) and int(s.get("id", 0)) == int(submission_id):
                 s["status"] = "approved"
                 s["reviewed_by"] = int(admin_uid)
-                # اضافه کردن به BANKS
-                qtype = str(s.get("type", "truth"))
-                if qtype not in BANKS:
-                    qtype = "truth"
-                BANKS[qtype].append(str(s.get("text", "")))
+                s["note"] = "پیشنهاد ثبت شد؛ بانک اصلی تغییرناپذیر است."
+                save_data(force=True)
                 return True
         return False
     except Exception:
@@ -19143,25 +18620,29 @@ def vote_skip_cast(game: dict, voter_uid: int, vote: bool) -> dict:
         if not v.get("active"):
             return {"ended": True, "skipped": False, "yes_count": 0, "no_count": 0}
         target_uid = int(v.get("target_uid", 0))
+        players = {int(x) for x in game.get("players", [])}
+        if int(voter_uid) not in players:
+            return {"ended": False, "skipped": False, "yes_count": len(v.get("yes", [])), "no_count": len(v.get("no", []))}
         if int(voter_uid) == int(target_uid):
             return {"ended": False, "skipped": False, "yes_count": len(v.get("yes", [])), "no_count": len(v.get("no", []))}
+        if int(voter_uid) in {int(x) for x in v.get("yes", []) + v.get("no", [])}:
+            return {"ended": False, "skipped": False, "yes_count": len(v.get("yes", [])), "no_count": len(v.get("no", []))}
         if vote:
-            if int(voter_uid) not in [int(x) for x in v.get("yes", [])]:
-                v.setdefault("yes", []).append(int(voter_uid))
+            v.setdefault("yes", []).append(int(voter_uid))
         else:
-            if int(voter_uid) not in [int(x) for x in v.get("no", [])]:
-                v.setdefault("no", []).append(int(voter_uid))
+            v.setdefault("no", []).append(int(voter_uid))
         # شمارش
-        total_players = len(game.get("players", []))
+        eligible = max(1, len(players - {target_uid}))
+        majority = (eligible // 2) + 1
         yes_count = len(v.get("yes", []))
         no_count = len(v.get("no", []))
         # اگه نصف+1 موافق شد، رد می‌شه
-        if yes_count >= (total_players // 2) + 1:
+        if yes_count >= majority:
             v["active"] = False
             v["ended_at"] = now_ts()
             return {"ended": True, "skipped": True, "yes_count": yes_count, "no_count": no_count}
         # اگه نصف+1 مخالف شد، رد نمی‌شه
-        if no_count >= (total_players // 2) + 1:
+        if no_count >= majority:
             v["active"] = False
             v["ended_at"] = now_ts()
             return {"ended": True, "skipped": False, "yes_count": yes_count, "no_count": no_count}
@@ -19276,6 +18757,7 @@ def theme_night_set(chat_id: int, theme_key: str) -> bool:
             return False
         g = get_group(int(chat_id))
         g["theme_night"] = str(theme_key)
+        save_data(force=True)
         return True
     except Exception:
         return False
@@ -19414,6 +18896,9 @@ async def cmd_apextheme(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if chat.type not in ("group", "supergroup"):
         await msg.reply_text("🌐 این دستور فقط در گروه کار می‌کنه.")
         return
+    if not await can_manage_group(context, int(user.id), int(chat.id)):
+        await msg.reply_text("🌟 فقط ادمین‌های گروه می‌توانند تم شب را تغییر دهند.")
+        return
     args = list(getattr(context, "args", None) or [])
     if not args:
         # نمایش تم‌های موجود
@@ -19450,6 +18935,13 @@ async def cmd_apexquick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if chat.type not in ("group", "supergroup"):
         await msg.reply_text("🌐 این دستور فقط در گروه کار می‌کنه.")
         return
+    uid = int(user.id)
+    if is_banned(uid) and not is_admin(uid):
+        await msg.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+        return
+    if onboarding_needed(uid):
+        await msg.reply_text("👤 اول در چت خصوصی ربات /start بزن و ثبت‌نام کن.")
+        return
     # بررسی بازی فعال
     game = active_game(int(chat.id))
     if game and str(game.get("status")) == "active":
@@ -19457,7 +18949,7 @@ async def cmd_apexquick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     # شروع سریع
     name = user.first_name or "بازیکن"
-    game = quick_game_start(int(chat.id), int(user.id), name)
+    game = quick_game_start(int(chat.id), uid, name)
     if not game:
         await msg.reply_text(UX_MSG["error_generic"])
         return
@@ -19466,14 +18958,15 @@ async def cmd_apexquick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         group = get_group(int(chat.id))
         group["created_games"] = int(group.get("created_games", 0)) + 1
         analytics_bump("games_started")
-        audit("quick_game_start", int(user.id), int(chat.id))
+        audit("quick_game_start", uid, int(chat.id))
     except Exception:
         pass
+    save_data(force=True)
     await msg.reply_text(
         f"{ds_top('⚡')}\n"
         "│  ⚡ <b>بازی سریع شروع شد!</b>\n"
         f"{ds_sep()}\n"
-        f"👑 سرگروه: {mention_user(int(user.id), name)}\n"
+        f"👑 سرگروه: {mention_user(uid, name)}\n"
         "🎮 بازی شروع شد! بقیه می‌تونن با /apexjoin وارد بشن.\n"
         "🎯 اولین نوبت شروع می‌شه!",
         parse_mode=ParseMode.HTML)
@@ -19491,6 +18984,13 @@ async def cmd_apexjoin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if chat.type not in ("group", "supergroup"):
         await msg.reply_text("🌐 این دستور فقط در گروه کار می‌کنه.")
         return
+    uid = int(user.id)
+    if is_banned(uid) and not is_admin(uid):
+        await msg.reply_text("🚫 دسترسی شما به ApexRival مسدود شده است.")
+        return
+    if onboarding_needed(uid):
+        await msg.reply_text("👤 اول در چت خصوصی ربات /start بزن و ثبت‌نام کن.")
+        return
     game = active_game(int(chat.id))
     if not game or str(game.get("status")) != "active":
         await msg.reply_text("❌ بازی فعالی نیست. /apexquick بزن.")
@@ -19498,9 +18998,15 @@ async def cmd_apexjoin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not game.get("quick_game") or not game.get("auto_join"):
         await msg.reply_text("❌ این بازی قابل ملحق شدن نیست.")
         return
-    uid = int(user.id)
     if uid in [int(x) for x in game.get("players", [])]:
         await msg.reply_text("ℹ️ قبلاً در بازی هستی!")
+        return
+    max_players = max(2, int(get_group(int(chat.id)).get("max_players", 20) or 20))
+    if len(game.get("players", [])) >= max_players:
+        await msg.reply_text(f"👥 ظرفیت بازی تکمیل است ({fmt_num(max_players)} نفر).")
+        return
+    if punishment_blocks_join(uid):
+        await msg.reply_text("⚖️ اول مجازاتت را تمام کن، بعد به بازی ملحق شو.")
         return
     # افزودن به بازی
     with LOCK:
@@ -19508,6 +19014,10 @@ async def cmd_apexjoin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         game["names"][str(uid)] = user.first_name or "بازیکن"
         game["ready"].append(uid)
         game["turn_order"].append(uid)
+        game.setdefault("round_scores", {}).setdefault(str(uid), 0)
+    get_user(uid, user.first_name)["games"] = int(get_user(uid).get("games", 0)) + 1
+    touch_game(game)
+    save_data(force=True)
     await msg.reply_text(
         f"✅ {mention_user(uid, user.first_name)} به بازی ملحق شد! 🎉",
         parse_mode=ParseMode.HTML)
@@ -19807,13 +19317,6 @@ async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         if action == "REWARD":
             await admin_reward_manager_show(query)
-            return
-        # --- نسخه ۶.۲: سیستم و ضداسپم ---
-        if action == "SYSCFG":
-            await admin_syscfg_show(query)
-            return
-        if action in ("SYST", "SYSN", "SYSNUM", "SYNOP", "SYSRESET"):
-            await admin_syscfg_action(update, context, query, action, parts)
             return
         # مسیرهای قدیمی — ارسال به admin_callback اصلی
         # برای حفظ Backward Compatibility
@@ -20172,16 +19675,6 @@ async def route_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             return
     except Exception:
         pass
-    # ۱.۲) 🪄 نسخه ۶.۲ — هوشمندِ ریپلای «خصوصی»: بعد از ویزاردهای ادمین.
-    #      (در گروه، بعد از موتور پاسخ بازی می‌آید تا «گزارش» روی کارت سوالِ فعال
-    #       توسط همان موتور تخصصی مدیریت شود — رجوع به گام ۵.۵)
-    try:
-        _chat_early = update.effective_chat
-        if _chat_early is None or _chat_early.type == "private":
-            if await universal_reply_router(update, context):
-                return
-    except Exception:
-        pass
     # ۱.۵) 1.1.0 — حالت‌های ورودی کاربر (افزودن دوست، رقیب، بازخورد)
     try:
         if await user_input_router_v11(update, context):
@@ -20219,13 +19712,6 @@ async def route_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # ۵) جواب نوبت بازی
     try:
         if await handle_game_reply(update, context):
-            return
-    except Exception:
-        pass
-    # ۵.۵) 🪄 نسخه ۶.۲ — هوشمندِ ریپلای در گروه (بعد از موتور پاسخ بازی:
-    #      ریپلایِ «گزارش» روی کارت سوالِ فعال توسط موتور بازی مدیریت می‌شود)
-    try:
-        if await universal_reply_router(update, context):
             return
     except Exception:
         pass
@@ -20476,176 +19962,45 @@ async def _legacy_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> No
         pass
 
 
-# ---- تنظیمات موتور رفرش (۶.۲) ----
-PANEL_TICK_EDIT_CAP = 12          # حداکثر ویرایش پنل در هر تیکِ ۱ ثانیه (ضد محدودیت نرخ تلگرام)
-_panel_tick_cursor = 0            # نشانگر گردشی برای انصاف بین گروه‌ها
-PANEL_SPIN_ICONS = "◐◓◑◒"         # آیکون چرخان ثانیه‌شمار
-
-
-def _panel_counter_line(remaining: int) -> str:
-    """سطر ثانیه‌شمار زنده — با آیکون چرخان، هر ثانیه تغییر می‌کند."""
-    spin = PANEL_SPIN_ICONS[int(time.time()) % 4]
-    rem = max(0, int(remaining))
-    return f"┃  ⏱ رفرش خودکار: <b>{pnum(rem)}</b> ثانیه {spin}"
-
-
-def panel_reset_timer(game: dict) -> None:
-    """ریست شمارنده‌ی رفرش پنل — بعد از هر تعامل یا تغییر فاز (۶.۲)."""
-    try:
-        try:
-            interval = int(syscfg().get("panel_interval", 5))
-        except Exception:
-            interval = 5
-        game["_panel_next_full"] = time.time() + max(3, interval)
-    except Exception:
-        pass
-
-
-def panel_waiting_view(game: dict) -> tuple:
-    """نمای «در انتظار پاسخ» — وقتی کارت سوال فعال است، پنل گروه چه نشان دهد (۶.۲)."""
-    prompt = game.get("reply_prompt") if isinstance(game.get("reply_prompt"), dict) else {}
-    target_uid = int(prompt.get("target_uid", 0) or 0)
-    questioner = int(prompt.get("questioner_uid", 0) or 0)
-    sent_ts = float(prompt.get("sent_ts", 0) or 0)
-    elapsed = max(0, int(time.time() - sent_ts)) if sent_ts else 0
-    clock = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
-    heat_info = game_heat_advanced(game)
-    heat_name = heat_info.get("name", "🟢 آرام")
-    scores = game.get("round_scores", {})
-    players = [int(x) for x in game.get("players", [])]
-    top = sorted(players, key=lambda p: -int(scores.get(str(p), 0)))[:3]
-    medals = ["🥇", "🥈", "🥉"]
-    board_parts = []
-    for p, medal in zip(top, medals):
-        board_parts.append(f"{medal}{escape(name_of(p, game))} {pnum(int(scores.get(str(p), 0)))}")
-    board = "  ".join(board_parts) if board_parts else "هنوز امتیازی نیست"
-    lines = [
-        og_top("🎯"),
-        og_head("🎯", "در انتظار پاسخ...", "کارت سوال فعال است — پاسخ با Reply به همان کارت"),
-        og_sep(),
-        f"┃  🎤 پرسشگر: {mention_user(questioner, name_of(questioner, game))}" if questioner else "┃  🎤 پرسشگر: —",
-        f"┃  🎯 در حال پاسخ: {mention_user(target_uid, name_of(target_uid, game))}" if target_uid else "┃  🎯 در حال پاسخ: —",
-        og_row("⏱ زمان پاسخ", pnum(clock)),
-        og_row("🌡 گرما", heat_name),
-        og_sep("◈"),
-        "┃  ▎🏆 <b>جدول زنده</b>",
-        f"┃  {board}",
-        og_close("🎯"),
-    ]
-    rows = [[btn("📊 امتیازها", "G|SCORES")]]
-    try:
-        if game.get("leader_id"):
-            rows.append([btn("🏁 پایان بازی", "G|END")])
-    except Exception:
-        pass
-    return "\n".join(lines), kb(rows)
-
-
-def _panel_views_for(game: dict) -> tuple:
-    """نمای درست برای وضعیت فعلی بازی — آگاه از فاز (۶.۲).
-
-    FIX بحرانی: رفرش قدیمی همیشه نمای «وضعیت» می‌ساخت و دکمه‌های
-    انتخاب موضوعِ پرسشگر را روی کارت نوبت می‌بلعید!
-    """
-    status = str(game.get("status", ""))
-    if status == "lobby":
-        return lobby_text(game), lobby_markup(game)
-    phase = str(game.get("phase", ""))
-    q = current_questioner(game)
-    if phase == "topic" and q is not None:
-        # کارت نوبت با دکمه‌های خودش — مجوزها در لحظه‌ی کلیک چک می‌شوند
-        return turn_announcement(game, int(q)), turn_markup(game, int(q))
-    if phase == "target":
-        return targets_view(game)
-    if phase == "question":
-        return panel_waiting_view(game)
-    return game_home_text(game), game_home_markup(game, 0)
-
-
-async def _panel_apply_edit(bot, game: dict, chat_id: int, message_id: int,
-                           counter_remaining=None) -> bool:
-    """اعمال ویرایش پنل با مدیریت خطاهای تلگرام (۶.۲)."""
-    try:
-        text, markup = _panel_views_for(game)
-        if counter_remaining is not None:
-            text = text + "\n" + _panel_counter_line(counter_remaining)
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=markup,
-            disable_web_page_preview=True,
-        )
-        return True
-    except Exception as exc:
-        msg = str(exc).lower()
-        if "not modified" in msg:
-            return True  # محتوا یکی بود — عادی است
-        if ("message to edit not found" in msg or "message id is invalid" in msg
-                or "message to edit not found" in msg or "chat not found" in msg
-                or "message can't be edited" in msg or "have no rights" in msg):
-            # پنل مرده — دیگر مزاحم نشو
-            game["_panel_msg_id"] = 0
-            game["_panel_next_full"] = 0
-            return False
-        return False
-
-
 async def auto_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """⏱ موتور رفرش زنده‌ی پنل‌های گروه (۶.۲).
-
-    • هر تیک ۱ ثانیه اجرا می‌شود.
-    • محتوای پنل هر «فاصله‌ی تنظیم‌شده» (پیش‌فرض ۵ ثانیه) کامل تازه می‌شود.
-    • بین دو رفرش کامل، «ثانیه‌شمار زنده» روی پنل می‌چرخد (قابل خاموش‌کردن).
-    • رندر آگاه از فاز است: کارت نوبت دکمه‌های خودش را نگه می‌دارد.
-    """
-    global _panel_tick_cursor
+    """رفرش خودکار پنل‌های گروه (لابی + بازی فعال) هر ۵ ثانیه."""
     try:
-        cfg = syscfg()
-        if not cfg.get("panel_refresh", True):
-            return
-        interval = max(3, int(cfg.get("panel_interval", 5)))
-        show_counter = bool(cfg.get("panel_countdown", True))
-        # جمع‌آوری پنل‌های واجد شرایط
-        eligible: list = []
         for gid, game in list(DATA.get("games", {}).items()):
             if not isinstance(game, dict):
                 continue
             status = str(game.get("status", ""))
-            if status not in ("lobby", "active"):
+            if status != "active":
                 continue
             chat_id = int(game.get("chat_id", 0))
+            if not chat_id:
+                continue
             panel_msg_id = int(game.get("_panel_msg_id", 0))
-            if not chat_id or not panel_msg_id:
+            if not panel_msg_id:
                 continue
-            eligible.append((game, chat_id, panel_msg_id))
-        if not eligible:
-            return
-        # انصاف بین گروه‌ها: گردشی + سقف هر تیک (ضد محدودیت نرخ)
-        if len(eligible) > PANEL_TICK_EDIT_CAP:
-            start = _panel_tick_cursor % len(eligible)
-            rotated = eligible[start:] + eligible[:start]
-            eligible = rotated[:PANEL_TICK_EDIT_CAP]
-            _panel_tick_cursor = (start + PANEL_TICK_EDIT_CAP) % len(eligible) \
-                if len(rotated) > PANEL_TICK_EDIT_CAP else 0
-        now = time.time()
-        for game, chat_id, panel_msg_id in eligible:
+            # بررسی اینکه آخرین رفرش بیش از ۵ ثانیه نباشه
+            last_refresh = int(game.get("_last_auto_refresh", 0))
+            now = now_ts()
+            if now - last_refresh < 5:
+                continue
+            game["_last_auto_refresh"] = now
+            # ساخت متن و دکمه‌های جدید
+            if str(game.get("phase", "")) == "lobby":
+                text = lobby_text(game)
+                markup = lobby_markup(game, 0)
+            else:
+                text = game_home_text(game)
+                markup = game_home_markup(game, 0)
             try:
-                nxt = float(game.get("_panel_next_full", 0) or 0)
-                if now >= nxt or nxt <= 0:
-                    # رفرش کامل + شروع شمارش جدید
-                    await _panel_apply_edit(context.bot, game, chat_id, panel_msg_id,
-                                            counter_remaining=interval if show_counter else None)
-                    game["_panel_next_full"] = now + interval
-                    game["_last_auto_refresh"] = now_ts()
-                elif show_counter:
-                    # فقط ثانیه‌شمار جلو برود
-                    remaining = max(0, int(round(nxt - now)))
-                    await _panel_apply_edit(context.bot, game, chat_id, panel_msg_id,
-                                            counter_remaining=remaining)
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=panel_msg_id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=markup,
+                    disable_web_page_preview=True,
+                )
             except Exception:
-                continue
+                pass
     except Exception:
         pass
 
@@ -21027,7 +20382,7 @@ def _start_fallback_scheduler(app) -> None:
         for name, job, interval, first in (
             ("maintenance", periodic_maintenance, 180, 60),
             ("backup", backup_job, 6 * 3600, 300),
-            ("panel_refresh", auto_refresh_group_panels, 1, 10),
+            ("panel_refresh", auto_refresh_group_panels, 5, 10),
         ):
             _FALLBACK_TASKS.append(
                 loop.create_task(_fallback_job_loop(name, job, ctx, interval, first))
@@ -21230,8 +20585,8 @@ def build_application() -> Application:
         if app.job_queue is not None:
             app.job_queue.run_repeating(periodic_maintenance, interval=180, first=60)
             app.job_queue.run_repeating(backup_job, interval=6 * 3600, first=300)
-            # ⏱ ۶.۲ — موتور رفرش زنده: تیک ۱ ثانیه‌ای؛ رفرش کامل هر «فاصله‌ی تنظیمی»
-            app.job_queue.run_repeating(auto_refresh_group_panels, interval=1, first=10)
+            # رفرش خودکار پنل‌های گروه هر ۵ ثانیه
+            app.job_queue.run_repeating(auto_refresh_group_panels, interval=5, first=10)
         else:
             print("ApexRival: job_queue unavailable — built-in asyncio scheduler will start in post_init")
     except Exception as exc:
@@ -21289,4 +20644,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
