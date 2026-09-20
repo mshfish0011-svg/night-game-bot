@@ -2793,7 +2793,8 @@ def group_adult_ok(chat_id: int, uid: int) -> bool:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """نقطه‌ی ورود: آنبوردینگ ترکیبی + دیپ‌لینک‌ها (دوئل و ...)."""
+    """نقطه‌ی ورود: آنبوردینگ ترکیبی + دیپ‌لینک‌ها (دوئل و ...).
+    پاک کردن خودکار پیام دستور قبلی در PV و گروه."""
     msg = update.message
     user = update.effective_user
     if msg is None or user is None:
@@ -2821,7 +2822,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if args and str(args[0]).startswith("ref_"):
         get_user(uid, user.first_name)
         await rf_handle_deep_link(update, context, uid, str(args[0]))
-        # ادامه‌ی جریان عادی — نمایش منوی خانه
 
     get_user(uid, user.first_name)
 
@@ -2834,7 +2834,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception:
         pass
 
-    # پاک کردن پیام /start در گروه (اگر مجاز است)
+    # پاک کردن پیام /start در گروه
     if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
         if chat_cfg(int(update.effective_chat.id)).get("delcmd", True):
             await safe_delete(msg)
@@ -2842,11 +2842,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await msg.reply_text("🎮 برای شروع، در چت خصوصی من /start بزن.", parse_mode=ParseMode.HTML)
         return
 
+    # در PV: پاک کردن پیام /start کاربر
+    await safe_delete(msg)
+
     if onboarding_needed(uid):
         text = (
             f"🎉 <b>سلام {escape(user.first_name)}!</b>\n"
-            "به <b>ApexRival</b> خوش اومدی — میدونِ جنگ گروهی تو! ⚔️\n\n"
-            "برای شروع فقط دو چیز کوچیک لازم دارم:"
+            "به <b>ApexRival</b> خوش اومدی — ربات بازی جرئت و حقیقت! ⚔️\n\n"
+            "برای شروع فقط جنسیتت رو انتخاب کن:"
         )
         markup = kb([
             [btn(GENDER_ICONS["male"], "ON|GENDER|male"), btn(GENDER_ICONS["female"], "ON|GENDER|female")],
@@ -2916,6 +2919,7 @@ async def onb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 #  پنل خانه — خصوصی و گروهی
 # ================================================================
 def private_home_text(uid: int) -> str:
+    """صفحه‌ی اصلی ربات — زیبا، جذاب، با طراحی حرفه‌ای."""
     u = get_user(uid)
     level = int(u.get("level", 1))
     xp = int(u.get("xp", 0))
@@ -2923,50 +2927,66 @@ def private_home_text(uid: int) -> str:
     games = int(u.get("games", 0))
     wins = int(u.get("wins", 0))
     floor_xp = (level - 1) * 100
-    bar = progress_bar(xp - floor_xp, 100)
+    xp_in_level = xp - floor_xp
+    bar = progress_bar(xp_in_level, 100, 15)
     g = gender_icon(uid)
     name = escape(str(u.get("name") or "بازیکن"))
-    # 1.1.0 — Rank، Level Name و Daily Streak
-    rank_name, rank_icon, _ = rank_for_xp(xp)
+    rank_name, rank_icon, rank_row = rank_for_xp(xp)
     lv_tier, lv_code = level_tier(level)
     daily_streak = int(u.get("daily_streak", 0))
     ach_count = len(u.get("achievements", []))
+    ach_total = len(ACHIEVEMENTS_BASE) + len(ACHIEVEMENTS_V11)
     unread = unread_notifications(uid)
-    # عنوان/قاب/badge
+    is_v = is_vip(int(uid))
+    is_ver = is_verified(int(uid))
+    rep = int(u.get("reputation", 0))
+    elo = int(u.get("elo_rating", 1000))
     title_owned = str(u.get("title", "") or "")
     title_disp = TITLES_SHOP.get(title_owned, {}).get("name", "") if title_owned else title_for(xp)
-    frame_owned = str(u.get("frame", "default") or "default")
     badge_owned = str(u.get("badge", "") or "")
     badge_disp = BADGES_SHOP.get(badge_owned, {}).get("name", "") if badge_owned else ""
-    # فصل جاری
     try:
         sid = current_season_id()
         season_xp = int(u.get("season_xp", 0))
     except Exception:
         sid, season_xp = "", 0
-    # Event فعال
     try:
         ev_list = active_events()
-        ev_line = "\n📢 " + " | ".join(str(e[1].get("title", "")) for e in ev_list) if ev_list else ""
+        ev_line = ""
+        if ev_list:
+            ev_names = [str(e[1].get("title", "")) for e in ev_list[:2]]
+            ev_line = "\n\n" + " · ".join(f"📢 {escape(n)}" for n in ev_names if n)
     except Exception:
         ev_line = ""
-    notify_dot = f" 🔴{unread}" if unread else ""
-    return (
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"{g} <b>{name}</b>{notify_dot}\n"
-        f"{title_disp} {badge_disp}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"🔥 سطح <b>{fmt_num(level)}</b> · {lv_tier}\n"
-        f"⭐ XP: <b>{fmt_num(xp)}</b> {bar} ({fmt_num(xp - floor_xp)}/۱۰۰)\n"
-        f"{rank_icon} رتبه: <b>{rank_name}</b>\n"
-        f"🪙 سکه: <b>{fmt_num(coins)}</b> · 🎮 بازی: <b>{fmt_num(games)}</b> · 🏆 برد: <b>{fmt_num(wins)}</b>\n"
-        f"🎖 دستاوردها: <b>{fmt_num(ach_count)}</b> · 📅 استریک: <b>{fmt_num(daily_streak)}</b> روز"
-        + (f"\n🌐 فصل {sid}: <b>{fmt_num(season_xp)}</b> XP" if sid else "")
-        + ev_line
-        + f"\n━━━━━━━━━━━━━━━━━━\n"
-        f"🆔 ربات را به گروهت اضافه کن و با /apex بازی رو شروع کن!\n"
-        f"📦 نسخه: <b>{VERSION}</b>"
+    notify_badge = f" 🔴{unread}" if unread else ""
+    vip_badge = " 👑" if is_v else ""
+    verified_badge = " ✅" if is_ver else ""
+    # خط زیبایی بالایی
+    top_border = "╭" + "━" * 20 + "╮"
+    bot_border = "╰" + "━" * 20 + "╯"
+    # محاسبه درصد پیشرفت سطح
+    xp_pct = int(xp_in_level) if xp_in_level <= 100 else 100
+    # خط لول با درصد
+    level_line = f"{bar} {fmt_num(xp_pct)}٪"
+    text = (
+        f"{top_border}\n"
+        f"│  {g} <b>{name}</b>{vip_badge}{verified_badge}{notify_badge}\n"
+        f"│  {title_disp} {badge_disp}\n"
+        f"├" + "━" * 20 + "┤\n"
+        f"│  🔥 سطح <b>{fmt_num(level)}</b> · {lv_tier}\n"
+        f"│  {level_line}\n"
+        f"│  {rank_icon} <b>{rank_name}</b>\n"
+        f"├" + "━" * 20 + "┤\n"
+        f"│  🪙 <b>{fmt_num(coins)}</b>  🎮 <b>{fmt_num(games)}</b>  🏆 <b>{fmt_num(wins)}</b>\n"
+        f"│  🎖 <b>{fmt_num(ach_count)}/{fmt_num(ach_total)}</b>  📅 <b>{fmt_num(daily_streak)}</b> روز\n"
+        f"│  👍 <b>{fmt_num(rep)}</b>  ⭐ <b>{fmt_num(elo)}</b>"
     )
+    if sid:
+        text += f"\n│  🌐 فصل {sid}: <b>{fmt_num(season_xp)}</b> ایکس‌پی"
+    text += f"\n{bot_border}"
+    if ev_line:
+        text += ev_line
+    return text
 
 
 def private_home_markup(uid: int) -> InlineKeyboardMarkup:
@@ -7161,31 +7181,26 @@ async def cmd_apexunmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 # ================================================================
 
 def admin_home_text() -> str:
+    """پنل ادمین قدیمی — حالا فقط fallback. پنل اصلی admin_dashboard_show است."""
     users = len(DATA.get("users", {}))
     groups = len(DATA.get("groups", {}))
     games_active = sum(1 for g in DATA.get("games", {}).values()
                        if isinstance(g, dict) and str(g.get("status")) == "active")
     size = Path(DATA_FILE).stat().st_size if Path(DATA_FILE).exists() else 0
-    ads = len(v24_store().get("ads", []))
     return (
-        f"🛡 <b>مرکز فرماندهی {BOT_NAME}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"🛡 <b>پنل مدیریت</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
         f"👥 کاربران: <b>{fmt_num(users)}</b>\n"
         f"👥 گروه‌ها: <b>{fmt_num(groups)}</b>\n"
         f"🎮 بازی‌های فعال: <b>{fmt_num(games_active)}</b>\n"
-        f"📚 بانک: <b>{fmt_num(BANKS_TOTAL)}</b> سوال ({fmt_num(len(BANKS))} بانک)\n"
-        f"📢 تبلیغ فعال: <b>{fmt_num(ads)}</b>\n"
-        f"💾 داده: <b>{fmt_num(size)}</b> بایت\n\n"
-        "یک بخش را انتخاب کن:"
+        f"💾 حجم داده: <b>{fmt_num(size // 1024)}</b> کیلوبایت"
     )
 
 
 def admin_home_markup() -> InlineKeyboardMarkup:
+    """دکمه‌های پنل ادمین قدیمی — فقط fallback."""
     return kb([
-        [btn("👥 کاربران", "A|USERS"), btn("📢 تبلیغات", "A|ADS")],
-        [btn("📡 پیام همگانی", "A|BC"), btn("🏦 مرکز بانک", "A|BANK")],
-        [btn("📊 آمار", "A|STATS"), btn("🩺 دکتر داده", "A|DOCTOR")],
-        [btn("🗄 بکاپ‌ها", "A|BACKUPS"), btn("⚠️ ریست کارخانه", "A|RESET")],
+        [btn("🏠 داشبورد اصلی", "A|HOME")],
     ])
 
 
@@ -7194,10 +7209,23 @@ async def cmd_apexpanel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user = update.effective_user
     if msg is None or user is None:
         return
-    if not is_admin(int(user.id)):
+    if not has_permission(int(user.id), "admin"):
         await msg.reply_text("🚫 این بخش فقط برای ادمین است.")
         return
-    await msg.reply_text(admin_home_text(), parse_mode=ParseMode.HTML, reply_markup=admin_home_markup())
+    # پاک کردن پیام دستور
+    await safe_delete(msg)
+    m = await msg.reply_text("🛠 پنل مدیریت\n━━━━━━━━━━━━━━━━━━\nدر حال بارگذاری...",
+                              parse_mode=ParseMode.HTML)
+    # ساخت fake query برای admin_dashboard_show
+    class _FQ:
+        def __init__(self, m, u):
+            self.message = m
+            self.from_user = u
+            self.data = "A|HOME"
+        async def answer(self, **kw):
+            pass
+    fq = _FQ(m, user)
+    await admin_dashboard_show(fq)
 
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -8354,12 +8382,83 @@ async def group_command_gate(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def group_text_triggers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """متن‌های کلیدی در گروه: «جرئت و حقیقت» و «مجازات»."""
+    """متن‌های کلیدی در گروه: «جرئت و حقیقت»، «مجازات»، «حکم»، «+18»."""
     msg = update.message
     chat = update.effective_chat
+    user = update.effective_user
     if msg is None or chat is None or chat.type not in ("group", "supergroup"):
         return
     text = (msg.text or "").strip()
+    uid = int(user.id) if user else 0
+    # --- تریجر «حکم» — سرگروه روی پیام کسی Reply می‌زنه و می‌نویسه «حکم» ---
+    if text in ("حکم", "hokm", "حکم!", "حکم."):
+        # بررسی Reply
+        target_user = getattr(msg.reply_to_message, "from_user", None) if msg.reply_to_message else None
+        if target_user is None:
+            return
+        target_uid = int(target_user.id)
+        if target_uid == uid:
+            await msg.reply_text("❌ نمی‌تونی به خودت حکم بدی!")
+            return
+        # بررسی بازی فعال
+        game = active_game(int(chat.id))
+        if game is None or str(game.get("status")) != "active":
+            await msg.reply_text("❌ بازی فعالی نیست! اول /apex بزن.")
+            return
+        # بررسی اینکه آیا بازیکن در بازی هست
+        if target_uid not in [int(x) for x in game.get("players", [])]:
+            await msg.reply_text("❌ این بازیکن در بازی نیست!")
+            return
+        # صدور حکم
+        penalty = pick_penalty(game)
+        deadline = int(game.get("settings", {}).get("penalty_deadline", 300) or 300)
+        target_name = name_of(target_uid, game)
+        issuer_name = name_of(uid, game)
+        await context.bot.send_message(
+            int(chat.id),
+            f"☠️ <b>حکم صادر شد!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 محکوم: {mention_user(target_uid, target_name)}\n"
+            f"👨‍⚖️ صادرکننده: {mention_user(uid, issuer_name)}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"⚖️ حکم: <b>{escape(penalty)}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"⏳ مهلت: <b>{fmt_num(deadline // 60)} دقیقه</b>\n"
+            f"✅ بعد از انجام، با <b>Reply به همین پیام</b> تأیید کن\n"
+            f"🎁 پاداش: +۴ ایکس‌پی و +۲ سکه",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb([[btn("✅ انجام شد", f"PN|DONE|{target_uid}_{now_ts()}")]]),
+        )
+        # ثبت مجازات در داده‌ی بازی
+        game["pending_penalties"][str(target_uid)] = {
+            "text": penalty,
+            "ts": now_ts(),
+            "deadline": deadline,
+            "done": False,
+            "skipped": False,
+            "source": "manual_hokm",
+            "by": int(uid),
+        }
+        touch_game(game)
+        save_data(force=True)
+        # پاک کردن پیام «حکم» کاربر
+        if chat_cfg(int(chat.id)).get("delcmd", True):
+            await safe_delete(msg)
+        return
+    # --- تریگر «+18» — روشن/خاموش کردن حالت بزرگسال ---
+    if text in ("+18", "+۱۸", "18+", "۱۸+"):
+        if not (uid == int(game.get("leader_id", 0)) if (game := active_game(int(chat.id))) else False):
+            if not has_permission(int(uid), "admin"):
+                # فقط سرگروه یا ادمین
+                return
+        g = get_group(int(chat.id))
+        g["adult_mode"] = not bool(g.get("adult_mode", False))
+        save_data(force=True)
+        state = "روشن ✅" if g.get("adult_mode") else "خاموش ❌"
+        await msg.reply_text(f"🔞 حالت +۱۸: <b>{state}</b>", parse_mode=ParseMode.HTML)
+        if chat_cfg(int(chat.id)).get("delcmd", True):
+            await safe_delete(msg)
+        return
     if text == "جرئت و حقیقت":
         await msg.reply_text(
             "🎯 همین حالا بازی کن! با /apex لابی بساز و ۸۲۸۱ سوال را شروع کنید.",
@@ -8368,7 +8467,8 @@ async def group_text_triggers(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     if text == "مجازات":
         await msg.reply_text(
-            "⚖️ برای مجازات هوشمند، روی پیام مقصر Reply کن و /apexpunish بزن!",
+            "⚖️ برای مجازات هوشمند، روی پیام مقصر Reply کن و /apexpunish بزن!\n"
+            "💡 یا روی پیام کسی Reply کن و بنویس «حکم»",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -10558,7 +10658,7 @@ async def cmd_apexdaily_reward(update: Update, context: ContextTypes.DEFAULT_TYP
 #  پنل مدیریت حرفه‌ای (Advanced Admin Dashboard) — فاز ۶
 # ================================================================
 async def admin_dashboard_show(query) -> None:
-    """نمایش داشبورد اصلی ادمین."""
+    """داشبورد اصلی ادمین — حرفه‌ای، زیبا، کامل."""
     try:
         users = DATA.get("users", {})
         groups = DATA.get("groups", {})
@@ -10568,40 +10668,52 @@ async def admin_dashboard_show(query) -> None:
         active_games = sum(1 for g in games.values() if isinstance(g, dict) and g.get("status") == "active")
         maintenance = maintenance_active()
         sid = current_season_id()
+        banned = sum(1 for u in users.values() if isinstance(u, dict) and u.get("banned"))
+        verified = len(DATA.get("verified_users", []))
+        size_kb = 0
+        try:
+            size_kb = Path(DATA_FILE).stat().st_size // 1024
+        except Exception:
+            pass
+        # آمار پیام‌های خصوصی
+        pm_count = len(DATA.get("private_matches", {}))
+        # آمار فصل
+        season_players = 0
+        try:
+            s = DATA.get("seasons", {}).get(sid, {})
+            season_players = len(s.get("leaderboard", {})) if isinstance(s, dict) else 0
+        except Exception:
+            pass
+        top_border = "╭" + "━" * 22 + "╮"
+        sep = "├" + "━" * 22 + "┤"
+        bot_border = "╰" + "━" * 22 + "╯"
         lines = [
-            "🛠 <b>پنل مدیریت ApexRival</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            "━ کاربران ━",
-            f"👥 کل: <b>{fmt_num(len(users))}</b>",
-            f"🔥 فعال امروز: <b>{fmt_num(today.get('active_users', 0))}</b>",
-            f"🚫 مسدود: <b>{fmt_num(sum(1 for u in users.values() if isinstance(u, dict) and u.get('banned')))}</b>",
-            "",
-            "━ بازی‌ها ━",
-            f"🎮 کل: <b>{fmt_num(len(games))}</b>",
-            f"🎮 فعال: <b>{fmt_num(active_games)}</b>",
-            f"🎮 شروع‌شده امروز: <b>{fmt_num(today.get('games_started', 0))}</b>",
-            "",
-            "━ گروه‌ها ━",
-            f"👥 کل: <b>{fmt_num(len(groups))}</b>",
-            "",
-            "━ اقتصاد ━",
-            f"🪙 مجموع سکه کاربران: <b>{fmt_num(total_coins)}</b>",
-            f"📈 درآمد امروز: <b>{fmt_num(today.get('coins_earned', 0))}</b>",
-            f"📉 مصرف امروز: <b>{fmt_num(today.get('coins_spent', 0))}</b>",
-            "",
-            "━ سیستم ━",
-            f"🌐 فصل جاری: <b>{sid}</b>",
-            f"🔧 حالت تعمیرات: {'✅ روشن' if maintenance else '❌ خاموش'}",
-            f"📦 نسخه: <b>{VERSION}</b>",
+            f"{top_border}",
+            f"│  🛡 <b>پنل مدیریت</b>",
+            f"{sep}",
+            f"│  👥 کاربران: <b>{fmt_num(len(users))}</b>  │  🔥 فعال: <b>{fmt_num(today.get('active_users', 0))}</b>",
+            f"│  🚫 مسدود: <b>{fmt_num(banned)}</b>  │  ✅ تأییدشده: <b>{fmt_num(verified)}</b>",
+            f"{sep}",
+            f"│  🎮 بازی فعال: <b>{fmt_num(active_games)}</b>  │  📊 کل: <b>{fmt_num(len(games))}</b>",
+            f"│  🎯 مسابقه خصوصی: <b>{fmt_num(pm_count)}</b>",
+            f"{sep}",
+            f"│  👥 گروه‌ها: <b>{fmt_num(len(groups))}</b>",
+            f"{sep}",
+            f"│  🪙 مجموع سکه: <b>{fmt_num(total_coins)}</b>",
+            f"│  📈 درآمد امروز: <b>{fmt_num(today.get('coins_earned', 0))}</b>",
+            f"│  📉 مصرف امروز: <b>{fmt_num(today.get('coins_spent', 0))}</b>",
+            f"{sep}",
+            f"│  🌐 فصل: <b>{sid}</b>  │  👥 بازیکنان: <b>{fmt_num(season_players)}</b>",
+            f"│  🔧 تعمیرات: {'✅' if maintenance else '❌'}  │  💾 <b>{fmt_num(size_kb)}</b>KB",
+            f"{bot_border}",
         ]
         rows = [
-            [btn("👥 مدیریت کاربران", "A|USERS"), btn("🎮 مدیریت بازی", "A|GAMES")],
-            [btn("🏆 دستاوردها", "A|ACHM"), btn("🪙 اقتصاد", "A|ECON")],
-            [btn("🎁 جوایز", "A|REWARD"), btn("👥 گروه‌ها", "A|GROUPS")],
-            [btn("📊 Analytics", "A|ANALYTICS"), btn("⚙️ تنظیمات", "A|SETTINGS")],
-            [btn("🛠 تعمیرات", "A|MAINT"), btn("💾 بکاپ", "A|BACKUP")],
-            [btn("📤 خروجی", "A|EXPORT"), btn("📝 لاگ‌ها", "A|LOGS")],
-            [btn("📨 بازخوردها", "A|FEEDBACK")],
+            [btn("👥 کاربران", "A|USERS"), btn("🎮 بازی‌ها", "A|GAMES"), btn("📢 تبلیغات", "A|ADS")],
+            [btn("📡 پیام همگانی", "A|BC"), btn("🏦 بانک", "A|BANK"), btn("📊 آمار", "A|STATS")],
+            [btn("🏆 دستاوردها", "A|ACHM"), btn("🪙 اقتصاد", "A|ECON"), btn("🎁 جوایز", "A|REWARD")],
+            [btn("👥 گروه‌ها", "A|GROUPS"), btn("⚙️ تنظیمات", "A|SETTINGS"), btn("🛠 تعمیرات", "A|MAINT")],
+            [btn("💾 بکاپ", "A|BACKUP"), btn("📤 خروجی", "A|EXPORT"), btn("📝 لاگ‌ها", "A|LOGS")],
+            [btn("📊 Analytics", "A|ANALYTICS"), btn("📨 بازخوردها", "A|FEEDBACK"), btn("🩺 دکتر", "A|DOCTOR")],
             [btn("⬅️ منوی اصلی", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
@@ -16255,6 +16367,123 @@ async def cmd_apexjoin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 # ================================================================
+#  دستور /apexstartall — استارت زدن به همه‌ی کاربران (ادمین)
+# ================================================================
+async def cmd_apexstartall(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ادمین می‌تونه به همه‌ی کاربرانی که استارت کردن، یک پیام استارت بفرسته."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    if not has_permission(int(user.id), "admin"):
+        await msg.reply_text("🚫 فقط ادمین!")
+        return
+    await safe_delete(msg)
+    # شمارش کاربران
+    all_users = DATA.get("users", {})
+    total = len(all_users)
+    if total == 0:
+        await msg.reply_text("❌ هیچ کاربری ثبت نشده!")
+        return
+    # ارسال پیام به همه
+    sent = 0
+    failed = 0
+    report_msg = await msg.reply_text(
+        f"📢 <b>ارسال استارت به همه</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👥 کل کاربران: <b>{fmt_num(total)}</b>\n"
+        f"⏳ در حال ارسال...",
+        parse_mode=ParseMode.HTML,
+    )
+    for uid_str, u in all_users.items():
+        if not isinstance(u, dict) or u.get("banned"):
+            continue
+        try:
+            uid = int(uid_str)
+            await context.bot.send_message(
+                uid,
+                f"🎮 <b>ApexRival به‌روزرسانی شد!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"سلام {escape(str(u.get('name', 'بازیکن')))}!\n"
+                f"ربات به‌روزرسانی شده و امکانات جدید اضافه شده.\n"
+                f"برای مشاهده‌ی منوی جدید، /start بزن!",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb([[btn("🎮 شروع", "H|HOME")]]),
+            )
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+    # آپدیت پیام گزارش
+    try:
+        await report_msg.edit_text(
+            f"📢 <b>ارسال استارت به همه — کامل شد</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👥 کل: <b>{fmt_num(total)}</b>\n"
+            f"✅ موفق: <b>{fmt_num(sent)}</b>\n"
+            f"❌ ناموفق: <b>{fmt_num(failed)}</b>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+    audit("startall", int(user.id), None, f"sent={sent} failed={failed}")
+
+
+# ================================================================
+#  دستور /apexbroadcast — پیام همگانی سریع
+# ================================================================
+async def cmd_apexbroadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ارسال پیام به همه‌ی کاربران."""
+    msg = update.message
+    user = update.effective_user
+    if msg is None or user is None:
+        return
+    if not has_permission(int(user.id), "admin"):
+        await msg.reply_text("🚫 فقط ادمین!")
+        return
+    args = list(getattr(context, "args", None) or [])
+    if not args:
+        await msg.reply_text(
+            "📢 <b>پیام همگانی</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "برای ارسال پیام به همه‌ی کاربران:\n"
+            "<code>/apexbroadcast متن پیام</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    text = " ".join(args)
+    await safe_delete(msg)
+    # ارسال
+    all_users = DATA.get("users", {})
+    sent = 0
+    failed = 0
+    for uid_str, u in all_users.items():
+        if not isinstance(u, dict) or u.get("banned"):
+            continue
+        try:
+            uid = int(uid_str)
+            await context.bot.send_message(
+                uid,
+                f"📢 <b>پیام از ادمین</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"{escape(text)}",
+                parse_mode=ParseMode.HTML,
+            )
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+    audit("broadcast_quick", int(user.id), None, f"sent={sent} failed={failed}")
+    await msg.reply_text(
+        f"✅ <b>ارسال شد!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"✅ موفق: <b>{fmt_num(sent)}</b>\n"
+        f"❌ ناموفق: <b>{fmt_num(failed)}</b>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+# ================================================================
 #  روتر مرکزی کالبک‌ها
 # ================================================================
 
@@ -17357,6 +17586,8 @@ def build_application() -> Application:
         "apextheme": cmd_apextheme,             # تم شب گروه
         "apexquick": cmd_apexquick,             # بازی سریع بدون لابی
         "apexjoin": cmd_apexjoin,               # پیوستن به بازی سریع
+        "apexstartall": cmd_apexstartall,       # استارت به همه (ادمین)
+        "apexbroadcast": cmd_apexbroadcast,     # پیام همگانی سریع (ادمین)
         # نام‌های آشنای قدیمی
         "profile": cmd_apexprofile,
         "rank": cmd_apextop,
