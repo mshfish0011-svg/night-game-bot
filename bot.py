@@ -2740,6 +2740,7 @@ _active_panels: dict[int, dict] = {}
 
 
 def panel_register(uid: int, chat_id: int, message_id: int, tag: str = "") -> None:
+    """ثبت پنل فعال برای رفرش خودکار."""
     try:
         uid = int(uid)
         cfg = chat_cfg(chat_id)
@@ -2748,6 +2749,16 @@ def panel_register(uid: int, chat_id: int, message_id: int, tag: str = "") -> No
             oldest = min(panels.items(), key=lambda kv: kv[1].get("ts", 0))[0]
             panels.pop(oldest, None)
         panels[str(message_id)] = {"ts": time.time(), "tag": str(tag)}
+        # ثبت در registry برای رفرش خودکار گروه
+        if int(chat_id) < 0:  # فقط گروه‌ها
+            reg = DATA.setdefault("_panel_registry", {})
+            reg[f"{chat_id}_{message_id}"] = {
+                "ts": time.time(),
+                "chat_id": int(chat_id),
+                "message_id": int(message_id),
+                "uid": int(uid),
+                "tag": str(tag),
+            }
     except Exception:
         pass
 
@@ -3035,12 +3046,11 @@ async def show_private_home(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 
 async def show_group_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, uid: int) -> None:
-    """منوی گروه — پنل بازی/لابی."""
+    """منوی گروه — پنل کامل با طراحی جعبه‌ای و دکمه‌های غنی."""
     game = active_game(chat_id)
     if game and str(game.get("status")) == "active":
         await game_show_panel(update, context, game, uid)
         return
-    # اطلاعات گروه
     g = get_group(int(chat_id))
     games_count = int(g.get("created_games", 0))
     league_name = "🥉 برنز"
@@ -3048,32 +3058,71 @@ async def show_group_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         _, league_name = group_league_for(int(chat_id))
     except Exception:
         pass
-    # اطلاعات تم شب
+    adult_on = bool(g.get("adult_mode", False))
     theme_info = ""
     try:
         theme = theme_night_get(int(chat_id))
         if theme:
-            theme_info = f"\n🌟 تم شب: <b>{theme['name']}</b>"
+            theme_info = f"\n│  🌟 تم شب: <b>{theme['name']}</b>"
+    except Exception:
+        pass
+    # آمار بازیکنان فعال گروه
+    group_players = 0
+    try:
+        group_players = sum(1 for u in DATA.get("users", {}).values()
+                            if isinstance(u, dict) and int(chat_id) in [int(x) for x in u.get("stats_ext", {}).get("groups_played_in", [])])
+    except Exception:
+        pass
+    # تعداد بازیکنان آنلاین (فعال در ۱ ساعت اخیر)
+    online_count = 0
+    try:
+        now = now_ts()
+        online_count = sum(1 for u in DATA.get("users", {}).values()
+                          if isinstance(u, dict) and (now - int(u.get("last_active", 0))) < 3600
+                          and int(chat_id) in [int(x) for x in u.get("stats_ext", {}).get("groups_played_in", [])])
+    except Exception:
+        pass
+    # اطلاعات مسابقات خصوصی فعال
+    pm_count = 0
+    try:
+        pm_count = sum(1 for m in DATA.get("private_matches", {}).values()
+                      if isinstance(m, dict) and m.get("status") == "active"
+                      and (int(m.get("p1", 0)) in [int(x) for x in g.get("mods", [])] or True))
     except Exception:
         pass
     text = (
-        f"⚔️ <b>{BOT_NAME}</b> — ربات بازی جرئت و حقیقت\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "در این گروه فعلاً بازی فعالی نیست.\n"
-        "برای شروع بازی، یکی از گزینه‌های زیر رو انتخاب کن:\n\n"
-        f"📊 آمار این گروه: <b>{fmt_num(games_count)}</b> بازی\n"
-        f"🏆 لِگ گروه: <b>{league_name}</b>"
-        f"{theme_info}"
+        f"╭" + "━" * 22 + "╮\n"
+        f"│  ⚔️ <b>{BOT_NAME}</b> — جرئت و حقیقت\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  🎮 بازی‌های گروه: <b>{fmt_num(games_count)}</b>\n"
+        f"│  🏆 لِگ: <b>{league_name}</b>\n"
+        f"│  👥 بازیکنان: <b>{fmt_num(group_players)}</b>"
+        + (f"  │  🟢 آنلاین: <b>{fmt_num(online_count)}</b>" if online_count else "")
+        + f"\n"
+        f"│  🔞 +۱۸: <b>{'روشن 🔥' if adult_on else 'خاموش'}</b>"
+        f"{theme_info}\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  🎯 بازی فعالی نیست — شروع کن!\n"
+        f"│  💡 برای شروع: /apex یا دکمه‌ی زیر\n"
+        f"╰" + "━" * 22 + "╯"
     )
-    markup = kb([
-        [btn("🎮 ساخت لابی بازی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
-        [btn("📜 قوانین بازی", "L|RULES"), btn("❓ راهنما", "H|GUIDE")],
+    is_leader = int(uid) == int(g.get("group_owner", 0)) or has_permission(int(uid), "admin")
+    rows = [
+        [btn("🎮 ساخت لابی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
+        [btn("🔞 +۱۸ روشن/خاموش", "L|ADULT"), btn("🌟 تم شب", "L|THEME")],
         [btn("📊 آمار گروه", "L|STATS"), btn("🏆 رتبه‌بندی", "L|TOP")],
-    ])
-    try:
-        await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup)
-    except Exception:
-        pass
+        [btn("📜 قوانین", "L|RULES"), btn("❓ راهنما", "H|GUIDE")],
+    ]
+    if is_leader or has_permission(int(uid), "mod"):
+        rows.append([btn("⚙️ تنظیمات گروه", "L|SETTINGS")])
+    # اگر از callback صدا زده شده، پیام را ویرایش کن
+    if update.callback_query:
+        await safe_edit(update.callback_query, text, kb(rows))
+    else:
+        try:
+            await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=kb(rows))
+        except Exception:
+            pass
 
 
 # ================================================================
@@ -3260,55 +3309,67 @@ def make_game(chat_id: int, leader: int, name: str) -> dict:
 
 
 def lobby_text(game: dict) -> str:
+    """لابی بازی — طراحی جعبه‌ای حرفه‌ای."""
     players = game.get("players", [])
     ready = [int(x) for x in game.get("ready", [])]
     group = get_group(int(game["chat_id"]))
     mn = int(group.get("min_players", 2))
     mx = int(group.get("max_players", 20))
-    lines = []
+    adult_on = bool(group.get("adult_mode", False))
+    # لیست بازیکنان
+    player_lines = []
     for uid in players:
-        mark = " ✅" if uid in ready else " ⏳"
-        # اضافه کردن اطلاعات سطح بازیکن
+        mark = "✅" if uid in ready else "⏳"
         try:
             u = get_user(int(uid))
             level = int(u.get("level", 1))
-            xp = int(u.get("xp", 0))
-            rank_name, rank_icon, _ = rank_for_xp(xp)
-            lines.append(f"• {mention_user(uid, name_of(uid, game))}{mark} 🔥{level} {rank_icon}")
+            _, rank_icon, _ = rank_for_xp(int(u.get("xp", 0)))
+            vip = "👑" if int(u.get("vip_until", 0)) > now_ts() else ""
+            ver = "✅" if u.get("verified") else ""
+            player_lines.append(f"│  {mark} {mention_user(uid, name_of(uid, game))} 🔥{level} {rank_icon} {vip}{ver}")
         except Exception:
-            lines.append(f"• {mention_user(uid, name_of(uid, game))}{mark}")
-    # محاسبه‌ی درصد آمادگی
+            player_lines.append(f"│  {mark} {mention_user(uid, name_of(uid, game))}")
     ready_pct = (len(ready) * 100 // len(players)) if players else 0
-    ready_bar = progress_bar(len(ready), max(1, len(players)), 10)
-    # اطلاعات تم شب اگر فعال باشه
+    ready_bar = progress_bar(len(ready), max(1, len(players)), 15)
+    # اطلاعات تم شب
     theme_info = ""
     try:
         theme = theme_night_get(int(game["chat_id"]))
         if theme:
-            theme_info = f"\n🌟 تم شب: <b>{theme['name']}</b>"
+            theme_info = f"\n│  🌟 تم شب: <b>{theme['name']}</b>"
     except Exception:
         pass
     # اطلاعات لِگ گروه
     league_info = ""
     try:
-        league_key, league_name = group_league_for(int(game["chat_id"]))
-        league_info = f"\n🏆 لِگ گروه: <b>{league_name}</b>"
+        _, league_name = group_league_for(int(game["chat_id"]))
+        league_info = f"\n│  🏆 لِگ: <b>{league_name}</b>"
     except Exception:
         pass
-    return (
-        f"⚔️ <b>لابی {BOT_NAME}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"👑 سرگروه: {mention_user(int(game['leader_id']), game.get('leader_name') or name_of(int(game['leader_id'])))}\n\n"
-        f"👥 بازیکنان ({fmt_num(len(players))}/{fmt_num(mx)}):\n"
-        + "\n".join(lines)
-        + f"\n\n📊 آمادگی: <b>{fmt_num(len(ready))}/{fmt_num(len(players))}</b> ({ready_pct}%)\n"
-        f"{ready_bar}\n"
-        f"🚦 حداقل بازیکن: <b>{fmt_num(mn)}</b>"
-        f"{theme_info}{league_info}"
+    adult_info = f"\n│  🔞 حالت +۱۸: <b>{'روشن 🔥' if adult_on else 'خاموش'}</b>"
+    text = (
+        f"╭" + "━" * 22 + "╮\n"
+        f"│  ⚔️ <b>لابی بازی</b>\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  👑 سرگروه: {mention_user(int(game['leader_id']), game.get('leader_name') or name_of(int(game['leader_id'])))}\n"
+        f"│  👥 بازیکنان: <b>{fmt_num(len(players))}/{fmt_num(mx)}</b>"
+        f"{adult_info}{theme_info}{league_info}\n"
+        f"├" + "━" * 22 + "┤\n"
     )
+    for pl in player_lines:
+        text += pl + "\n"
+    text += (
+        f"├" + "━" * 22 + "┤\n"
+        f"│  📊 آمادگی: <b>{fmt_num(len(ready))}/{fmt_num(len(players))}</b> ({ready_pct}٪)\n"
+        f"│  {ready_bar}\n"
+        f"│  🚦 حداقل بازیکن: <b>{fmt_num(mn)}</b>\n"
+        f"╰" + "━" * 22 + "╯"
+    )
+    return text
 
 
 def lobby_markup(game: dict, uid: int) -> InlineKeyboardMarkup:
+    """دکمه‌های لابی — تمیز و واضح."""
     players = [int(x) for x in game.get("players", [])]
     ready = [int(x) for x in game.get("ready", [])]
     is_leader = int(uid) == int(game.get("leader_id", 0))
@@ -3326,15 +3387,19 @@ def lobby_markup(game: dict, uid: int) -> InlineKeyboardMarkup:
             rows.append([btn("🔒 لابی قفل است", "L|NOP")])
     if is_leader:
         can_start = len(players) >= int(get_group(int(game["chat_id"])).get("min_players", 2))
-        rows.append([
-            btn("🚀 شروع بازی" if can_start else f"🚀 شروع ({fmt_num(len(players))}/{fmt_num(int(get_group(int(game['chat_id'])).get('min_players', 2)))})", "L|START"),
-        ])
+        all_ready = len(ready) == len(players) and len(players) >= 2
+        if can_start and all_ready:
+            rows.append([btn("🚀 شروع بازی!", "L|START")])
+        elif can_start:
+            rows.append([btn(f"⏳ همه آماده بشن ({fmt_num(len(ready))}/{fmt_num(len(players))})", "L|NOP")])
+        else:
+            rows.append([btn(f"🚀 شروع ({fmt_num(len(players))}/{fmt_num(int(get_group(int(game['chat_id'])).get('min_players', 2)))})", "L|NOP")])
         if len(players) >= 3:
             rows.append([
-                btn("🔐 قفل لابی" if not game.get("lobby_locked") else "🔓 باز کردن لابی", "L|LOCK"),
+                btn("🔐 قفل" if not game.get("lobby_locked") else "🔓 باز کردن", "L|LOCK"),
+                btn("🦵 اخراج", "L|KICK"),
+                btn("👑 انتقال", "L|HOST"),
             ])
-            # اخراج و انتقال سرگروهی
-            rows.append([btn("🦵 اخراج بازیکن", "L|KICK"), btn("👑 انتقال سرگروهی", "L|HOST")])
         rows.append([btn("❌ لغو بازی", "L|CANCEL")])
     return kb(rows)
 
@@ -3344,24 +3409,25 @@ async def lobby_refresh(update_or_none, context, game: dict, query=None, chat_id
     try:
         if query is not None:
             await safe_edit(query, lobby_text(game), lobby_markup(game, int(query.from_user.id)))
+            game["_panel_msg_id"] = int(query.message.message_id)
             return
         cid = int(chat_id or game.get("chat_id", 0))
         if cid:
-            await context.bot.send_message(cid, lobby_text(game), parse_mode=ParseMode.HTML,
+            m = await context.bot.send_message(cid, lobby_text(game), parse_mode=ParseMode.HTML,
                                            reply_markup=lobby_markup(game, 0))
+            game["_panel_msg_id"] = int(m.message_id)
     except Exception as exc:
         audit("lobby_refresh_error", 0, int(game.get("chat_id", 0) or 0), repr(exc)[:200])
 
 
 async def cmd_apex(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """ساخت لابی در گروه."""
+    """ساخت لابی یا نمایش منوی گروه — با حذف پیام دستور قبلی."""
     msg = update.message
     user = update.effective_user
     chat = update.effective_chat
     if msg is None or user is None or chat is None:
         return
     if chat.type not in ("group", "supergroup"):
-        # در خصوصی: منوی خانه
         if not onboarding_needed(int(user.id)):
             await show_private_home(update, context, int(user.id), fresh_message=True)
         else:
@@ -3384,22 +3450,30 @@ async def cmd_apex(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await msg.reply_text("👤 اول به چت خصوصی من /start بزن و ثبت‌نام کن.")
         return
 
+    # حذف پیام /apex کاربر در گروه
+    if chat_cfg(int(chat.id)).get("delcmd", True):
+        await safe_delete(msg)
+
     game = active_game(int(chat.id))
     if game:
-        # بازی فعال وجود دارد؛ پنل بازی را نشان بده
         if str(game.get("status")) == "active" and game.get("phase") in ("topic", "playing", "question"):
-            await game_send_turn_card(context, game)
+            # نمایش پنل بازی به‌جای کارت نوبت تکراری
+            await game_show_panel(update, context, game, uid)
         else:
+            # لابی فعال — پنل لابی
             await context.bot.send_message(int(chat.id), lobby_text(game), parse_mode=ParseMode.HTML,
                                            reply_markup=lobby_markup(game, uid))
         return
 
-    game = make_game(int(chat.id), uid, user.first_name)
-    get_group(int(chat.id))["created_games"] = int(get_group(int(chat.id)).get("created_games", 0)) + 1
-    save_data(force=True)
-    audit("lobby_create", uid, int(chat.id))
-    await context.bot.send_message(int(chat.id), lobby_text(game), parse_mode=ParseMode.HTML,
-                                   reply_markup=lobby_markup(game, uid))
+    # بازی فعالی نیست — منوی گروه
+    await show_group_menu(update, context, int(chat.id), uid)
+    # ثبت message_id پنل برای رفرش خودکار
+    try:
+        game = active_game(int(chat.id))
+        if game:
+            game["_panel_msg_id"] = 0  # منوی گروه، نه پنل لابی
+    except Exception:
+        pass
 
 
 async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3489,6 +3563,74 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 [btn("🎮 ساخت لابی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
                 [btn("⬅️ بازگشت", "H|HOME")],
             ]))
+        return
+
+    if action == "ADULT":
+        # روشن/خاموش کردن +۱۸
+        g = get_group(int(chat_id))
+        # فقط سرگروه یا ادمین
+        is_leader = uid == int(g.get("leader_id", 0)) if g.get("leader_id") else False
+        # در منوی گروه (بدون بازی)، هر کسی می‌تونه toggle کنه
+        g["adult_mode"] = not bool(g.get("adult_mode", False))
+        save_data(force=True)
+        state = "روشن 🔥" if g.get("adult_mode") else "خاموش"
+        await safe_answer_query(query, f"🔞 حالت +۱۸: {state}")
+        # رفرش منوی گروه
+        await show_group_menu(update, context, chat_id, uid)
+        return
+    if action == "THEME":
+        # نمایش منوی تم شب
+        await safe_answer_query(query)
+        theme_lines = ["🌟 <b>تم شب گروه</b>", "━━━━━━━━━━━━━━━━━━", ""]
+        current_theme = ""
+        try:
+            t = theme_night_get(int(chat_id))
+            if t:
+                current_theme = t.get("name", "")
+        except Exception:
+            pass
+        theme_lines.append(f"📍 تم فعلی: <b>{current_theme or '—'}</b>\n")
+        theme_lines.append("برای تغییر تم:")
+        rows = []
+        for key, info in THEME_NIGHTS.items():
+            rows.append([btn(f"{info['icon']} {info['name']}", f"L|THEMESET|{key}")])
+        rows.append([btn("🔴 خاموش", "L|THEMESET|off")])
+        rows.append([btn("⬅️ بازگشت", "H|HOME")])
+        await safe_edit(query, "\n".join(theme_lines), kb(rows))
+        return
+    if action == "THEMESET" and len(parts) > 2:
+        theme_key = parts[2]
+        if theme_key == "off":
+            theme_night_set(int(chat_id), "")
+            await safe_answer_query(query, "🔴 تم شب خاموش شد.")
+        elif theme_key in THEME_NIGHTS:
+            theme_night_set(int(chat_id), theme_key)
+            info = THEME_NIGHTS[theme_key]
+            await safe_answer_query(query, f"{info['icon']} {info['name']} فعال شد!")
+        await show_group_menu(update, context, chat_id, uid)
+        return
+    if action == "SETTINGS":
+        # نمایش تنظیمات گروه
+        await safe_answer_query(query)
+        g = get_group(int(chat_id))
+        cfg = chat_cfg(int(chat_id))
+        adult_on = bool(g.get("adult_mode", False))
+        text = (
+            "╭" + "━" * 22 + "╮\n"
+            "│  ⚙️ <b>تنظیمات گروه</b>\n"
+            "├" + "━" * 22 + "┤\n"
+            f"│  🔞 +۱۸: <b>{'روشن 🔥' if adult_on else 'خاموش'}</b>\n"
+            f"│  👥 سقف بازیکن: <b>{fmt_num(int(g.get('max_players', 20)))}</b>\n"
+            f"│  🚦 حداقل بازیکن: <b>{fmt_num(int(g.get('min_players', 2)))}</b>\n"
+            f"│  📢 خوش‌آمد: <b>{'✅' if cfg.get('welcome', True) else '❌'}</b>\n"
+            f"│  🎉 جشن لول: <b>{'✅' if cfg.get('levelup', True) else '❌'}</b>\n"
+            "╰" + "━" * 22 + "╯"
+        )
+        rows = [
+            [btn("🔞 +۱۸ روشن/خاموش", "L|ADULT")],
+            [btn("⬅️ بازگشت", "H|HOME")],
+        ]
+        await safe_edit(query, text, kb(rows))
         return
 
     # اکشن‌های نیاز به بازی فعال
@@ -3753,34 +3895,42 @@ def advance_turn(game: dict) -> int | None:
 
 
 def turn_announcement(game: dict, questioner: int) -> str:
-    label = MODE_LABELS.get(str(game.get("selected_mode")), "")
+    """اعلان نوبت پرسشگری — طراحی جعبه‌ای حرفه‌ای."""
     heat_info = game_heat_advanced(game)
-    heat_level = heat_info.get("level", 1)
     heat_name = heat_info.get("name", "🟢 آرام")
     intensity = heat_info.get("intensity", "سبک و دوستانه")
     round_num = int(game.get("round", 0)) + 1
     players_count = len(game.get("players", []))
-    # اطلاعات پرسشگر
     try:
         q_user = get_user(int(questioner))
         q_level = int(q_user.get("level", 1))
         q_xp = int(q_user.get("xp", 0))
-        q_rank_name, q_rank_icon, _ = rank_for_xp(q_xp)
+        _, q_rank_icon, _ = rank_for_xp(q_xp)
+        vip = "👑" if int(q_user.get("vip_until", 0)) > now_ts() else ""
+        ver = "✅" if q_user.get("verified") else ""
     except Exception:
         q_level = 1
-        q_rank_name = "تازه‌کار"
         q_rank_icon = "🌱"
+        vip = ver = ""
+    adult_on = bool(get_group(int(game.get("chat_id", 0))).get("adult_mode", False))
+    adult_line = f"\n│  🔞 حالت +۱۸: <b>{'روشن 🔥' if adult_on else 'خاموش'}</b>"
     return (
-        f"🎤 <b>نوبتِ پرسشگری</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"{mention_user(int(questioner), name_of(int(questioner), game))}، وسط میدانی! 🔥{q_level} {q_rank_icon}\n\n"
-        f"🎯 دورِ <b>{fmt_num(round_num)}</b> · 👥 {fmt_num(players_count)} بازیکن\n"
-        f"🌡 گرمای فعلی: <b>{heat_name}</b> ({intensity})\n\n"
-        f"📋 <b>مراحل نوبت:</b>\n"
-        f"۱) یک موضوع انتخاب کن\n"
-        f"۲) بازیکن هدف را انتخاب کن\n"
-        f"۳) سوال خودکار از بانک {fmt_num(BANKS_TOTAL)} سوالی می‌آید\n\n"
-        f"💡 پاسخ دادن: +۵ تا +۸ ایکس‌پی و سکه"
+        f"╭" + "━" * 22 + "╮\n"
+        f"│  🎤 <b>نوبت پرسشگری</b>\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  👤 {mention_user(int(questioner), name_of(int(questioner), game))} 🔥{q_level} {q_rank_icon} {vip}{ver}\n"
+        f"│  🎯 دور: <b>{fmt_num(round_num)}</b>  │  👥 <b>{fmt_num(players_count)}</b> بازیکن\n"
+        f"│  🌡 گرما: <b>{heat_name}</b> ({intensity})"
+        f"{adult_line}\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  📋 <b>مراحل:</b>\n"
+        f"│  ۱) یک موضوع انتخاب کن\n"
+        f"│  ۲) بازیکن هدف رو انتخاب کن\n"
+        f"│  ۳) سوال خودکار میاد\n"
+        f"│  ۴) هدف با Reply جواب میده\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  🎁 پاداش: +۵ تا +۸ ایکس‌پی و سکه\n"
+        f"╰" + "━" * 22 + "╯"
     )
 
 
@@ -3843,7 +3993,7 @@ async def game_send_turn_card(context, game: dict) -> None:
 
 
 async def game_start(context, game: dict, query=None) -> None:
-    """شروع بازی از لابی."""
+    """شروع بازی از لابی — پیام زیبا با جعبه."""
     chat_id = int(game.get("chat_id", 0))
     players = [int(x) for x in game.get("players", [])]
     random.shuffle(players)
@@ -3857,7 +4007,6 @@ async def game_start(context, game: dict, query=None) -> None:
     game["round_scores"] = {str(p): 0 for p in players}
     for p in players:
         get_user(p)["games"] = int(get_user(p).get("games", 0)) + 1
-    # تیم‌ها (اگری فعال باشد)
     try:
         if chat_cfg(chat_id).get("teams", True) and len(players) >= 4:
             teams_build(chat_id, players)
@@ -3865,12 +4014,22 @@ async def game_start(context, game: dict, query=None) -> None:
         pass
     save_data(force=True)
     audit("game_start", int(game.get("leader_id", 0)), chat_id)
-    roster = "\n".join(f"• {mention_user(p, name_of(p, game))}" for p in players)
+    # ساخت لیست بازیکنان
+    roster_lines = []
+    for i, p in enumerate(players, 1):
+        roster_lines.append(f"│  {fmt_num(i)}. {mention_user(p, name_of(p, game))}")
+    roster = "\n".join(roster_lines)
     text = (
-        "🚀 <b>بازی شروع شد!</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"👥 بازیکنان ({fmt_num(len(players))}):\n{roster}\n\n"
-        "🎯 ترتیب نوبت‌ها تصادفی انتخاب شد."
+        f"╭" + "━" * 22 + "╮\n"
+        f"│  🚀 <b>بازی شروع شد!</b>\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  👥 بازیکنان (<b>{fmt_num(len(players))}</b>):\n"
+        f"{roster}\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  🎯 ترتیب نوبت‌ها تصادفی شد\n"
+        f"│  🌡 شروع از گرما: <b>🟢 آرام</b>\n"
+        f"│  📊 {fmt_num(BANKS_TOTAL)} سوال آماده\n"
+        f"╰" + "━" * 22 + "╯"
     )
     try:
         if query is not None:
@@ -3887,6 +4046,7 @@ async def game_start(context, game: dict, query=None) -> None:
 
 
 def game_home_text(game: dict) -> str:
+    """وضعیت بازی — طراحی جعبه‌ای حرفه‌ای."""
     q = current_questioner(game)
     heat_info = game_heat_advanced(game)
     heat_name = heat_info.get("name", "🟢 آرام")
@@ -3895,36 +4055,40 @@ def game_home_text(game: dict) -> str:
     players = [int(x) for x in game.get("players", [])]
     top = sorted(players, key=lambda p: -int(scores.get(str(p), 0)))[:3]
     medals = ["🥇", "🥈", "🥉"]
-    board = "\n".join(
-        f"{medals[i]} {mention_user(p, name_of(p, game))} · ⭐ {fmt_num(int(scores.get(str(p), 0)))}"
-        for i, p in enumerate(top) if int(scores.get(str(p), 0)) > 0
-    ) or "هنوز امتیازی ثبت نشده."
-    # محاسبه‌ی مدت بازی
+    board_lines = []
+    for i, p in enumerate(top):
+        if int(scores.get(str(p), 0)) > 0:
+            board_lines.append(f"│  {medals[i]} {mention_user(p, name_of(p, game))} · ⭐{fmt_num(int(scores.get(str(p), 0)))}")
+    board = "\n".join(board_lines) if board_lines else "│  هنوز امتیازی ثبت نشده"
     started = int(game.get("started_at", 0))
     duration_min = (now_ts() - started) // 60 if started else 0
-    # آمار سوالات بازی
     game_stats = game.get("_question_stats", {})
     total_q = int(game_stats.get("total", 0))
     total_penalties = int(game_stats.get("penalties", 0))
-    # اطلاعاتی تم شب
+    adult_on = bool(get_group(int(game.get("chat_id", 0))).get("adult_mode", False))
     theme_info = ""
     try:
         theme = theme_night_get(int(game["chat_id"]))
         if theme:
-            theme_info = f"\n🌟 تم شب: <b>{theme['name']}</b>"
+            theme_info = f"\n│  🌟 تم شب: <b>{theme['name']}</b>"
     except Exception:
         pass
+    q_display = mention_user(int(q), name_of(int(q), game)) if q else "—"
     return (
-        f"🎮 <b>وضعیت بازی</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"🎤 پرسشگر فعلی: {mention_user(int(q), name_of(int(q), game)) if q else '—'}\n"
-        f"🔄 شماره نوبت: <b>{fmt_num(int(game.get('turn_number', 0)) + 1)}</b>\n"
-        f"🎯 دور: <b>{fmt_num(int(game.get('round', 0)) + 1)}</b>\n"
-        f"🌡 گرما: <b>{heat_name}</b> ({intensity})\n"
-        f"⏱ مدت: <b>{fmt_num(duration_min)} دقیقه</b>\n"
-        f"📊 سوالات: <b>{fmt_num(total_q)}</b> · ⚖️ مجازات: <b>{fmt_num(total_penalties)}</b>"
-        f"{theme_info}\n\n"
-        f"🏆 <b>برترین‌های این بازی</b>\n{board}"
+        f"╭" + "━" * 22 + "╮\n"
+        f"│  🎮 <b>وضعیت بازی</b>\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  🎤 پرسشگر: {q_display}\n"
+        f"│  🔄 نوبت: <b>{fmt_num(int(game.get('turn_number', 0)) + 1)}</b>  │  🎯 دور: <b>{fmt_num(int(game.get('round', 0)) + 1)}</b>\n"
+        f"│  🌡 گرما: <b>{heat_name}</b> ({intensity})\n"
+        f"│  ⏱ مدت: <b>{fmt_num(duration_min)} دقیقه</b>\n"
+        f"│  📊 سوال: <b>{fmt_num(total_q)}</b>  │  ⚖️ حکم: <b>{fmt_num(total_penalties)}</b>\n"
+        f"│  🔞 +۱۸: <b>{'روشن 🔥' if adult_on else 'خاموش'}</b>"
+        f"{theme_info}\n"
+        f"├" + "━" * 22 + "┤\n"
+        f"│  🏆 <b>برترین‌ها</b>\n"
+        f"{board}\n"
+        f"╰" + "━" * 22 + "╯"
     )
 
 
@@ -3937,13 +4101,13 @@ async def game_show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, ga
     chat_id = int(game.get("chat_id", 0))
     text = game_home_text(game)
     markup = game_home_markup(game, uid)
-    # اگر callback_query داریم، پیام را ویرایش کن
     if update.callback_query:
         await safe_edit(update.callback_query, text, markup)
+        game["_panel_msg_id"] = int(update.callback_query.message.message_id)
     else:
-        # در غیر این صورت، پیام جدید بفرست
         try:
-            await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            m = await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            game["_panel_msg_id"] = int(m.message_id)
         except Exception:
             pass
 
@@ -8328,16 +8492,19 @@ _group_hint_ts: dict[int, float] = {}
 
 
 async def group_command_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """دستورهای خصوصیِ زده‌شده در گروه، پیام راهنمای دوستانه می‌گیرند (نه سکوت)."""
+    """حذف خودکار پیام دستورات در گروه + راهنمای دستورات خصوصی."""
     msg = update.message
     chat = update.effective_chat
     user = update.effective_user
     if msg is None or chat is None or user is None or chat.type not in ("group", "supergroup"):
         return
     cmd = (msg.text or "").split("@")[0].lstrip("/").split()[0].lower() if msg.text else ""
+    # حذف پیام دستور در گروه (اگر تنظیمات فعال باشه)
+    if chat_cfg(int(chat.id)).get("delcmd", True) and cmd:
+        await safe_delete(msg)
     if cmd not in PRIVATE_ONLY_COMMANDS:
         return
-    # ضد اسپم: هر گروه حداکثر یک راهنما در ۴۵ ثانیه
+    # ضد اسپم
     now = time.time()
     last = _group_hint_ts.get(int(chat.id), 0)
     if now - last < 45:
@@ -17184,6 +17351,117 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         pass
 
 
+async def auto_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """رفرش خودکار پنل‌های گروه (لابی و بازی) هر ۳۰ ثانیه.
+    پیام‌های پنل ربات را با آخرین اطلاعات به‌روزرسانی می‌کند."""
+    try:
+        # پنل‌های ثبت‌شده در panel_register
+        registry = DATA.get("_panel_registry", {})
+        if not isinstance(registry, dict) or not registry:
+            return
+        now = now_ts()
+        for panel_key, panel_info in list(registry.items()):
+            try:
+                if not isinstance(panel_info, dict):
+                    continue
+                # انقضای پنل (۱۲ ساعت)
+                if now - float(panel_info.get("ts", 0)) > 43200:
+                    registry.pop(panel_key, None)
+                    continue
+                chat_id = int(panel_info.get("chat_id", 0))
+                message_id = int(panel_info.get("message_id", 0))
+                uid = int(panel_info.get("uid", 0))
+                tag = str(panel_info.get("tag", ""))
+                if not chat_id or not message_id:
+                    continue
+                # فقط در گروه
+                if chat_id > 0:
+                    continue
+                # رفرش بر اساس نوع پنل
+                if tag == "lobby" or tag == "game":
+                    game = active_game(chat_id)
+                    if game and str(game.get("status")) == "active":
+                        # پنل بازی فعال
+                        text = game_home_text(game)
+                        markup = game_home_markup(game, uid)
+                    elif game:
+                        # پنل لابی
+                        text = lobby_text(game)
+                        markup = lobby_markup(game, uid)
+                    else:
+                        # بازی تمام شده — منوی گروه
+                        text = (
+                            "╭" + "━" * 22 + "╮\n"
+                            "│  ⚔️ <b>منوی گروه</b>\n"
+                            "├" + "━" * 22 + "┤\n"
+                            "│  🎯 بازی تمام شد!\n"
+                            "│  🎮 برای بازی جدید: /apex\n"
+                            "╰" + "━" * 22 + "╯"
+                        )
+                        markup = kb([
+                            [btn("🎮 ساخت لابی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
+                            [btn("🔞 +۱۸", "L|ADULT"), btn("📊 آمار", "L|STATS")],
+                        ])
+                    try:
+                        await context.bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=markup,
+                            disable_web_page_preview=True,
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+async def auto_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """رفرش خودکار پنل‌های گروه (لابی + بازی فعال) هر ۵ ثانیه."""
+    try:
+        for gid, game in list(DATA.get("games", {}).items()):
+            if not isinstance(game, dict):
+                continue
+            status = str(game.get("status", ""))
+            if status not in ("lobby", "active"):
+                continue
+            chat_id = int(game.get("chat_id", 0))
+            if not chat_id:
+                continue
+            panel_msg_id = int(game.get("_panel_msg_id", 0))
+            if not panel_msg_id:
+                continue
+            # بررسی اینکه آخرین رفرش بیش از ۵ ثانیه نباشه
+            last_refresh = int(game.get("_last_auto_refresh", 0))
+            now = now_ts()
+            if now - last_refresh < 5:
+                continue
+            game["_last_auto_refresh"] = now
+            # ساخت متن و دکمه‌های جدید
+            if status == "lobby":
+                text = lobby_text(game)
+                markup = lobby_markup(game, 0)
+            else:
+                text = game_home_text(game)
+                markup = game_home_markup(game, 0)
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=panel_msg_id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=markup,
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 async def periodic_maintenance(context: ContextTypes.DEFAULT_TYPE) -> None:
     """هر ۳ دقیقه: ذخیره + نگهبان نوبت + بازیابی بازی گیرکرده + چالش روزانه."""
     try:
@@ -17676,6 +17954,8 @@ def build_application() -> Application:
         if app.job_queue is not None:
             app.job_queue.run_repeating(periodic_maintenance, interval=180, first=60)
             app.job_queue.run_repeating(backup_job, interval=6 * 3600, first=300)
+            # رفرش خودکار پنل‌های گروه هر ۵ ثانیه
+            app.job_queue.run_repeating(auto_refresh_group_panels, interval=5, first=10)
         else:
             print("ApexRival warning: job_queue unavailable (install python-telegram-bot[job-queue])")
     except Exception as exc:
