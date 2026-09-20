@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ================================================================
 #  ApexRival — ربات بازی گروهی جرئت و حقیقت
-#  نسخه‌ی ۱.۲.۰ — Advanced Edition (Extended) — Ultimate Build V
+#  نسخه‌ی ۱.۲.۰ — Advanced Edition (Extended) — Ultimate Build VI
 #  توسعه‌یافته روی نسخه‌ی ۱.۰.۰ (معماری تخت، بدون لایه‌بندی)
 #
 #  این فایل یک برنامه‌ی واحد و تمیز است:
@@ -126,6 +126,18 @@
 #   • پنل امتیازات غنی‌تر: مدال، سطح، رتبه، دور، گرما، مدت، تعداد سوال
 #   • ثبت آمار کامل سوالات در حین بازی
 #   • فارسی‌سازی کامل همه‌ی پیام‌های ایکس‌پی (XP → ایکس‌پی)
+#
+# بهبود در Ultimate Build VI (همچنان نسخه 1.2.0) — رفع دکمه‌های بی‌عمل و ساده‌سازی:
+#   • ساده‌سازی منوی اصلی از ۱۷ ردیف گیج‌کننده به ۸ ردیف منطقی
+#   • اضافه کردن منوی ثانویه «📋 بیشتر...» برای قابلیت‌های کمتر استفاده‌شده
+#   • رفع دکمه‌های بی‌عمل: مدیریت کامل WYR و LIKELY در fun_callback
+#   • رفع دکمه‌های بی‌عمل: اکشن‌های L|QUICK، L|RULES، L|STATS، L|TOP در lobby_callback
+#   • اکشن‌های بدون نیاز به بازی فعال قبل از بررسی لابی فعال
+#   • اضافه کردن دکمه‌ی «🏠 منوی اصلی» به همه‌ی پنل‌ها
+#   • منوی گروه غنی‌تر: آمار گروه، لِگ، تم شب، دکمه‌های مفید
+#   • پنل پروفایل با دکمه‌های ناوبری کامل
+#   • منوی بازی‌های مهمانی با دو بخش (اصلی + بیشتر)
+#   • مدیریت کامل رأی‌های WYR و LIKELY با ثبت در آمار
 #
 #  راه‌اندازی:  BOT_TOKEN=... ADMIN_ID=... python bot.py
 # ================================================================
@@ -2949,29 +2961,27 @@ def private_home_text(uid: int) -> str:
 
 
 def private_home_markup(uid: int) -> InlineKeyboardMarkup:
+    """منوی اصلی ساده و واضح — ۸ ردیف منطقی به‌جای ۱۷ ردیف گیج‌کننده."""
     u = get_user(uid)
     unread = unread_notifications(uid)
     notify_label = f"🔔 اعلان‌ها ({unread})" if unread else "🔔 اعلان‌ها"
-    is_v = is_vip(int(uid))
-    vip_label = "👑 وی‌آی‌پی" if is_v else "👑 وی‌آی‌پی"
     rows = [
-        [btn("🪪 پروفایل من", "P|PROFILE"), btn("📊 داشبورد آماری", "SD|HOME")],
-        [btn("🎮 مسابقه خصوصی", "PM|HOME"), btn("🎯 مأموریت‌ها", "DM|HOME")],
-        [btn("🎯 مرکز مأموریت", "QS|HOME"), btn("🎫 پاس فصل", "SP|HOME")],
-        [btn("🔥 حالت بقا", "SV|HOME"), btn("🤝 نبرد تیمی", "TB|HOME")],
-        [btn("🎮 مینی‌بازی‌ها", "MG|HOME"), btn("🎰 عدد شانسی", "LN|HOME")],
-        [btn("🤖 پیشنهاد هوشمند", "AI|HOME"), btn("🎁 پاداش روزانه", "DR|CLAIM")],
-        [btn("🎯 جفت‌یابی حریف", "MM|HOME"), btn("📜 تاریخچه بازی", "GH|HOME")],
-        [btn("🎯 قدم‌های میل", "MS|HOME"), btn("👑 تالار افتخار", "HF|HOME")],
-        [btn("🔄 مرکز معامله", "TR|HOME"), btn("⚔️ رقبا", "RV|HOME")],
-        [btn("🛍 فروشگاه", "S|HOME"), btn("🎖 دستاوردها", "P|ACH")],
-        [btn("👥 دوستان", "FR|HOME"), btn("🎁 دعوت دوستان", "RF|HOME")],
-        [btn("🏆 مسابقات", "TM|HOME"), btn("🌐 فصل و رویداد", "SE|HOME")],
-        [btn(notify_label, "NT|HOME"), btn("⚙️ تنظیمات من", "US|HOME")],
-        [btn("📝 بازخورد", "FB|HOME"), btn(vip_label, "VP|HOME")],
-        [btn("🎓 راهنمای آموزش", "TT|START"), btn("🌐 دیوار اجتماعی", "DR|WALL")],
-        [btn("🏆 بازیکن روز", "DR|POTD"), btn("❤️ عشق‌سنج", "LV|HOME")],
-        [btn("🎮 بازی‌های مهمانی", "FY|HOME"), btn("🎓 راهنما", "H|GUIDE")],
+        # ردیف ۱: بازی‌های اصلی
+        [btn("🎮 شروع بازی گروهی", "H|GUIDE"), btn("🎮 مسابقه خصوصی", "PM|HOME")],
+        # ردیف ۲: مینی‌بازی‌ها و سرگرمی
+        [btn("🎲 بازی‌های مهمانی", "FY|HOME"), btn("🔥 حالت بقا", "SV|HOME")],
+        # ردوف ۳: پیشرفت
+        [btn("🪪 پروفایل من", "P|PROFILE"), btn("🏆 رتبه‌بندی", "P|TOP")],
+        # ردیف ۴: مأموریت‌ها و پاداش‌ها
+        [btn("🎯 مأموریت‌ها", "DM|HOME"), btn("🎁 پاداش روزانه", "DR|CLAIM")],
+        # ردیف ۵: اجتماعی
+        [btn("👥 دوستان", "FR|HOME"), btn("⚔️ رقبا", "RV|HOME")],
+        # ردیف ۶: فروشگاه و شخصی‌سازی
+        [btn("🛍 فروشگاه", "S|HOME"), btn("⚙️ تنظیمات من", "US|HOME")],
+        # ردیف ۷: اعلان‌ها و راهنما
+        [btn(notify_label, "NT|HOME"), btn("🎓 راهنما", "H|GUIDE")],
+        # ردیف ۸: بیشتر (منوی ثانویه)
+        [btn("📋 بیشتر...", "H|MORE")],
     ]
     # ادمین‌ها دکمه‌ی پنل مدیریت می‌بینند
     if has_permission(int(uid), "admin"):
@@ -3001,15 +3011,35 @@ async def show_group_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     if game and str(game.get("status")) == "active":
         await game_show_panel(update, context, game, uid)
         return
+    # اطلاعات گروه
+    g = get_group(int(chat_id))
+    games_count = int(g.get("created_games", 0))
+    league_name = "🥉 برنز"
+    try:
+        _, league_name = group_league_for(int(chat_id))
+    except Exception:
+        pass
+    # اطلاعات تم شب
+    theme_info = ""
+    try:
+        theme = theme_night_get(int(chat_id))
+        if theme:
+            theme_info = f"\n🌟 تم شب: <b>{theme['name']}</b>"
+    except Exception:
+        pass
     text = (
-        f"⚔️ <b>{BOT_NAME}</b>\n"
+        f"⚔️ <b>{BOT_NAME}</b> — ربات بازی جرئت و حقیقت\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "در این گروه فعلاً بازی فعالی نیست.\n"
-        "برای ساخت لابی جدید، دستور /apex را بفرست."
+        "برای شروع بازی، یکی از گزینه‌های زیر رو انتخاب کن:\n\n"
+        f"📊 آمار این گروه: <b>{fmt_num(games_count)}</b> بازی\n"
+        f"🏆 لِگ گروه: <b>{league_name}</b>"
+        f"{theme_info}"
     )
     markup = kb([
-        [btn("🎮 ساخت لابی بازی", "L|CREATE")],
-        [btn("❓ راهنما", "H|GUIDE")],
+        [btn("🎮 ساخت لابی بازی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
+        [btn("📜 قوانین بازی", "L|RULES"), btn("❓ راهنما", "H|GUIDE")],
+        [btn("📊 آمار گروه", "L|STATS"), btn("🏆 رتبه‌بندی", "L|TOP")],
     ])
     try:
         await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup)
@@ -3348,13 +3378,91 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if query is None or query.message is None:
         return
     data = str(query.data or "")
-    action = data.split("|")[1] if len(data.split("|")) > 1 else ""
+    parts = data.split("|")
+    action = parts[1] if len(parts) > 1 else ""
     uid = int(query.from_user.id)
     chat = query.message.chat
     if chat.type not in ("group", "supergroup"):
         await safe_answer_query(query, "این دکمه فقط در گروه کار می‌کند.")
         return
     chat_id = int(chat.id)
+
+    # اکشن‌های بدون نیاز به بازی فعال
+    if action == "CREATE":
+        game = active_game(chat_id)
+        if game is not None and str(game.get("status")) == "active":
+            await safe_answer_query(query, "⚠️ بازی فعالی وجود دارد! اول /apexend بزن.")
+            return
+        try:
+            await safe_delete(query.message)
+        except Exception:
+            pass
+        await cmd_apex(update, context)
+        return
+    if action == "QUICK":
+        # بازی سریع
+        game = active_game(chat_id)
+        if game is not None and str(game.get("status")) == "active":
+            await safe_answer_query(query, "⚠️ بازی فعالی وجود دارد! اول /apexend بزن.")
+            return
+        try:
+            await safe_delete(query.message)
+        except Exception:
+            pass
+        await cmd_apexquick(update, context)
+        return
+    if action == "RULES":
+        await safe_answer_query(query)
+        await safe_edit(query,
+            "📜 <b>قوانین بازی</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "۱) /apex رو بفرست تا لابی ساخته بشه\n"
+            "۲) بقیه با «پیوستن» وارد بشن و «آماده» بزنن\n"
+            "۳) سرگروه «شروع بازی» رو بزنه\n"
+            "۴) پرسشگر یک موضوع و هدف انتخاب می‌کنه\n"
+            "۵) هدف با Reply به سوال جواب می‌ده\n"
+            "۶) با /apexend بازی تمام می‌شه\n\n"
+            "💡 برای راهنمای کامل: /apexrules",
+            kb([
+                [btn("🎮 ساخت لابی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
+                [btn("⬅️ بازگشت", "H|HOME")],
+            ]))
+        return
+    if action == "STATS":
+        await safe_answer_query(query)
+        g = get_group(int(chat_id))
+        games_count = int(g.get("created_games", 0))
+        league_name = "🥉 برنز"
+        try:
+            _, league_name = group_league_for(int(chat_id))
+        except Exception:
+            pass
+        await safe_edit(query,
+            f"📊 <b>آمار گروه</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🎮 بازی‌های ساخته‌شده: <b>{fmt_num(games_count)}</b>\n"
+            f"🏆 لِگ گروه: <b>{league_name}</b>",
+            kb([
+                [btn("🎮 ساخت لابی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
+                [btn("⬅️ بازگشت", "H|HOME")],
+            ]))
+        return
+    if action == "TOP":
+        await safe_answer_query(query)
+        await safe_edit(query,
+            "🏆 <b>رتبه‌بندی گروه</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "برای مشاهده‌ی رتبه‌بندی هفتگی:\n"
+            "<code>/apextop</code>\n\n"
+            "برای رتبه‌بندی کلی:\n"
+            "<code>/apextop_all</code>",
+            kb([
+                [btn("🎮 ساخت لابی", "L|CREATE"), btn("⚡ بازی سریع", "L|QUICK")],
+                [btn("⬅️ بازگشت", "H|HOME")],
+            ]))
+        return
+
+    # اکشن‌های نیاز به بازی فعال
     game = active_game(chat_id)
     if game is None:
         await safe_answer_query(query, "این لابی دیگر فعال نیست. با /apex جدید بساز. 🔄")
@@ -6691,15 +6799,21 @@ async def cmd_apexprofile(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def profile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """روتر کالبک‌های پروفایل و رتبه‌بندی."""
     query = update.callback_query
     if query is None:
         return
     parts = str(query.data or "").split("|")
     action = parts[1] if len(parts) > 1 else ""
+    uid = int(query.from_user.id)
     if action == "PROFILE":
         await safe_answer_query(query)
-        await safe_edit(query, profile_text(int(query.from_user.id)),
-                        kb([[btn("🎖 دستاوردها", "P|ACH"), btn("🛍 فروشگاه", "S|HOME")]]))
+        await safe_edit(query, profile_text(uid),
+                        kb([
+                            [btn("🎖 دستاوردها", "P|ACH"), btn("📊 آمار من", "SD|HOME")],
+                            [btn("📜 تاریخچه بازی", "GH|HOME"), btn("🛍 فروشگاه", "S|HOME")],
+                            [btn("🏠 منوی اصلی", "H|HOME")],
+                        ]))
         return
     if action == "TOP":
         await safe_answer_query(query)
@@ -6707,6 +6821,10 @@ async def profile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     if action == "ACH":
         await achievements_show(update, context, query=query)
+        return
+    # اکشن‌های اضافی برای پروفایل
+    if action == "EDIT":
+        await safe_answer_query(query, "برای تغییر نام از /apexname استفاده کن")
         return
     await safe_answer_query(query)
 
@@ -16208,6 +16326,30 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await safe_edit(query, private_home_text(uid), private_home_markup(uid))
         return
 
+    if action == "MORE":
+        # منوی ثانویه — قابلیت‌های کمتر استفاده‌شده
+        await safe_answer_query(query)
+        await safe_edit(
+            query,
+            "📋 <b>بیشتر...</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "قابلیت‌های بیشتر ربات:",
+            kb([
+                [btn("🎯 مأموریت‌های ویژه", "QS|HOME"), btn("🎫 پاس فصل", "SP|HOME")],
+                [btn("🎯 جفت‌یابی حریف", "MM|HOME"), btn("📜 تاریخچه بازی", "GH|HOME")],
+                [btn("🎯 قدم‌های میل", "MS|HOME"), btn("👑 تالار افتخار", "HF|HOME")],
+                [btn("🔄 مرکز معامله", "TR|HOME"), btn("🎰 عدد شانسی", "LN|HOME")],
+                [btn("🎮 مینی‌بازی‌ها", "MG|HOME"), btn("🤝 نبرد تیمی", "TB|HOME")],
+                [btn("🤖 پیشنهاد هوشمند", "AI|HOME"), btn("🌐 فصل و رویداد", "SE|HOME")],
+                [btn("🎁 دعوت دوستان", "RF|HOME"), btn("🏆 مسابقات", "TM|HOME")],
+                [btn("📝 بازخورد", "FB|HOME"), btn("👑 وی‌آی‌پی", "VP|HOME")],
+                [btn("🎓 راهنمای آموزش", "TT|START"), btn("🌐 دیوار اجتماعی", "DR|WALL")],
+                [btn("🏆 بازیکن روز", "DR|POTD"), btn("❤️ عشق‌سنج", "LV|HOME")],
+                [btn("🏠 منوی اصلی", "H|HOME")],
+            ]),
+        )
+        return
+
     await safe_answer_query(query)
 
 
@@ -16254,22 +16396,96 @@ async def love2_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def fun_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """منوی بازی‌های مهمانی (خصوصی)."""
+    """منوی بازی‌های مهمانی (خصوصی) و مدیریت کالبک‌های WYR/LIKELY."""
     query = update.callback_query
     if query is None:
         return
+    parts = str(query.data or "").split("|")
+    action = parts[1] if len(parts) > 1 else ""
+    uid = int(query.from_user.id)
+    # مدیریت رأی‌های WYR (می‌کردی؟)
+    if action == "WYR" and len(parts) >= 4:
+        poll_id = parts[2]
+        choice = parts[3]  # "a" یا "b"
+        # ثبت رأی در v24_store
+        try:
+            store = v24_store()
+            polls = store.setdefault("wyr_polls", {})
+            poll = polls.get(str(poll_id), {"a": 0, "b": 0, "voters": []})
+            if int(uid) not in [int(x) for x in poll.get("voters", [])]:
+                poll[choice] = int(poll.get(choice, 0)) + 1
+                poll.setdefault("voters", []).append(int(uid))
+                polls[str(poll_id)] = poll
+                add_xp(int(uid), 2)
+                bump_mission_progress(int(uid), "votes", 1)
+                await safe_answer_query(query, f"✅ رأی‌ت ثبت شد! +۲ ایکس‌پی")
+            else:
+                await safe_answer_query(query, "✅ قبلاً رأی دادی!")
+        except Exception:
+            await safe_answer_query(query, UX_MSG["error_generic"])
+        return
+    # مدیریت رأی‌های LIKELY (به احتمال زیاد کی؟)
+    if action == "LIKELY" and len(parts) >= 4:
+        poll_id = parts[2]
+        target_uid = int(parts[3])
+        try:
+            store = v24_store()
+            polls = store.setdefault("likely_polls", {})
+            poll = polls.get(str(poll_id), {"votes": {}, "voters": []})
+            if int(uid) not in [int(x) for x in poll.get("voters", [])]:
+                votes = poll.setdefault("votes", {})
+                votes[str(target_uid)] = int(votes.get(str(target_uid), 0)) + 1
+                poll.setdefault("voters", []).append(int(uid))
+                polls[str(poll_id)] = poll
+                add_xp(int(uid), 2)
+                bump_mission_progress(int(uid), "votes", 1)
+                await safe_answer_query(query, f"✅ رأی‌ت ثبت شد! +۲ ایکس‌پی")
+            else:
+                await safe_answer_query(query, "✅ قبلاً رأی دادی!")
+        except Exception:
+            await safe_answer_query(query, UX_MSG["error_generic"])
+        return
+    # منوی اصلی بازی‌های مهمانی
+    if action == "HOME" or not action:
+        await safe_answer_query(query)
+        await safe_edit(
+            query,
+            "🎉 <b>بازی‌های مهمانی</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "این بازی‌ها در <b>گروه</b> اجرا می‌شوند:\n\n"
+            "🎰 <code>/apexspin</code> — گردونه‌ی بطری\n"
+            "🤔 <code>/apexwyr</code> — می‌کردی؟ (رأی زنده)\n"
+            "🙈 <code>/apexnhie</code> — هرگز نشده\n"
+            "🎯 <code>/apexlikely</code> — به احتمال زیاد کی؟\n\n"
+            "🤺 <code>/apexduel</code> — دوئل دو نفره\n\n"
+            "💡 برای اجرا، در گروه دستور رو بفرست.",
+            kb([
+                [btn("🎮 بازی‌های بیشتر", "FY|MORE")],
+                [btn("🏠 منوی اصلی", "H|HOME")],
+            ]),
+        )
+        return
+    if action == "MORE":
+        await safe_answer_query(query)
+        await safe_edit(
+            query,
+            "🎮 <b>بازی‌های بیشتر</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🎲 <code>/apexdice</code> — تاس\n"
+            "🪙 <code>/apexcoin</code> — شیر یا خط\n"
+            "🎱 <code>/apex8ball</code> — هشت‌گوی جادویی\n"
+            "🍀 <code>/apexluck</code> — گردونه‌ی شانس\n"
+            "🧮 <code>/apexquiz</code> — مسابقه‌ی ریاضی\n"
+            "❤️ <code>/apexlove</code> — عشق‌سنج\n"
+            "💌 <code>/apexlove2</code> — عشق‌سنج دو نفره\n\n"
+            "💡 برای اجرا، در گروه یا خصوصی دستور رو بفرست.",
+            kb([
+                [btn("⬅️ بازگشت", "FY|HOME")],
+                [btn("🏠 منوی اصلی", "H|HOME")],
+            ]),
+        )
+        return
     await safe_answer_query(query)
-    await safe_edit(
-        query,
-        "🎉 <b>بازی‌های مهمانی</b>\n━━━━━━━━━━━━━━━━━━\n"
-        "این بازی‌ها در <b>گروه</b> اجرا می‌شوند:\n\n"
-        "🎰 /apexspin — گردونه‌ی بطری\n"
-        "🤔 /apexwyr — می‌کردی؟ (رأی زنده)\n"
-        "🙈 /apexnhie — هرگز نشده\n"
-        "🎯 /apexlikely — به احتمال زیاد کی؟\n\n"
-        "🤺 /apexduel — دوئل دو نفره (همین‌جا لینک می‌سازد)",
-        kb([nav_row("H|HOME")]),
-    )
 
 
 # ================================================================
