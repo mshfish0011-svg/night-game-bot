@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ================================================================
 #  ApexRival — ربات بازی گروهی جرئت و حقیقت
-#  نسخه‌ی ۱.۲.۰ — Advanced Edition (Extended) — Ultimate Build VI
+#  نسخه‌ی ۱.۲.۰ — Advanced Edition (Extended) — Ultimate Build VII
 #  توسعه‌یافته روی نسخه‌ی ۱.۰.۰ (معماری تخت، بدون لایه‌بندی)
 #
 #  این فایل یک برنامه‌ی واحد و تمیز است:
@@ -138,6 +138,15 @@
 #   • پنل پروفایل با دکمه‌های ناوبری کامل
 #   • منوی بازی‌های مهمانی با دو بخش (اصلی + بیشتر)
 #   • مدیریت کامل رأی‌های WYR و LIKELY با ثبت در آمار
+#
+# بهبود در Ultimate Build VII (همچنان نسخه 1.2.0) — رفع نهایی دکمه‌های بی‌عمل:
+#   • اصلاح admin_callback: استفاده از has_permission به‌جای is_admin
+#   • اصلاح game_callback: استفاده از has_permission برای پایان بازی
+#   • اضافه کردن دکمه‌ی «🏠 منوی اصلی» به پنل موجودی فروشگاه
+#   • اضافه کردن دکمه‌ی «🪪 پروفایل من» به پنل دستاوردها
+#   • نمایش دستاوردهای نسخه‌ی گسترش‌یافته (ACHIEVEMENTS_V11)
+#   • شمارش صحیح کل دستاوردها (BASE + V11)
+#   • ناوبری کامل بین پنل‌ها
 #
 #  راه‌اندازی:  BOT_TOKEN=... ADMIN_ID=... python bot.py
 # ================================================================
@@ -3992,7 +4001,7 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if action == "END":
         q = current_questioner(game)
         is_leader = uid == int(game.get("leader_id", 0))
-        if not (is_leader or is_admin(uid)):
+        if not (is_leader or has_permission(int(uid), "admin")):
             await safe_answer_query(query, "فقط سرگروه می‌تواند بازی را تمام کند.", True)
             return
         await end_game_flow(context, game, query, reason="manual")
@@ -6595,7 +6604,7 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             query,
             "🎒 <b>موجودی من</b>\n━━━━━━━━━━━━━━━━━━\n"
             + ("\n".join(lines) if lines else "کالایی نداری؛ از فروشگاه بخر! 🛍"),
-            kb([[btn("🛍 فروشگاه", "S|HOME")]]),
+            kb([[btn("🛍 فروشگاه", "S|HOME"), btn("🏠 منوی اصلی", "H|HOME")]]),
         )
         return
 
@@ -6624,6 +6633,7 @@ async def achievements_show(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                           "v20_team_player", "v20_daily_hero", "v20_heart_giver",
                           "v21_lucky_star", "v21_quiz_whiz", "v21_generous",
                           "v24_punisher", "v24_duelist", "v24_party_soul", "v24_shopaholic", "v24_bank_center"],
+        "🚀 نسخه‌ی گسترش‌یافته": list(ACHIEVEMENTS_V11.keys()),
     }
     progress_map = {
         "first_win": (wins, 1), "ten_wins": (wins, 10), "streak5": (streak, 5),
@@ -6633,9 +6643,11 @@ async def achievements_show(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     for gname, keys in groups.items():
         lines.append(f"\n<b>{gname}</b>")
         for k in keys:
-            if k not in ACHIEVEMENTS_BASE:
+            # بررسی در ACHIEVEMENTS_BASE یا ACHIEVEMENTS_V11
+            ach_info = ACHIEVEMENTS_BASE.get(k) or ACHIEVEMENTS_V11.get(k)
+            if not ach_info:
                 continue
-            name, desc, coins = ACHIEVEMENTS_BASE[k]
+            name, desc, coins = ach_info
             if k in got:
                 lines.append(f"✅ {name} — {escape(desc)} <i>(+{fmt_num(coins)}🪙)</i>")
             else:
@@ -6644,14 +6656,16 @@ async def achievements_show(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     lines.append(f"▫️ {name} — {escape(desc)} {progress_bar(cur, goal, 6)} {fmt_num(cur)}/{fmt_num(goal)}")
                 else:
                     lines.append(f"▫️ {name} — {escape(desc)}")
-    total = sum(1 for k in ACHIEVEMENTS_BASE)
-    mine = sum(1 for k in got if k in ACHIEVEMENTS_BASE)
+    total = sum(1 for k in ACHIEVEMENTS_BASE) + sum(1 for k in ACHIEVEMENTS_V11)
+    mine = sum(1 for k in got if k in ACHIEVEMENTS_BASE or k in ACHIEVEMENTS_V11)
     text = (
         f"🎖 <b>دستاوردهای من</b> — {fmt_num(mine)}/{fmt_num(total)}\n"
         "━━━━━━━━━━━━━━━━━━\n"
         + "\n".join(lines)
     )
-    markup = kb([[btn("⬅️ منوی اصلی", "H|HOME")]])
+    markup = kb([
+        [btn("🪪 پروفایل من", "P|PROFILE"), btn("🏠 منوی اصلی", "H|HOME")],
+    ])
     if query is not None:
         await safe_answer_query(query)
         await safe_edit(query, text, markup)
@@ -7041,12 +7055,13 @@ async def cmd_apexpanel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """پنل ادمین قدیمی — حالا توسط admin_callback_v11 صدا زده می‌شه."""
     query = update.callback_query
     if query is None:
         return
     uid = int(query.from_user.id)
-    if not is_admin(uid):
-        await safe_answer_query(query, "فقط ادمین!", True)
+    if not has_permission(int(uid), "admin"):
+        await safe_answer_query(query, "⛔ فقط ادمین!", True)
         return
     data = str(query.data or "")
     parts = data.split("|")
