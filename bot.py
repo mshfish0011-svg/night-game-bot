@@ -1124,8 +1124,23 @@ def load_data() -> dict:
 DATA = load_data()
 
 
+def _json_safe(obj):
+    """تبدیل انواع غیرقابل‌سریالایز (مثل set) به فرمت JSON — دفاع عمیق.
+    دیگر هیچ‌وقت ذخیره‌سازی به‌خاطر یک تایپ عجیب فرو نمی‌ریزد."""
+    try:
+        if isinstance(obj, (set, frozenset)):
+            return sorted(str(x) for x in obj)
+        if isinstance(obj, (bytes, bytearray)):
+            return obj.decode("utf-8", errors="replace")
+        return str(obj)
+    except Exception:
+        return ""
+
+
 def save_data(force: bool = False) -> None:
-    """ذخیره‌ی اتمی و سریع داده‌ها (JSON فشرده، تعویض اتمی فایل)."""
+    """ذخیره‌ی اتمی و سریع داده‌ها (JSON فشرده، تعویض اتمی فایل).
+    FIX: با default=_json_safe دیگر هیچ تایپ ناشناخته‌ای (set و ...)
+    نمی‌تواند ذخیره‌سازی را متوقف کند و داده از دست نمی‌رود."""
     global LAST_SAVE
     current = time.time()
     if not force and current - LAST_SAVE < SAVE_EVERY_SECONDS:
@@ -1134,7 +1149,7 @@ def save_data(force: bool = False) -> None:
     with LOCK:
         try:
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(DATA, f, ensure_ascii=False, separators=(",", ":"))
+                json.dump(DATA, f, ensure_ascii=False, separators=(",", ":"), default=_json_safe)
             os.replace(tmp, DATA_FILE)
             LAST_SAVE = current
             SAVED_ONCE["v"] = True
@@ -1165,7 +1180,7 @@ def backup_data(reason: str = "auto") -> str | None:
         path = os.path.join(BACKUP_DIR, f"apexrival_{reason}_{stamp}.json")
         with LOCK:
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(DATA, f, ensure_ascii=False, separators=(",", ":"))
+                json.dump(DATA, f, ensure_ascii=False, separators=(",", ":"), default=_json_safe)
         # فقط ۲۰ بکاپ آخر نگه داشته شود
         files = sorted(Path(BACKUP_DIR).glob("apexrival_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         for old in files[20:]:
@@ -1828,12 +1843,20 @@ def mark_user_active(uid: int) -> None:
                 award_achievement_v11(int(uid), "v11_streak_30")
         # در Analytics امروز به‌عنوان فعال شمارش شود
         d = analytics_day()
-        d.setdefault("active_uids", set())  # noqa — فقط برای اینستنس موقت
-        # چون set قابل سریالایز نیست، از لیست استفاده می‌کنیم
+        # ⚠️ FIX: قبلاً اینجا d.setdefault("active_uids", set()) بود که یک set خام
+        # داخل DATA قرار می‌داد و json.dump در save_data/backup_data را برای همیشه
+        # خراب می‌کرد (از دست رفتن کل داده‌ها بعد از ری‌استارت). حذف شد —
+        # مکانیزم درست، همان لیست _active_uids است که پایین‌تر استفاده می‌شود.
         active_set = d.setdefault("_active_uids", [])
         if int(uid) not in active_set:
             active_set.append(int(uid))
             d["active_users"] = int(d.get("active_users", 0)) + 1
+        # پاک‌سازی دفاعی اگر داده‌ی قدیمی فاسد شده باشد
+        if "active_uids" in d:
+            try:
+                d.pop("active_uids", None)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -2602,6 +2625,23 @@ def data_doctor() -> list:
                     if created and (time.time() - created) > 24 * 3600:
                         p["expired"] = True
                         fixes.append(f"punish-expire:{pk}")
+        except Exception:
+            pass
+        # ۵.۵) FIX: پاک‌سازی set های فاسد در analytics_daily —
+        # نسخه‌های قبلی به‌اشتباه «active_uids» به‌صورت set ذخیره می‌کردند که
+        # باعث شکست کامل ذخیره‌سازی JSON و از دست رفتن داده‌ها می‌شد.
+        try:
+            for dkey, ddata in list(DATA.get("analytics_daily", {}).items()):
+                if not isinstance(ddata, dict):
+                    continue
+                if "active_uids" in ddata:
+                    ddata.pop("active_uids", None)
+                    fixes.append(f"analytics-set-clean:{dkey}")
+                # پاک‌سازی هر مقدار set دیگر در سطح اول روز
+                for k, v in list(ddata.items()):
+                    if isinstance(v, (set, frozenset)):
+                        ddata[k] = sorted(str(x) for x in v)
+                        fixes.append(f"analytics-set-fix:{dkey}:{k}")
         except Exception:
             pass
         # ۶) بانک‌ها: هیچ بانکی None یا پر از موارد خالی نباشد
@@ -3496,11 +3536,37 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if game is not None and str(game.get("status")) == "active":
             await safe_answer_query(query, "⚠️ بازی فعالی وجود دارد! اول /apexend بزن.")
             return
+        if onboarding_needed(uid):
+            await safe_answer_query(query, "👤 اول در چت خصوصی من /start بزن و ثبت‌نام کن!", True)
+            return
         try:
             await safe_delete(query.message)
         except Exception:
             pass
-        await cmd_apex(update, context)
+        # FIX: قبلاً اینجا cmd_apex(update, context) صدا زده می‌شد که در آپدیتِ کالبک
+        # update.message == None است و بی‌صدا return می‌کرد؛ یعنی دکمه‌ی «ساخت لابی»
+        # هیچ کاری نمی‌کرد. حالا لابی مستقیماً ساخته می‌شود.
+        try:
+            name = (query.from_user.first_name if query.from_user else None) or name_of(uid) or "بازیکن"
+            game = make_game(chat_id, uid, name)
+            group = get_group(chat_id)
+            group["created_games"] = int(group.get("created_games", 0)) + 1
+            analytics_bump("games_started")
+            audit("lobby_create", uid, chat_id)
+            save_data(force=True)
+            m = await context.bot.send_message(
+                chat_id, lobby_text(game),
+                parse_mode=ParseMode.HTML,
+                reply_markup=lobby_markup(game, uid),
+            )
+            game["_panel_msg_id"] = int(m.message_id)
+            try:
+                panel_register(uid, chat_id, int(m.message_id), "lobby")
+            except Exception:
+                pass
+        except Exception as exc:
+            audit("lobby_create_error", uid, chat_id, repr(exc)[:200])
+            await safe_answer_query(query, UX_MSG["error_generic"], True)
         return
     if action == "QUICK":
         # بازی سریع
@@ -3508,11 +3574,40 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if game is not None and str(game.get("status")) == "active":
             await safe_answer_query(query, "⚠️ بازی فعالی وجود دارد! اول /apexend بزن.")
             return
+        if onboarding_needed(uid):
+            await safe_answer_query(query, "👤 اول در چت خصوصی من /start بزن و ثبت‌نام کن!", True)
+            return
         try:
             await safe_delete(query.message)
         except Exception:
             pass
-        await cmd_apexquick(update, context)
+        # FIX: قبلاً cmd_apexquick(update, context) صدا زده می‌شد که در آپدیتِ کالبک
+        # update.message == None است و بی‌صدا return می‌کرد؛ یعنی دکمه‌ی «بازی سریع»
+        # هیچ کاری نمی‌کرد. حالا بازی سریع مستقیماً و با شروع صحیح نوبت ساخته می‌شود.
+        try:
+            name = (query.from_user.first_name if query.from_user else None) or name_of(uid) or "بازیکن"
+            game = quick_game_start(chat_id, uid, name)
+            if game:
+                group = get_group(chat_id)
+                group["created_games"] = int(group.get("created_games", 0)) + 1
+                analytics_bump("games_started")
+                audit("quick_game_start", uid, chat_id)
+                save_data(force=True)
+                await context.bot.send_message(
+                    chat_id,
+                    "⚡ <b>بازی سریع شروع شد!</b>\n"
+                    "━━━━━━━━━━━━━━━━━━\n"
+                    f"👑 سرگروه: {mention_user(uid, name)}\n"
+                    "🎮 بقیه می‌تونن با /apexjoin وارد بشن.\n"
+                    "🎯 اولین نوبت شروع می‌شه!",
+                    parse_mode=ParseMode.HTML,
+                )
+                await game_send_turn_card(context, game)
+            else:
+                await safe_answer_query(query, UX_MSG["error_generic"], True)
+        except Exception as exc:
+            audit("quick_game_error", uid, chat_id, repr(exc)[:200])
+            await safe_answer_query(query, UX_MSG["error_generic"], True)
         return
     if action == "RULES":
         await safe_answer_query(query)
@@ -3568,11 +3663,27 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if action == "ADULT":
         # روشن/خاموش کردن +۱۸
         g = get_group(int(chat_id))
-        # فقط سرگروه یا ادمین
-        is_leader = uid == int(g.get("leader_id", 0)) if g.get("leader_id") else False
-        # در منوی گروه (بدون بازی)، هر کسی می‌تونه toggle کنه
+        # FIX: بررسی مجوز — طبق تریگر متنی «+18» و تنظیمات گروه، فقط سرگروهِ
+        # بازی فعال، ادمین‌های تلگرامی گروه یا ادمین ربات اجازه‌ی تغییر دارند.
+        # قبلاً is_leader محاسبه می‌شد ولی استفاده نمی‌شد و هر عضوی می‌توانست
+        # حالت +۱۸ گروه را عوض کند.
+        allowed = is_admin(uid) or is_moderator_in_group(uid, chat_id)
+        if not allowed:
+            active = active_game(chat_id)
+            if active and uid == int(active.get("leader_id", 0)):
+                allowed = True
+            else:
+                try:
+                    member = await context.bot.get_chat_member(chat_id, uid)
+                    allowed = member.status in ("administrator", "creator")
+                except Exception:
+                    allowed = False
+        if not allowed:
+            await safe_answer_query(query, "🔞 فقط سرگروه بازی یا ادمین‌های گروه می‌توانند حالت +۱۸ را تغییر دهند.", True)
+            return
         g["adult_mode"] = not bool(g.get("adult_mode", False))
         save_data(force=True)
+        audit("adult_mode_toggle", uid, chat_id, "on" if g.get("adult_mode") else "off")
         state = "روشن 🔥" if g.get("adult_mode") else "خاموش"
         await safe_answer_query(query, f"🔞 حالت +۱۸: {state}")
         # رفرش منوی گروه
@@ -3611,6 +3722,18 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if action == "SETTINGS":
         # نمایش تنظیمات گروه
+        # FIX: بررسی مجوز — این دکمه فقط برای سرگروه/ادمین نمایش داده می‌شود،
+        # اما خودِ هندلر هم باید بررسی کند (ضد ساخت کالبک دستی).
+        if not (is_admin(uid) or is_moderator_in_group(uid, chat_id)):
+            allowed = False
+            try:
+                member = await context.bot.get_chat_member(chat_id, uid)
+                allowed = member.status in ("administrator", "creator")
+            except Exception:
+                allowed = False
+            if not allowed:
+                await safe_answer_query(query, "⚙️ فقط ادمین‌های گروه می‌توانند تنظیمات را ببینند.", True)
+                return
         await safe_answer_query(query)
         g = get_group(int(chat_id))
         cfg = chat_cfg(int(chat_id))
@@ -3706,6 +3829,22 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await lobby_refresh(None, context, game, query=query)
         return
 
+    # FIX: اخراج هدفمند — قبلاً شاخه‌ی «action == KICK» (نمایش لیست) قبل از
+    # شاخه‌ی اخراجِ هدفدار بررسی می‌شد؛ در نتیجه دکمه‌ی هر بازیکن دوباره لیست را
+    # نشان می‌داد و اخراج در حلقه‌ی بی‌نهایت گیر می‌کرد. حالا ابتدا اکشن هدفدار
+    # بررسی می‌شود.
+    if action == "KICKACT" or (action == "KICK" and len(data.split("|")) > 2):
+        try:
+            target = int(data.split("|")[2])
+        except Exception:
+            target = 0
+        if not is_leader:
+            await safe_answer_query(query, "فقط سرگروه!", True)
+            return
+        if target and target in [int(x) for x in game.get("players", [])]:
+            await lobby_remove_player(context, game, target, query, kicked=True)
+        return
+
     if action == "KICK":
         if not is_leader:
             await safe_answer_query(query, "فقط سرگروه می‌تواند اخراج کند.", True)
@@ -3720,18 +3859,6 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         rows.append([btn("⬅️ برگشت به لابی", "L|REFRESH")])
         await safe_answer_query(query)
         await safe_edit(query, f"🦵 <b>چه کسی اخراج شود؟</b>\n(دکمه را بزن)", kb(rows))
-        return
-
-    if action == "KICKACT" or (action == "KICK" and len(data.split("|")) > 2):
-        try:
-            target = int(data.split("|")[2])
-        except Exception:
-            target = 0
-        if not is_leader:
-            await safe_answer_query(query, "فقط سرگروه!", True)
-            return
-        if target and target in [int(x) for x in game.get("players", [])]:
-            await lobby_remove_player(context, game, target, query, kicked=True)
         return
 
     if action == "HOST":
@@ -4854,6 +4981,11 @@ async def end_game_flow(context, game: dict, query=None, reason: str = "manual")
         for p in ranked[1:]:
             reward_player(game, p, 3, 1, reason="game_end")
     get_group(chat_id)["active_game"] = None
+    # FIX: ثبت آمار پایان بازی در Analytics — قبلاً games_ended هرگز ثبت نمی‌شد
+    try:
+        analytics_bump("games_ended")
+    except Exception:
+        pass
     try:
         game_ended_stats(game)
     except Exception:
@@ -8090,6 +8222,22 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         _BC_STATE["mode"] = ""
         await msg.reply_text("👁 پیش‌نمایش:", parse_mode=ParseMode.HTML)
         await bc_render_preview(context, int(user.id))
+        # FIX: قبلاً بعد از پیش‌نمایش هیچ دکمه‌ای نمایش داده نمی‌شد و ادمین
+        # راهی برای ارسال نهایی نداشت (bc_render_preview بدون query دکمه نمی‌ساخت).
+        # حالا پیام تأیید با دکمه‌ی ارسال ارسال می‌شود.
+        try:
+            await context.bot.send_message(
+                int(user.id),
+                "🚀 <b>ارسال نهایی؟</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb([
+                    [btn("🚀 ارسال به همه", "A|BCSEND")],
+                    [btn("✏️ از اول", "A|BCNEW")],
+                    [btn("⌂ منوی اصلی", "A|HOME"), btn("✕ بستن", "H|CLOSE")],
+                ]),
+            )
+        except Exception:
+            pass
         return True
     return False
 
@@ -16267,13 +16415,25 @@ def vote_skip_clear(game: dict) -> None:
 
 # سیستم Quick Game (بازی سریع بدون لابی)
 def quick_game_start(chat_id: int, leader: int, name: str) -> dict:
-    """شروع سریع بازی بدون لابی — فقط یک نفر شروع می‌کنه و بقیه در حین بازی ملحق می‌شن."""
+    """شروع سریع بازی بدون لابی — فقط یک نفر شروع می‌کنه و بقیه در حین بازی ملحق می‌شن.
+    FIX: قبلاً phase روی «active» می‌ماند، turn_order خالی بود و advance_turn صدا
+    زده نمی‌شد؛ در نتیجه current_questioner همیشه None بود، هیچ کارت نوبتی
+    ارسال نمی‌شد و بازی برای همیشه در وضعیت لابی گیر می‌کرد."""
     try:
         game = make_game(chat_id, leader, name)
-        game["phase"] = "active"
+        game["phase"] = "topic"
         game["started_at"] = now_ts()
         game["quick_game"] = True
         game["auto_join"] = True  # بقیه می‌تونن بدون لابی ملحق بشن
+        # شروع صحیح نوبت‌ها: سرگروه در turn_order و اولین نوبت فوری
+        game["turn_order"] = [int(leader)]
+        game["turn_index"] = 0
+        game["round_scores"] = {str(leader): 0}
+        try:
+            get_user(int(leader))["games"] = int(get_user(int(leader)).get("games", 0)) + 1
+        except Exception:
+            pass
+        advance_turn(game)
         return game
     except Exception:
         return {}
@@ -16535,6 +16695,14 @@ async def cmd_apexquick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not game:
         await msg.reply_text(UX_MSG["error_generic"])
         return
+    # FIX: آمار گروه + Analytics ثبت شود
+    try:
+        group = get_group(int(chat.id))
+        group["created_games"] = int(group.get("created_games", 0)) + 1
+        analytics_bump("games_started")
+        audit("quick_game_start", int(user.id), int(chat.id))
+    except Exception:
+        pass
     await msg.reply_text(
         "⚡ <b>بازی سریع شروع شد!</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -16542,6 +16710,8 @@ async def cmd_apexquick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "🎮 بازی شروع شد! بقیه می‌تونن با /apexjoin وارد بشن.\n"
         "🎯 اولین نوبت شروع می‌شه!",
         parse_mode=ParseMode.HTML)
+    # FIX: ارسال کارت اولین نوبت — قبلاً هرگز ارسال نمی‌شد
+    await game_send_turn_card(context, game)
 
 
 async def cmd_apexjoin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
