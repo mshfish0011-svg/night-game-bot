@@ -466,18 +466,18 @@ _preflight()
 import asyncio
 import contextvars
 import hashlib
+import hmac
 import json
 import os
 import random
 import re
 import threading
 import time
-import hmac
-import urllib.parse
 from copy import deepcopy
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -488,8 +488,8 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     MenuButtonWebApp,
-    WebAppInfo,
     Update,
+    WebAppInfo,
 )
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -510,7 +510,7 @@ from telegram.error import RetryAfter, BadRequest  # ۶.۳/۶.۵ — فلود-ک
 # ================================================================
 #  پیکربندی
 # ================================================================
-VERSION = "12.0"
+VERSION = "12.0-miniapp"
 BOT_NAME = "ApexRival"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -521,10 +521,9 @@ BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
 SAVE_EVERY_SECONDS = 12
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@NovaLinkNETPN").strip() or "@NovaLinkNETPN"
 REQUIRED_CHANNEL_URL = os.getenv("REQUIRED_CHANNEL_URL", "https://t.me/NovaLinkNETPN").strip() or "https://t.me/NovaLinkNETPN"
-# Telegram Mini App — در Render معمولاً RENDER_EXTERNAL_URL خودکار تنظیم می‌شود.
-MINIAPP_URL = (os.getenv("MINIAPP_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()).rstrip("/")
-if MINIAPP_URL:
-    MINIAPP_URL += "/miniapp"
+# Mini App: on Render, RENDER_EXTERNAL_URL is supplied automatically; WEBAPP_URL can override it.
+WEBAPP_URL = (os.getenv("WEBAPP_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()).rstrip("/")
+MINIAPP_URL = f"{WEBAPP_URL}/miniapp" if WEBAPP_URL.startswith("https://") else ""
 BOOT_TS = time.time()
 
 # دکمه‌ی شروع عمومی (لینک گروه)
@@ -4384,6 +4383,8 @@ def private_home_markup(uid: int, frame: int = 0) -> InlineKeyboardMarkup:
             btn(f"{_anim_icon('admin', f)} پنل مدیریت", "A|HOME", "danger"),
             btn("📊 تحلیل‌ها", "A|ANALYTICS", "danger"),
         ])
+    if MINIAPP_URL:
+        rows.insert(0, [InlineKeyboardButton("🚀 اپ ApexRival", web_app=WebAppInfo(url=MINIAPP_URL))])
     return kb(rows)
 
 
@@ -27733,132 +27734,402 @@ async def backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         print(f"ApexRival backup job warning: {exc!r}")
 
 
+# ================================================================
+#  📱 ApexRival Mini App — UI + secure API (single-file build)
+# ================================================================
+MINIAPP_HTML = '<!doctype html>\n<html lang="fa" dir="rtl">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">\n<meta name="theme-color" content="#070912">\n<title>ApexRival</title>\n<script src="https://telegram.org/js/telegram-web-app.js?63"></script>\n<style>\n:root{--bg:#070912;--bg2:#0b0e18;--panel:rgba(18,22,37,.82);--panel2:#151b2d;--line:#252c42;--text:#f7f8fc;--muted:#8e98ad;--a:#7b5cff;--a2:#13c6ff;--ok:#25d58a;--gold:#ffc957;--red:#ff5f75;--shadow:0 24px 70px rgba(0,0,0,.38);--r:24px}\n*{box-sizing:border-box}html{background:var(--bg)}body{margin:0;background:radial-gradient(700px 420px at 95% -5%,rgba(123,92,255,.18),transparent 60%),radial-gradient(520px 380px at 0% 100%,rgba(19,198,255,.10),transparent 58%),var(--bg);color:var(--text);font-family:Tahoma,"Segoe UI",sans-serif;min-height:100vh;padding-bottom:92px;overflow-x:hidden}\nbutton{font:inherit;color:inherit;border:0;cursor:pointer}button:active{transform:scale(.985)}\n.app{max-width:780px;margin:auto;padding:15px 13px 30px}.top{display:flex;justify-content:space-between;align-items:center;padding:3px 2px 14px}.brand{display:flex;align-items:center;gap:10px}.logo{width:44px;height:44px;border-radius:15px;display:grid;place-items:center;font-weight:1000;background:linear-gradient(135deg,var(--a),#4a98ff);box-shadow:0 10px 32px rgba(123,92,255,.35)}.brand b{font-size:18px}.brand small{display:block;color:var(--muted);font-size:10px;margin-top:4px}.coinpill{display:flex;align-items:center;gap:6px;background:rgba(18,22,37,.9);border:1px solid var(--line);border-radius:15px;padding:9px 11px;color:var(--gold);font-weight:900}\n.page{display:none;animation:fade .18s ease}.page.active{display:block}@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}\n.hero{position:relative;overflow:hidden;border:1px solid rgba(133,116,255,.22);background:linear-gradient(145deg,rgba(29,25,59,.95),rgba(13,17,30,.95) 62%,rgba(9,25,35,.92));border-radius:30px;padding:20px;box-shadow:var(--shadow)}.hero:before{content:"";position:absolute;width:210px;height:210px;border-radius:50%;background:rgba(123,92,255,.18);filter:blur(44px);left:-80px;bottom:-100px}.hero>*{position:relative}.eyebrow{display:flex;align-items:center;gap:7px;color:#b6adff;font-size:10px;font-weight:800;letter-spacing:.3px}.hero h1{font-size:27px;line-height:1.25;margin:8px 0 7px}.hero p{margin:0;color:var(--muted);font-size:11px;line-height:1.9}.herorow{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:17px}.profilemini{display:flex;align-items:center;gap:10px;min-width:0}.avatar{width:43px;height:43px;border-radius:15px;display:grid;place-items:center;background:linear-gradient(145deg,#232a42,#101522);border:1px solid #313a57;font-weight:900;flex:0 0 auto}.pmain{min-width:0}.pmain b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pmain small{display:block;color:var(--muted);font-size:9px;margin-top:3px}.rankpill{padding:8px 10px;border-radius:13px;background:#ffffff0d;border:1px solid #ffffff12;font-size:10px;white-space:nowrap}\n.levelrow{display:grid;grid-template-columns:78px 1fr;gap:12px;align-items:center;margin-top:18px}.ring{width:78px;height:78px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--a) var(--pct),#242b3e 0);position:relative}.ring:after{content:"";position:absolute;inset:7px;background:#111524;border-radius:50%}.ring strong,.ring span{position:relative;z-index:1}.ring strong{font-size:20px}.ring span{font-size:7px;color:var(--muted);position:absolute;bottom:21px}.xpbox .xphead{display:flex;justify-content:space-between;color:var(--muted);font-size:9px;margin-bottom:7px}.bar{height:9px;background:#080b13;border:1px solid #242b3e;border-radius:100px;overflow:hidden}.bar i{display:block;height:100%;width:0;border-radius:100px;background:linear-gradient(90deg,var(--a),var(--a2));box-shadow:0 0 16px rgba(19,198,255,.22)}\n.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:16px}.stat{background:#ffffff07;border:1px solid #ffffff0b;border-radius:15px;padding:10px 8px;min-width:0}.stat small{display:block;color:var(--muted);font-size:8px;margin-bottom:5px}.stat strong{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.section{margin-top:19px}.sectionhead{display:flex;align-items:center;justify-content:space-between;margin:0 2px 9px}.sectionhead h2{font-size:15px;margin:0}.sectionhead span{color:var(--muted);font-size:9px}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.tile{background:linear-gradient(145deg,rgba(18,22,37,.9),rgba(13,17,28,.9));border:1px solid var(--line);border-radius:20px;padding:14px;text-align:right;min-height:105px;position:relative;overflow:hidden}.tile:after{content:"";position:absolute;inset:auto -30px -55px auto;width:100px;height:100px;background:rgba(123,92,255,.08);filter:blur(8px);border-radius:50%}.tile .ico{font-size:24px;position:relative;z-index:1}.tile b{display:block;font-size:12px;margin-top:8px;position:relative;z-index:1}.tile small{display:block;color:var(--muted);font-size:9px;line-height:1.7;margin-top:4px;position:relative;z-index:1}.bigbtn{width:100%;padding:13px 14px;border-radius:17px;background:linear-gradient(135deg,var(--a),#5b81ff);font-weight:900;box-shadow:0 10px 28px rgba(123,92,255,.24);text-align:center}.outline{width:100%;padding:12px 14px;border-radius:16px;background:#ffffff06;border:1px solid var(--line);font-weight:800}.green{background:linear-gradient(135deg,#1fb979,#21d38d);color:#05110b}.danger{background:linear-gradient(135deg,#d74b62,#ff5f75)}\n.list{display:grid;gap:8px}.row{display:flex;align-items:center;gap:10px;padding:12px;background:rgba(16,20,33,.88);border:1px solid var(--line);border-radius:18px}.rowmain{flex:1;min-width:0}.rowmain b{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rowmain small{display:block;color:var(--muted);font-size:8px;margin-top:4px;line-height:1.7}.value{font-weight:900;font-size:11px;text-align:left;white-space:nowrap}.medal{width:30px;text-align:center;font-weight:1000}.tag{display:inline-flex;align-items:center;gap:4px;padding:5px 7px;border-radius:10px;background:#ffffff08;border:1px solid #ffffff0d;color:var(--muted);font-size:8px}\n.progresscard{padding:13px;background:rgba(16,20,33,.9);border:1px solid var(--line);border-radius:19px}.progline{display:flex;justify-content:space-between;gap:8px;font-size:9px;margin-bottom:7px}.progline span:last-child{color:var(--muted)}\n.modal{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(12px);display:none;align-items:flex-end;z-index:30}.modal.show{display:flex}.sheet{width:100%;max-width:780px;margin:auto auto 0;background:#111626;border:1px solid #2c3550;border-bottom:0;border-radius:26px 26px 0 0;padding:17px 15px 25px;max-height:82vh;overflow:auto}.handle{width:42px;height:4px;background:#3a445d;border-radius:99px;margin:0 auto 14px}.sheet h3{margin:0 0 8px;font-size:17px}.sheet p{color:var(--muted);font-size:10px;line-height:1.8}.sheetactions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:13px}\n.toast{position:fixed;z-index:50;bottom:91px;left:50%;transform:translate(-50%,15px);opacity:0;background:#171e30;border:1px solid #33405d;padding:10px 14px;border-radius:14px;font-size:10px;transition:.2s;white-space:nowrap;box-shadow:0 12px 36px #0009}.toast.show{opacity:1;transform:translate(-50%,0)}\n.bottom{position:fixed;z-index:20;left:50%;transform:translateX(-50%);bottom:8px;width:min(750px,calc(100% - 16px));padding:7px;background:rgba(13,17,29,.88);backdrop-filter:blur(18px);border:1px solid #293249;border-radius:23px;display:grid;grid-template-columns:repeat(5,1fr);box-shadow:0 16px 45px #0009}.bottom button{background:none;color:var(--muted);font-size:8px;padding:8px 2px;border-radius:16px}.bottom button.active{color:#fff;background:#7657ff22}.bottom .bi{display:block;font-size:18px;margin-bottom:3px}\n.search{display:flex;gap:7px}.search input{flex:1;min-width:0;background:#0e1321;color:var(--text);border:1px solid var(--line);outline:none;border-radius:14px;padding:11px 12px}.empty{padding:25px 10px;text-align:center;color:var(--muted);font-size:10px}.subtabs{display:flex;gap:6px;overflow:auto;padding-bottom:3px;margin-bottom:10px}.subtabs button{white-space:nowrap;padding:8px 10px;border-radius:12px;background:#ffffff06;border:1px solid var(--line);font-size:9px;color:var(--muted)}.subtabs button.on{background:#7657ff24;color:#fff;border-color:#654eff55}\n.event{padding:12px 13px;border-radius:17px;background:linear-gradient(135deg,#192034,#111724);border:1px solid #2c3750}.event b{font-size:11px}.event small{display:block;color:var(--muted);margin-top:4px;font-size:9px}\n@media(min-width:600px){.app{padding:24px 20px 35px}.grid{grid-template-columns:repeat(3,1fr)}.tile{min-height:112px}.bottom{bottom:12px}.modal{align-items:center}.sheet{margin:auto;border-bottom:1px solid #2c3550;border-radius:26px;max-width:620px}}\n</style>\n</head>\n<body>\n<div id="app" class="app"></div>\n<nav class="bottom" id="bottom"></nav>\n<div class="modal" id="modal" onclick="closeModal(event)"><div class="sheet" id="sheet"></div></div>\n<div class="toast" id="toast"></div>\n<script>\n(()=>{\n\'use strict\';\nconst tg=window.Telegram?.WebApp||null;\nlet state=null,current=\'home\',shopCat=\'all\',loading=false;\nconst esc=v=>String(v??\'\').replace(/[&<>"\']/g,c=>({\'&\':\'&amp;\',\'<\':\'&lt;\',\'>\':\'&gt;\',\'"\':\'&quot;\',"\'":\'&#039;\'}[c]));\nconst fa=n=>Number(n||0).toLocaleString(\'fa-IR\');\nconst apiBase=\'\';\nfunction initTG(){try{if(tg){tg.ready();tg.expand();tg.setHeaderColor?.(\'#080b12\');tg.setBackgroundColor?.(\'#080b12\')}}catch(e){}}\nfunction initData(){return tg?.initData||\'\'}\nasync function api(path,method=\'GET\',body=null){\n const opt={method,headers:{\'X-Telegram-Init-Data\':initData(),\'Accept\':\'application/json\'}};\n if(body){opt.headers[\'Content-Type\']=\'application/json\';opt.body=JSON.stringify(body)}\n const r=await fetch(apiBase+path,opt);let d={};try{d=await r.json()}catch(e){}\n if(!r.ok||d.ok===false)throw new Error(d.error||\'خطا در ارتباط با سرور\');return d;\n}\nfunction toast(msg){const x=document.getElementById(\'toast\');x.textContent=msg;x.classList.add(\'show\');clearTimeout(window.__t);window.__t=setTimeout(()=>x.classList.remove(\'show\'),2400)}\nfunction openModal(html){document.getElementById(\'sheet\').innerHTML=\'<div class="handle"></div>\'+html;document.getElementById(\'modal\').classList.add(\'show\')}\nfunction closeModal(e){if(e?.target===document.getElementById(\'modal\'))document.getElementById(\'modal\').classList.remove(\'show\')}\nwindow.closeApexModal=()=>document.getElementById(\'modal\').classList.remove(\'show\');\nasync function refresh(){try{loading=true;const d=await api(\'/api/miniapp/state\');state=d;render();}catch(e){toast(e.message||\'خطا\');}finally{loading=false}}\nfunction initials(name){return (String(name||\'A\').trim().charAt(0)||\'A\').toUpperCase()}\nfunction nav(){return `<button class="${current===\'home\'?\'active\':\'\'}" onclick="go(\'home\')"><span class="bi">⌂</span>خانه</button><button class="${current===\'progress\'?\'active\':\'\'}" onclick="go(\'progress\')"><span class="bi">⚡</span>پیشرفت</button><button class="${current===\'games\'?\'active\':\'\'}" onclick="go(\'games\')"><span class="bi">🎮</span>بازی</button><button class="${current===\'social\'?\'active\':\'\'}" onclick="go(\'social\')"><span class="bi">🏆</span>رقابت</button><button class="${current===\'profile\'?\'active\':\'\'}" onclick="go(\'profile\')"><span class="bi">👤</span>من</button>`}\nfunction shell(content){document.getElementById(\'app\').innerHTML=content;document.getElementById(\'bottom\').innerHTML=nav()}\nfunction topHero(){const u=state.user,s=state.stats,need=state.meta.level_next_xp||((s.level||1)*100),pct=Math.min(100,Math.max(0,((s.xp-state.meta.level_floor_xp)/Math.max(1,need-state.meta.level_floor_xp))*100));document.documentElement.style.setProperty(\'--pct\',pct+\'%\');return `<section class="hero"><div class="eyebrow">⚡ APEXRIVAL · MINI APP <span class="tag">${state.user.verified?\'✅ Verified\':\'\'}${state.user.vip?\' · 👑 VIP\':\'\'}</span></div><div class="herorow"><div class="profilemini"><div class="avatar">${esc(initials(u.name))}</div><div class="pmain"><b>${esc(u.name)}</b><small>${esc(u.username||\'کاربر تلگرام\')} · ID ${fa(u.id)}</small></div></div><div class="rankpill">${esc(s.rank_icon)} ${esc(s.rank_name)}</div></div><div class="levelrow"><div class="ring" style="--pct:${pct}%"><strong>${fa(s.level)}</strong><span>LEVEL</span></div><div class="xpbox"><div class="xphead"><span>پیشرفت سطح ${fa(s.level)}</span><span>${fa(Math.max(0,s.xp-state.meta.level_floor_xp))} / ${fa(Math.max(1,need-state.meta.level_floor_xp))} XP</span></div><div class="bar"><i style="width:${pct}%"></i></div><div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap"><span class="tag">⭐ ${fa(s.xp)} XP</span><span class="tag">🪙 ${fa(s.coins)}</span><span class="tag">🔥 ${fa(s.daily_streak)} روز</span></div></div></div><div class="stats"><div class="stat"><small>بازی</small><strong>${fa(s.games)}</strong></div><div class="stat"><small>برد</small><strong>${fa(s.wins)}</strong></div><div class="stat"><small>برد٪</small><strong>${fa(s.success_rate)}٪</strong></div><div class="stat"><small>ELO</small><strong>${fa(s.elo)}</strong></div></div></section>`}\nfunction home(){let events=(state.events||[]).map(e=>`<div class="event"><b>${esc(e.title||\'رویداد\')}</b><small>${esc(e.desc||\'رویداد فعال ApexRival\')}</small></div>`).join(\'\');return topHero()+`<div class="section"><div class="sectionhead"><h2>مرکز فرمان</h2><span>LIVE</span></div><div class="grid"><button class="tile" onclick="daily()"><div class="ico">🎁</div><b>پاداش روزانه</b><small>${state.daily.eligible?\'امروز آماده دریافت است\':\'امروز دریافت شده\'}</small></button><button class="tile" onclick="go(\'missions\')"><div class="ico">🎯</div><b>مأموریت\u200cها</b><small>${fa(state.daily.missions_completed)}/${fa(state.daily.missions_total)} کامل</small></button><button class="tile" onclick="go(\'quests\')"><div class="ico">🧩</div><b>Quest Center</b><small>${fa(state.quests.completed)}/${fa(state.quests.total)} کامل</small></button><button class="tile" onclick="go(\'shop\')"><div class="ico">🛍️</div><b>فروشگاه</b><small>${fa(state.shop.count)} آیتم</small></button><button class="tile" onclick="go(\'achievements\')"><div class="ico">🏅</div><b>دستاوردها</b><small>${fa(state.achievements.earned)}/${fa(state.achievements.total)} باز شده</small></button><button class="tile" onclick="go(\'history\')"><div class="ico">📜</div><b>تاریخچه</b><small>${fa(state.stats.history_count)} بازی ثبت\u200cشده</small></button></div></div>${events?`<div class="section"><div class="sectionhead"><h2>رویدادهای فعال</h2><span>EVENTS</span></div><div class="list">${events}</div></div>`:\'\'}<div class="section"><button class="bigbtn" onclick="startGame()">⚡ رفتن به بازی ApexRival</button></div>`}\nfunction profile(){return topHero()+`<div class="section"><div class="card"><div class="sectionhead"><h2>پروفایل بازیکن</h2><span>${state.user.verified?\'تأییدشده\':\'\'}</span></div><div class="list"><div class="row"><div class="avatar">${esc(initials(state.user.name))}</div><div class="rowmain"><b>${esc(state.user.name)}</b><small>${esc(state.user.username||\'کاربر تلگرام\')}</small></div><div class="value">${esc(state.stats.rank_name)}</div></div><div class="row"><div class="medal">🏅</div><div class="rowmain"><b>دستاوردهای ویترین</b><small>${state.achievements.showcase.map(esc).join(\' · \')||\'هنوز چیزی انتخاب نشده\'}</small></div></div><div class="row"><div class="medal">🎨</div><div class="rowmain"><b>تم پروفایل</b><small>${esc(state.user.profile_theme||\'default\')}</small></div></div></div></div></div><div class="section"><button class="outline" onclick="openBot(\'apexprofile\')">🪪 پروفایل کامل داخل ربات</button></div>`}\nfunction progress(){const modes=Object.entries(state.stats.modes||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);const max=Math.max(1,...modes.map(x=>x[1]));return topHero()+`<div class="section"><div class="sectionhead"><h2>داشبورد پیشرفت</h2><span>ANALYTICS</span></div><div class="grid"><div class="progresscard"><div class="progline"><b>🏆 بردها</b><span>${fa(state.stats.wins)}</span></div><div class="bar"><i style="width:${Math.min(100,state.stats.wins*5)}%"></i></div></div><div class="progresscard"><div class="progline"><b>🔥 بهترین استریک</b><span>${fa(state.stats.best_streak)}</span></div><div class="bar"><i style="width:${Math.min(100,state.stats.best_streak*10)}%"></i></div></div><div class="progresscard"><div class="progline"><b>👑 Boss</b><span>${fa(state.stats.boss)}</span></div><div class="bar"><i style="width:${Math.min(100,state.stats.boss*10)}%"></i></div></div><div class="progresscard"><div class="progline"><b>🤺 دوئل</b><span>${fa(state.stats.duels)}</span></div><div class="bar"><i style="width:${Math.min(100,state.stats.duels*5)}%"></i></div></div></div></div><div class="section"><div class="sectionhead"><h2>مودهای محبوب</h2><span>TOP MODES</span></div><div class="list">${modes.length?modes.map(([k,v],i)=>{const label=state.meta.mode_labels[k]||k;return `<div class="row"><div class="medal">${i+1}</div><div class="rowmain"><b>${esc(label)}</b><small>بازی انجام\u200cشده</small></div><div class="value">${fa(v)}</div></div>`}).join(\'\'):\'<div class="empty">هنوز آماری ثبت نشده.</div>\'}</div></div>`}\nfunction social(){const lb=state.leaderboard||[];return `<div class="hero"><div class="eyebrow">🏆 RANKED AREA</div><h1>رقابت و رتبه\u200cبندی</h1><p>رتبه\u200cبندی واقعی ApexRival بر اساس داده\u200cهای ذخیره\u200cشده\u200cی خود ربات.</p><div class="stats"><div class="stat"><small>رتبه تو</small><strong>#${fa(state.social.rank||\'-\')}</strong></div><div class="stat"><small>دوستان</small><strong>${fa(state.social.friends)}</strong></div><div class="stat"><small>رقبا</small><strong>${fa(state.social.rivals)}</strong></div><div class="stat"><small>اعتبار</small><strong>${fa(state.stats.reputation)}</strong></div></div></div><div class="section"><div class="sectionhead"><h2>لیدربورد کلی</h2><span>GLOBAL</span></div><div class="list">${lb.length?lb.map((r,i)=>`<div class="row"><div class="medal">${i<3?[\'🥇\',\'🥈\',\'🥉\'][i]:fa(i+1)}</div><div class="avatar">${esc(initials(r.name))}</div><div class="rowmain"><b>${esc(r.name)} ${r.verified?\'✅\':\'\'}</b><small>${esc(r.rank_name||\'بازیکن\')} · ${fa(r.wins)} برد</small></div><div class="value">⭐ ${fa(r.xp)}</div></div>`).join(\'\'):\'<div class="empty">فعلاً رتبه\u200cای ثبت نشده.</div>\'}</div></div><div class="section"><div class="grid"><button class="tile" onclick="openBot(\'apexfriends\')"><div class="ico">👥</div><b>دوستان</b><small>${fa(state.social.friends)} نفر</small></button><button class="tile" onclick="openBot(\'apexrivals\')"><div class="ico">⚔️</div><b>رقبا</b><small>${fa(state.social.rivals)} نفر</small></button><button class="tile" onclick="openBot(\'apexinvite\')"><div class="ico">🎁</div><b>دعوت دوستان</b><small>${fa(state.social.referrals)} دعوت</small></button><button class="tile" onclick="openBot(\'apexcompare\')"><div class="ico">⚖️</div><b>مقایسه</b><small>مقایسه بازیکن\u200cها</small></button></div></div>`}\nfunction games(){return `<div class="hero"><div class="eyebrow">🎮 PLAY HUB</div><h1>مرکز بازی</h1><p>هسته\u200cی بازی واقعی ApexRival همچنان توسط خود ربات اجرا می\u200cشود؛ اینجا نقطه\u200cی ورود سریع و کنترل امکانات است.</p></div><div class="section"><div class="grid"><button class="tile" onclick="openBot(\'apex\')"><div class="ico">⚔️</div><b>شروع بازی اصلی</b><small>ساخت لابی و انتخاب مود</small></button><button class="tile" onclick="openBot(\'apexquick\')"><div class="ico">⚡</div><b>بازی سریع</b><small>بدون لابی طولانی</small></button><button class="tile" onclick="openBot(\'apexminigames\')"><div class="ico">🧠</div><b>Mini-Games</b><small>چالش\u200cهای سریع</small></button><button class="tile" onclick="openBot(\'apexduel\')"><div class="ico">🤺</div><b>دوئل</b><small>رقابت دونفره</small></button><button class="tile" onclick="openBot(\'apexmatchmaking\')"><div class="ico">🎯</div><b>Matchmaking</b><small>پیدا کردن رقیب</small></button><button class="tile" onclick="openBot(\'apexteambattle\')"><div class="ico">🤝</div><b>Team Battle</b><small>نبرد تیمی</small></button></div></div>`}\nfunction missions(){return listWork(\'missions\',\'مأموریت\u200cهای روزانه\',state.missions||[],\'claim_mission\')}\nfunction quests(){return `<div class="hero"><div class="eyebrow">🧩 QUEST CENTER</div><h1>کوئست\u200cها</h1><p>کوئست\u200cهای روزانه و هفتگی واقعی حساب تو.</p></div><div class="section"><div class="subtabs"><button class="${state.questTab===\'daily\'?\'on\':\'\'}" onclick="questTab(\'daily\')">روزانه</button><button class="${state.questTab===\'weekly\'?\'on\':\'\'}" onclick="questTab(\'weekly\')">هفتگی</button></div><div class="list">${questItems()}</div></div>`}\nfunction questItems(){const kind=state.questTab===\'weekly\'?\'weekly\':\'daily\';const arr=kind===\'weekly\'?(state.quests.weekly||[]):(state.quests.daily||[]);return arr.length?arr.map(q=>workCard({...q,kind},\'claim_quest\')).join(\'\'):\'<div class="empty">کوئستی برای نمایش نیست.</div>\'}\nfunction listWork(type,title,arr,action){return `<div class="hero"><div class="eyebrow">🎯 DAILY CENTER</div><h1>${title}</h1><p>پیشرفت\u200cها مستقیماً از داده\u200cهای ربات خوانده می\u200cشوند.</p></div><div class="section"><div class="list">${arr.length?arr.map(x=>workCard(x,action)).join(\'\'):\'<div class="empty">موردی برای نمایش نیست.</div>\'}</div></div>`}\nfunction workCard(x,action){const pct=Math.min(100,Math.round(Number(x.progress||0)/Math.max(1,Number(x.target||1))*100));const claimed=action===\'claim_quest\'?((state[\'quests_claimed_\'+(x.kind||\'daily\')]||[]).includes(x.key)):((state.missions_claimed||[]).includes(x.key));return `<div class="progresscard"><div class="progline"><b>${esc(x.name||x.key)}</b><span>${fa(x.progress||0)} / ${fa(x.target||1)}</span></div><div class="bar"><i style="width:${pct}%"></i></div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:9px"><span class="tag">⭐ +${fa(x.reward_xp||0)} XP · 🪙 +${fa(x.reward_coins||0)}</span>${claimed?\'<span class="tag">✅ دریافت شد</span>\':x.completed?`<button class="outline" style="width:auto;padding:7px 10px" onclick="claim(\'${action}\',\'${esc(x.key)}\',\'${esc(x.kind||\'\')}\')">دریافت</button>`:\'<span class="tag">در حال انجام</span>\'}</div></div>`}\nfunction achievements(){const arr=state.achievements.items||[];return `<div class="hero"><div class="eyebrow">🏅 COLLECTION</div><h1>دستاوردها</h1><p>${fa(state.achievements.earned)} از ${fa(state.achievements.total)} دستاورد باز شده.</p><div class="bar" style="margin-top:14px"><i style="width:${Math.min(100,state.achievements.total?state.achievements.earned/state.achievements.total*100:0)}%"></i></div></div><div class="section"><div class="grid">${arr.slice(0,30).map(a=>`<div class="tile" style="opacity:${a.earned?1:.42}"><div class="ico">${esc(a.icon)}</div><b>${esc(a.name)}</b><small>${esc(a.desc)} · ${a.earned?\'باز شده ✅\':\'قفل\'}</small></div>`).join(\'\')}</div></div>`}\nfunction history(){const arr=state.history||[];return `<div class="hero"><div class="eyebrow">📜 HISTORY</div><h1>تاریخچه</h1><p>آخرین فعالیت\u200cهای ثبت\u200cشده در پروفایل.</p></div><div class="section"><div class="list">${arr.length?arr.map(h=>`<div class="row"><div class="medal">${h.icon||\'🎮\'}</div><div class="rowmain"><b>${esc(h.title||h.type||\'فعالیت\')}</b><small>${esc(h.detail||\'\')} · ${esc(h.time||\'\')}</small></div><div class="value">${h.xp?(\'+\'+fa(h.xp)+\' XP\'):\'\'}</div></div>`).join(\'\'):\'<div class="empty">تاریخچه\u200cای موجود نیست.</div>\'}</div></div>`}\nfunction notifications(){const arr=state.notifications||[];return `<div class="hero"><div class="eyebrow">🔔 INBOX</div><h1>اعلان\u200cها</h1><p>${fa(state.unread)} اعلان خوانده\u200cنشده داری.</p><div class="section" style="margin-top:14px"><button class="outline" onclick="markRead()">✅ همه را خوانده\u200cشده کن</button></div></div><div class="section"><div class="list">${arr.length?arr.map(n=>`<div class="row"><div class="medal">${n.unread?\'🔴\':\'🔘\'}</div><div class="rowmain"><b>${esc(n.title)}</b><small>${esc(n.body||\'\')} · ${esc(n.time||\'\')}</small></div></div>`).join(\'\'):\'<div class="empty">اعلانی نیست.</div>\'}</div></div>`}\nfunction shop(){const items=(state.shop.items||[]).filter(x=>shopCat===\'all\'||x.cat===shopCat);return `<div class="hero"><div class="eyebrow">🛍 MARKET</div><h1>فروشگاه ApexRival</h1><p>${fa(state.stats.coins)} سکه موجود داری. خریدها مستقیماً در موجودی واقعی ربات ثبت می\u200cشوند.</p></div><div class="section"><div class="subtabs"><button class="${shopCat===\'all\'?\'on\':\'\'}" onclick="setShop(\'all\')">همه</button>${Object.entries(state.shop.cats||{}).map(([k,v])=>`<button class="${shopCat===k?\'on\':\'\'}" onclick="setShop(\'${k}\')">${esc(v)}</button>`).join(\'\')}</div><div class="grid">${items.map(x=>`<div class="tile"><div class="ico">${esc((x.name||\'🛍\').charAt(0))}</div><b>${esc(x.name)}</b><small>${esc(x.desc||\'\')}</small><div style="display:flex;justify-content:space-between;align-items:center;margin-top:9px"><span class="tag">🪙 ${fa(x.price)}</span><button class="bigbtn" style="width:auto;padding:8px 10px;font-size:9px" onclick="buy(\'${esc(x.key)}\')">خرید</button></div></div>`).join(\'\')}</div></div>`}\nfunction render(){document.documentElement.style.setProperty(\'--a\',state.meta.theme?.a||\'#7b5cff\');if(current===\'home\')shell(home());else if(current===\'profile\')shell(profile());else if(current===\'progress\')shell(progress());else if(current===\'social\')shell(social());else if(current===\'games\')shell(games());else if(current===\'missions\')shell(missions());else if(current===\'quests\')shell(quests());else if(current===\'achievements\')shell(achievements());else if(current===\'history\')shell(history());else if(current===\'notifications\')shell(notifications());else if(current===\'shop\')shell(shop())}\nwindow.go=id=>{current=id;render();window.scrollTo({top:0,behavior:\'smooth\'})};\nwindow.questTab=k=>{state.questTab=k;render()};window.setShop=k=>{shopCat=k;render()};\nasync function act(action,payload={}){try{const d=await api(\'/api/miniapp/action\',\'POST\',{action,...payload});if(d.message)toast(d.message);await refresh();if(d.close)closeApexModal()}catch(e){toast(e.message||\'عملیات ناموفق\')}}\nwindow.claim=(action,key,kind)=>act(action,{key,kind});\nwindow.daily=()=>act(\'daily_claim\');window.buy=key=>openModal(`<h3>خرید از فروشگاه</h3><p>آیتم انتخاب\u200cشده را با سکه\u200cهای واقعی حساب ApexRival خریداری می\u200cکنی.</p><div class="sheetactions"><button class="bigbtn" onclick="closeApexModal();act(\'shop_buy\',{key:\'${key}\'})">تأیید خرید</button><button class="outline" onclick="closeApexModal()">انصراف</button></div>`);\nwindow.markRead=()=>act(\'read_notifications\');\nwindow.openBot=cmd=>{try{const u=state.bot.username;if(!u){toast(\'یوزرنیم ربات در دسترس نیست\');return}const url=\'https://t.me/\'+u+\'?start=apex_\'+encodeURIComponent(cmd);if(tg?.openTelegramLink)tg.openTelegramLink(url);else window.open(url,\'_blank\')}catch(e){toast(\'باز کردن ربات ناموفق بود\')}};\nwindow.startGame=()=>openBot(\'apex\');\ninitTG();\nrefresh();\n})();\n</script>\n</body>\n</html>\n'
 
-# ================================================================
-#  Telegram Mini App — تک‌فایلی و متصل به داده‌های واقعی ربات
-# ================================================================
-MINIAPP_HTML = '<!doctype html>\n<html lang="fa" dir="rtl">\n<head>\n<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n<meta name="theme-color" content="#080b12"><title>ApexRival</title>\n<script src="https://telegram.org/js/telegram-web-app.js"></script>\n<style>\n:root{--bg:#080b12;--p:#101522;--p2:#171e2d;--line:#273044;--t:#f5f7fb;--m:#8995aa;--a:#7657ff;--b:#00cfff;--g:#ffc857}\n*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font-family:Tahoma,"Segoe UI",sans-serif;padding-bottom:90px}\n.app{max-width:760px;margin:auto;padding:18px 14px}.glow{position:fixed;width:260px;height:260px;border-radius:50%;filter:blur(100px);background:#7657ff2b;top:-100px;right:-100px;pointer-events:none}\n.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.brand{display:flex;gap:10px;align-items:center}.logo{width:45px;height:45px;border-radius:15px;display:grid;place-items:center;background:linear-gradient(135deg,var(--a),#479cff);font-weight:900}.brand b{font-size:18px}.brand small{display:block;color:var(--m);font-size:11px;margin-top:3px}.coins{background:var(--p);border:1px solid var(--line);border-radius:14px;padding:9px 12px;color:var(--g);font-weight:800}\n.hero{background:linear-gradient(145deg,#191631,#101522 60%,#0d1a28);border:1px solid #303452;border-radius:27px;padding:20px;box-shadow:0 16px 50px #0006}.hero h1{margin:0 0 7px;font-size:25px}.hero p{margin:0;color:var(--m);font-size:12px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:18px}.stat{background:#ffffff09;border:1px solid #ffffff0d;border-radius:16px;padding:12px}.stat span{display:block;color:var(--m);font-size:10px;margin-bottom:6px}.stat strong{font-size:18px}.xp{margin-top:14px}.xphead{display:flex;justify-content:space-between;color:var(--m);font-size:10px;margin-bottom:7px}.bar{height:9px;background:#080b12;border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--a),var(--b));border-radius:99px}\n.sec{margin-top:20px}.sec h2{font-size:16px;margin:0 0 10px}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.card{background:var(--p);border:1px solid var(--line);border-radius:20px;padding:15px}.action{text-align:right;min-height:115px}.action:active{transform:scale(.98)}.icon{font-size:25px;margin-bottom:9px}.action b{display:block;font-size:13px}.action small{display:block;color:var(--m);font-size:11px;line-height:1.7;margin-top:5px}\n.user{display:flex;align-items:center;gap:10px}.avatar{width:42px;height:42px;border-radius:14px;background:var(--p2);display:grid;place-items:center;font-weight:900}.um{flex:1}.um b{display:block;font-size:13px}.um small{color:var(--m)}.win{font-weight:900;color:var(--g)}\n.page{display:none}.page.active{display:block}.nav{position:fixed;z-index:10;bottom:9px;left:50%;transform:translateX(-50%);width:min(730px,calc(100% - 18px));display:grid;grid-template-columns:repeat(4,1fr);padding:7px;background:#111622ee;backdrop-filter:blur(18px);border:1px solid #293248;border-radius:22px;box-shadow:0 15px 40px #0008}.nav button{background:none;color:var(--m);border-radius:15px;padding:8px 3px;font-size:10px}.nav button.active{background:#7657ff25;color:#fff}.ni{display:block;font-size:18px;margin-bottom:3px}\n.toast{position:fixed;z-index:30;bottom:92px;left:50%;transform:translate(-50%,20px);opacity:0;background:#1b2230;border:1px solid #34405a;padding:10px 14px;border-radius:14px;font-size:11px;transition:.2s;white-space:nowrap}.toast.show{opacity:1;transform:translate(-50%,0)}\n@media(min-width:600px){.app{padding:25px 20px}.grid{grid-template-columns:repeat(3,1fr)}}\n</style></head>\n<body><div class="glow"></div><main class="app">\n<header class="top"><div class="brand"><div class="logo">AR</div><div><b>ApexRival</b><small>پنل بازی گروهی</small></div></div><div class="coins">🪙 <span id="coins">0</span></div></header>\n<section id="home" class="page active"><div class="hero"><h1 id="hello">خوش اومدی 👋</h1><p>پروفایل و امکانات ApexRival</p><div class="stats"><div class="stat"><span>سطح</span><strong id="level">1</strong></div><div class="stat"><span>XP</span><strong id="xp">0</strong></div><div class="stat"><span>بازی\u200cها</span><strong id="games">0</strong></div></div><div class="xp"><div class="xphead"><span>پیشرفت سطح</span><span id="xptext">0 / 100</span></div><div class="bar"><i id="xpbar"></i></div></div></div>\n<div class="sec"><h2>دسترسی سریع</h2><div class="grid"><button class="card action" onclick="page(\'profile\')"><div class="icon">👤</div><b>پروفایل من</b><small>اطلاعات و آمار حساب</small></button><button class="card action" onclick="page(\'leaderboard\')"><div class="icon">🏆</div><b>لیدربورد</b><small>رتبه بازیکن\u200cها</small></button><button class="card action" onclick="page(\'games\')"><div class="icon">🎮</div><b>بازی\u200cها</b><small>حالت\u200cهای بازی</small></button><button class="card action" onclick="page(\'achievements\')"><div class="icon">🎖️</div><b>دستاوردها</b><small>رکوردها و جوایز</small></button></div></div>\n<div class="sec"><h2>حساب</h2><div class="card"><div class="user"><div class="avatar" id="avatar">A</div><div class="um"><b id="name">بازیکن</b><small id="username">@player</small></div><div class="win" id="wins">0 برد</div></div></div></div></section>\n<section id="profile" class="page"><div class="hero"><h1>پروفایل 👤</h1><p>اطلاعات حساب تلگرام</p></div><div class="sec"><div class="card"><div class="user"><div class="avatar" id="pavatar">A</div><div class="um"><b id="pname">بازیکن</b><small id="pusername">@player</small></div></div><div class="stats"><div class="stat"><span>سطح</span><strong id="plevel">1</strong></div><div class="stat"><span>برد</span><strong id="pwins">0</strong></div><div class="stat"><span>سکه</span><strong id="pcoins">0</strong></div></div></div></div></section>\n<section id="leaderboard" class="page"><div class="hero"><h1>لیدربورد 🏆</h1><p>رتبه\u200cبندی واقعی بازیکن\u200cهای ApexRival</p></div><div class="sec"><div class="card" id="leaders"></div></div></section>\n<section id="games" class="page"><div class="hero"><h1>بازی\u200cها 🎮</h1><p>حالت موردنظر را انتخاب کن</p></div><div class="sec"><div class="grid"><button class="card action" onclick="toast(\'بخش بازی از طریق منطق اصلی ربات اجرا می\u200cشود.\')"><div class="icon">⚔️</div><b>رقابت</b><small>شروع رقابت گروهی</small></button><button class="card action" onclick="toast(\'مینی\u200cگیم\u200cها از منوی اصلی بات قابل اجرا هستند.\')"><div class="icon">🧠</div><b>مینی\u200cگیم</b><small>چالش سریع</small></button><button class="card action" onclick="toast(\'دوئل از منطق اصلی ApexRival استفاده می\u200cکند.\')"><div class="icon">🥊</div><b>دوئل</b><small>مقابله با بازیکن</small></button><button class="card action" onclick="toast(\'فروشگاه از اطلاعات واقعی ربات استفاده می\u200cکند.\')"><div class="icon">🛒</div><b>فروشگاه</b><small>آیتم\u200cها و امکانات</small></button></div></div></section>\n<section id="achievements" class="page"><div class="hero"><h1>دستاوردها 🎖️</h1><p>رکوردها و افتخارات حساب</p></div><div class="sec"><div class="grid"><div class="card action"><div class="icon">🔥</div><b>شروع\u200cکننده</b><small>اولین بازی را انجام بده.</small></div><div class="card action"><div class="icon">🏅</div><b>رقیب</b><small>بردهای بیشتری ثبت کن.</small></div><div class="card action"><div class="icon">💎</div><b>کلکسیونر</b><small>دستاوردهای مختلف جمع کن.</small></div><div class="card action"><div class="icon">👑</div><b>افسانه</b><small>برای بازیکن\u200cهای سطح بالا.</small></div></div></div></section>\n</main><nav class="nav"><button class="active" data-page="home" onclick="page(\'home\')"><span class="ni">⌂</span>خانه</button><button data-page="leaderboard" onclick="page(\'leaderboard\')"><span class="ni">🏆</span>رتبه\u200cها</button><button data-page="games" onclick="page(\'games\')"><span class="ni">🎮</span>بازی</button><button data-page="profile" onclick="page(\'profile\')"><span class="ni">👤</span>من</button></nav><div id="toast" class="toast"></div>\n<script>\n(()=>{const tg=window.Telegram?.WebApp||null;let s={user:{first_name:"بازیکن",username:"player"},coins:0,xp:0,level:1,games:0,wins:0};\nfunction full(){return[s.user.first_name,s.user.last_name].filter(Boolean).join(" ")||"بازیکن"}\nfunction render(){let n=full(),u=s.user.username?"@"+s.user.username:"کاربر تلگرام",i=n.charAt(0).toUpperCase(),need=Math.max(100,s.level*100);["name","pname"].forEach(x=>document.getElementById(x).textContent=n);["username","pusername"].forEach(x=>document.getElementById(x).textContent=u);["avatar","pavatar"].forEach(x=>document.getElementById(x).textContent=i);["level","plevel"].forEach(x=>document.getElementById(x).textContent=s.level);["coins","pcoins"].forEach(x=>document.getElementById(x).textContent=s.coins.toLocaleString("fa-IR"));document.getElementById("xp").textContent=s.xp.toLocaleString("fa-IR");document.getElementById("games").textContent=s.games.toLocaleString("fa-IR");document.getElementById("wins").textContent=s.wins.toLocaleString("fa-IR")+" برد";document.getElementById("pwins").textContent=s.wins.toLocaleString("fa-IR");document.getElementById("xptext").textContent=s.xp.toLocaleString("fa-IR")+" / "+need.toLocaleString("fa-IR");document.getElementById("xpbar").style.width=Math.min(100,Math.round(s.xp/need*100))+"%";document.getElementById("hello").textContent="خوش اومدی "+n+" 👋"}\nfunction leaders(data){let rows=data||[{rank:1,name:"در حال دریافت...",xp:0}];document.getElementById("leaders").innerHTML=rows.map(r=>\'<div class="user" style="margin-bottom:12px"><div style="width:30px;text-align:center;color:var(--g);font-weight:900">\'+r.rank+\'</div><div class="avatar">\'+String(r.name||"؟").charAt(0)+\'</div><div class="um"><b>\'+String(r.name||"بازیکن")+\'</b><small>XP</small></div><strong>\'+Number(r.xp||0).toLocaleString("fa-IR")+\'</strong></div>\').join("")}\nwindow.page=id=>{document.querySelectorAll(".page").forEach(x=>x.classList.remove("active"));document.getElementById(id).classList.add("active");document.querySelectorAll(".nav button").forEach(x=>x.classList.toggle("active",x.dataset.page===id));scrollTo({top:0,behavior:"smooth"})};\nwindow.toast=msg=>{let x=document.getElementById("toast");x.textContent=msg;x.classList.add("show");clearTimeout(window.__t);window.__t=setTimeout(()=>x.classList.remove("show"),2400)};\nasync function start(){if(tg){try{tg.ready();tg.expand();if(tg.initDataUnsafe?.user)s.user={...s.user,...tg.initDataUnsafe.user};if(tg.colorScheme==="light"){document.documentElement.style.setProperty("--bg","#f4f6fa");document.documentElement.style.setProperty("--p","#fff");document.documentElement.style.setProperty("--p2","#eef1f7");document.documentElement.style.setProperty("--line","#dfe4ed");document.documentElement.style.setProperty("--t","#111827");document.documentElement.style.setProperty("--m","#64748b")}}catch(e){}}\nrender();leaders([{rank:1,name:"—",xp:0}]);\ntry{if(tg?.initData){let r=await fetch("/api/miniapp/me",{headers:{"X-Telegram-Init-Data":tg.initData}});if(r.ok){let d=await r.json();s={...s,...d};render();leaders(d.leaderboard)}}}catch(e){}}\nstart()})();\n</script></body></html>'
+_MINIAPP_RATE: dict[str, list[float]] = {}
+
+def _miniapp_json(handler, payload: dict, status: int = 200) -> None:
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store, max-age=0")
+    handler.send_header("X-Content-Type-Options", "nosniff")
+    handler.send_header("Content-Length", str(len(raw)))
+    handler.end_headers()
+    handler.wfile.write(raw)
+
+
+def _miniapp_auth(init_data: str) -> tuple[int, dict] | None:
+    """Validate Telegram Mini App initData and return (uid, signed_user)."""
+    try:
+        init_data = str(init_data or "")
+        if not init_data or not BOT_TOKEN:
+            return None
+        pairs = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+        received_hash = str(pairs.pop("hash", "") or "")
+        if len(received_hash) != 64:
+            return None
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256).digest()
+        calculated = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calculated, received_hash):
+            return None
+        auth_date = int(pairs.get("auth_date", "0") or 0)
+        if auth_date <= 0 or time.time() - auth_date > 86400:
+            return None
+        user_raw = pairs.get("user", "")
+        user_obj = json.loads(user_raw) if user_raw else {}
+        uid = int(user_obj.get("id", 0) or 0)
+        if uid <= 0:
+            return None
+        return uid, user_obj
+    except Exception:
+        return None
+
+
+def _miniapp_request_user(handler) -> tuple[int, dict] | None:
+    init_data = handler.headers.get("X-Telegram-Init-Data", "")
+    if not init_data:
+        init_data = handler.headers.get("X-Telegram-Web-App-Init-Data", "")
+    return _miniapp_auth(init_data)
+
+
+def _miniapp_rate_ok(key: str, limit: int = 30, window: int = 60) -> bool:
+    now = time.time()
+    values = _MINIAPP_RATE.setdefault(str(key), [])
+    cutoff = now - window
+    values[:] = [x for x in values if x > cutoff]
+    if len(values) >= limit:
+        return False
+    values.append(now)
+    if len(_MINIAPP_RATE) > 3000:
+        for k in list(_MINIAPP_RATE)[:500]:
+            if not _MINIAPP_RATE[k] or _MINIAPP_RATE[k][-1] < cutoff:
+                _MINIAPP_RATE.pop(k, None)
+    return True
+
+
+def _miniapp_history(user: dict) -> list[dict]:
+    out: list[dict] = []
+    for item in list(user.get("game_history", []) or [])[:15]:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            "icon": "🎮",
+            "title": item.get("mode") or item.get("type") or "بازی",
+            "detail": item.get("result") or item.get("summary") or item.get("players") or "فعالیت بازی",
+            "xp": int(item.get("xp", 0) or 0),
+            "time": _miniapp_time(item.get("ts", 0)),
+        })
+    if not out:
+        for item in list(user.get("activity_log", []) or [])[:10]:
+            if not isinstance(item, dict):
+                continue
+            out.append({
+                "icon": "⚡",
+                "title": item.get("action", "فعالیت"),
+                "detail": item.get("details", ""),
+                "xp": 0,
+                "time": _miniapp_time(item.get("ts", 0)),
+            })
+    return out
+
+
+def _miniapp_time(ts) -> str:
+    try:
+        if not ts:
+            return ""
+        return datetime.fromtimestamp(float(ts), timezone.utc).astimezone().strftime("%Y/%m/%d %H:%M")
+    except Exception:
+        return ""
+
+
+def _miniapp_state(uid: int, tg_user: dict) -> dict:
+    user = get_user(int(uid), str(tg_user.get("first_name") or user_key(uid)))
+    try:
+        signed_name = " ".join(x for x in [tg_user.get("first_name"), tg_user.get("last_name")] if x).strip()
+        # Stored custom name wins; Telegram profile name is only used when default is still generic.
+        if (not user.get("name") or user.get("name") in ("کاربر", "بازیکن")) and signed_name:
+            user["name"] = signed_name
+    except Exception:
+        pass
+    xp = int(user.get("xp", 0) or 0)
+    level = int(user.get("level", level_for_xp(xp)) or 1)
+    floor_xp = max(0, (level - 1) * 100)
+    rank_name, rank_icon, rank_row = rank_for_xp(xp)
+    games = int(user.get("games", 0) or 0)
+    wins = int(user.get("wins", 0) or 0)
+    losses = int(user.get("losses", 0) or 0)
+    success = round((wins / games) * 100, 1) if games else 0
+    modes = dict((user.get("stats_ext", {}) or {}).get("modes_played", {}) or {})
+    ach_all = v9_all_achievements()
+    earned_keys = set(str(x) for x in (user.get("achievements", []) or []))
+    ach_items = []
+    for key, d in list(ach_all.items()):
+        if not isinstance(d, dict):
+            continue
+        ach_items.append({
+            "key": str(key), "icon": str(d.get("icon", "🎖")), "name": str(d.get("name", key)),
+            "desc": str(d.get("desc", "")), "earned": str(key) in earned_keys,
+        })
+    ach_items.sort(key=lambda x: (not x["earned"], x["name"]))
+    missions = user_daily_missions(uid)
+    q_daily = user_quests_daily(uid)
+    q_weekly = user_quests_weekly(uid)
+    shop_items = []
+    for key, d in SHOP_ITEMS.items():
+        if not isinstance(d, dict):
+            continue
+        shop_items.append({
+            "key": key, "cat": d.get("cat", "util"), "name": d.get("name", key),
+            "price": int(d.get("price", 0) or 0), "desc": d.get("desc", ""), "rar": d.get("rar", "common"),
+        })
+    cats_raw = sorted({str(x["cat"]) for x in shop_items})
+    cat_names = {"title": "لقب", "theme": "تم", "power": "پاورآپ", "boost": "بوستر", "box": "جعبه", "util": "ابزار"}
+    lb = []
+    my_rank = None
+    for idx, (lu, lxp, lwins, lgames) in enumerate(leaderboard_global(50), start=1):
+        if int(lu) == int(uid):
+            my_rank = idx
+        lu_data = DATA.get("users", {}).get(user_key(int(lu)), {})
+        rname, ricon, _ = rank_for_xp(int(lxp))
+        lb.append({
+            "rank": idx, "uid": int(lu), "name": str(lu_data.get("name") or name_of(lu) or "بازیکن"),
+            "xp": int(lxp), "wins": int(lwins), "games": int(lgames), "rank_name": rname,
+            "verified": bool(lu_data.get("verified", False)),
+        })
+    if my_rank is None and lb:
+        my_rank = next((x["rank"] for x in lb if x["uid"] == uid), None)
+    events = []
+    try:
+        for _, e in active_events()[:4]:
+            if isinstance(e, dict):
+                events.append({"title": e.get("title", "رویداد"), "desc": e.get("desc", e.get("description", "رویداد فعال"))})
+    except Exception:
+        pass
+    unread = unread_notifications(uid)
+    notifications = []
+    for n in list(user.get("notify_inbox", []) or [])[:20]:
+        if not isinstance(n, dict):
+            continue
+        notifications.append({"title": n.get("title", "اعلان"), "body": n.get("body", ""), "read": bool(n.get("read", False)), "unread": not bool(n.get("read", False)), "time": _miniapp_time(n.get("ts", 0))})
+    inv = {str(k): int(v) for k, v in (user.get("inventory", {}) or {}).items() if int(v or 0) > 0}
+    history = _miniapp_history(user)
+    daily_completed = sum(1 for m in missions if isinstance(m, dict) and m.get("completed"))
+    q_all = list(q_daily or []) + list(q_weekly or [])
+    q_completed = sum(1 for q in q_all if isinstance(q, dict) and q.get("completed"))
+    admin_enabled = bool(has_permission(uid, "admin"))
+    return {
+        "ok": True, "api": 1, "questTab": "daily", "unread": unread,
+        "user": {
+            "id": int(uid), "name": str(user.get("name") or "بازیکن"),
+            "username": (f"@{tg_user.get('username')}" if tg_user.get("username") else "کاربر تلگرام"),
+            "verified": bool(user.get("verified", False)), "vip": bool(is_vip(uid)),
+            "profile_theme": str(user.get("profile_theme") or user.get("theme") or "default"),
+        },
+        "stats": {
+            "xp": xp, "coins": int(user.get("coins", 0) or 0), "level": level, "games": games,
+            "wins": wins, "losses": losses, "success_rate": success, "best_streak": int(user.get("best_streak", 0) or 0),
+            "duels": int(user.get("duels", 0) or 0), "boss": int(user.get("boss", 0) or 0),
+            "reputation": int(user.get("reputation", 0) or 0), "elo": int(user.get("elo_rating", 1000) or 1000),
+            "daily_streak": int(user.get("daily_streak", 0) or 0), "season_xp": int(user.get("season_xp", 0) or 0),
+            "history_count": len(user.get("game_history", []) or []), "modes": modes,
+            "rank_name": rank_name, "rank_icon": rank_icon,
+        },
+        "meta": {
+            "level_floor_xp": floor_xp, "level_next_xp": level * 100,
+            "mode_labels": MODE_LABELS, "bot_version": VERSION,
+            "theme": {"a": "#7b5cff"},
+        },
+        "daily": {"eligible": daily_reward_eligible(uid), "missions_completed": daily_completed, "missions_total": len(missions)},
+        "missions": missions,
+        "quests": {"daily": q_daily, "weekly": q_weekly, "completed": q_completed, "total": len(q_all)},
+        "missions_claimed": list((user.get("daily_missions", {}) or {}).get("claimed", []) or []),
+        "quests_claimed_daily": list((user.get("quests_daily", {}) or {}).get("claimed", []) or []),
+        "quests_claimed_weekly": list((user.get("quests_weekly", {}) or {}).get("claimed", []) or []),
+        "achievements": {"earned": len(earned_keys), "total": len(ach_items), "showcase": [str(x) for x in (user.get("showcase_achievements", []) or [])], "items": ach_items},
+        "inventory": inv,
+        "shop": {"count": len(shop_items), "items": shop_items, "cats": {k: cat_names.get(k, k) for k in cats_raw}},
+        "leaderboard": lb, "social": {"rank": my_rank, "friends": len(user.get("friends", []) or []), "rivals": len(user.get("rivals", []) or []), "referrals": len(user.get("referrals", []) or [])},
+        "history": history, "notifications": notifications, "events": events,
+        "admin": {"enabled": admin_enabled, "users": len(DATA.get("users", {})), "groups": len(DATA.get("groups", {})), "active_games": sum(1 for g in DATA.get("games", {}).values() if isinstance(g, dict) and g.get("status") == "active")} if admin_enabled else {"enabled": False},
+        "bot": {"username": str(BOT_USERNAME_CACHE.get("u", "") or "")},
+    }
+
+
+def _miniapp_shop_buy(uid: int, key: str) -> tuple[bool, str]:
+    d = SHOP_ITEMS.get(str(key))
+    if not isinstance(d, dict):
+        return False, "آیتم پیدا نشد."
+    price = int(d.get("price", 0) or 0)
+    user = get_user(uid)
+    if not spend_coins(uid, price):
+        return False, f"سکه کافی نداری؛ {fmt_num(price)} سکه لازم است."
+    kind = d.get("kind")
+    value = d.get("value")
+    note = "خرید با موفقیت انجام شد! 🎉"
+    if kind == "title":
+        user["title"] = str(value)
+        user.setdefault("titles_owned", [])
+        if str(value) not in user["titles_owned"]:
+            user["titles_owned"].append(str(value))
+        note = f"لقب {d.get('name', key)} فعال شد."
+    elif kind == "theme":
+        user["theme"] = str(value)
+        user["profile_theme"] = str(value)
+        note = f"تم {d.get('name', key)} فعال شد."
+    elif kind == "box":
+        lo, hi = value
+        got = random.randint(int(lo), int(hi))
+        add_coins(uid, got, user.get("name"))
+        note = f"جعبه باز شد و {fmt_num(got)} سکه گرفتی!"
+    elif kind == "mystery":
+        note = re.sub(r"<[^>]+>", "", str(_mystery_open(uid)))
+    elif kind == "luck":
+        user["v24_luck_until"] = time.time() + int(value)
+        note = "طلسم شانس فعال شد."
+    elif kind == "xpboost":
+        user["v24_xp_until"] = time.time() + int(value)
+        note = "بوست XP فعال شد."
+    elif kind == "boost":
+        bkind, dur = value
+        now = time.time()
+        if bkind in ("xp", "both"):
+            user["v24_xp_until"] = max(now, float(user.get("v24_xp_until", 0) or 0)) + int(dur)
+        if bkind in ("coin", "both"):
+            user["v24_luck_until"] = max(now, float(user.get("v24_luck_until", 0) or 0)) + int(dur)
+        note = "بوستر با موفقیت فعال شد."
+    elif kind == "power":
+        base_item = str(value); times = int(d.get("times", 1) or 1)
+        if base_item == "kit":
+            grant_item(uid, "shield", 2); grant_item(uid, "reroll", 1); grant_item(uid, "double", 1)
+        else:
+            grant_item(uid, base_item, times)
+        note = "آیتم به موجودی اضافه شد."
+    elif kind == "item":
+        base_item = str(value); times = 3 if str(key) == "util_shield3" else 1
+        grant_item(uid, base_item, times)
+        note = "آیتم به موجودی اضافه شد."
+    elif kind == "rename":
+        grant_item(uid, "rename", 1); note = "کارت تغییر نام به موجودی اضافه شد."
+    elif kind == "lossreset":
+        user["streak"] = 0; note = "استریک باخت پاک شد."
+    v24_store()["stats"]["shop_buys"] = int(v24_store()["stats"].get("shop_buys", 0)) + 1
+    award_achievement(uid, "v24_shopaholic")
+    audit("miniapp_shop_buy", uid, None, str(key))
+    save_data(force=True)
+    return True, note
+
+
+def _miniapp_action(uid: int, action: str, payload: dict) -> tuple[bool, str]:
+    action = str(action or "")
+    if action == "daily_claim":
+        r = daily_reward_claim(uid)
+        if not r.get("ok"):
+            return False, "پاداش امروز را قبلاً گرفتی." if r.get("reason") == "already_claimed" else "دریافت پاداش ناموفق بود."
+        save_data(force=True)
+        return True, f"🎁 +{fmt_num(r.get('coins',0))} سکه و +{fmt_num(r.get('xp',0))} XP دریافت کردی!"
+    if action == "mission_claim":
+        key = str(payload.get("key", ""))
+        ok = claim_mission(uid, key)
+        if not ok:
+            return False, "این مأموریت کامل نشده یا قبلاً دریافت شده."
+        save_data(force=True)
+        return True, "🎯 پاداش مأموریت دریافت شد."
+    if action == "claim_quest":
+        key = str(payload.get("key", "")); kind = str(payload.get("kind", "daily") or "daily")
+        if kind not in ("daily", "weekly"):
+            kind = "daily"
+        ok = claim_quest(uid, kind, key)
+        if not ok:
+            return False, "این Quest کامل نشده یا قبلاً دریافت شده."
+        save_data(force=True)
+        return True, "🧩 پاداش Quest دریافت شد."
+    if action == "read_notifications":
+        mark_notifications_read(uid); save_data(force=True); return True, "اعلان‌ها خوانده شدند."
+    if action == "shop_buy":
+        return _miniapp_shop_buy(uid, str(payload.get("key", "")))
+    return False, "عملیات ناشناخته است."
+
 
 # ================================================================
 #  سرور سلامت (Render)
 # ================================================================
 
-def _miniapp_validate_init_data(init_data: str) -> dict | None:
-    """اعتبارسنجی رسمی Telegram WebApp initData در سمت سرور."""
-    if not BOT_TOKEN or not init_data:
-        return None
-    try:
-        pairs = urllib.parse.parse_qsl(init_data, keep_blank_values=True)
-        data = dict(pairs)
-        received_hash = str(data.pop("hash", "") or "")
-        if not received_hash:
-            return None
-        check_string = "\n".join(f"{k}={data[k]}" for k in sorted(data))
-        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256).digest()
-        calculated = hmac.new(secret_key, check_string.encode("utf-8"), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(calculated, received_hash):
-            return None
-        auth_date = int(data.get("auth_date", "0") or 0)
-        if auth_date and abs(time.time() - auth_date) > 86400:
-            return None
-        user_raw = data.get("user", "")
-        user = json.loads(user_raw) if user_raw else {}
-        if not isinstance(user, dict) or not user.get("id"):
-            return None
-        return user
-    except Exception:
-        return None
-
-
-def _miniapp_payload(user: dict) -> dict:
-    uid = int(user["id"])
-    name = " ".join(str(x) for x in (user.get("first_name"), user.get("last_name")) if x).strip() or "کاربر"
-    record = get_user(uid, name=name)
-    xp = max(0, int(record.get("xp", 0) or 0))
-    coins = max(0, int(record.get("coins", 0) or 0))
-    level = int(record.get("level", 1) or 1)
-    games = max(0, int(record.get("games", 0) or 0))
-    wins = max(0, int(record.get("wins", 0) or 0))
-    rows = []
-    try:
-        with LOCK:
-            for raw_uid, raw in DATA.get("users", {}).items():
-                if not isinstance(raw, dict):
-                    continue
-                rows.append({
-                    "uid": int(raw_uid),
-                    "name": str(raw.get("name", "کاربر") or "کاربر"),
-                    "xp": max(0, int(raw.get("xp", 0) or 0)),
-                })
-    except Exception:
-        rows = []
-    rows.sort(key=lambda x: x["xp"], reverse=True)
-    leaderboard = [
-        {"rank": i + 1, "name": r["name"], "xp": r["xp"]}
-        for i, r in enumerate(rows[:20])
-    ]
-    return {
-        "user": {
-            "id": uid,
-            "first_name": str(user.get("first_name", "") or ""),
-            "last_name": str(user.get("last_name", "") or ""),
-            "username": str(user.get("username", "") or ""),
-        },
-        "coins": coins,
-        "xp": xp,
-        "level": level,
-        "games": games,
-        "wins": wins,
-        "leaderboard": leaderboard,
-    }
-
-
 def start_health_server() -> None:
     class _HealthHandler(BaseHTTPRequestHandler):
-        def _send(self, code: int, body: bytes, content_type: str = "text/plain; charset=utf-8") -> None:
-            self.send_response(code)
+        def _headers(self, content_type: str = "text/plain; charset=utf-8"):
             self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "no-store, max-age=0")
+            self.send_header("X-Content-Type-Options", "nosniff")
+
+        def _send_text(self, body: str, status: int = 200, content_type: str = "text/plain; charset=utf-8"):
+            raw = body.encode("utf-8")
+            self.send_response(status)
+            self._headers(content_type)
+            self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
-            self.wfile.write(body)
+            self.wfile.write(raw)
 
         def do_OPTIONS(self):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "X-Telegram-Init-Data, Content-Type")
-            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, X-Telegram-Web-App-Init-Data")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
 
         def do_GET(self):
-            path = urllib.parse.urlparse(self.path).path
+            path = urlsplit(self.path).path
             if path == "/miniapp":
                 body = MINIAPP_HTML.encode("utf-8")
-                self._send(200, body, "text/html; charset=utf-8")
-                return
-
-            if path == "/api/miniapp/me":
-                init_data = self.headers.get("X-Telegram-Init-Data", "")
-                user = _miniapp_validate_init_data(init_data)
-                if not user:
-                    self._send(401, b'{"ok":false,"error":"invalid_init_data"}', "application/json; charset=utf-8")
-                    return
-                payload = _miniapp_payload(user)
-                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store, max-age=0")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Security-Policy", "default-src 'self' https://telegram.org; script-src 'self' https://telegram.org 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:; frame-ancestors https://web.telegram.org https://*.telegram.org 'self';")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
                 return
-
-            if path in ("/", "/health", "/healthz"):
-                self._send(200, b"ApexRival OK")
+            if path == "/api/miniapp/state":
+                auth = _miniapp_request_user(self)
+                if not auth:
+                    _miniapp_json(self, {"ok": False, "error": "نشست Telegram معتبر نیست یا منقضی شده است."}, 401)
+                    return
+                uid, tg_user = auth
+                if not _miniapp_rate_ok(f"s:{uid}", 60, 60):
+                    _miniapp_json(self, {"ok": False, "error": "درخواست‌ها بیش از حد زیاد هستند."}, 429)
+                    return
+                try:
+                    _miniapp_json(self, _miniapp_state(uid, tg_user), 200)
+                except Exception as exc:
+                    log_event("error", "system", f"miniapp_state failed: {exc!r}", actor=uid)
+                    _miniapp_json(self, {"ok": False, "error": "خطای داخلی Mini App."}, 500)
                 return
+            if path in ("/", "/health", "/healthz"):
+                self._send_text("ApexRival OK")
+                return
+            self._send_text("Not Found", 404)
 
-            self._send(404, b"Not Found")
+        def do_POST(self):
+            path = urlsplit(self.path).path
+            if path != "/api/miniapp/action":
+                self._send_text("Not Found", 404)
+                return
+            auth = _miniapp_request_user(self)
+            if not auth:
+                _miniapp_json(self, {"ok": False, "error": "نشست Telegram معتبر نیست یا منقضی شده است."}, 401)
+                return
+            uid, _tg_user = auth
+            if not _miniapp_rate_ok(f"a:{uid}", 20, 60):
+                _miniapp_json(self, {"ok": False, "error": "تعداد عملیات در این دقیقه زیاد شده است."}, 429)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0") or 0)
+                if length <= 0 or length > 64 * 1024:
+                    raise ValueError("invalid body")
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                if not isinstance(body, dict):
+                    raise ValueError("invalid json")
+                with LOCK:
+                    ok, message = _miniapp_action(uid, body.get("action", ""), body)
+                _miniapp_json(self, {"ok": ok, "message": message, "data": _miniapp_state(uid, _tg_user) if ok else None}, 200 if ok else 400)
+            except Exception as exc:
+                log_event("error", "system", f"miniapp_action failed: {exc!r}", actor=uid)
+                _miniapp_json(self, {"ok": False, "error": "عملیات انجام نشد."}, 500)
 
         def log_message(self, format, *args):
             return
@@ -27867,10 +28138,10 @@ def start_health_server() -> None:
         try:
             server = ThreadingHTTPServer(("0.0.0.0", PORT), _HealthHandler)
             server.daemon_threads = True
-            print(f"Health/MiniApp server listening on 0.0.0.0:{PORT}")
+            print(f"Health/MiniApp server listening on 0.0.0.0:{PORT} | miniapp={MINIAPP_URL or 'off'}")
             server.serve_forever()
         except Exception as exc:
-            print(f"Health/MiniApp server error: {exc}")
+            print(f"Health server error: {exc}")
 
     thread = threading.Thread(target=_serve, name="apexrival-health", daemon=True)
     thread.start()
@@ -28083,19 +28354,6 @@ async def post_init(app) -> None:
         BOT_USERNAME_CACHE["u"] = me.username or ""
     except Exception:
         pass
-    if MINIAPP_URL:
-        try:
-            await app.bot.set_chat_menu_button(
-                menu_button=MenuButtonWebApp(
-                    text="ApexRival",
-                    web_app=WebAppInfo(url=MINIAPP_URL),
-                )
-            )
-            print(f"ApexRival Mini App menu button: {MINIAPP_URL}")
-        except Exception as exc:
-            print(f"ApexRival Mini App menu warning: {exc!r}")
-    else:
-        print("ApexRival Mini App: MINIAPP_URL/RENDER_EXTERNAL_URL not available; menu button skipped.")
     try:
         await app.bot.set_my_commands(
             [BotCommand(c, d) for c, d in COMMANDS_PRIVATE],
@@ -28114,6 +28372,12 @@ async def post_init(app) -> None:
         await app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS_PRIVATE])
     except Exception:
         pass
+    if MINIAPP_URL:
+        try:
+            await app.bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="⚡ اپ ApexRival", web_app=WebAppInfo(url=MINIAPP_URL)))
+            print(f"ApexRival Mini App menu configured: {MINIAPP_URL}")
+        except Exception as exc:
+            print(f"ApexRival Mini App menu warning: {exc!r}")
     try:
         backup_data("boot")
     except Exception:
