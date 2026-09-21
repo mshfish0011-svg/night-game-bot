@@ -27730,15 +27730,15 @@ async def backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ================================================================
-#  ApexRival Mini App ULTRA + Admin Web Control Center
-#  نسخه‌ی ۲.۰ — Ultra Edition (بدون هیچ تغییری در منطق بازی ربات)
+#  ApexRival Mini App ARENA + Admin Web Control Center
+#  نسخه‌ی ۳.۰ — Arena Edition (بدون هیچ تغییری در منطق بازی ربات)
 #  • موتور وب با HTTP/1.1 keep-alive، لاگ ساختاریافته و rate-limit
 #  • احراز هویت Telegram با بررسی تازگی امضا (ضد replay)
-#  • API غنی: پروفایل، مأموریت، Quest، پاداش روزانه، فروشگاه کامل،
-#    Season Pass، اعلان‌ها، رتبه‌بندی ۴گانه، بازخورد و پنل ادمین کامل
+#  • ۱۳ بازی کامل داخل مینی‌اپ + لابی چندنفره + دوئل + آرنا رنک‌دار
+#    + عشق‌سنج + Survival + آمار کامل + مقایسه + AI + ابزار پروفایل
 #  • همه‌ی عملیات نوشتنی دقیقاً از همان توابع اصلی ربات عبور می‌کنند
 # ================================================================
-MINIAPP_VERSION = "2.0-ultra"
+MINIAPP_VERSION = "3.0-arena"
 _MINI_AUTH_TTL = 86400  # حداکثر عمر امضای initData: ۲۴ ساعت
 _MINI_DEBUG = os.getenv("MINIAPP_DEBUG", "").strip() not in ("", "0")
 
@@ -28572,6 +28572,2007 @@ def _mini_admin_action(uid, action, data):
     return False, "این عملیات در پنل وب تعریف نشده است."
 
 
+# ================================================================
+#  🎮 IN-APP GAME ENGINE (۳.۰) — همه‌ی بازی‌های ربات داخل مینی‌اپ
+#  هیچ تابع/بانکی از ربات تغییر نمی‌کند؛ فقط فراخوانی می‌شوند و
+#  پاداش‌ها دقیقاً با همان جدول ربات پرداخت می‌شوند.
+# ================================================================
+def _mg_view(uid):
+    """نمای مرکز بازی‌ها — رکوردها + آمار + وضعیت کول‌داون‌ها."""
+    try:
+        u = get_user(int(uid))
+        best = u.get("mg_best", {}) if isinstance(u.get("mg_best"), dict) else {}
+        stats = u.get("mini_games_stats", {}) if isinstance(u.get("mini_games_stats"), dict) else {}
+        luck_cd = 0
+        try:
+            st21 = v21_store()
+            last = float(st21["luck"].get(user_key(uid), 0) or 0)
+            luck_cd = max(0, int(LUCK_COOLDOWN - (time.time() - last)))
+        except Exception:
+            luck_cd = 0
+        quiz_done = False
+        try:
+            st21 = v21_store()
+            quiz_done = bool(st21["quiz_day"].get(day_key(), {}).get(user_key(uid)))
+        except Exception:
+            quiz_done = False
+        ln_free = False
+        try:
+            ln_free = str(u.get("ln_free_day", "")) != today_key()
+        except Exception:
+            ln_free = False
+        return {
+            "ok": True,
+            "played": int(u.get("mini_games_played", 0) or 0),
+            "won": int(u.get("mini_games_won", 0) or 0),
+            "best": {k: int(v) for k, v in best.items()},
+            "stats": {k: int(v) for k, v in stats.items()},
+            "cooldowns": {"luck": luck_cd, "quiz_done": quiz_done, "ln_free": ln_free},
+            "games": [
+                {"key": "trivia", "icon": "🧠", "name": "Trivia زنجیره‌ای", "desc": "تا وقتی درست جواب می‌دهی ادامه دارد"},
+                {"key": "word", "icon": "📝", "name": "بازی کلمات", "desc": "حروف به‌هم‌ریخته را مرتب کن"},
+                {"key": "number", "icon": "🔢", "name": "حدس عدد", "desc": "۷ فرصت، گزینه‌های تطبیقی"},
+                {"key": "memory", "icon": "🃏", "name": "حافظه", "desc": "دنباله را به خاطر بسپار"},
+                {"key": "reaction", "icon": "⚡", "name": "سرعت واکنش", "desc": "میلیمترثانیه‌ات را بسنج"},
+                {"key": "ttt", "icon": "✖️", "name": "دوز با AI", "desc": "برد: +۲۰ سکه"},
+                {"key": "mine", "icon": "⛏", "name": "مین‌یاب", "desc": "شرطی — ضریب ریسک"},
+                {"key": "quiz", "icon": "🧮", "name": "کوییز ریاضی", "desc": "۶۰ ثانیه — +۸ XP"},
+                {"key": "luck", "icon": "🍀", "name": "گردونه شانس", "desc": "هر ۲۰ ساعت — تا ۵۰ سکه"},
+                {"key": "ln", "icon": "🎰", "name": "Lucky Number", "desc": "کازینو — جکپات ×۲۵"},
+            ],
+        }
+    except Exception as exc:
+        _mlog("error", f"_mg_view failed: {exc!r}")
+        return {"ok": False, "error": "خطا در بارگذاری مرکز بازی‌ها."}
+
+
+# ---------------- 🧠 Trivia زنجیره‌ای ----------------
+def _mini_trivia_get(uid):
+    try:
+        trivia = mini_game_trivia_get()
+        if not trivia:
+            return {"ok": False, "error": "سوالی موجود نیست."}, 500
+        st = DATA.setdefault("_mg_trivia", {}).get(str(uid)) or {}
+        if not st.get("q"):
+            st = {"streak": 0, "q": trivia}
+            DATA.setdefault("_mg_trivia", {})[str(uid)] = st
+        q = st["q"]
+        return {"ok": True, "question": q["question"], "options": q["options"],
+                "streak": int(st.get("streak", 0))}, 200
+    except Exception as exc:
+        _mlog("error", f"trivia_get failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_trivia_answer(uid, ans):
+    try:
+        st = DATA.get("_mg_trivia", {}).get(str(uid))
+        if not st:
+            return _mini_trivia_get(uid)
+        trivia = st["q"]
+        if str(ans) == str(trivia["answer"]):
+            st["streak"] = int(st.get("streak", 0)) + 1
+            streak = int(st["streak"])
+            add_xp(int(uid), 4 + min(streak, 10))
+            add_coins(int(uid), 3 + min(streak, 8))
+            bonus = 0
+            if streak % 5 == 0:
+                add_coins(int(uid), 25)
+                bonus = 25
+            st["q"] = mini_game_trivia_get()
+            nxt = st["q"]
+            save_data()
+            return {"ok": True, "correct": True, "streak": streak, "bonus": bonus,
+                    "question": nxt["question"], "options": nxt["options"],
+                    "message": f"درست! زنجیره: {streak}"}, 200
+        streak = int(st.get("streak", 0))
+        mini_game_record_play(int(uid), "trivia", streak >= 3)
+        is_rec = _mg_set_best(int(uid), "trivia", streak)
+        DATA.get("_mg_trivia", {}).pop(str(uid), None)
+        add_xp(int(uid), 2 + streak * 2)
+        save_data(force=True)
+        return {"ok": True, "correct": False, "streak": streak, "record": is_rec,
+                "answer": str(trivia["answer"]),
+                "message": f"نادرست! جواب: {trivia['answer']} — زنجیره‌ات {streak} بود"}, 200
+    except Exception as exc:
+        _mlog("error", f"trivia_answer failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 📝 بازی کلمات ----------------
+def _mini_word_get(uid):
+    try:
+        wd = mini_game_wordgame_get()
+        if not wd:
+            return {"ok": False, "error": "خطا در ساخت بازی."}, 500
+        original = str(wd["original"])
+        others = [w for w in WORD_GAME_WORDS if w != original]
+        opts = [original] + random.sample(others, min(3, len(others)))
+        random.shuffle(opts)
+        st = {"answer": original, "options": opts, "scrambled": wd["scrambled"], "hint": wd["hint"]}
+        DATA.setdefault("_mg_word", {})[str(uid)] = st
+        return {"ok": True, "scrambled": st["scrambled"], "hint": st["hint"], "options": opts}, 200
+    except Exception as exc:
+        _mlog("error", f"word_get failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_word_answer(uid, ans):
+    try:
+        st = DATA.get("_mg_word", {}).pop(str(uid), None)
+        if not st:
+            return _mini_word_get(uid)
+        correct = str(ans) == str(st["answer"])
+        if correct:
+            mini_game_record_play(int(uid), "wordgame", True)
+            _mg_set_best(int(uid), "wordgame", 1)
+            add_xp(int(uid), 15)
+            add_coins(int(uid), 8)
+        else:
+            mini_game_record_play(int(uid), "wordgame", False)
+            add_xp(int(uid), 5)
+        save_data(force=True)
+        nxt, code = _mini_word_get(uid)
+        nxt["correct"] = correct
+        nxt["answer"] = str(st["answer"])
+        nxt["message"] = ("درست! +" if correct else "نادرست! کلمه: ") + (str(st["answer"]) if not correct else "۱۵ XP +۸ سکه")
+        return nxt, code
+    except Exception as exc:
+        _mlog("error", f"word_answer failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🔢 حدس عدد ----------------
+def _mini_number_get(uid):
+    try:
+        game = mini_game_numberguess_new()
+        game["last_guess"] = 50
+        game["span"] = 40
+        DATA.setdefault("_mg_number", {})[str(uid)] = game
+        opts = _mg_number_options(50, 40)
+        return {"ok": True, "attempts_left": int(game["max_attempts"]),
+                "options": opts, "message": "عددی بین ۱ تا ۱۰۰ انتخاب شده!"}, 200
+    except Exception as exc:
+        _mlog("error", f"number_get failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_number_guess(uid, guess):
+    try:
+        game = DATA.get("_mg_number", {}).get(str(uid))
+        if not game or game.get("finished"):
+            return _mini_number_get(uid)
+        try:
+            guess = int(guess)
+        except Exception:
+            return {"ok": False, "error": "عدد معتبر بفرست."}, 400
+        game["attempts"] = int(game.get("attempts", 0)) + 1
+        target = int(game["target"])
+        remaining = int(game["max_attempts"]) - int(game["attempts"])
+        if guess == target:
+            game["finished"] = True
+            game["won"] = True
+            mini_game_record_play(int(uid), "numberguess", True)
+            _mg_set_best(int(uid), "numberguess", 1)
+            add_xp(int(uid), 5 + remaining * 2)
+            add_coins(int(uid), 4 + remaining * 2)
+            save_data(force=True)
+            nxt, code = _mini_number_get(uid)
+            nxt["won"] = True
+            nxt["target"] = target
+            nxt["message"] = f"آفرین! عدد {target} بود — {4 + remaining * 2} سکه گرفتی"
+            return nxt, code
+        hint = "بزرگ‌تر" if guess < target else "کوچک‌تر"
+        if remaining <= 0:
+            game["finished"] = True
+            game["won"] = False
+            mini_game_record_play(int(uid), "numberguess", False)
+            add_xp(int(uid), 5)
+            save_data(force=True)
+            return {"ok": True, "won": False, "lost": True, "target": target,
+                    "message": f"تمام شد! عدد {target} بود"}, 200
+        span = max(5, int(game.get("span", 40)) // 2)
+        game["span"] = span
+        game["last_guess"] = int(guess)
+        center = int(guess) + (span if int(guess) < target else -span)
+        opts = _mg_number_options(center, span)
+        save_data()
+        return {"ok": True, "hint": hint, "last_guess": int(guess),
+                "attempts_left": remaining, "options": opts}, 200
+    except Exception as exc:
+        _mlog("error", f"number_guess failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🃏 حافظه ----------------
+def _mini_memory_get(uid):
+    try:
+        game = mini_game_memory_new()
+        seq = list(game["sequence"])
+        correct = " ".join(str(x) for x in seq)
+        options = {correct}
+        while len(options) < 4:
+            shuffled = list(seq)
+            random.shuffle(shuffled)
+            options.add(" ".join(str(x) for x in shuffled))
+        options = list(options)
+        random.shuffle(options)
+        st = {"seq": seq, "correct": correct, "options": options}
+        DATA.setdefault("_mg_memory", {})[str(uid)] = st
+        return {"ok": True, "sequence": " ".join(str(x) for x in seq),
+                "options": options, "display_time": 3}, 200
+    except Exception as exc:
+        _mlog("error", f"memory_get failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_memory_answer(uid, idx):
+    try:
+        st = DATA.get("_mg_memory", {}).pop(str(uid), None)
+        if not st:
+            return _mini_memory_get(uid)
+        try:
+            idx = int(idx)
+        except Exception:
+            idx = -1
+        if idx < 0 or idx >= len(st["options"]):
+            return {"ok": False, "error": "گزینه نامعتبر."}, 400
+        correct = st["options"][idx] == st["correct"]
+        if correct:
+            mini_game_record_play(int(uid), "memory", True)
+            _mg_set_best(int(uid), "memory", 1)
+            add_xp(int(uid), 15)
+            add_coins(int(uid), 8)
+        else:
+            mini_game_record_play(int(uid), "memory", False)
+            add_xp(int(uid), 5)
+        save_data(force=True)
+        nxt, code = _mini_memory_get(uid)
+        nxt["correct"] = correct
+        nxt["correct_seq"] = str(st["correct"])
+        nxt["message"] = "درست! +۱۵ XP +۸ سکه" if correct else f"نادرست! دنباله درست: {st['correct']}"
+        return nxt, code
+    except Exception as exc:
+        _mlog("error", f"memory_answer failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- ⚡ واکنش ----------------
+def _mini_reaction_arm(uid):
+    try:
+        game = mini_game_reaction_new()
+        game["go_at_ms"] = int(now_ms() + random.randint(2200, 6000))
+        DATA.setdefault("_temp_reaction", {})[str(uid)] = game
+        save_data()
+        return {"ok": True, "go_at_ms": int(game["go_at_ms"])}, 200
+    except Exception as exc:
+        _mlog("error", f"reaction_arm failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_reaction_hit(uid, tap_ms):
+    try:
+        game = DATA.get("_temp_reaction", {}).pop(str(uid), None)
+        if not game or not game.get("go_at_ms"):
+            mini_game_record_play(int(uid), "reaction", False)
+            return {"ok": True, "early": True, "message": "زود زدی! دکمه هنوز سبز نشده بود."}, 200
+        try:
+            tap = int(tap_ms)
+        except Exception:
+            tap = int(now_ms())
+        go = int(game.get("go_at_ms"))
+        ms = tap - go
+        if ms < 0:
+            ms = max(50, int(now_ms()) - go)
+        ms = max(50, min(ms, 10000))
+        mini_game_record_play(int(uid), "reaction", True)
+        prev = _mg_best(int(uid), "reaction_ms")
+        is_rec = False
+        if prev <= 0 or ms < prev:
+            _mg_set_best(int(uid), "reaction_ms", ms)
+            is_rec = True
+        coins = xp = 0
+        if ms < 400:
+            xp, coins = 20, 12
+        elif ms < 800:
+            xp, coins = 12, 6
+        else:
+            xp, coins = 6, 3
+        add_xp(int(uid), xp)
+        add_coins(int(uid), coins)
+        save_data(force=True)
+        return {"ok": True, "ms": ms, "record": is_rec, "xp": xp, "coins": coins,
+                "message": f"واکنش: {ms}ms — +{coins} سکه"}, 200
+    except Exception as exc:
+        _mlog("error", f"reaction_hit failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- ✖️ دوز با AI ----------------
+def _mini_ttt_view(st):
+    return {"board": list(st["board"]), "over": bool(st.get("over")), "wins": int(st.get("wins", 0))}
+
+
+def _mini_ttt_get(uid):
+    try:
+        st = {"board": [0] * 9, "over": False, "wins": 0}
+        DATA.setdefault("_mg_ttt", {})[str(uid)] = st
+        return {"ok": True, **_mini_ttt_view(st), "message": "تو ❌ ، من ⭕ — برد هر بازی +۲۰ سکه"}, 200
+    except Exception as exc:
+        _mlog("error", f"ttt_get failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_ttt_move(uid, cell):
+    try:
+        st = DATA.get("_mg_ttt", {}).get(str(uid))
+        if not st or st.get("over"):
+            return _mini_ttt_get(uid)
+        try:
+            cell = int(cell)
+        except Exception:
+            return {"ok": False, "error": "خانه نامعتبر."}, 400
+        b = st["board"]
+        if cell < 0 or cell > 8 or b[cell] != 0:
+            return {"ok": False, "error": "این خانه پر است!"}, 400
+        b[cell] = 1
+        if _ttt_winner(b) == 1:
+            st["over"] = True
+            st["wins"] = int(st.get("wins", 0)) + 1
+            mini_game_record_play(int(uid), "ttt", True)
+            _mg_set_best(int(uid), "ttt", int(st.get("wins", 1)))
+            add_xp(int(uid), 20)
+            add_coins(int(uid), 20)
+            save_data(force=True)
+            return {"ok": True, **_mini_ttt_view(st), "won": True, "message": "بردی! +۲۰ سکه"}, 200
+        if all(v != 0 for v in b):
+            st["over"] = True
+            mini_game_record_play(int(uid), "ttt", False)
+            save_data()
+            return {"ok": True, **_mini_ttt_view(st), "draw": True, "message": "مساوی!"}, 200
+        ai = _ttt_ai_move(b)
+        if ai >= 0:
+            b[ai] = 2
+        if _ttt_winner(b) == 2:
+            st["over"] = True
+            mini_game_record_play(int(uid), "ttt", False)
+            save_data()
+            return {"ok": True, **_mini_ttt_view(st), "lost": True, "message": "باختی! دفعه بعد..."}, 200
+        if all(v != 0 for v in b):
+            st["over"] = True
+            mini_game_record_play(int(uid), "ttt", False)
+            save_data()
+            return {"ok": True, **_mini_ttt_view(st), "draw": True, "message": "مساوی!"}, 200
+        save_data()
+        return {"ok": True, **_mini_ttt_view(st), "message": "نوبت تو"}, 200
+    except Exception as exc:
+        _mlog("error", f"ttt_move failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- ⛏ مین‌یاب ----------------
+def _mini_mine_view(st, uid):
+    mult = _mine_mult(len(st["revealed"]))
+    return {"cells": st["revealed"], "over": bool(st.get("over")),
+            "pot": int(st["fee"] * mult), "mult": round(float(mult), 2),
+            "bombs": (list(st["bombs"]) if st.get("over") else []),
+            "fee": int(MINE_FEE), "bombs_count": int(MINE_BOMBS),
+            "coins": int(get_user(int(uid)).get("coins", 0) or 0)}
+
+
+def _mini_mine_get(uid):
+    try:
+        st = DATA.get("_mg_mine", {}).get(str(uid))
+        if st and not st.get("over"):
+            return {"ok": True, **_mini_mine_view(st, uid)}, 200
+        return {"ok": True, "new": True, "coins": int(get_user(int(uid)).get("coins", 0) or 0),
+                "fee": int(MINE_FEE), "bombs_count": int(MINE_BOMBS),
+                "message": f"ورودی {MINE_FEE} سکه — مین: {MINE_BOMBS} از {MINE_SIZE}"}, 200
+    except Exception as exc:
+        _mlog("error", f"mine_get failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_mine_start(uid):
+    try:
+        if not spend_coins(int(uid), MINE_FEE):
+            return {"ok": False, "error": f"ورودی مین‌یاب {MINE_FEE} سکه است — کافی نداری!"}, 400
+        bombs = random.sample(range(MINE_SIZE), MINE_BOMBS)
+        st = {"bombs": bombs, "revealed": [], "over": False, "fee": MINE_FEE}
+        DATA.setdefault("_mg_mine", {})[str(uid)] = st
+        save_data(force=True)
+        return {"ok": True, **_mini_mine_view(st, uid), "message": f"ورودی پرداخت شد ({MINE_FEE} سکه)"}, 200
+    except Exception as exc:
+        _mlog("error", f"mine_start failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_mine_open(uid, cell):
+    try:
+        st = DATA.get("_mg_mine", {}).get(str(uid))
+        if not st or st.get("over"):
+            return {"ok": False, "error": "بازی فعالی نداری — از اول شروع کن."}, 400
+        try:
+            cell = int(cell)
+        except Exception:
+            return {"ok": False, "error": "خانه نامعتبر."}, 400
+        if cell in st["revealed"] or cell < 0 or cell >= MINE_SIZE:
+            return {"ok": False, "error": "این خانه قبلاً باز شده!"}, 400
+        if cell in st["bombs"]:
+            st["over"] = True
+            mini_game_record_play(int(uid), "mine", False)
+            save_data(force=True)
+            return {"ok": True, **_mini_mine_view(st, uid), "boom": True,
+                    "message": "بووم! به مین خوردی — گنج سوخت!"}, 200
+        st["revealed"].append(cell)
+        mini_game_record_play(int(uid), "mine", True)
+        if len(st["revealed"]) >= MINE_SIZE - MINE_BOMBS:
+            st["over"] = True
+            pot = int(st["fee"] * _mine_mult(len(st["revealed"])))
+            add_coins(int(uid), pot)
+            _mg_set_best(int(uid), "mine", int(_mine_mult(len(st["revealed"])) * 100))
+            save_data(force=True)
+            return {"ok": True, **_mini_mine_view(st, uid), "won": True,
+                    "message": f"همه‌ی خانه‌های امن! +{pot} سکه!"}, 200
+        save_data()
+        return {"ok": True, **_mini_mine_view(st, uid), "message": "امن! گنج بزرگ‌تر شد..."}, 200
+    except Exception as exc:
+        _mlog("error", f"mine_open failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_mine_cash(uid):
+    try:
+        st = DATA.get("_mg_mine", {}).get(str(uid))
+        if not st or st.get("over"):
+            return {"ok": False, "error": "بازی فعالی نداری."}, 400
+        st["over"] = True
+        pot = int(st["fee"] * _mine_mult(len(st["revealed"])))
+        add_coins(int(uid), pot)
+        _mg_set_best(int(uid), "mine", int(_mine_mult(len(st["revealed"])) * 100))
+        save_data(force=True)
+        return {"ok": True, **_mini_mine_view(st, uid), "cashed": pot,
+                "message": f"برداشت! +{pot} سکه"}, 200
+    except Exception as exc:
+        _mlog("error", f"mine_cash failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🧮 کوییز ریاضی ----------------
+def _mini_quiz_get(uid):
+    try:
+        st21 = v21_store()
+        quota = st21["quiz_day"].get(day_key(), {})
+        if quota.get(user_key(uid)):
+            return {"ok": False, "error": "سهمیه‌ی کوییز امروزت پر شده! فردا دوباره 📅"}, 429
+        a, b = random.randint(2, 12), random.randint(2, 12)
+        op = random.choice(["+", "-", "×"])
+        if op == "+":
+            answer = a + b
+        elif op == "-":
+            a, b = max(a, b), min(a, b)
+            answer = a - b
+        else:
+            answer = a * b
+        DATA.setdefault("_mini_quiz", {})[str(uid)] = {"a": a, "b": b, "op": op,
+                                                       "answer": answer, "ts": time.time()}
+        save_data()
+        return {"ok": True, "q": f"{a} {op} {b} = ?", "timeout": 60, "reward_xp": 8}, 200
+    except Exception as exc:
+        _mlog("error", f"quiz_get failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_quiz_answer(uid, ans):
+    try:
+        q = DATA.get("_mini_quiz", {}).pop(str(uid), None)
+        if not q:
+            return {"ok": False, "error": "کوییز فعالی نداری — اول سوال بگیر."}, 400
+        if time.time() - float(q.get("ts", 0)) > 60:
+            return {"ok": False, "error": "وقت تمام شد! ۶۰ ثانیه گذشت."}, 400
+        st21 = v21_store()
+        quota = st21["quiz_day"].setdefault(day_key(), {})
+        quota[user_key(uid)] = True
+        st21["stats"]["quizzes"] = int(st21["stats"].get("quizzes", 0)) + 1
+        try:
+            val = int(str(ans).strip().replace("٬", "").replace(",", ""))
+        except Exception:
+            save_data()
+            return {"ok": True, "correct": False, "answer": int(q["answer"]),
+                    "message": "نه! جواب عددی نبود."}, 200
+        if val == int(q["answer"]):
+            add_xp(int(uid), 8)
+            award_achievement(int(uid), "v21_quiz_whiz")
+            save_data(force=True)
+            return {"ok": True, "correct": True, "answer": int(q["answer"]),
+                    "message": "درست! +۸ XP"}, 200
+        save_data(force=True)
+        return {"ok": True, "correct": False, "answer": int(q["answer"]),
+                "message": "نه! دوباره فکر کن..."}, 200
+    except Exception as exc:
+        _mlog("error", f"quiz_answer failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🍀 گردونه شانس ----------------
+def _mini_luck_spin(uid):
+    try:
+        st = v21_store()
+        last = float(st["luck"].get(user_key(uid), 0) or 0)
+        if time.time() - last < LUCK_COOLDOWN:
+            remain = int((LUCK_COOLDOWN - (time.time() - last)) / 3600) + 1
+            return {"ok": False, "error": f"گردونه برای تو تا {max(1, remain)} ساعت دیگه خسته‌ه 🎡"}, 429
+        st["luck"][user_key(uid)] = time.time()
+        st["stats"]["luck_spins"] = int(st["stats"].get("luck_spins", 0)) + 1
+        award_achievement(uid, "v21_lucky_star")
+        roll = random.random()
+        if roll < 0.05:
+            coins, label, tier = 50, "جایزه‌ی بزرگ!", 4
+        elif roll < 0.25:
+            coins, label, tier = 20, "شانس خوب!", 3
+        elif roll < 0.60:
+            coins, label, tier = 10, "نه بد نه خوب", 2
+        else:
+            coins, label, tier = 5, "کمی شانس", 1
+        best = int(st["luck_best"].get(user_key(uid), 0) or 0)
+        if coins > best:
+            st["luck_best"][user_key(uid)] = coins
+        add_coins(uid, coins)
+        save_data(force=True)
+        return {"ok": True, "coins": coins, "label": label, "tier": tier,
+                "best": max(best, coins), "message": f"{label} — +{coins} سکه"}, 200
+    except Exception as exc:
+        _mlog("error", f"luck_spin failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🎰 کازینوی Lucky Number ----------------
+def _mini_ln_view(uid):
+    try:
+        u = get_user(int(uid))
+        st = u.get("ln_stats", {}) if isinstance(u.get("ln_stats"), dict) else {}
+        hot, cold = _ln_hot_cold()
+        hist = [int(x) for x in DATA.get("ln_draws", [])[-12:]][::-1]
+        free_ready = str(u.get("ln_free_day", "")) != today_key()
+        return {"ok": True, "coins": int(u.get("coins", 0) or 0),
+                "bets": [int(x) for x in LN_BETS],
+                "hot": hot, "cold": cold, "history": hist, "free_ready": free_ready,
+                "free_streak": int(u.get("ln_free_streak", 0) or 0),
+                "stats": {"spins": int(st.get("spins", 0)), "wins": int(st.get("wins", 0)),
+                          "jackpots": int(st.get("jackpots", 0)), "net": int(st.get("net", 0))},
+                "paytable": "دقیق ×۲۵ · فاصله≤۲ ×۶ · فاصله≤۵ ×۲ · فاصله≤۱۰ ×۱.۵"}, 200
+    except Exception as exc:
+        _mlog("error", f"ln_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_ln_bet(uid, number, bet):
+    try:
+        res = ln_bet_play(int(uid), int(number), int(bet))
+        if not res.get("ok"):
+            if res.get("reason") == "no_coins":
+                return {"ok": False, "error": "سکه کافی نداری!"}, 400
+            return {"ok": False, "error": "عدد باید بین ۱ تا ۱۰۰ باشد."}, 400
+        save_data(force=True)
+        return {"ok": True, "winning": int(res["winning"]), "diff": int(res["diff"]),
+                "bet": int(res["bet"]), "ret": int(res["ret"]),
+                "coins": int(get_user(int(uid)).get("coins", 0) or 0),
+                "message": (f"جکپات! عدد {res['winning']} — ×۲۵!" if res["diff"] == 0 else
+                            (f"برد! عدد {res['winning']} — {res['ret']} سکه" if res["ret"] > 0 else
+                             f"عدد {res['winning']} — بدون برد"))}, 200
+    except Exception as exc:
+        _mlog("error", f"ln_bet failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_ln_free(uid):
+    try:
+        res = ln_free_spin(int(uid))
+        if not res.get("ok"):
+            return {"ok": False, "error": "امروز چرخیدی — فردا برگرد!"}, 429
+        save_data(force=True)
+        return {"ok": True, "prize": int(res["prize"]), "streak": int(res["streak"]),
+                "message": f"چرخ رایگان: +{res['prize']} سکه (استریک {res['streak']})"}, 200
+    except Exception as exc:
+        _mlog("error", f"ln_free failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🎲 دایس / 🪙 شیر یا خط / 🔮 هشت‌تو ----------------
+def _mini_fun(kind, q=""):
+    try:
+        kind = str(kind)
+        if kind == "dice":
+            n = random.randint(1, 6)
+            faces = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
+            return {"ok": True, "kind": "dice", "value": n, "face": faces[n],
+                    "message": f"تاس انداختی: {n}"}, 200
+        if kind == "coin":
+            side = random.choice(["شیر 🦁", "خط 🪙"])
+            return {"ok": True, "kind": "coin", "value": side,
+                    "message": f"سکه چرخید: {side}"}, 200
+        if kind == "8ball":
+            ans = random.choice(EIGHT_BALL)
+            question = str(q or "").strip()[:120] or "سوالت را بپرس..."
+            return {"ok": True, "kind": "8ball", "value": ans, "question": question,
+                    "message": ans}, 200
+        return {"ok": False, "error": "نوع نامعتبر."}, 400
+    except Exception as exc:
+        _mlog("error", f"fun failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🔥 بقای تایتان (Survival) ----------------
+def _mini_survival_view(uid):
+    try:
+        u = get_user(int(uid))
+        session = survival_active_session(int(uid))
+        recs = u.get("sv_records", {}) if isinstance(u.get("sv_records"), dict) else {}
+        diffs = []
+        for k, v in SV_DIFFS.items():
+            r = recs.get(k) or {}
+            diffs.append({"key": k, "name": v["name"], "icon": v["icon"],
+                          "hearts": int(v["hearts"]), "mult": float(v["mult"]),
+                          "best_points": int(r.get("points", 0) or 0),
+                          "best_day": int(r.get("day", 0) or 0)})
+        payload = {"ok": True, "active": False, "diffs": diffs,
+                   "survival_best": int(u.get("survival_best", 0) or 0)}
+        if session:
+            payload["active"] = True
+            payload["session"] = _mini_sv_session_view(session)
+        return payload, 200
+    except Exception as exc:
+        _mlog("error", f"survival_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_sv_session_view(session):
+    diff = SV_DIFFS.get(str(session.get("diff")), SV_DIFFS["normal"])
+    mult = float(diff["mult"]) * (2.0 if session.get("storm") else 1.0)
+    day = int(session.get("day", 1))
+    q = str(session.get("current_q") or "")
+    mode = str(session.get("current_mode") or "truth")
+    ev = str(session.get("event") or "")
+    items = session.get("items", {}) if isinstance(session.get("items"), dict) else {}
+    return {
+        "id": str(session.get("id", "")), "day": day, "hearts": int(session.get("hearts", 0)),
+        "max_hearts": int(session.get("max_hearts", 3)), "streak": int(session.get("streak", 0)),
+        "best_streak": int(session.get("best_streak", 0)),
+        "events_survived": int(session.get("events_survived", 0)),
+        "storm": bool(session.get("storm")), "diff": str(session.get("diff", "normal")),
+        "diff_name": diff["name"], "diff_icon": diff["icon"],
+        "total_xp": int(session.get("total_xp", 0)),
+        "total_coins": int(session.get("total_coins", 0)),
+        "question": q, "mode": mode, "mode_name": MODE_LABELS.get(mode, mode),
+        "event": ev, "items": {"heal": int(items.get("heal", 0)), "shield": int(items.get("shield", 0))},
+        "reward": {"xp": int((5 + day) * mult), "coins": int((3 + day // 2) * mult)},
+    }
+
+
+def _mini_survival_start(uid, diff, mode="mixed"):
+    try:
+        old = survival_active_session(int(uid))
+        if old:
+            return {"ok": True, "active": True, "session": _mini_sv_session_view(old),
+                    "message": "بازی فعالی داری — ادامه بده!"}, 200
+        if diff not in SV_DIFFS:
+            diff = "normal"
+        session = survival_create_session(int(uid), str(mode), str(diff))
+        question = survival_pick_question(session)
+        return {"ok": True, "session": _mini_sv_session_view(session),
+                "message": f"ماجراجویی {SV_DIFFS[diff]['name']} شروع شد!"}, 200
+    except Exception as exc:
+        _mlog("error", f"survival_start failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_survival_answer(uid, accepted):
+    try:
+        session = survival_active_session(int(uid))
+        if not session:
+            return {"ok": False, "error": "بازی فعالی نداری."}, 400
+        result = survival_answer(session, bool(accepted))
+        if result.get("ended"):
+            fin = _mini_sv_finish(uid, session)
+            return {"ok": True, "ended": True, "finish": fin,
+                    "message": "جان‌هایت تمام شد!"}, 200
+        add_xp(int(uid), int(result.get("xp", 0)))
+        add_coins(int(uid), int(result.get("coins", 0)))
+        milestone = 0
+        ev = result.get("event")
+        if not ev:
+            day = int(session.get("day", 1))
+            if day in SV_MILESTONES:
+                bonus = int(SV_MILESTONES[day] * float(SV_DIFFS.get(str(session.get("diff")), SV_DIFFS['normal'])['mult']))
+                session["total_coins"] = int(session.get("total_coins", 0)) + bonus
+                add_coins(int(uid), bonus)
+                milestone = bonus
+            survival_pick_question(session)
+        save_data(force=True)
+        return {"ok": True, "session": _mini_sv_session_view(session),
+                "gained": {"xp": int(result.get("xp", 0)), "coins": int(result.get("coins", 0))},
+                "milestone": milestone,
+                "message": ("انجامش دادی! روز بعد" if accepted else "یک جان کم شد!")}, 200
+    except Exception as exc:
+        _mlog("error", f"survival_answer failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_survival_item(uid, item):
+    try:
+        session = survival_active_session(int(uid))
+        if not session:
+            return {"ok": False, "error": "بازی فعالی نداری."}, 400
+        items = session.get("items", {})
+        if int(items.get(item, 0)) <= 0:
+            return {"ok": False, "error": "از این آیتم نداری!"}, 400
+        if item == "heal":
+            if int(session.get("hearts", 0)) >= int(session.get("max_hearts", 3)):
+                return {"ok": False, "error": "جان‌ت پر است!"}, 400
+            items["heal"] = int(items.get("heal", 0)) - 1
+            session["hearts"] = int(session.get("hearts", 0)) + 1
+            msg = "معجون! یک جان پس گرفتی"
+        elif item == "shield":
+            items["shield"] = int(items.get("shield", 0)) - 1
+            session["day"] = int(session.get("day", 1)) + 1
+            survival_pick_question(session)
+            msg = "سپر! این روز بی‌جریمه رد شد"
+        else:
+            return {"ok": False, "error": "آیتم نامعتبر."}, 400
+        save_data(force=True)
+        return {"ok": True, "session": _mini_sv_session_view(session), "message": msg}, 200
+    except Exception as exc:
+        _mlog("error", f"survival_item failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_survival_event(uid, choice):
+    try:
+        session = survival_active_session(int(uid))
+        if not session or not session.get("event"):
+            return {"ok": False, "error": "رویدادی در انتظار نیست."}, 400
+        ev = str(session.get("event", ""))
+        # رویدادهای خودکار
+        if ev == "medic":
+            session["hearts"] = min(int(session.get("max_hearts", 3)), int(session.get("hearts", 0)) + 1)
+            session["event"] = None
+            session["day"] = int(session.get("day", 1)) + 1
+            session["events_survived"] = int(session.get("events_survived", 0)) + 1
+            msg = "چادر درمانگر — یک جان بازیابی شد!"
+        elif ev == "storm":
+            session["storm"] = True
+            session["event"] = None
+            session["day"] = int(session.get("day", 1)) + 1
+            session["events_survived"] = int(session.get("events_survived", 0)) + 1
+            msg = "طوفان ثبت شد — پاداش دوبرابر!"
+        elif ev == "ambush":
+            session["hearts"] = int(session.get("hearts", 1)) - 1
+            session["event"] = None
+            session["day"] = int(session.get("day", 1)) + 1
+            session["events_survived"] = int(session.get("events_survived", 0)) + 1
+            if int(session.get("hearts", 0)) <= 0:
+                fin = _mini_sv_finish(uid, session)
+                return {"ok": True, "ended": True, "finish": fin,
+                        "message": "کمین شبانه — جان آخر هم رفت!"}, 200
+            msg = "کمین! یک جان از دست رفت"
+        else:
+            # gift / shop — تصمیم کاربر
+            session["event"] = None
+            session["day"] = int(session.get("day", 1)) + 1
+            session["events_survived"] = int(session.get("events_survived", 0)) + 1
+            if ev == "gift" and choice == "open":
+                items = session.setdefault("items", {})
+                found = random.choice(["heal", "shield", "heal"])
+                items[found] = int(items.get(found, 0)) + 1
+                msg = "داخل جعبه " + ("معجون بود!" if found == "heal" else "سپر بود!")
+            elif ev == "shop" and choice == "buyheal":
+                if int(session.get("total_coins", 0)) >= 30:
+                    session["total_coins"] = int(session.get("total_coins", 0)) - 30
+                    items = session.setdefault("items", {})
+                    items["heal"] = int(items.get("heal", 0)) + 1
+                    msg = "معجون خریدی!"
+                else:
+                    msg = "سکه‌ات کافی نبود — فروشنده رفت."
+            elif ev == "shop" and choice == "buyshield":
+                if int(session.get("total_coins", 0)) >= 25:
+                    session["total_coins"] = int(session.get("total_coins", 0)) - 25
+                    items = session.setdefault("items", {})
+                    items["shield"] = int(items.get("shield", 0)) + 1
+                    msg = "سپر خریدی!"
+                else:
+                    msg = "سکه‌ات کافی نبود — فروشنده رفت."
+            else:
+                msg = "ردش کردی و راه افتادی..."
+        survival_pick_question(session)
+        save_data(force=True)
+        return {"ok": True, "session": _mini_sv_session_view(session), "message": msg}, 200
+    except Exception as exc:
+        _mlog("error", f"survival_event failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_sv_finish(uid, session):
+    """پایان بقا — مطابق sv_finish ربات: رکورد + پاداش نهایی."""
+    try:
+        session["ended"] = True
+        session["ended_at"] = now_ts()
+        streak = int(session.get("streak", 0))
+        best = int(session.get("best_streak", 0))
+        day = int(session.get("day", 1))
+        diff = str(session.get("diff", "normal"))
+        diff_cfg = SV_DIFFS.get(diff, SV_DIFFS["normal"])
+        events = int(session.get("events_survived", 0))
+        points = day * 10 + streak * 2 + events * 5
+        user = get_user(int(uid))
+        if best > int(user.get("survival_best", 0)):
+            user["survival_best"] = best
+        recs = user.setdefault("sv_records", {})
+        old = recs.get(diff) or {}
+        is_rec = points > int(old.get("points", 0))
+        if is_rec:
+            recs[diff] = {"day": day, "points": points, "ts": now_ts()}
+        bonus_coins = int(streak * 3 * float(diff_cfg["mult"]))
+        if bonus_coins:
+            add_coins(int(uid), bonus_coins)
+        bump_mission_progress(int(uid), "answers", streak)
+        bump_mission_progress(int(uid), "games", 1)
+        award_achievement_v11(int(uid), "v11_first_survival")
+        log_user_activity(int(uid), "survival_end", f"day={day} pts={points} diff={diff} src=miniapp")
+        save_data(force=True)
+        return {"diff": diff, "diff_name": diff_cfg["name"], "diff_icon": diff_cfg["icon"],
+                "day": day, "streak": streak, "best_streak": best, "events": events,
+                "total_xp": int(session.get("total_xp", 0)),
+                "total_coins": int(session.get("total_coins", 0)) + bonus_coins,
+                "points": points, "bonus_coins": bonus_coins, "record": is_rec}
+    except Exception as exc:
+        _mlog("error", f"sv_finish failed: {exc!r}")
+        return {}
+
+
+def _mini_survival_end(uid):
+    try:
+        session = survival_active_session(int(uid))
+        if not session:
+            return {"ok": False, "error": "بازی فعالی نداری."}, 400
+        fin = _mini_sv_finish(uid, session)
+        return {"ok": True, "ended": True, "finish": fin,
+                "message": "ماجراجویی تمام شد — پاداش‌ها پرداخت شد!"}, 200
+    except Exception as exc:
+        _mlog("error", f"survival_end failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 👥 لابی چندنفره داخل مینی‌اپ ----------------
+_MINI_LOBBY_TTL = 6 * 3600
+_MINI_LOBBY_Q_TIMEOUT = 120
+
+
+def _mini_lobby_store():
+    return DATA.setdefault("mini_lobbies", {})
+
+
+def _mini_lobby_code():
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    while True:
+        code = "".join(random.choice(alphabet) for _ in range(6))
+        if code not in _mini_lobby_store():
+            return code
+
+
+def _mini_lobby_cleanup():
+    """حذف لابی‌های مرده."""
+    try:
+        store = _mini_lobby_store()
+        cutoff = time.time() - _MINI_LOBBY_TTL
+        dead = [c for c, lb in store.items()
+                if not isinstance(lb, dict) or float(lb.get("last_activity", 0)) < cutoff]
+        for c in dead:
+            store.pop(c, None)
+        if len(store) > 200:
+            keep = sorted(store.items(), key=lambda kv: -float(kv[1].get("last_activity", 0)))[:200]
+            DATA["mini_lobbies"] = dict(keep)
+    except Exception:
+        pass
+
+
+def _mini_lobby_create(uid):
+    try:
+        _mini_lobby_cleanup()
+        u = get_user(int(uid))
+        code = _mini_lobby_code()
+        lobby = {
+            "code": code,
+            "leader_id": int(uid),
+            "leader_name": str(u.get("name") or "بازیکن"),
+            "players": [int(uid)],
+            "ready": [],
+            "names": {str(uid): str(u.get("name") or "بازیکن")},
+            "phase": "lobby",
+            "round": 0,
+            "turn_index": 0,
+            "turn_order": [],
+            "scores": {},
+            "answers": {},
+            "reply_prompt": None,
+            "v7_used_prompts_global": [],
+            "v7_used_penalties": [],
+            "pending_penalties": {},
+            "round_scores": {},
+            "settings": {},
+            "created_at": now_ts(),
+            "last_activity": now_ts(),
+            "status": "active",
+        }
+        _mini_lobby_store()[code] = lobby
+        save_data(force=True)
+        log_user_activity(int(uid), "mini_lobby_create", f"code={code}")
+        _mlog("info", f"lobby created {code} by {uid}")
+        return {"ok": True, "code": code, "lobby": _mini_lobby_view(lobby, uid),
+                "message": "لابی ساخته شد — کد را برای دوستانت بفرست!"}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_create failed: {exc!r}")
+        return {"ok": False, "error": "خطا در ساخت لابی."}, 500
+
+
+def _mini_lobby_get(code):
+    lb = _mini_lobby_store().get(str(code or "").strip().upper())
+    return lb if isinstance(lb, dict) else None
+
+
+def _mini_lobby_view(lb, uid):
+    """نمای کامل لابی برای یک بازیکن — با تایم‌اوت خودکار سوال."""
+    try:
+        _mini_lobby_tick(lb)
+        players = []
+        for p in lb.get("players", []):
+            try:
+                u = get_user(int(p))
+                players.append({"id": int(p), "name": str(lb.get("names", {}).get(str(p)) or u.get("name") or "بازیکن"),
+                                "level": int(u.get("level", 1)),
+                                "ready": int(p) in [int(x) for x in lb.get("ready", [])],
+                                "score": int(lb.get("round_scores", {}).get(str(p), 0)),
+                                "online": (time.time() - float(u.get("last_active", 0) or 0)) < 300,
+                                "vip": bool(is_vip(int(p)))})
+            except Exception:
+                players.append({"id": int(p), "name": "بازیکن", "level": 1, "ready": False,
+                                "score": 0, "online": False, "vip": False})
+        prompt = lb.get("reply_prompt") or {}
+        phase = str(lb.get("phase", "lobby"))
+        view = {
+            "code": str(lb.get("code", "")),
+            "phase": phase,
+            "leader_id": int(lb.get("leader_id", 0)),
+            "players": players,
+            "round": int(lb.get("round", 0)) + (1 if phase not in ("lobby", "done") else 0),
+            "scores": {str(k): int(v) for k, v in (lb.get("round_scores") or {}).items()},
+            "is_leader": int(uid) == int(lb.get("leader_id", 0)),
+            "modes": [{"key": k, "label": l} for k, l in MODE_ORDER],
+            "questioner": int(lb.get("turn_order", [0])[lb.get("turn_index", 0) % max(1, len(lb.get("turn_order", [1])))]) if lb.get("turn_order") else 0,
+            "now": int(time.time()),
+        }
+        if phase == "question" and prompt:
+            view["prompt"] = {
+                "mode": str(prompt.get("mode", "")),
+                "mode_label": str(MODE_LABELS.get(prompt.get("mode", ""), "")),
+                "target_uid": int(prompt.get("target_uid", 0)),
+                "target_name": str(lb.get("names", {}).get(str(prompt.get("target_uid", 0))) or "بازیکن"),
+                "questioner_uid": int(prompt.get("questioner_uid", 0)),
+                "question": str(prompt.get("question", "")),
+                "sent_ts": float(prompt.get("sent_ts", 0)),
+                "timeout": _MINI_LOBBY_Q_TIMEOUT,
+                "answered": bool(prompt.get("answered", False)),
+                "answer_text": str(prompt.get("answer_text", "")),
+                "reward": prompt.get("reward"),
+            }
+        if phase == "done":
+            podium = sorted(lb.get("players", []),
+                            key=lambda p: -int(lb.get("round_scores", {}).get(str(p), 0)))
+            view["podium"] = [{"id": int(p), "name": str(lb.get("names", {}).get(str(p)) or "بازیکن"),
+                               "score": int(lb.get("round_scores", {}).get(str(p), 0))} for p in podium]
+        return view
+    except Exception as exc:
+        _mlog("error", f"lobby_view failed: {exc!r}")
+        return {"code": "", "phase": "lobby", "players": []}
+
+
+def _mini_lobby_tick(lb):
+    """پیشروی خودکار: سوال بی‌جواب بعد از تایم‌اوت رد می‌شود."""
+    try:
+        if str(lb.get("phase")) != "question":
+            return
+        prompt = lb.get("reply_prompt") or {}
+        if prompt.get("answered"):
+            if time.time() - float(prompt.get("answered_ts", 0) or 0) > 8:
+                _mini_lobby_advance(lb, skip=False)
+            return
+        if time.time() - float(prompt.get("sent_ts", 0) or 0) > _MINI_LOBBY_Q_TIMEOUT:
+            _mini_lobby_advance(lb, skip=True)
+    except Exception:
+        pass
+
+
+def _mini_lobby_advance(lb, skip):
+    """نوبت بعدی + شمارش راند."""
+    try:
+        lb["reply_prompt"] = None
+        lb["phase"] = "topic"
+        lb["turn_index"] = int(lb.get("turn_index", 0)) + 1
+        n = max(1, len(lb.get("turn_order", []) or [1]))
+        if int(lb["turn_index"]) >= n * (int(lb.get("round", 0)) + 1):
+            lb["round"] = int(lb.get("round", 0)) + 1
+        lb["last_activity"] = now_ts()
+    except Exception:
+        pass
+
+
+def _mini_lobby_join(uid, code):
+    try:
+        lb = _mini_lobby_get(code)
+        if not lb:
+            return {"ok": False, "error": "لابی پیدا نشد — کد را چک کن."}, 404
+        if str(lb.get("phase")) not in ("lobby",):
+            return {"ok": False, "error": "بازی شروع شده — دیر رسیدی!"}, 400
+        uid = int(uid)
+        if uid in [int(x) for x in lb.get("players", [])]:
+            return {"ok": True, "lobby": _mini_lobby_view(lb, uid), "message": "قبلاً عضوی!"}, 200
+        if len(lb.get("players", [])) >= 20:
+            return {"ok": False, "error": "لابی پر است!"}, 400
+        u = get_user(uid)
+        lb["players"].append(uid)
+        lb["names"][str(uid)] = str(u.get("name") or "بازیکن")
+        lb["last_activity"] = now_ts()
+        save_data(force=True)
+        log_user_activity(uid, "mini_lobby_join", f"code={lb.get('code')}")
+        return {"ok": True, "lobby": _mini_lobby_view(lb, uid), "message": "به لابی پیوستی!"}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_join failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_lobby_ready(uid, code):
+    try:
+        lb = _mini_lobby_get(code)
+        if not lb:
+            return {"ok": False, "error": "لابی پیدا نشد."}, 404
+        uid = int(uid)
+        if uid not in [int(x) for x in lb.get("players", [])]:
+            return {"ok": False, "error": "عضو این لابی نیستی."}, 400
+        if str(lb.get("phase")) != "lobby":
+            return {"ok": False, "error": "بازی شروع شده!"}, 400
+        ready = [int(x) for x in lb.get("ready", [])]
+        if uid in ready:
+            lb["ready"] = [x for x in ready if x != uid]
+            msg = "آمادگی لغو شد"
+        else:
+            ready.append(uid)
+            lb["ready"] = ready
+            msg = "آماده‌ای! ⚡"
+        lb["last_activity"] = now_ts()
+        save_data()
+        return {"ok": True, "lobby": _mini_lobby_view(lb, uid), "message": msg}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_ready failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_lobby_start(uid, code):
+    try:
+        lb = _mini_lobby_get(code)
+        if not lb:
+            return {"ok": False, "error": "لابی پیدا نشد."}, 404
+        uid = int(uid)
+        if uid != int(lb.get("leader_id", 0)):
+            return {"ok": False, "error": "فقط سرگروه می‌تواند شروع کند."}, 403
+        players = [int(x) for x in lb.get("players", [])]
+        if len(players) < 2:
+            return {"ok": False, "error": "حداقل ۲ بازیکن لازم است!"}, 400
+        if str(lb.get("phase")) != "lobby":
+            return {"ok": True, "lobby": _mini_lobby_view(lb, uid)}, 200
+        order = list(players)
+        random.shuffle(order)
+        lb["turn_order"] = order
+        lb["turn_index"] = 0
+        lb["phase"] = "topic"
+        lb["round"] = 0
+        lb["started_at"] = now_ts()
+        lb["last_activity"] = now_ts()
+        save_data(force=True)
+        log_user_activity(uid, "mini_lobby_start", f"code={code} players={len(players)}")
+        return {"ok": True, "lobby": _mini_lobby_view(lb, uid),
+                "message": "بازی شروع شد! 🔥"}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_start failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_lobby_topic(uid, code, mode):
+    try:
+        lb = _mini_lobby_get(code)
+        if not lb:
+            return {"ok": False, "error": "لابی پیدا نشد."}, 404
+        uid = int(uid)
+        if str(lb.get("phase")) != "topic":
+            return {"ok": False, "error": "الان نوبت انتخاب موضوع نیست."}, 400
+        order = lb.get("turn_order", [])
+        q = int(order[int(lb.get("turn_index", 0)) % max(1, len(order))]) if order else 0
+        if uid != q:
+            return {"ok": False, "error": "نوبت انتخاب موضوع با دیگری است!"}, 403
+        mode = str(mode)
+        if mode not in [k for k, _ in MODE_ORDER]:
+            return {"ok": False, "error": "موضوع نامعتبر."}, 400
+        lb["phase"] = "target"
+        lb["current_mode"] = mode
+        lb["last_activity"] = now_ts()
+        save_data()
+        return {"ok": True, "lobby": _mini_lobby_view(lb, uid),
+                "message": "حالا هدف را انتخاب کن 🎯"}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_topic failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_lobby_target(uid, code, target):
+    try:
+        lb = _mini_lobby_get(code)
+        if not lb:
+            return {"ok": False, "error": "لابی پیدا نشد."}, 404
+        uid = int(uid)
+        if str(lb.get("phase")) != "target":
+            return {"ok": False, "error": "الان نوبت انتخاب هدف نیست."}, 400
+        order = lb.get("turn_order", [])
+        q = int(order[int(lb.get("turn_index", 0)) % max(1, len(order))]) if order else 0
+        if uid != q:
+            return {"ok": False, "error": "نوبت با دیگری است!"}, 403
+        target = int(target)
+        if target not in [int(x) for x in lb.get("players", [])]:
+            return {"ok": False, "error": "این بازیکن در لابی نیست."}, 400
+        mode = str(lb.get("current_mode", "truth"))
+        question = pick_question(lb, mode, target)
+        lb["reply_prompt"] = {
+            "mode": mode, "target_uid": target, "questioner_uid": uid,
+            "question": str(question), "sent_ts": time.time(),
+            "answered": False, "answer_text": "",
+        }
+        lb["phase"] = "question"
+        lb["last_activity"] = now_ts()
+        save_data(force=True)
+        log_user_activity(uid, "mini_lobby_q", f"code={code} mode={mode} target={target}")
+        return {"ok": True, "lobby": _mini_lobby_view(lb, uid),
+                "message": "سوال صادر شد!"}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_target failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_lobby_answer(uid, code, text):
+    try:
+        lb = _mini_lobby_get(code)
+        if not lb:
+            return {"ok": False, "error": "لابی پیدا نشد."}, 404
+        uid = int(uid)
+        if str(lb.get("phase")) != "question":
+            return {"ok": False, "error": "سوال فعالی در جریان نیست."}, 400
+        prompt = lb.get("reply_prompt") or {}
+        target = int(prompt.get("target_uid", 0))
+        if uid != target:
+            return {"ok": False, "error": "فعلاً نوبت پاسخ با بازیکن دیگر است."}, 403
+        if prompt.get("answered"):
+            return {"ok": False, "error": "پاسخ این نوبت قبلاً ثبت شده."}, 400
+        text = str(text or "").strip()
+        if len(text) < 2:
+            return {"ok": False, "error": "پاسخ خیلی کوتاه است."}, 400
+        kind = str(prompt.get("mode", "truth"))
+        xp, coins = REPLY_REWARDS.get(kind, (5, 2))
+        answer_len = len(text)
+        quality = 3 if answer_len >= 100 else 2 if answer_len >= 50 else 1 if answer_len >= 20 else 0
+        xp_total = xp + quality
+        reward_player(lb, uid, xp_total, coins, win=True, reason=f"MiniApp Reply:{kind}")
+        questioner = int(prompt.get("questioner_uid", 0))
+        if questioner:
+            add_xp(questioner, 2, name_of(questioner, lb), 1)
+            try:
+                lb.setdefault("round_scores", {})[str(questioner)] = int(lb.setdefault("round_scores", {}).get(str(questioner), 0)) + 2
+            except Exception:
+                pass
+        try:
+            u = get_user(uid)
+            u["stats"][kind] = int((u.get("stats", {})).get(kind, 0)) + 1
+        except Exception:
+            pass
+        prompt["answered"] = True
+        prompt["answered_ts"] = time.time()
+        prompt["answer_text"] = text[:400]
+        prompt["reward"] = {"xp": xp_total, "coins": coins}
+        lb["last_activity"] = now_ts()
+        save_data(force=True)
+        log_user_activity(uid, "mini_lobby_answer", f"code={code} mode={kind}")
+        return {"ok": True, "lobby": _mini_lobby_view(lb, uid),
+                "reward": {"xp": xp_total, "coins": coins},
+                "message": f"پاسخ ثبت شد! +{xp_total} XP و +{coins} سکه"}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_answer failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_lobby_skip(uid, code):
+    try:
+        lb = _mini_lobby_get(code)
+        if not lb:
+            return {"ok": False, "error": "لابی پیدا نشد."}, 404
+        uid = int(uid)
+        if str(lb.get("phase")) != "question":
+            return {"ok": False, "error": "سوال فعالی نیست."}, 400
+        prompt = lb.get("reply_prompt") or {}
+        if uid not in (int(prompt.get("target_uid", 0)), int(prompt.get("questioner_uid", 0)), int(lb.get("leader_id", 0))):
+            return {"ok": False, "error": "فقط هدف، پرسشگر یا سرگروه می‌تواند رد کند."}, 403
+        _mini_lobby_advance(lb, skip=True)
+        save_data()
+        return {"ok": True, "lobby": _mini_lobby_view(lb, uid), "message": "رد شد"}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_skip failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_lobby_leave(uid, code):
+    try:
+        lb = _mini_lobby_get(code)
+        if not lb:
+            return {"ok": False, "error": "لابی پیدا نشد."}, 404
+        uid = int(uid)
+        if uid not in [int(x) for x in lb.get("players", [])]:
+            return {"ok": False, "error": "عضو این لابی نیستی."}, 400
+        lb["players"] = [x for x in lb.get("players", []) if int(x) != uid]
+        lb["ready"] = [x for x in lb.get("ready", []) if int(x) != uid]
+        lb.get("names", {}).pop(str(uid), None)
+        lb["turn_order"] = [x for x in lb.get("turn_order", []) if int(x) != uid]
+        if not lb["players"] or (uid == int(lb.get("leader_id", 0)) and not lb["players"]):
+            _mini_lobby_store().pop(str(lb.get("code")), None)
+            save_data(force=True)
+            return {"ok": True, "closed": True, "message": "لابی بسته شد."}, 200
+        if uid == int(lb.get("leader_id", 0)) and lb["players"]:
+            nl = int(lb["players"][0])
+            lb["leader_id"] = nl
+            lb["leader_name"] = str(lb.get("names", {}).get(str(nl)) or "بازیکن")
+        lb["last_activity"] = now_ts()
+        save_data(force=True)
+        return {"ok": True, "message": "از لابی خارج شدی."}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_leave failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_lobby_end(uid, code):
+    try:
+        lb = _mini_lobby_get(code)
+        if not lb:
+            return {"ok": False, "error": "لابی پیدا نشد."}, 404
+        uid = int(uid)
+        if uid != int(lb.get("leader_id", 0)):
+            return {"ok": False, "error": "فقط سرگروه می‌تواند پایان دهد."}, 403
+        lb["phase"] = "done"
+        lb["status"] = "finished"
+        lb["last_activity"] = now_ts()
+        # آمار بازی برای همه
+        try:
+            for p in lb.get("players", []):
+                u2 = get_user(int(p))
+                u2["games"] = int(u2.get("games", 0)) + 1
+                bump_mission_progress(int(p), "games", 1)
+        except Exception:
+            pass
+        save_data(force=True)
+        log_user_activity(uid, "mini_lobby_end", f"code={code}")
+        return {"ok": True, "lobby": _mini_lobby_view(lb, uid),
+                "message": "بازی تمام شد — جام قهرمانی تعیین شد! 🏆"}, 200
+    except Exception as exc:
+        _mlog("error", f"lobby_end failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🤺 دوئل داخل مینی‌اپ (هم‌راسته با دوئل‌های ربات) ----------------
+def _mini_duel_create(uid):
+    try:
+        st = v24_store()
+        code = v24_new_code()
+        st["duels"][str(code)] = {
+            "a": int(uid), "b": None,
+            "round": 0, "score_a": 0, "score_b": 0,
+            "ts": now_ts(), "state": "waiting",
+            "src": "miniapp",
+        }
+        save_data(force=True)
+        log_user_activity(int(uid), "mini_duel_create", f"code={code}")
+        return {"ok": True, "code": int(code),
+                "message": "دوئل ساخته شد — کد را برای حریفت بفرست!"}, 200
+    except Exception as exc:
+        _mlog("error", f"duel_create failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_duel_get(code):
+    try:
+        return v24_store()["duels"].get(str(int(code)))
+    except Exception:
+        return None
+
+
+def _mini_duel_view(duel, code, uid):
+    try:
+        a, b = int(duel.get("a", 0)), int(duel.get("b", 0) or 0)
+        state = str(duel.get("state", ""))
+        rnd = int(duel.get("round", 0))
+        current = a if rnd % 2 == 0 else b
+        view = {
+            "code": int(code), "state": state, "round": rnd,
+            "total_rounds": int(DUEL_ROUNDS),
+            "a": {"id": a, "name": name_of(a), "score": int(duel.get("score_a", 0))},
+            "my_turn": (state == "topic" and int(uid) == current and b),
+            "answering": (state == "answer" and int(uid) == current),
+        }
+        if b:
+            view["b"] = {"id": b, "name": name_of(b), "score": int(duel.get("score_b", 0))}
+        if state == "answer":
+            view["question"] = {"mode": str(duel.get("current_mode", "")),
+                                "mode_label": str(MODE_LABELS.get(duel.get("current_mode", ""), "")),
+                                "text": str(duel.get("current_q", "")),
+                                "ts": float(duel.get("q_ts", 0) or 0),
+                                "timeout": 120}
+            view["answering"] = int(uid) == current
+        if state == "done":
+            sa, sb = int(duel.get("score_a", 0)), int(duel.get("score_b", 0))
+            view["winner"] = a if sa > sb else (b if sb > sa else 0)
+        view["modes"] = [{"key": k, "label": l} for k, l in MODE_ORDER[:8]]
+        return view
+    except Exception as exc:
+        _mlog("error", f"duel_view failed: {exc!r}")
+        return {"code": 0, "state": "done", "round": 0}
+
+
+def _mini_duel_join(uid, code):
+    try:
+        duel = _mini_duel_get(code)
+        if not isinstance(duel, dict):
+            return {"ok": False, "error": "این دوئل معتبر نیست."}, 404
+        if (time.time() - float(duel.get("ts", 0))) > 24 * 3600:
+            v24_store()["duels"].pop(str(code), None)
+            save_data()
+            return {"ok": False, "error": "این دعوت‌نامه منقضی شده است."}, 410
+        uid = int(uid)
+        if uid == int(duel.get("a", 0)):
+            return {"ok": True, "duel": _mini_duel_view(duel, code, uid)}, 200
+        if duel.get("b") is None:
+            duel["b"] = uid
+            duel["state"] = "topic"
+            save_data(force=True)
+            log_user_activity(uid, "mini_duel_join", f"code={code}")
+            return {"ok": True, "duel": _mini_duel_view(duel, code, uid),
+                    "message": "به دوئل پیوستی! ⚔️"}, 200
+        if uid == int(duel.get("b", 0)):
+            return {"ok": True, "duel": _mini_duel_view(duel, code, uid)}, 200
+        return {"ok": False, "error": "این دوئل پر است."}, 403
+    except Exception as exc:
+        _mlog("error", f"duel_join failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_duel_topic(uid, code, mode):
+    try:
+        duel = _mini_duel_get(code)
+        if not isinstance(duel, dict) or str(duel.get("state")) == "done":
+            return {"ok": False, "error": "این دوئل تمام شده است."}, 400
+        uid = int(uid)
+        rnd = int(duel.get("round", 0))
+        current = int(duel.get("a", 0)) if rnd % 2 == 0 else int(duel.get("b", 0) or 0)
+        if uid != current:
+            return {"ok": False, "error": "نوبت حریف است!"}, 403
+        mode = str(mode)
+        if mode not in [k for k, _ in MODE_ORDER[:8]]:
+            return {"ok": False, "error": "موضوع نامعتبر."}, 400
+        question = pick_question(duel, mode, uid)
+        duel["current_q"] = question
+        duel["current_mode"] = mode
+        duel["state"] = "answer"
+        duel["q_ts"] = time.time()
+        save_data(force=True)
+        return {"ok": True, "duel": _mini_duel_view(duel, code, uid),
+                "message": "سوال صادر شد!"}, 200
+    except Exception as exc:
+        _mlog("error", f"duel_topic failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_duel_answer(uid, code, text):
+    try:
+        duel = _mini_duel_get(code)
+        if not isinstance(duel, dict) or str(duel.get("state")) != "answer":
+            return {"ok": False, "error": "سوال فعالی نیست."}, 400
+        uid = int(uid)
+        if uid not in (int(duel.get("a", 0)), int(duel.get("b", 0) or 0)):
+            return {"ok": False, "error": "در این دوئل نیستی."}, 403
+        if time.time() - float(duel.get("q_ts", 0) or 0) > 120:
+            duel["state"] = "topic"
+            duel["round"] = int(duel.get("round", 0)) + 1
+            save_data()
+            return {"ok": False, "error": "وقت تمام شد؛ راند رد شد."}, 400
+        text = str(text or "").strip()
+        if len(text) < 2:
+            return {"ok": False, "error": "جوابت خیلی کوتاه است."}, 400
+        is_a = uid == int(duel.get("a", 0))
+        duel["score_a" if is_a else "score_b"] = int(duel.get("score_a" if is_a else "score_b", 0)) + 1
+        add_xp(uid, 3, name_of(uid))
+        duel["state"] = "topic"
+        duel["round"] = int(duel.get("round", 0)) + 1
+        duel["answer_text"] = text[:400]
+        duel["answer_uid"] = uid
+        duel["answer_ts"] = time.time()
+        save_data(force=True)
+        if int(duel.get("round", 0)) >= DUEL_ROUNDS:
+            fin = _mini_duel_finish(code, duel)
+            return {"ok": True, "duel": _mini_duel_view(duel, code, uid),
+                    "finished": True, "finish": fin,
+                    "message": "جواب ثبت شد! +۳ XP — دوئل تمام شد"}, 200
+        return {"ok": True, "duel": _mini_duel_view(duel, code, uid),
+                "message": "جواب ثبت شد! +۳ XP"}, 200
+    except Exception as exc:
+        _mlog("error", f"duel_answer failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_duel_skip(uid, code):
+    try:
+        duel = _mini_duel_get(code)
+        if not isinstance(duel, dict) or str(duel.get("state")) != "answer":
+            return {"ok": False, "error": "سوال فعالی نیست."}, 400
+        uid = int(uid)
+        if uid not in (int(duel.get("a", 0)), int(duel.get("b", 0) or 0)):
+            return {"ok": False, "error": "در این دوئل نیستی."}, 403
+        duel["state"] = "topic"
+        duel["round"] = int(duel.get("round", 0)) + 1
+        save_data()
+        if int(duel.get("round", 0)) >= DUEL_ROUNDS:
+            fin = _mini_duel_finish(code, duel)
+            return {"ok": True, "duel": _mini_duel_view(duel, code, uid),
+                    "finished": True, "finish": fin, "message": "رد شد — دوئل تمام شد"}, 200
+        return {"ok": True, "duel": _mini_duel_view(duel, code, uid), "message": "رد شد"}, 200
+    except Exception as exc:
+        _mlog("error", f"duel_skip failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_duel_finish(code, duel):
+    """پایان دوئل — مطابق duel_finish ربات."""
+    try:
+        duel["state"] = "done"
+        a, b = int(duel.get("a", 0)), int(duel.get("b", 0) or 0)
+        sa, sb = int(duel.get("score_a", 0)), int(duel.get("score_b", 0))
+        if sa > sb and a:
+            add_xp(a, 10, name_of(a))
+            add_coins(a, 5, name_of(a))
+        elif sb > sa and b:
+            add_xp(b, 10, name_of(b))
+            add_coins(b, 5, name_of(b))
+        for who in (a, b):
+            if who:
+                get_user(who)["duels"] = int(get_user(who).get("duels", 0)) + 1
+        award_achievement(a, "v24_duelist")
+        award_achievement(b, "v24_duelist")
+        save_data(force=True)
+        return {"a": {"id": a, "name": name_of(a), "score": sa},
+                "b": {"id": b, "name": name_of(b), "score": sb},
+                "winner": a if sa > sb else (b if sb > sa else 0)}
+    except Exception as exc:
+        _mlog("error", f"duel_finish failed: {exc!r}")
+        return {}
+
+
+def _mini_duel_list(uid):
+    try:
+        st = v24_store()
+        out = []
+        for cid, d in st["duels"].items():
+            if not isinstance(d, dict):
+                continue
+            if uid not in (int(d.get("a", 0)), int(d.get("b", 0) or 0)):
+                continue
+            if str(d.get("state")) == "done" or (time.time() - float(d.get("ts", 0))) >= 24 * 3600:
+                continue
+            out.append(_mini_duel_view(d, cid, uid))
+        out.sort(key=lambda x: -(x.get("round", 0)))
+        return {"ok": True, "items": out[:20]}, 200
+    except Exception as exc:
+        _mlog("error", f"duel_list failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🏆 آرنا رنک‌دار (Matchmaking) ----------------
+def _mini_arena_view(uid):
+    try:
+        uid = int(uid)
+        u = get_user(uid)
+        elo = int(u.get("elo_rating", 1000))
+        tier_icon, tier_name = mm_tier(elo)
+        in_queue = any(isinstance(e, dict) and int(e.get("uid", 0)) == uid
+                       for e in DATA.get("matchmaking_queue", []))
+        queue_len = len(DATA.get("matchmaking_queue", []))
+        match = ranked_active_for(uid)
+        view = {
+            "ok": True, "elo": elo, "tier": tier_name, "tier_icon": tier_icon,
+            "wins": int(u.get("matchmaking_wins", 0)),
+            "losses": int(u.get("matchmaking_losses", 0)),
+            "draws": int(u.get("matchmaking_draws", 0)),
+            "best_elo": int((u.get("stats_ext", {}) or {}).get("best_elo", 1000)),
+            "in_queue": in_queue, "queue_len": queue_len,
+            "target": int(MM_TARGET_SCORE),
+            "active": bool(match),
+        }
+        if match:
+            view["match"] = _mini_arena_match_view(match, uid)
+        return view, 200
+    except Exception as exc:
+        _mlog("error", f"arena_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_arena_match_view(match, uid):
+    try:
+        p1, p2 = int(match.get("p1", 0)), int(match.get("p2", 0))
+        me_p1 = int(uid) == p1
+        opp = p2 if me_p1 else p1
+        my_score = int(match.get("score1", 0)) if me_p1 else int(match.get("score2", 0))
+        opp_score = int(match.get("score2", 0)) if me_p1 else int(match.get("score1", 0))
+        my_turn = int(match.get("turn", 0)) == int(uid)
+        view = {
+            "id": int(match.get("id", 0)),
+            "me": {"score": my_score},
+            "opp": {"id": opp, "name": name_of(opp), "score": opp_score,
+                    "elo": int(get_user(opp).get("elo_rating", 1000))},
+            "my_turn": my_turn,
+            "target": int(match.get("target", MM_TARGET_SCORE)),
+        }
+        q = match.get("q")
+        if my_turn and not q:
+            q = ranked_question_get(match)
+            match["q"] = q
+        if my_turn and q:
+            view["question"] = {"text": str(q.get("q", "")), "options": list(q.get("options", []))}
+        return view
+    except Exception as exc:
+        _mlog("error", f"arena_match_view failed: {exc!r}")
+        return {"id": 0, "me": {"score": 0}, "opp": {"id": 0, "name": "؟", "score": 0}, "my_turn": False}
+
+
+def _mini_arena_join(uid):
+    try:
+        uid = int(uid)
+        ok = matchmaking_join(uid)
+        if ok:
+            matches = matchmaking_try_match()
+            for u1, u2 in matches:
+                if uid in (int(u1), int(u2)):
+                    other = int(u2) if int(u1) == uid else int(u1)
+                    match = ranked_match_create(uid, other)
+                    save_data(force=True)
+                    log_user_activity(uid, "mini_arena_match", f"rid={match.get('id')} vs={other}")
+                    return {"ok": True, "matched": True,
+                            "view": _mini_arena_view(uid)[0],
+                            "message": f"حریف پیدا شد! {name_of(other)} — نبرد شروع شد!"}, 200
+            save_data()
+            return {"ok": True, "matched": False,
+                    "message": "در صف جستجوی حریف هم‌سطح... ⏳"}, 200
+        return {"ok": False, "error": "قبلاً در صف هستی یا خطا رخ داد."}, 400
+    except Exception as exc:
+        _mlog("error", f"arena_join failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_arena_leave(uid):
+    try:
+        matchmaking_leave(int(uid))
+        save_data()
+        return {"ok": True, "message": "از صف خارج شدی."}, 200
+    except Exception as exc:
+        _mlog("error", f"arena_leave failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_arena_answer(uid, idx):
+    try:
+        uid = int(uid)
+        match = ranked_active_for(uid)
+        if not match:
+            return {"ok": False, "error": "نبرد فعالی نداری."}, 400
+        if int(match.get("turn", 0)) != uid:
+            return {"ok": False, "error": "نوبت تو نیست!"}, 403
+        q = match.get("q") or {}
+        opts = list(q.get("options", []))
+        try:
+            idx = int(idx)
+        except Exception:
+            idx = -1
+        chosen = str(opts[idx]) if 0 <= idx < len(opts) else ""
+        correct = str(q.get("a", ""))
+        p1, p2 = int(match.get("p1", 0)), int(match.get("p2", 0))
+        my_key = "1" if p1 == uid else "2"
+        opp_uid = p2 if p1 == uid else p1
+        if chosen == correct:
+            match[f"score{my_key}"] = int(match.get(f"score{my_key}", 0)) + 1
+            my = int(match[f"score{my_key}"])
+            add_xp(int(uid), 6)
+            add_coins(int(uid), 3)
+            bump_mission_progress(int(uid), "answers", 1)
+            if my >= int(match.get("target", MM_TARGET_SCORE)):
+                fin = _mini_arena_finish(match, uid)
+                return {"ok": True, "correct": True, "correct_text": correct,
+                        "finished": True, "finish": fin,
+                        "message": f"درست! {my} امتیاز — نبرد را بردی! 🏆"}, 200
+            match["q"] = ranked_question_get(match)
+            save_data(force=True)
+            return {"ok": True, "correct": True, "correct_text": correct,
+                    "view": _mini_arena_view(uid)[0],
+                    "message": "درست! +۱ امتیاز — نوبت هنوز با توست!"}, 200
+        match["turn"] = int(opp_uid)
+        match["q"] = None
+        save_data(force=True)
+        return {"ok": True, "correct": False, "correct_text": correct,
+                "view": _mini_arena_view(uid)[0],
+                "message": "نادرست! نوبت به حریف رفت"}, 200
+    except Exception as exc:
+        _mlog("error", f"arena_answer failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_arena_finish(match, winner):
+    """پایان نبرد رنک‌دار — مطابق mm_finish ربات."""
+    try:
+        match["status"] = "finished"
+        p1, p2 = int(match.get("p1", 0)), int(match.get("p2", 0))
+        loser = p2 if winner == p1 else p1
+        t_w_before = mm_tier_floor(int(match.get(f"elo{'1' if winner == p1 else '2'}", 1000)))
+        t_l_before = mm_tier_floor(int(match.get(f"elo{'1' if loser == p1 else '2'}", 1000)))
+        elo_update(int(winner), int(loser))
+        uw, ul = get_user(int(winner)), get_user(int(loser))
+        uw["ranked_games"] = int(uw.get("ranked_games", 0)) + 1
+        ul["ranked_games"] = int(ul.get("ranked_games", 0)) + 1
+        uw["mm_streak"] = int(uw.get("mm_streak", 0)) + 1
+        uw["mm_best"] = max(int(uw.get("mm_best", 0)), int(uw.get("mm_streak", 0)))
+        ul["mm_streak"] = 0
+        streak = int(uw.get("mm_streak", 1))
+        add_coins(int(winner), 30 + min(5, streak) * 5)
+        add_xp(int(winner), 40)
+        add_coins(int(loser), 5)
+        add_xp(int(loser), 10)
+        log_user_activity(int(winner), f"ranked_win:{match['id']}")
+        log_user_activity(int(loser), f"ranked_loss:{match['id']}")
+        t_w_after = mm_tier_floor(int(get_user(int(winner)).get("elo_rating", 1000)))
+        promo = 0
+        if t_w_after > t_w_before:
+            promo = t_w_after
+            add_coins(int(winner), 50)
+        demote = 0
+        t_l_after = mm_tier_floor(int(get_user(int(loser)).get("elo_rating", 1000)))
+        if t_l_after < t_l_before:
+            demote = t_l_after
+        save_data(force=True)
+        return {"winner": int(winner), "loser": int(loser),
+                "winner_name": name_of(int(winner)), "loser_name": name_of(int(loser)),
+                "score": [int(match.get("score1", 0)), int(match.get("score2", 0))],
+                "promo": promo, "demote": demote,
+                "new_elo": int(get_user(int(winner)).get("elo_rating", 1000))}
+    except Exception as exc:
+        _mlog("error", f"arena_finish failed: {exc!r}")
+        return {}
+
+
+# ---------------- 💌 عشق‌سنج دو نفره ----------------
+def _mini_love2_create(uid, target):
+    try:
+        uid, target = int(uid), int(target)
+        if target == uid:
+            return {"ok": False, "error": "این بازی دو نفره است!"}, 400
+        if str(target) not in DATA.get("users", {}) and str(target) not in [str(k) for k in DATA.get("users", {})]:
+            return {"ok": False, "error": "این بازیکن پیدا نشد."}, 404
+        st = v24_store()
+        code = v24_new_code()
+        st["love2"][str(code)] = {
+            "a": uid, "b": target,
+            "a_done": False, "b_done": False,
+            "a_answers": {}, "b_answers": {},
+            "ts": now_ts(), "src": "miniapp",
+        }
+        st["stats"]["love2"] = int(st["stats"].get("love2", 0)) + 1
+        save_data(force=True)
+        return {"ok": True, "code": int(code),
+                "message": "عشق‌سنج ساخته شد — کد را برای طرف مقابل بفرست!"}, 200
+    except Exception as exc:
+        _mlog("error", f"love2_create failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_love2_state(uid, code):
+    try:
+        entry = v24_store()["love2"].get(str(int(code)))
+        if not isinstance(entry, dict):
+            return {"ok": False, "error": "این عشق‌سنج معتبر نیست."}, 404
+        uid = int(uid)
+        if uid not in (int(entry.get("a", 0)), int(entry.get("b", 0))):
+            return {"ok": False, "error": "این عشق‌سنج مال شما نیست."}, 403
+        side = "a" if uid == int(entry.get("a", 0)) else "b"
+        other_uid = int(entry.get("b", 0)) if side == "a" else int(entry.get("a", 0))
+        my_ans = entry.get(f"{side}_answers", {}) or {}
+        questions = [q for _, q in LOVE2_QUESTIONS]
+        view = {"ok": True, "code": int(code), "side": side,
+                "other": {"id": other_uid, "name": name_of(other_uid)},
+                "my_done": bool(entry.get(f"{side}_done")),
+                "other_done": bool(entry.get(f"{'b' if side == 'a' else 'a'}_done")),
+                "current_idx": len(my_ans), "questions": questions,
+                "total": len(questions)}
+        if entry.get("a_done") and entry.get("b_done"):
+            view["result"] = _mini_love2_compute(entry)
+        return view, 200
+    except Exception as exc:
+        _mlog("error", f"love2_state failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_love2_answer(uid, code, text):
+    try:
+        entry = v24_store()["love2"].get(str(int(code)))
+        if not isinstance(entry, dict):
+            return {"ok": False, "error": "این عشق‌سنج معتبر نیست."}, 404
+        uid = int(uid)
+        if uid not in (int(entry.get("a", 0)), int(entry.get("b", 0))):
+            return {"ok": False, "error": "این عشق‌سنج مال شما نیست."}, 403
+        side = "a" if uid == int(entry.get("a", 0)) else "b"
+        if entry.get(f"{side}_done"):
+            return _mini_love2_state(uid, code)
+        ans_key = f"{side}_answers"
+        answers = entry.setdefault(ans_key, {})
+        text = str(text or "").strip()
+        if len(text) < 2:
+            return {"ok": False, "error": "جوابت خیلی کوتاه است."}, 400
+        idx = len(answers)
+        answers[str(idx)] = text[:400]
+        nxt = idx + 1
+        if nxt >= len(LOVE2_QUESTIONS):
+            entry[f"{side}_done"] = True
+            save_data(force=True)
+            result = None
+            if entry.get("a_done") and entry.get("b_done"):
+                result = _mini_love2_compute(entry)
+            return {"ok": True, "done": True, "result": result,
+                    "message": "جواب‌هایت ثبت شد! منتظر طرف مقابل..."}, 200
+        save_data()
+        return {"ok": True, "done": False, "current_idx": nxt,
+                "message": "ثبت شد!"}, 200
+    except Exception as exc:
+        _mlog("error", f"love2_answer failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_love2_compute(entry):
+    try:
+        a, b = int(entry.get("a", 0)), int(entry.get("b", 0))
+        a_ans, b_ans = entry.get("a_answers", {}), entry.get("b_answers", {})
+        matches = 0
+        rows = []
+        for i, (_, q) in enumerate(LOVE2_QUESTIONS):
+            ta, tb = str(a_ans.get(str(i), "")), str(b_ans.get(str(i), ""))
+            match = False
+            if ta.strip() and tb.strip():
+                wa = set(re.findall(r"[\w\u0600-\u06FF]+", ta.lower()))
+                wb = set(re.findall(r"[\w\u0600-\u06FF]+", tb.lower()))
+                match = bool(wa & wb)
+            if match:
+                matches += 1
+            rows.append({"q": q, "a": ta[:120] or "—", "b": tb[:120] or "—", "match": match})
+        score = min(98, 50 + matches * 12)
+        # پاکسازی پس از نمایش (مطابق ربات)
+        v24_store()["love2"].pop(str(entry.get("code", "")) or "", None)
+        for k in list(v24_store()["love2"].keys()):
+            if v24_store()["love2"][k] is entry:
+                v24_store()["love2"].pop(k, None)
+                break
+        save_data(force=True)
+        return {"score": score, "matches": matches, "total": len(LOVE2_QUESTIONS),
+                "a_name": name_of(a), "b_name": name_of(b), "rows": rows}
+    except Exception as exc:
+        _mlog("error", f"love2_compute failed: {exc!r}")
+        return {"score": 50, "matches": 0, "total": len(LOVE2_QUESTIONS), "rows": []}
+
+
+# ---------------- 📊 آمار کامل + مقایسه + AI ----------------
+def _mini_stats_full(uid):
+    try:
+        uid = int(uid)
+        u = get_user(uid)
+        stats = u.get("stats", {}) if isinstance(u.get("stats"), dict) else {}
+        stats_ext = u.get("stats_ext", {}) if isinstance(u.get("stats_ext"), dict) else {}
+        games = int(u.get("games", 0))
+        wins = int(u.get("wins", 0))
+        losses = int(u.get("losses", 0))
+        mode_dist = []
+        total_mode = sum(int(v) for v in stats.values()) or 1
+        for k, v in sorted(stats.items(), key=lambda x: -int(x[1])):
+            if int(v) > 0:
+                mode_dist.append({"key": k, "label": MODE_LABELS.get(k, k),
+                                  "count": int(v), "pct": int(int(v) * 100 / total_mode)})
+        mg_best = u.get("mg_best", {}) if isinstance(u.get("mg_best"), dict) else {}
+        ln = u.get("ln_stats", {}) if isinstance(u.get("ln_stats"), dict) else {}
+        sv = u.get("sv_records", {}) if isinstance(u.get("sv_records"), dict) else {}
+        return {"ok": True,
+                "general": {"games": games, "wins": wins, "losses": losses,
+                            "winrate": int(wins * 100 / games) if games > 0 else 0,
+                            "xp": int(u.get("xp", 0)), "coins": int(u.get("coins", 0)),
+                            "level": int(u.get("level", 1)),
+                            "daily_streak": int(u.get("daily_streak", 0)),
+                            "streak": int(u.get("streak", 0)),
+                            "best_streak": int(u.get("best_streak", 0)),
+                            "created_at": int(u.get("created_at", 0) or 0)},
+                "matchmaking": {"elo": int(u.get("elo_rating", 1000)),
+                                "best_elo": int(stats_ext.get("best_elo", 1000)),
+                                "wins": int(u.get("matchmaking_wins", 0)),
+                                "losses": int(u.get("matchmaking_losses", 0)),
+                                "draws": int(u.get("matchmaking_draws", 0)),
+                                "ranked_games": int(u.get("ranked_games", 0)),
+                                "mm_best": int(u.get("mm_best", 0))},
+                "reputation": int(u.get("reputation", 0)),
+                "duels": int(u.get("duels", 0)),
+                "survival": {"best": int(u.get("survival_best", 0)), "records": sv},
+                "mini_games": {"played": int(u.get("mini_games_played", 0)),
+                               "won": int(u.get("mini_games_won", 0)), "best": mg_best},
+                "casino": {"spins": int(ln.get("spins", 0)), "wins": int(ln.get("wins", 0)),
+                           "jackpots": int(ln.get("jackpots", 0)), "net": int(ln.get("net", 0))},
+                "mode_dist": mode_dist[:12],
+                "groups_played": len(stats_ext.get("groups_played_in", []) or []),
+                "history": [h for h in (u.get("game_history") or [])[:15] if isinstance(h, dict)],
+                "activity": [a for a in (u.get("activity_log") or [])[:15] if isinstance(a, dict)]}, 200
+    except Exception as exc:
+        _mlog("error", f"stats_full failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_compare(uid, target):
+    try:
+        uid, target = int(uid), int(target)
+        if target == uid:
+            return {"ok": False, "error": "نمی‌توانی با خودت مقایسه کنی!"}, 400
+        them = DATA.get("users", {}).get(str(target)) or DATA.get("users", {}).get(user_key(target))
+        if not isinstance(them, dict):
+            return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+        me = get_user(uid)
+
+        def cmp3(a, b):
+            return "win" if a > b else ("lose" if a < b else "eq")
+
+        rows = [
+            {"label": "سطح", "icon": "🔥", "a": int(me.get("level", 1)), "b": int(them.get("level", 1))},
+            {"label": "XP", "icon": "⭐", "a": int(me.get("xp", 0)), "b": int(them.get("xp", 0))},
+            {"label": "بازی", "icon": "🎮", "a": int(me.get("games", 0)), "b": int(them.get("games", 0))},
+            {"label": "برد", "icon": "🏆", "a": int(me.get("wins", 0)), "b": int(them.get("wins", 0))},
+            {"label": "سکه", "icon": "🪙", "a": int(me.get("coins", 0)), "b": int(them.get("coins", 0))},
+            {"label": "ELO", "icon": "⭐", "a": int(me.get("elo_rating", 1000)), "b": int(them.get("elo_rating", 1000))},
+            {"label": "اعتبار", "icon": "👍", "a": int(me.get("reputation", 0)), "b": int(them.get("reputation", 0))},
+            {"label": "استریک", "icon": "🔥", "a": int(me.get("daily_streak", 0)), "b": int(them.get("daily_streak", 0))},
+            {"label": "دستاوردها", "icon": "🎖", "a": len(me.get("achievements", []) or []),
+             "b": len(them.get("achievements", []) or [])},
+        ]
+        for r in rows:
+            r["res"] = cmp3(r["a"], r["b"])
+        wins_me = sum(1 for r in rows if r["res"] == "win")
+        wins_them = sum(1 for r in rows if r["res"] == "lose")
+        return {"ok": True,
+                "me": {"id": uid, "name": str(me.get("name") or "بازیکن")},
+                "them": {"id": target, "name": str(them.get("name") or "بازیکن")},
+                "rows": rows, "score": [wins_me, wins_them]}, 200
+    except Exception as exc:
+        _mlog("error", f"compare failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_ai_view(uid):
+    try:
+        suggestion = ai_game_master_suggest(int(uid))
+        style = ai_player_style(int(uid))
+        smart = smart_suggestion_by_time(int(uid))
+        return {"ok": True,
+                "style": {"name": str(style.get("style", "نامشخص")),
+                          "total_answers": int(style.get("total_answers", 0))},
+                "suggestion": {"mode": str(suggestion.get("mode", "truth")),
+                               "mode_label": str(MODE_LABELS.get(suggestion.get("mode", ""), "")),
+                               "difficulty": str(suggestion.get("difficulty", "")),
+                               "expected_xp": int(suggestion.get("expected_xp", 0)),
+                               "reason": str(suggestion.get("reason", ""))},
+                "smart_tip": str(smart)}, 200
+    except Exception as exc:
+        _mlog("error", f"ai_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🧰 ابزار پروفایل ----------------
+def _mini_set_name(uid, name):
+    try:
+        name = str(name or "").strip()[:32]
+        if not name:
+            return {"ok": False, "error": "نام معتبر بفرست."}, 400
+        get_user(int(uid))["name"] = name
+        save_data(force=True)
+        audit("miniapp_name", int(uid), None, name[:32])
+        return {"ok": True, "name": name, "message": f"نام نمایشی تو ثبت شد: {name}"}, 200
+    except Exception as exc:
+        _mlog("error", f"set_name failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_friends_action(uid, action, fid):
+    try:
+        uid, fid = int(uid), int(fid)
+        u = get_user(uid)
+        friends = [int(x) for x in (u.get("friends") or [])]
+        if action == "add":
+            if fid == uid:
+                return {"ok": False, "error": "خودت را نمی‌توانی اضافه کنی!"}, 400
+            if str(fid) not in DATA.get("users", {}) and user_key(fid) not in DATA.get("users", {}):
+                return {"ok": False, "error": "این بازیکن پیدا نشد."}, 404
+            if fid in friends:
+                return {"ok": False, "error": "قبلاً دوست هستید!"}, 400
+            friends.append(fid)
+            u["friends"] = friends
+            save_data(force=True)
+            log_user_activity(uid, "friend_add", f"id={fid} src=miniapp")
+            return {"ok": True, "message": f"{name_of(fid)} به دوستانت اضافه شد!"}, 200
+        if action == "remove":
+            if fid not in friends:
+                return {"ok": False, "error": "در لیست دوستانت نیست."}, 400
+            u["friends"] = [x for x in friends if x != fid]
+            save_data(force=True)
+            return {"ok": True, "message": "از دوستان حذف شد."}, 200
+        return {"ok": False, "error": "عملیات نامعتبر."}, 400
+    except Exception as exc:
+        _mlog("error", f"friends_action failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_reminder(uid, minutes, text):
+    try:
+        minutes = int(minutes)
+        if minutes < 1 or minutes > 1440:
+            return {"ok": False, "error": "بین ۱ تا ۱۴۴۰ دقیقه."}, 400
+        text = str(text or "").strip()[:200]
+        if not text:
+            return {"ok": False, "error": "متن یادآور خالی است."}, 400
+        when = now_ts() + minutes * 60
+        reminder = reminder_add(int(uid), text, when)
+        if reminder:
+            return {"ok": True, "message": f"یادآور ثبت شد! {minutes} دقیقه بعد 📝"}, 200
+        return {"ok": False, "error": "خطا در ثبت یادآور."}, 500
+    except Exception as exc:
+        _mlog("error", f"reminder failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_broadcast(admin_uid, text):
+    """ارسال پیام همگانی — فقط ادمین (مطابق BC ربات)."""
+    try:
+        if int(admin_uid) != int(ADMIN_ID):
+            return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+        text = str(text or "").strip()
+        if not (3 <= len(text) <= 900):
+            return {"ok": False, "error": "متن باید بین ۳ تا ۹۰۰ نویسه باشد."}, 400
+        users = [int(k) for k in DATA.get("users", {}).keys()]
+        entry = {"ts": now_ts(), "level": "info", "category": "system",
+                 "message": f"miniapp broadcast queued to {len(users)} users",
+                 "actor": int(admin_uid), "details": text[:100]}
+        DATA.setdefault("audit", []).append(entry)
+        DATA.setdefault("broadcast_queue", []).append({"text": text[:900], "ts": now_ts(),
+                                                       "targets": users, "sent": 0, "by": int(admin_uid)})
+        save_data(force=True)
+        audit("admin_bc", int(admin_uid), None, f"queued {len(users)}")
+        return {"ok": True, "message": f"پیام همگانی در صف ارسال قرار گرفت ({len(users)} کاربر)."}, 200
+    except Exception as exc:
+        _mlog("error", f"broadcast failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
 _MINIAPP_HTML_SRC = r"""<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
@@ -28908,6 +30909,120 @@ textarea.input{min-height:96px;resize:vertical;line-height:1.9}
   .ring{width:72px;height:72px}
 }
 @media(min-width:600px){.items{grid-template-columns:repeat(3,1fr)}.achg{grid-template-columns:repeat(3,1fr)}.tiles{grid-template-columns:repeat(3,1fr)}}
+/* ---------- GAME ENGINE UI (۳.۰) ---------- */
+.gm-hero{display:flex;align-items:center;gap:14px;padding:16px}
+.gm-hero .gi{width:56px;height:56px;border-radius:19px;display:grid;place-items:center;font-size:27px;flex:0 0 auto;
+  background:linear-gradient(150deg,#151b2e,#0a0e19);border:1px solid var(--line2);box-shadow:0 10px 30px #0006}
+.gm-hero .gi.pulse{animation:gpulse 2s ease-in-out infinite}
+@keyframes gpulse{0%,100%{transform:scale(1);box-shadow:0 10px 30px #0006}50%{transform:scale(1.06);box-shadow:0 10px 40px #7c5cff55}}
+.qcard{border:1px solid var(--line2);background:linear-gradient(160deg,#141a2bf5,#0a0e19f8);border-radius:var(--r-lg);
+  padding:18px;margin-bottom:14px;position:relative;overflow:hidden}
+.qcard::before{content:"";position:absolute;inset:0;background:radial-gradient(500px 180px at 80% -30%,#7c5cff1c,transparent 70%)}
+.qcard .qtag{display:inline-flex;align-items:center;gap:5px;font-size:9px;font-weight:800;padding:4px 11px;border-radius:99px;
+  background:#7c5cff1c;border:1px solid #7c5cff44;color:#cfc4ff;margin-bottom:10px}
+.qcard .qtext{font-size:14.5px;font-weight:800;line-height:2;position:relative}
+.opt{width:100%;text-align:right;border:1px solid var(--line2);background:#ffffff08;border-radius:15px;padding:13px 15px;
+  font-size:12.5px;font-weight:700;margin-top:9px;display:flex;align-items:center;gap:10px;transition:transform .13s,border-color .2s,background .2s;position:relative}
+.opt:active{transform:scale(.97)}
+.opt .ol{width:26px;height:26px;border-radius:9px;background:#7c5cff22;border:1px solid #7c5cff44;
+  display:grid;place-items:center;font-size:11px;font-weight:900;color:#cfc4ff;flex:0 0 auto}
+.opt.right{border-color:#31e98188;background:#31e98116}
+.opt.right .ol{background:#31e98133;border-color:#31e98166;color:#b8ffd9}
+.opt.wrong{border-color:#ff526888;background:#ff526816}
+.opt.wrong .ol{background:#ff526833;border-color:#ff526866;color:#ffc2cb}
+.opt:disabled{opacity:.55;pointer-events:none}
+.streakbar{display:flex;align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap}
+.streakbar .flame{font-size:19px;animation:gpulse 1.4s ease-in-out infinite}
+.bigres{text-align:center;padding:26px 14px}
+.bigres .bico{font-size:46px;display:block;margin-bottom:10px}
+.bigres .bt{font-size:16px;font-weight:900}
+.bigres .bs{color:var(--muted);font-size:11px;margin-top:6px}
+/* ttt */
+.ttt{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:300px;margin:12px auto}
+.ttt button{aspect-ratio:1;border-radius:16px;border:1px solid var(--line2);background:#ffffff08;font-size:31px;
+  display:grid;place-items:center;transition:transform .13s,background .2s}
+.ttt button:active{transform:scale(.92)}
+.ttt button.x{background:#7c5cff1e;border-color:#7c5cff66}
+.ttt button.o{background:#15d8ff14;border-color:#15d8ff55}
+.ttt button.dead{opacity:.4;pointer-events:none}
+/* mine grid */
+.mineg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+.mineg button{aspect-ratio:1;border-radius:15px;border:1px solid var(--line2);background:linear-gradient(150deg,#131828,#0b0f18);
+  font-size:22px;display:grid;place-items:center;transition:transform .13s}
+.mineg button:active{transform:scale(.9)}
+.mineg button.gem{background:#31e98116;border-color:#31e98155}
+.mineg button.boom{background:#ff526822;border-color:#ff526888}
+.mineg button.dead{opacity:.35;pointer-events:none}
+/* reaction */
+.rxpad{height:220px;border-radius:var(--r-lg);display:grid;place-items:center;font-size:19px;font-weight:900;
+  border:2px dashed var(--line2);background:#ffffff05;margin:12px 0;transition:background .18s,border-color .18s;user-select:none}
+.rxpad.wait{background:#ff526810;border-color:#ff526855;color:#ffb9c2}
+.rxpad.go{background:#31e98122;border-color:#31e98188;color:#b8ffd9;animation:gpulse .8s ease-in-out infinite;cursor:pointer}
+.rxpad.res{background:#7c5cff12;border-color:#7c5cff55;color:#fff}
+/* wheel */
+.wheel{width:230px;height:230px;border-radius:50%;margin:16px auto;position:relative;
+  border:7px solid #1a2033;box-shadow:0 18px 60px #0008, inset 0 0 30px #0006;transition:transform 3.4s cubic-bezier(.15,.85,.22,1)}
+.wheel .seg{position:absolute;inset:0;border-radius:50%;clip-path:polygon(50% 50%,50% 0,100% 0)}
+.wheel::after{content:"";position:absolute;left:50%;top:-13px;transform:translateX(-50%);width:0;height:0;
+  border-left:12px solid transparent;border-right:12px solid transparent;border-top:19px solid var(--gold);filter:drop-shadow(0 4px 6px #0008)}
+.wheel .hubx{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:58px;height:58px;border-radius:50%;
+  background:linear-gradient(135deg,#1a2033,#0d1119);border:2px solid var(--line2);display:grid;place-items:center;font-size:23px;z-index:2}
+/* countdown ring + timer */
+.timer{display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums;font-weight:900;font-size:13px;color:var(--gold)}
+.timer .tring{width:34px;height:34px;position:relative;flex:0 0 auto}
+.timer .tring svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.timer .tring circle{fill:none;stroke-width:4;stroke-linecap:round}
+.timer .tring .ttr{stroke:#ffffff10}
+.timer .tring .tvl{stroke:var(--gold);transition:stroke-dashoffset .95s linear}
+/* hearts */
+.hearts{display:flex;gap:5px;font-size:16px}
+.hearts i{font-style:normal;animation:pop .35s cubic-bezier(.2,2,.4,1)}
+.hearts i.off{opacity:.22;filter:grayscale(1)}
+/* lobby */
+.pl-wrap{display:flex;flex-direction:column;gap:8px}
+.pl{display:flex;align-items:center;gap:11px;border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:11px 13px}
+.pl .grow{flex:1;min-width:0}
+.pl .grow b{display:block;font-size:12px}
+.pl .grow small{display:block;color:var(--muted);font-size:9px;margin-top:2px}
+.pl.ready{border-color:#31e98144;background:#31e9810a}
+.pl .sc{font-size:15px;font-weight:900;color:var(--gold);min-width:34px;text-align:center}
+.codechip{display:inline-flex;align-items:center;gap:8px;background:#7c5cff12;border:1px dashed #7c5cff66;color:#cfc4ff;
+  border-radius:14px;padding:9px 16px;font-size:16px;font-weight:900;letter-spacing:3px;font-family:'Vazirmatn',monospace}
+.sharebtn{cursor:pointer}
+/* duel / arena score */
+.duelbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;margin:12px 0}
+.duelbar .side{text-align:center;padding:12px 8px;border:1px solid var(--line);background:#ffffff06;border-radius:var(--r-md)}
+.duelbar .side.me{border-color:#7c5cff55;background:#7c5cff0e}
+.duelbar .side b{display:block;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.duelbar .side .sc{font-size:23px;font-weight:900;color:var(--gold)}
+.duelbar .vs{font-size:11px;font-weight:900;color:var(--muted)}
+/* dice/coin animation */
+.funbox{min-height:150px;display:grid;place-items:center;border-radius:var(--r-lg);border:1px solid var(--line2);
+  background:radial-gradient(300px 160px at 50% 30%,#7c5cff14,transparent 70%),#ffffff05;margin:12px 0;padding:20px}
+.funbox .fres{font-size:52px;animation:pop .5s cubic-bezier(.2,2,.4,1)}
+.funbox.spin .fres{animation:funspin .6s linear infinite}
+@keyframes funspin{from{transform:rotate(0) scale(.9)}to{transform:rotate(360deg) scale(1)}}
+/* stats page bars */
+.mbar{margin:8px 0}
+.mbar .lb{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);margin-bottom:4px}
+/* love2 */
+.lovebar{height:16px;border-radius:99px;background:#ffffff0c;overflow:hidden;position:relative;margin:14px 0}
+.lovebar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#ff4fa3,#ff85b3,#ffc857);
+  transition:width 1.4s cubic-bezier(.2,.9,.3,1);position:relative}
+.lovebar i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#ffffff66,transparent);
+  background-size:200% 100%;animation:shine 2s linear infinite}
+/* segment tabs for games */
+.gtabs{display:flex;gap:6px;overflow-x:auto;padding:2px;margin:12px 0 4px;scrollbar-width:none}
+.gtab{border:1px solid var(--line2);background:#ffffff08;border-radius:12px;padding:8px 13px;font-size:10.5px;
+  font-weight:800;color:var(--muted);white-space:nowrap;transition:.2s;flex:0 0 auto}
+.gtab.on{background:#7c5cff26;border-color:#7c5cff88;color:#fff}
+/* keyboard number input */
+.numpad{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;max-width:260px;margin:10px auto}
+.numpad button{padding:13px;border-radius:13px;border:1px solid var(--line2);background:#ffffff0a;font-size:15px;font-weight:900}
+.numpad button:active{transform:scale(.93)}
+.seqdots{display:flex;gap:9px;justify-content:center;font-size:23px;font-weight:900;letter-spacing:3px;margin:12px 0;
+  font-variant-numeric:tabular-nums}
+.seqdots span{animation:pop .4s cubic-bezier(.2,2,.4,1) backwards}
 </style>
 </head>
 <body>
@@ -28976,19 +31091,21 @@ function countUp(el,val,suf){var t0=performance.now(),dur=700,from=0;function fr
  el.textContent=faK(Math.round(from+(val-from)*(1-Math.pow(1-p,3))))+(suf||'');if(p<1)requestAnimationFrame(fr)}requestAnimationFrame(fr)}
 
 /* ================= nav + router ================= */
-const NAV=[['home','⌂','خانه'],['play','🎮','بازی'],['miss','🎯','مأموریت'],['board','🏆','رتبه'],['shop','🛍','فروشگاه'],['me','👤','پروفایل']];
-const PAGES={home:renderHome,play:renderPlay,miss:renderMiss,board:null,shop:renderShop,ach:renderAch,me:renderMe,notif:renderNotif,pass:renderPass,admin:renderAdmin};
+const NAV=[['home','⌂','خانه'],['play','🎮','بازی'],['games','🕹','گیم‌ها'],['miss','🎯','مأموریت'],['board','🏆','رتبه'],['shop','🛍','فروشگاه'],['me','👤','پروفایل']];
+const PAGES={home:renderHome,play:renderPlay,games:renderGames,miss:renderMiss,board:null,shop:renderShop,ach:renderAch,me:renderMe,notif:renderNotif,pass:renderPass,admin:renderAdmin,survival:renderSurvival,lobby:renderLobbyPage,duel:renderDuelPage,arena:renderArenaPage,stats:renderStatsPage};
 function buildShell(){
  var nav=$('nav');var h='';
  for(var i=0;i<NAV.length;i++)h+='<button data-pg="'+NAV[i][0]+'" onclick="show(\''+NAV[i][0]+'\')"><span class="bi">'+NAV[i][1]+'</span>'+NAV[i][2]+(NAV[i][0]==='miss'?'<span class="bdg" id="missBdg" style="display:none">۰</span>':'')+'</button>';
  h+='<button data-pg="admin" id="navAdmin" style="display:none" onclick="show(\'admin\')"><span class="bi">🛡️</span>مدیریت</button>';
  nav.innerHTML=h;
- var m=$('main');var pages=[['home',''],['play',''],['miss',''],['board',''],['shop',''],['ach',''],['me',''],['notif',''],['pass',''],['admin','']];
+ var m=$('main');var pages=[['home',''],['play',''],['games',''],['miss',''],['board',''],['shop',''],['ach',''],['me',''],['notif',''],['pass',''],['admin',''],['survival',''],['lobby',''],['duel',''],['arena',''],['stats','']];
  var mh='';for(var j=0;j<pages.length;j++)mh+='<section class="page" id="pg-'+pages[j][0]+'"></section>';
  m.innerHTML=mh;
 }
 function show(id){
  if(PAGE&&SCROLL[PAGE]!=null)try{SCROLL[PAGE]=window.scrollY}catch(e){}
+ /* توقف polling صفحه‌های زنده هنگام ترک */
+ if(PAGE!==id){if(PAGE==='lobby'&&id!=='lobby')stopPoll('lobby');if(PAGE==='duel'&&id!=='duel')stopPoll('duel');if(PAGE==='arena'&&id!=='arena')stopPoll('arena')}
  PAGE=id;haptic();
  for(var i=0;i<NAV.length+1;i++){var s=document.querySelectorAll('nav.bottom button')[i];if(s)s.classList.remove('on')}
  var btn=document.querySelector('nav.bottom button[data-pg="'+id+'"]');if(btn)btn.classList.add('on');
@@ -29074,31 +31191,64 @@ function renderHome(){
  +st('بازی جدید','tg1',t.games_started)+st('بازیکن فعال','ta1',t.active_users)+st('دوئل','td1',t.duels)+st('عضو جدید','tn1',t.new_users)+'</div></div>';
  /* quick tiles */
  h+='<div class="section"><div class="shead"><b>⚡ دسترسی سریع</b><small>HUB</small></div><div class="tiles">'
- +tile('🧠','مینی‌گیم‌ها','۵ گیم سریع','apexminigames')+tile('🤺','دوئل','رقابت دونفره','apexduel')
- +tile('🔥','بقا','Survival','apexsurvival')+tile('🎯','مچ‌میکینگ','رقیب هم‌سطح','apexmatchmaking')
- +tile('🎰','شانس','Lucky Number','apexlucky')+tile('📊','آمار من','داشبورد کامل','apexstats_me')
+ +tile('🕹','گیم‌زون','۱۳ بازی داخل اپ','games')+tile('🤺','دوئل','رقابت دونفره','duel_page')
+ +tile('🔥','بقا','Survival','survival')+tile('🏆','آرنا','رنک‌دار ELO','arena_page')
+ +tile('👥','لابی','بازی گروهی','lobby_page')+tile('📊','آمار من','داشبورد کامل','stats_page')
  +'</div></div>';
  $('pg-home').innerHTML=h;
  countUp($('gms'),u.games);countUp($('wns'),u.wins);countUp($('stk'),u.streak);countUp($('elo'),u.elo);
  countUp($('tg1'),t.games_started);countUp($('ta1'),t.active_users);countUp($('td1'),t.duels);countUp($('tn1'),t.new_users);
 }
 function st(lbl,id,val){return '<div class="stat"><small>'+lbl+'</small><b id="'+id+'">—</b></div>'}
-function tile(ic,nm,ds,cmd){return '<button class="tile" onclick="bot(\''+cmd+'\')"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>'}
+function tile(ic,nm,ds,cmd){
+ /* همه‌ی دکمه‌ها داخل مینی‌اپ کار می‌کنند — هیچ خروجی به ربات وجود ندارد */
+ var pg={games:'games',duel_page:'duel',survival:'survival',arena_page:'arena',lobby_page:'lobby',stats_page:'stats'}[cmd];
+ if(pg)return '<button class="tile" onclick="show(\''+pg+'\')"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>';
+ return '<button class="tile" onclick="show(\'play\')"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>';
+}
 
 /* ================= PLAY HUB ================= */
+function navTile(ic,nm,ds,fn){return '<button class="tile" onclick="'+fn+'"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>'}
 function renderPlay(){
  var secs=[
-  ['👥 بازی گروهی',[['🚀','ساخت لابی','بازی کامل جرئت/حقیقت در گروه','apex'],['⚡','بازی سریع','بدون لابی، فوری شروع کن','apexquick'],['➕','پیوستن','به بازی جاری گروه بپیوند','apexjoin']]],
-  ['🔒 دو نفره',[['🤺','دوئل','نبرد تن‌به‌تن با سوالات','apexduel'],['🎮','مسابقه خصوصی','دو نفره در پی‌وی','apexmatch'],['💌','عشق‌سنج','سنجش سازگاری دو نفر','apexlove2'],['⚖️','مقایسه','آمار تو در برابر رقیب','apexcompare']]],
-  ['🏆 رقابتی',[['🏟','مسابقات','Tournament های زنده','apextournament'],['🎯','مچ‌میکینگ','رقیب هم‌سطح با ELO','apexmatchmaking'],['🔥','Survival','حالت بقا با سختی فزاینده','apexsurvival'],['🤝','Team Battle','نبرد تیمی گروهی','apexteambattle'],['🤖','پیشنهاد AI','تحلیل سبک و پیشنهاد حالت','apexai'],['✨','پیشنهاد هوشمند','انتخاب بهترین بازی برای الان','apexsmart']]],
-  ['🎮 مینی‌گیم‌ها',[['🧠','مینی‌گیم‌ها','Trivia، واژه، حافظه، واکنش','apexminigames'],['🧮','کوییز ریاضی','محاسبه سریع با تایمر','apexquiz'],['🎰','Lucky Number','عدد شانس روزانه','apexlucky'],['🍀','گردونه شانس','چرخش و جایزه','apexluck'],['🎲','دایس','پرتاب تاس','apexdice'],['🪙','شیر یا خط','اپ‌تاس','apexcoin'],['🎱','هشت‌تو','پاسخ شگفت‌انگیز','apex8ball']]],
-  ['🎖 پیشرفت',[['🎫','Season Pass','مسیر پاداش ۵۰ مرحله‌ای','apexpass'],['🎯','Quest Center','کوئست روزانه و هفتگی','apexquests'],['🌐','فصل و رویداد','وضعیت فصل فعال','apexseason'],['👑','Hall of Fame','تالار افسانه‌ها','apexhof'],['🎖','Milestones','پاداش‌های نقطه عطف','apexmilestones'],['📜','تاریخچه','آرشیو بازی‌هایت','apexhistory']]],
-  ['🧰 ابزارها',[['👥','دوستان','مدیریت لیست دوستی','apexfriends'],['⚔️','رقبا','رقبای سرسختت','apexrivals'],['⏰','یادآور','یادآور شخصی','apexreminder'],['🎓','آموزش','راهنمای گام‌به‌گام','apextutorial'],['🎁','دعوت دوستان','سکه با هر دعوت','apexinvite'],['👑','VIP','مزایای عضویت ویژه','apexvip']]]
+  ['👥 بازی گروهی و دونفره',[
+   navTile('🚀','ساخت لابی','بازی کامل جرئت/حقیقت چندنفره','lobbyCreate()'),
+   navTile('➕','پیوستن به لابی','با کد ۶ حرفی','lobbyJoinSheet()'),
+   navTile('🤺','دوئل','نبرد تن‌به‌تن — ۱۰ راند','duelCreate()'),
+   navTile('💌','عشق‌سنج','سنجش سازگاری دو نفره','love2Sheet()'),
+   navTile('⚖️','مقایسه','آمار تو در برابر رقیب','compareSheet()')]],
+  ['🏆 رقابتی',[
+   navTile('🎯','آرنا رنک‌دار','رقیب هم‌سطح با ELO','show(\'arena\')'),
+   navTile('🔥','Survival','حالت بقا با سختی فزاینده','show(\'survival\')'),
+   navTile('🤖','پیشنهاد AI','تحلیل سبک و پیشنهاد حالت','aiSheet()'),
+   navTile('✨','پیشنهاد هوشمند','بهترین بازی برای الان','aiSheet()')]],
+  ['🎮 گیم‌زون',[
+   navTile('🕹','مرکز بازی‌ها','۱۳ بازی کامل داخل اپ','show(\'games\')'),
+   navTile('🧠','Trivia','زنجیره‌ای — تا وقتی درستی','gameView(\'trivia\')'),
+   navTile('🧮','کوییز ریاضی','محاسبه سریع با تایمر','gameView(\'quiz\')'),
+   navTile('🎰','Lucky Number','کازینوی عدد شانس','gameView(\'ln\')'),
+   navTile('🍀','گردونه شانس','چرخش و جایزه','gameView(\'luck\')'),
+   navTile('✖️','دوز','بازی با هوش مصنوعی','gameView(\'ttt\')'),
+   navTile('⛏','مین‌یاب','شرطی با ضریب ریسک','gameView(\'mine\')'),
+   navTile('🎲','ابزار شانس','تاس · سکه · هشت‌تو','funSheet()')]],
+  ['🎖 پیشرفت',[
+   navTile('🎫','Season Pass','مسیر پاداش ۵۰ مرحله‌ای','show(\'pass\')'),
+   navTile('🎯','Quest Center','کوئست روزانه و هفتگی','show(\'miss\')'),
+   navTile('🏅','دستاوردها','تالار افتخاراتت','show(\'ach\')'),
+   navTile('📊','آمار کامل','داشبورد شخصی','show(\'stats\')'),
+   navTile('📜','تالار افسانه‌ها','رتبه‌بندی جهانی','show(\'board\')')]],
+  ['🧰 ابزارها',[
+   navTile('👥','دوستان','مدیریت لیست دوستی','friendsSheet()'),
+   navTile('🎭','نام نمایشی','تغییر نام در ربات','nameSheet()'),
+   navTile('⏰','یادآور','یادآور شخصی','reminderSheet()'),
+   navTile('🎁','دعوت دوستان','سکه با هر دعوت','inviteSheet()'),
+   navTile('👑','VIP','مزایای عضویت ویژه','vipSheet()'),
+   navTile('🎓','راهنما','آموزش گام‌به‌گام','guideSheet()')]]
  ];
- var h='<div class="gcard hero"><div class="in"><h1 class="h1">🎮 Play Hub</h1><p class="sub">همه‌ی حالت‌های بازی ApexRival در یک نگاه — روی هرکدام بزن تا داخل تلگرام اجرا شود.</p></div></div>';
+ var h='<div class="gcard hero"><div class="in"><h1 class="h1">🎮 Play Hub</h1><p class="sub">همه‌ی حالت‌های بازی ApexRival — کامل داخل همین مینی‌اپ، بدون خروج به تلگرام.</p></div></div>';
  secs.forEach(function(s){
   h+='<div class="section"><div class="shead"><b>'+s[0]+'</b><small>'+fa(s[1].length)+' حالت</small></div><div class="tiles">';
-  s[1].forEach(function(m){h+=tile(m[0],m[1],m[2],m[3])});
+  s[1].forEach(function(m){h+=m});
   h+='</div></div>';
  });
  $('pg-play').innerHTML=h;
@@ -29299,7 +31449,7 @@ function renderMe(){
  h+='<div class="section"><div class="shead"><b>⚔️ رقبا</b><small>'+fa((D.rivals||[]).length)+' نفر</small></div>';
  if((D.rivals||[]).length){
   h+='<div class="list">';
-  D.rivals.forEach(function(x){h+='<div class="row" onclick="profileView('+x.id+')" style="cursor:pointer">'+avaHtml({id:x.id,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>ELO '+fa(x.elo)+'</small></div><button class="btn" onclick="event.stopPropagation();bot(\'apexduel\')">🤺 دوئل</button></div>'});
+  D.rivals.forEach(function(x){h+='<div class="row" onclick="profileView('+x.id+')" style="cursor:pointer">'+avaHtml({id:x.id,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>ELO '+fa(x.elo)+'</small></div><button class="btn" onclick="event.stopPropagation();duelCreate()">🤺 دوئل</button></div>'});
   h+='</div>';
  }else h+='<div class="empty" style="padding:18px"><span class="ei">🥷</span>رقیبی ثبت نشده — در دوئل‌ها حریفت را رقیب کن!</div>';
  h+='</div>';
@@ -29457,8 +31607,9 @@ async function profileView(id){
    p.achievements_top.forEach(function(a){h+='<div class="ach got"><h4 style="margin:0">'+esc(a.title)+'</h4></div>'});
    h+='</div>';
   }
-  h+='<div style="display:flex;gap:8px;margin-top:16px"><button class="btn" style="flex:1" onclick="bot(\'apexcompare\')">⚖️ مقایسه با من</button>'
-  +'<button class="btn primary" style="flex:1" onclick="closeSheet();bot(\'apexduel\')">🤺 چالش دوئل</button></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:16px"><button class="btn" style="flex:1" onclick="compareSheet('+Number(id)+')">⚖️ مقایسه با من</button>'
+  +'<button class="btn primary" style="flex:1" onclick="closeSheet();duelCreate()">🤺 چالش دوئل</button>'
+  +(p.is_friend?'':'<button class="btn green" style="flex:1" onclick="friendAdd('+Number(id)+')">➕ دوست</button>')+'</div>';
   $('sheetBody').innerHTML=h;
  }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">🔍</span>'+esc(e.message)+'</div>'}
 }
@@ -29477,7 +31628,7 @@ function renderAdmin(){
  +'<div class="stat"><small>GROUPS</small><b id="a_groups">—</b></div>'
  +'<div class="stat"><small>GAMES</small><b id="a_games">—</b></div>'
  +'<div class="stat"><small>ACTIVE</small><b id="a_active">—</b></div></div></div></div>';
- var tabs=[['dashboard','📊 داشبورد'],['users','👥 کاربران'],['games','🎮 بازی‌ها'],['groups','🏘 گروه‌ها'],['backups','💾 بکاپ‌ها'],['logs','🧾 لاگ‌ها'],['settings','⚙️ تنظیمات'],['economy','💰 اقتصاد']];
+ var tabs=[['dashboard','📊 داشبورد'],['users','👥 کاربران'],['games','🎮 بازی‌ها'],['groups','🏘 گروه‌ها'],['backups','💾 بکاپ‌ها'],['logs','🧾 لاگ‌ها'],['broadcast','📢 همگانی'],['settings','⚙️ تنظیمات'],['economy','💰 اقتصاد']];
  h+='<div class="chips">'+tabs.map(function(t){return '<button class="chip'+(ADMINTAB===t[0]?' on':'')+'" onclick="ADMINTAB=\''+t[0]+'\';renderAdmin();adminPage(\''+t[0]+'\')">'+t[1]+'</button>'}).join('')+'</div>';
  h+='<div id="adminBody"></div>';
  $('pg-admin').innerHTML=h;
@@ -29532,6 +31683,12 @@ async function adminPage(kind){
    h+='<div class="list">'+(d.items||[]).map(function(x){
     var lv=String(x.level||x.type||'info').toLowerCase();
     return '<div class="row"><div class="grow"><b>'+esc(x.message||x.action||'event')+'</b><small>'+esc(x.category||'')+(x.details?' · '+esc(x.details):'')+'</small></div><span class="loglv '+lv+'">'+lv+'</span><time style="color:var(--dim);font-size:8px;white-space:nowrap">'+timeAgo(x.ts)+'</time></div>'}).join('')||'<div class="empty"><span class="ei">🧾</span>لاگی در این سطح نیست.</div>'+'</div>';
+  }
+  else if(kind==='broadcast'){
+   h+='<div class="card"><b>📢 ارسال پیام همگانی</b>'
+   +'<p class="sub" style="margin:8px 0">پیام برای همه‌ی کاربران ربات در صف ارسال قرار می‌گیرد (همان Broadcast ربات).</p>'
+   +'<textarea id="bcTxt" class="input" maxlength="900" placeholder="متن پیام همگانی..." style="min-height:110px"></textarea>'
+   +'<button class="btn primary wide" style="margin-top:10px" onclick="adminBroadcast()">✈️ قرار دادن در صف ارسال</button></div>';
   }
   else if(kind==='settings'){
    h+='<div class="card"><b>⚙️ تنظیمات کلیدی سیستم</b><pre class="json" style="margin-top:10px">'+esc(JSON.stringify(d,null,2))+'</pre></div>';
@@ -29595,6 +31752,15 @@ async function userSheet(id){
   $('sheetBody').innerHTML=h;
  }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">⚠️</span>'+esc(e.message)+'</div>'}
 }
+async function adminBroadcast(){
+ var t=($('bcTxt')||{}).value||'';
+ if(t.trim().length<3){toast('متن خیلی کوتاه است','err');return}
+ try{
+  haptic('medium');
+  var d=await api('/api/miniapp/admin/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
+  toast(d.message||'قرار گرفت','ok');$('bcTxt').value='';
+ }catch(e){toast(e.message,'err')}
+}
 async function adminAction(action,target,value){
  try{
   haptic('medium');
@@ -29604,6 +31770,1377 @@ async function adminAction(action,target,value){
   if(action==='backup_now'||action==='maintenance_toggle')adminPage('dashboard');
   else if(target){userSheet(target);loadUsers(USERSPG)}
  }catch(e){toast(e.message,'err')}
+}
+
+/* ================= GAME ENGINE UI (۳.۰) — همه داخل مینی‌اپ ================= */
+var GAMEV={trivia:1,word:1,number:1,memory:1,reaction:1,ttt:1,mine:1,quiz:1,luck:1,ln:1};
+var GAMEMETA={trivia:['🧠','Trivia زنجیره‌ای','هر جواب درست = ادامه؛ اولین غلط = پایان!'],
+ word:['📝','بازی کلمات','حروف به‌هم‌ریخته را مرتب کن'],
+ number:['🔢','حدس عدد','۷ فرصت — بعد هر حدس بازه باریک‌تر'],
+ memory:['🃏','حافظه','دنباله را به خاطر بسپار'],
+ reaction:['⚡','سرعت واکنش','دکمه سبز شد، بزن!'],
+ ttt:['✖️','دوز با AI','تو ❌ — برد +۲۰ سکه'],
+ mine:['⛏','مین‌یاب','ورودی ۲۰ سکه — ضریب ریسک'],
+ quiz:['🧮','کوییز ریاضی','۶۰ ثانیه — +۸ XP'],
+ luck:['🍀','گردونه شانس','هر ۲۰ ساعت — تا ۵۰ سکه'],
+ ln:['🎰','Lucky Number','کازینو — جکپات ×۲۵']};
+var POLLS={}; /* page polling registry */
+function stopPoll(k){if(POLLS[k]){clearInterval(POLLS[k]);delete POLLS[k]}}
+function stopAllPolls(){Object.keys(POLLS).forEach(stopPoll)}
+function startPoll(k,fn,ms){stopPoll(k);POLLS[k]=setInterval(fn,ms||2000)}
+
+/* ---------- GAMES HUB ---------- */
+async function renderGames(){
+ var el=$('pg-games');
+ el.innerHTML='<div class="sk tall" style="margin-bottom:12px"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var g=await api('/api/miniapp/games');
+  var h='<div class="gcard hero"><div class="in gm-hero"><div class="gi pulse">🕹</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">گیم‌زون</h1><p class="sub">'+fa(g.played)+' بازی · '+fa(g.won)+' برد — همه‌ی بازی‌ها داخل اپ اجرا می‌شوند</p></div></div></div>';
+  h+='<div class="grid g4" style="margin-bottom:14px">'
+  +st('بازی کل','gg_p',g.played)+st('برد','gg_w',g.won)+st('رکورد Trivia','gg_t',g.best.trivia||0)+st('بهترین واکنش','gg_r',(g.best.reaction_ms||0)?fa(g.best.reaction_ms)+'ms':'—')+'</div>';
+  h+='<div class="section"><div class="shead"><b>🎮 بازی‌ها</b><small>'+fa(g.games.length)+' عنوان</small></div><div class="tiles">';
+  g.games.forEach(function(x){
+   var lock='';
+   if(x.key==='luck'&&g.cooldowns.luck>0)lock='<small style="color:var(--gold)">⏳ '+fa(Math.ceil(g.cooldowns.luck/3600))+' ساعت دیگر</small>';
+   if(x.key==='quiz'&&g.cooldowns.quiz_done)lock='<small style="color:var(--muted)">✅ امروز انجام شد</small>';
+   if(x.key==='ln'&&g.cooldowns.ln_free)lock='<small style="color:var(--green)">🎁 چرخ رایگان آماده</small>';
+   h+=navTile(x.icon,x.name,x.desc,'gameView(\''+x.key+'\')')+(lock?'<div style="grid-column:span 1;text-align:center;margin-top:-6px">'+lock+'</div>':'');
+  });
+  h+='</div></div>';
+  h+='<div class="card" style="margin-top:14px;text-align:center;color:var(--muted);font-size:10px">💡 پاداش‌ها مستقیماً روی حساب واقعی ربات اعمال می‌شوند — XP و سکه‌ها همان‌جا ثبت می‌شوند.</div>';
+  el.innerHTML=h;
+  countUp($('gg_p'),g.played);countUp($('gg_w'),g.won);countUp($('gg_t'),g.best.trivia||0);
+  var rr=$('gg_r');if(rr)rr.textContent=(g.best.reaction_ms||0)?fa(g.best.reaction_ms)+'ms':'—';
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderGames()">تلاش دوباره</button></div>'}
+}
+function gameView(key){
+ if(!GAMEMETA[key]){toast('این بازی پیدا نشد','err');return}
+ show('games');
+ var m=GAMEMETA[key];
+ if(key==='trivia')return triviaStart();
+ if(key==='word')return wordStart();
+ if(key==='number')return numberStart();
+ if(key==='memory')return memoryStart();
+ if(key==='reaction')return reactionStart();
+ if(key==='ttt')return tttStart();
+ if(key==='mine')return mineStart();
+ if(key==='quiz')return quizStart();
+ if(key==='luck')return luckStart();
+ if(key==='ln')return lnStart();
+}
+function gmHead(icon,title,sub,backFn){
+ return '<div class="gcard hero"><div class="in gm-hero"><div class="gi">'+icon+'</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0;font-size:16px">'+title+'</h1><p class="sub">'+sub+'</p></div>'
+ +(backFn?'<button class="btn" onclick="'+backFn+'">✕</button>':'')+'</div></div>';
+}
+
+/* ---------- TRIVIA ---------- */
+async function triviaStart(){
+ var el=$('pg-games');
+ try{
+  var d=await api('/api/miniapp/game/trivia');
+  triviaRender(d.question,d.options,d.streak||0);
+ }catch(e){toast(e.message,'err')}
+}
+function triviaRender(q,opts,streak){
+ var el=$('pg-games');
+ var h=gmHead('🧠','Trivia زنجیره‌ای','هر جواب درست = ادامه؛ اولین غلط = پایان!','renderGames()');
+ h+='<div class="streakbar"><span class="flame">🔥</span><b>زنجیره: '+fa(streak)+'</b><span class="tag cy">هر ۵ تایی +۲۵ سکه</span></div>';
+ h+='<div class="qcard"><span class="qtag">❓ سوال</span><div class="qtext">'+esc(q)+'</div></div>';
+ var letters=['🅰','🅱','🅲','🅳'];
+ opts.forEach(function(o,i){
+  h+='<button class="opt" id="opt'+i+'" onclick="triviaAns('+i+')"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
+ });
+ h+='<button class="btn wide" style="margin-top:12px" onclick="renderGames()">🔚 پایان و ثبت رکورد</button>';
+ el.innerHTML=h;
+}
+async function triviaAns(i){
+ var b=$('opt'+i);if(!b||b.disabled)return;
+ var opts=[].slice.call(document.querySelectorAll('#pg-games .opt'));
+ opts.forEach(function(x){x.disabled=true});
+ try{
+  var d=await api('/api/miniapp/game/trivia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:b.innerText.replace(/^[🅰🅱🅲🅳]\s*/,'')})});
+  haptic(d.correct?'ok':'error');
+  if(d.correct){b.classList.add('right');toast(d.message+(d.bonus?' +۲۵ سکه 🎉':''),'ok');setTimeout(function(){triviaRender(d.question,d.options,d.streak)},650)}
+  else{
+   opts.forEach(function(x,i2){if(x.innerText.replace(/^[🅰🅱🅲🅳]\s*/,'')===String(d.answer))x.classList.add('right')});
+   b.classList.add('wrong');
+   setTimeout(function(){
+    var el=$('pg-games');
+    el.innerHTML=gmHead('🧠','پایان زنجیره','زنجیره‌ات '+fa(d.streak)+' بود','renderGames()')
+    +'<div class="bigres"><span class="bico">🔥</span><span class="bt">زنجیره‌ی '+fa(d.streak)+' تایی</span>'
+    +'<div class="bs">جواب درست: '+esc(d.answer)+(d.record?' · 🏆 رکورد جدید!':'')+'</div></div>'
+    +'<button class="btn primary wide" onclick="triviaStart()">🔄 دوباره</button>'
+    +'<button class="btn wide" style="margin-top:8px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+   },900);
+  }
+ }catch(e){toast(e.message,'err');opts.forEach(function(x){x.disabled=false})}
+}
+
+/* ---------- WORD ---------- */
+async function wordStart(){
+ try{
+  var d=await api('/api/miniapp/game/word');
+  wordRender(d);
+ }catch(e){toast(e.message,'err')}
+}
+function wordRender(d){
+ var el=$('pg-games');
+ var letters=['🅰','🅱','🅲','🅳'];
+ var h=gmHead('📝','بازی کلمات','این حروف به‌هم‌ریخته را مرتب کن','renderGames()');
+ if(d.message)h+='<div class="card" style="margin-bottom:12px;text-align:center;font-size:11px;color:'+(d.correct?'var(--green)':'var(--red)')+'">'+esc(d.message)+'</div>';
+ h+='<div class="qcard"><span class="qtag">🔀 به‌هم‌ریخته</span><div class="qtext" style="text-align:center;letter-spacing:4px;font-size:17px">'+esc(d.scrambled)+'</div>'
+ +'<div style="text-align:center;margin-top:10px" class="sub">💡 راهنما: <b>'+esc(d.hint)+'</b></div></div>';
+ d.options.forEach(function(o,i){
+  h+='<button class="opt" onclick="wordAns(\''+esc(o)+'\',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
+ });
+ el.innerHTML=h;
+}
+async function wordAns(o,btn){
+ if(btn.disabled)return;
+ try{
+  var d=await api('/api/miniapp/game/word',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:o})});
+  haptic(d.correct?'ok':'error');
+  btn.classList.add(d.correct?'right':'wrong');
+  if(!d.correct){[].forEach.call(document.querySelectorAll('#pg-games .opt'),function(x){if(x.innerText.replace(/^[🅰🅱🅲🅳]\s*/,'')===d.answer)x.classList.add('right')})}
+  setTimeout(function(){wordRender(d)},800);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- NUMBER GUESS ---------- */
+async function numberStart(){
+ try{
+  var d=await api('/api/miniapp/game/number');
+  numberRender(d);
+ }catch(e){toast(e.message,'err')}
+}
+function numberRender(d){
+ var el=$('pg-games');
+ var h=gmHead('🔢','حدس عدد','عددی بین ۱ تا ۱۰۰ — ۷ فرصت داری','renderGames()');
+ if(d.won||d.lost){
+  h+='<div class="bigres"><span class="bico">'+(d.won?'🎉':'😞')+'</span><span class="bt">'+esc(d.message||'')+'</span></div>'
+  +'<button class="btn primary wide" onclick="numberStart()">🔄 بازی جدید</button>'
+  +'<button class="btn wide" style="margin-top:8px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+  el.innerHTML=h;return;
+ }
+ if(d.message&&!d.hint)h+='<div class="card" style="margin-bottom:10px;text-align:center;font-size:11px">'+esc(d.message)+'</div>';
+ if(d.hint)h+='<div class="card" style="margin-bottom:10px;text-align:center">🎯 حدس: <b>'+fa(d.last_guess||0)+'</b> — <b style="color:var(--gold)">'+esc(d.hint)+'!</b></div>';
+ h+='<div class="card" style="text-align:center;margin-bottom:12px">⏳ فرصت‌های باقی‌مانده: <b style="font-size:16px">'+fa(d.attempts_left)+'</b></div>';
+ h+='<div class="numpad">';
+ d.options.forEach(function(v){
+  h+='<button onclick="numberGuess('+v+',this)">'+fa(v)+'</button>';
+ });
+ h+='</div>';
+ el.innerHTML=h;
+}
+async function numberGuess(v,btn){
+ if(btn.disabled)return;btn.disabled=true;
+ try{
+  var d=await api('/api/miniapp/game/number',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guess:v})});
+  haptic(d.won?'ok':'light');
+  if(d.won){btn.classList.add('right');confetti()}
+  setTimeout(function(){numberRender(d)},d.won?800:250);
+ }catch(e){toast(e.message,'err');btn.disabled=false}
+}
+
+/* ---------- MEMORY ---------- */
+async function memoryStart(){
+ try{
+  var d=await api('/api/miniapp/game/memory');
+  var el=$('pg-games');
+  var seq=d.sequence.split(' ');
+  var h=gmHead('🃏','حافظه','دنباله را به خاطر بسپار','renderGames()');
+  h+='<div class="card" style="text-align:center;padding:22px">'
+  +'<div class="sub" style="margin-bottom:10px">این دنباله را حفظ کن ('+fa(d.display_time)+' ثانیه):</div>'
+  +'<div class="seqdots" id="seqShow">'+seq.map(function(x,i){return '<span style="animation-delay:'+(i*0.22)+'s">'+fa(x)+'</span>'}).join('')+'</div>'
+  +'<div class="bar" style="margin-top:8px"><i id="memBar" style="width:100%"></i></div></div>'
+  +'<div id="memOpts" style="display:none">'
+  +'<div class="card" style="text-align:center;margin-bottom:10px">حالا همان دنباله را انتخاب کن:</div>';
+  var letters=['🅰','🅱','🅲','🅳'];
+  d.options.forEach(function(o,i){
+   h+='<button class="opt" onclick="memAns('+i+',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1" dir="rtl">'+fa(o)+'</span></button>';
+  });
+  h+='</div>';
+  el.innerHTML=h;
+  /* انیمیشن مخفی‌سازی */
+  var bar=$('memBar');
+  setTimeout(function(){if(bar)bar.style.width='0%'},60);
+  setTimeout(function(){
+   var ss=$('seqShow');if(ss)ss.innerHTML='<span style="opacity:.25">🤫</span>';
+   var mo=$('memOpts');if(mo)mo.style.display='block';
+  },d.display_time*1000);
+ }catch(e){toast(e.message,'err')}
+}
+async function memAns(i,btn){
+ if(btn.disabled)return;
+ try{
+  var d=await api('/api/miniapp/game/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idx:i})});
+  haptic(d.correct?'ok':'error');
+  btn.classList.add(d.correct?'right':'wrong');
+  setTimeout(function(){
+   var el=$('pg-games');
+   el.innerHTML=gmHead('🃏','نتیجه',d.correct?'+۱۵ XP +۸ سکه!':'نادرست — +۵ XP','renderGames()')
+   +'<div class="bigres"><span class="bico">'+(d.correct?'🎉':'🙃')+'</span><span class="bt">'+esc(d.message)+'</span>'
+   +(d.correct?'':'<div class="bs">دنباله درست: '+esc(d.correct_seq)+'</div>')+'</div>'
+   +'<button class="btn primary wide" onclick="memoryStart()">🔄 دوباره</button>';
+  },900);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- REACTION ---------- */
+async function reactionStart(){
+ var el=$('pg-games');
+ el.innerHTML=gmHead('⚡','سرعت واکنش','بعد از «شروع» صبر کن — سبز که شد، فوراً بزن!','renderGames()')
+ +'<div class="rxpad" id="rx" onclick="rxTap()">آماده‌ای؟</div>'
+ +'<button class="btn primary wide" id="rxGo" onclick="rxArm()">🟢 شروع</button>'
+ +'<div style="text-align:center;margin-top:10px" class="sub">ردیف سبز: زیر ۴۰۰ms = +۲۰XP +۱۲🪙</div>';
+}
+async function rxArm(){
+ var go=$('rxGo');if(go)go.disabled=true;
+ var pad=$('rx');
+ if(pad){pad.className='rxpad wait';pad.textContent='🔴 صبر کن...'}
+ try{
+  var d=await api('/api/miniapp/game/reaction/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  var wait=d.go_at_ms-Date.now();
+  RXGO=d.go_at_ms;RXARMED=true;
+  setTimeout(function(){
+   var p=$('rx');if(!p)return;
+   p.className='rxpad go';p.textContent='🟢 حالا بزن!';
+   haptic('medium');
+  },Math.max(100,wait));
+ }catch(e){toast(e.message,'err');if(go)go.disabled=false}
+}
+var RXGO=0,RXARMED=false;
+function rxTap(){
+ var pad=$('rx');
+ if(!RXARMED){toast('اول «شروع» را بزن','err');return}
+ if(!pad||pad.className.indexOf('go')<0){
+  /* زود زد */
+  RXARMED=false;
+  api('/api/miniapp/game/reaction/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tap:Date.now()})})
+  .then(function(d){toast(d.message,'err');reactionStart()})
+  .catch(function(e){toast(e.message,'err')});
+  return;
+ }
+ RXARMED=false;
+ var tap=Date.now();
+ pad.className='rxpad res';pad.textContent='⏱ ...';
+ api('/api/miniapp/game/reaction/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tap:tap})})
+ .then(function(d){
+  haptic('ok');
+  pad.innerHTML='⚡ '+fa(d.ms)+'ms';
+  setTimeout(function(){
+   var el=$('pg-games');
+   var ico=(d.ms<400?'🚀':(d.ms<800?'👍':'🐢'));
+   el.innerHTML=gmHead('⚡','نتیجه واکنش',d.record?'🏆 رکورد جدید!':'زیر ۴۰۰ms = جایزه ویژه','renderGames()')
+   +'<div class="bigres"><span class="bico">'+ico+'</span><span class="bt">'+fa(d.ms)+' میلی‌ثانیه</span>'
+   +'<div class="bs">+'+fa(d.xp)+' XP · +'+fa(d.coins)+' سکه'+(d.record?' · 🏆 رکورد!':'')+'</div></div>'
+   +'<button class="btn primary wide" onclick="reactionStart()">🔄 دوباره</button>'
+   +'<button class="btn wide" style="margin-top:8px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+  },700);
+ })
+ .catch(function(e){toast(e.message,'err');reactionStart()});
+}
+
+/* ---------- TTT ---------- */
+async function tttStart(){
+ try{
+  var d=await api('/api/miniapp/game/ttt');
+  tttRender(d);
+ }catch(e){toast(e.message,'err')}
+}
+function tttRender(d){
+ var el=$('pg-games');
+ var syms={0:'▫️',1:'❌',2:'⭕'};
+ var h=gmHead('✖️','دوز با AI','تو ❌ ، من ⭕ — برد +۲۰ سکه','renderGames()');
+ if(d.message&&(d.won||d.lost||d.draw))h+='<div class="bigres" style="padding:14px"><span class="bico">'+(d.won?'🎉':d.lost?'😐':'🤝')+'</span><span class="bt">'+esc(d.message)+'</span></div>';
+ h+='<div class="ttt">';
+ for(var i=0;i<9;i++){
+  var v=d.board[i];
+  h+='<button class="'+(v===1?'x':v===2?'o':'')+(d.over?' dead':'')+'" onclick="tttMove('+i+')">'+syms[v]+'</button>';
+ }
+ h+='</div>';
+ h+='<div style="display:flex;gap:8px"><button class="btn primary" style="flex:1" onclick="tttStart()">🔄 بازی جدید</button>'
+ +'<button class="btn" style="flex:1" onclick="renderGames()">🕹 مرکز بازی‌ها</button></div>';
+ el.innerHTML=h;
+}
+async function tttMove(i){
+ try{
+  var d=await api('/api/miniapp/game/ttt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cell:i})});
+  if(d.won){haptic('ok');confetti()}else if(d.lost)haptic('error');
+  setTimeout(function(){tttRender(d)},d.won||d.lost||d.draw?600:180);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- MINE ---------- */
+async function mineStart(){
+ try{
+  var d=await api('/api/miniapp/game/mine');
+  mineRender(d);
+ }catch(e){toast(e.message,'err')}
+}
+function mineRender(d){
+ var el=$('pg-games');
+ var h=gmHead('⛏','مین‌یاب','💣 '+fa(d.bombs_count||3)+' مین — هر خانه امن = گنج بزرگ‌تر','renderGames()');
+ if(d.new){
+  h+='<div class="card" style="text-align:center">'
+  +'<div style="font-size:34px;margin-bottom:8px">⛏</div>'
+  +'<div class="sub" style="margin-bottom:10px">ورودی: <b style="color:var(--gold)">'+fa(d.fee)+' سکه</b> · موجودی: '+fa(d.coins)+'</div>'
+  +'<button class="btn primary wide'+((d.coins||0)>=d.fee?' glow':'')+'" '+((d.coins||0)>=(d.fee||0)?'':'disabled')+' onclick="mineNew()">⛏ شروع بازی</button></div>';
+  el.innerHTML=h;return;
+ }
+ if(d.message&&!d.boom)h+='<div class="card" style="margin-bottom:10px;text-align:center;font-size:11px;color:var(--green)">'+esc(d.message)+'</div>';
+ if(d.boom)h+='<div class="card" style="margin-bottom:10px;text-align:center;font-size:11px;color:var(--red)">💥 '+esc(d.message)+'</div>';
+ h+='<div class="card" style="text-align:center;margin-bottom:12px">'
+ +'💰 گنج فعلی: <b style="color:var(--gold);font-size:16px">'+fa(d.pot)+' سکه</b> <span class="tag cy">×'+fa(d.mult)+'</span></div>';
+ h+='<div class="mineg">';
+ for(var i=0;i<12;i++){
+  var open=(d.cells||[]).indexOf(i)>=0;
+  var boom=(d.bombs||[]).indexOf(i)>=0;
+  var cls=open?'gem':(boom?'boom':'');
+  h+='<button class="'+cls+(d.over?' dead':'')+'" onclick="mineOpen('+i+')">'+(open?'💎':(boom?'💥':'🔲'))+'</button>';
+ }
+ h+='</div>';
+ if(!d.over){
+  h+='<button class="btn green wide" onclick="mineCash()">💰 برداشت '+fa(d.pot)+' سکه</button>';
+ }else{
+  h+='<button class="btn primary wide" style="margin-top:8px" onclick="mineStart()">⛏ دوباره</button>';
+ }
+ el.innerHTML=h;
+}
+async function mineNew(){
+ try{
+  var d=await api('/api/miniapp/game/mine/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(d.boom===undefined&&!d.ok){toast(d.error,'err');return}
+  if(d.message)toast(d.message,'ok');
+  mineRender(d);
+ }catch(e){toast(e.message,'err')}
+}
+async function mineOpen(i){
+ try{
+  var d=await api('/api/miniapp/game/mine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cell:i})});
+  if(d.boom)haptic('error');else if(d.won){haptic('ok');confetti()}else haptic('light');
+  setTimeout(function(){mineRender(d)},d.boom||d.won?700:150);
+ }catch(e){toast(e.message,'err')}
+}
+async function mineCash(){
+ try{
+  var d=await api('/api/miniapp/game/mine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cash:1})});
+  haptic('ok');confetti();
+  setTimeout(function(){mineRender(d)},400);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- MATH QUIZ ---------- */
+async function quizStart(){
+ try{
+  var d=await api('/api/miniapp/game/quiz');
+  if(!d.ok){toast(d.error,'warn');return}
+  var el=$('pg-games');
+  el.innerHTML=gmHead('🧮','کوییز ریاضی','اولین جواب درست: +۸ XP — فقط ۶۰ ثانیه!','renderGames()')
+  +'<div class="qcard"><span class="qtag">⚡ سرعتی</span>'
+  +'<div class="qtext" style="text-align:center;font-size:26px;letter-spacing:2px" dir="ltr">'+esc(d.q)+'</div>'
+  +'<div style="display:flex;justify-content:center;margin-top:14px">'+timerRing(60,'quizT')+'</div></div>'
+  +'<input class="input" id="quizIn" type="number" inputmode="numeric" placeholder="جوابت را بنویس..." style="text-align:center;font-size:17px;font-weight:900">'
+  +'<button class="btn primary wide glow" style="margin-top:10px" onclick="quizAns()">✅ ثبت جواب</button>';
+  $('quizIn').focus();
+  quizTimer(60);
+ }catch(e){toast(e.message,'err')}
+}
+function timerRing(sec,id){
+ var r=15,c=2*Math.PI*r;
+ return '<div class="timer" id="'+id+'"><div class="tring"><svg viewBox="0 0 34 34"><circle class="ttr" cx="17" cy="17" r="'+r+'"></circle>'
+ +'<circle class="tvl" cx="17" cy="17" r="'+r+'" stroke-dasharray="'+c.toFixed(1)+'" stroke-dashoffset="0"></circle></svg></div>'
+ +'<span class="tx">'+fa(sec)+'</span></div>';
+}
+var QTMRS={};
+function quizTimer(sec){
+ clearInterval(QTMRS.quiz);
+ var left=sec;
+ var t=$('quizT');
+ QTMRS.quiz=setInterval(function(){
+  left--;
+  var el=$('quizT');
+  if(!el){clearInterval(QTMRS.quiz);return}
+  var c=2*Math.PI*15;
+  var ring=el.querySelector('.tvl');var tx=el.querySelector('.tx');
+  if(ring)ring.style.strokeDashoffset=(c*(1-left/sec)).toFixed(1);
+  if(tx)tx.textContent=fa(Math.max(0,left));
+  if(left<=0){clearInterval(QTMRS.quiz)}
+ },1000);
+}
+async function quizAns(){
+ clearInterval(QTMRS.quiz);
+ var inp=$('quizIn');if(!inp)return;
+ var v=inp.value;
+ if(v===''){toast('جوابت را بنویس','err');return}
+ try{
+  var d=await api('/api/miniapp/game/quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:v})});
+  haptic(d.correct?'ok':'error');
+  if(d.correct)confetti();
+  var el=$('pg-games');
+  el.innerHTML=gmHead('🧮','نتیجه کوییز',d.correct?'+۸ XP گرفتی!':'جواب درست: '+fa(d.answer),'renderGames()')
+  +'<div class="bigres"><span class="bico">'+(d.correct?'✅':'❌')+'</span><span class="bt">'+esc(d.message)+'</span></div>'
+  +'<button class="btn primary wide" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- LUCKY WHEEL ---------- */
+async function luckStart(){
+ var el=$('pg-games');
+ var segs=['#31e981','#15d8ff','#7c5cff','#ffc857','#ff4fa3','#ff9e4f'];
+ var h=gmHead('🍀','گردونه شانس','هر ۲۰ ساعت یک چرخ — تا ۵۰ سکه','renderGames()');
+ h+='<div style="display:flex;justify-content:center"><div class="wheel" id="wheel"><div class="hubx">🍀</div>';
+ for(var i=0;i<6;i++){
+  h+='<div class="seg" style="background:conic-gradient(from '+(-i*60)+'deg,'+segs[i]+' 0deg 60deg,transparent 60deg)"></div>';
+ }
+ h+='</div></div>';
+ h+='<div style="text-align:center" id="luckRes"><div class="sub">برای چرخیدن دکمه‌ی زیر را بزن</div></div>';
+ h+='<button class="btn primary wide glow" style="margin-top:14px" id="luckBtn" onclick="luckSpin()">🎡 چرخش!</button>';
+ h+='<div class="card section" style="text-align:center;font-size:10px;color:var(--muted)">🏆 جایزه‌ها: ۵٪ → ۵۰ سکه · ۲۰٪ → ۲۰ · ۳۵٪ → ۱۰ · ۴۰٪ → ۵</div>';
+ el.innerHTML=h;
+}
+async function luckSpin(){
+ var btn=$('luckBtn');if(btn)btn.disabled=true;
+ var w=$('wheel');
+ try{
+  var d=await api('/api/miniapp/game/luck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(!d.ok){toast(d.error,'warn');if(btn)btn.disabled=false;return}
+  haptic('medium');
+  var targetDeg=1440+ (d.tier*60)+30;
+  if(w)w.style.transform='rotate('+targetDeg+'deg)';
+  setTimeout(function(){
+   haptic('ok');confetti();
+   var res=$('luckRes');
+   if(res)res.innerHTML='<div style="font-size:19px;font-weight:900;color:var(--gold)">+'+fa(d.coins)+' سکه 🎉</div><div class="sub">'+esc(d.label)+' · رکورد: '+fa(d.best)+'</div>';
+   if(btn)btn.disabled=false;
+  },3500);
+ }catch(e){toast(e.message,'err');if(btn)btn.disabled=false}
+}
+
+/* ---------- LN CASINO ---------- */
+async function lnStart(){
+ var el=$('pg-games');
+ el.innerHTML='<div class="sk tall"></div>';
+ try{
+  var d=await api('/api/miniapp/game/ln');
+  var h=gmHead('🎰','Lucky Number','کازینو — عدد ۱ تا ۱۰۰، جکپات ×۲۵','renderGames()');
+  h+='<div class="card" style="text-align:center;margin-bottom:12px"><b style="color:var(--gold);font-size:16px">🪙 '+faK(d.coins)+'</b> سکه'
+  +(d.free_ready?' · <button class="btn green" style="margin-right:8px" onclick="lnFree()">🎁 چرخ رایگان!</button>':'')+'</div>';
+  h+='<div class="grid g3" style="margin-bottom:12px">'
+  +'<div class="stat"><small>🔥 داغ</small><b>'+esc(d.hot)+'</b></div>'
+  +'<div class="stat"><small>❄️ سرد</small><b>'+esc(d.cold)+'</b></div>'
+  +'<div class="stat"><small>🎲 جکپات‌ها</small><b>'+fa(d.stats.jackpots)+'</b></div></div>';
+  if((d.history||[]).length){
+   h+='<div class="card" style="margin-bottom:12px"><div class="sub" style="margin-bottom:8px">📜 آخرین اعداد:</div><div class="chips" style="margin:0">';
+   d.history.forEach(function(x){h+='<span class="tag" style="font-size:10px">'+fa(x)+'</span>'});
+   h+='</div></div>';
+  }
+  h+='<div class="qcard"><span class="qtag">🎲 شرط‌بندی</span>'
+  +'<div class="sub" style="margin-bottom:10px">عدد شانست را انتخاب کن (۱-۱۰۰):</div>'
+  +'<input class="input" id="lnNum" type="number" min="1" max="100" value="50" style="text-align:center;font-size:17px;font-weight:900">'
+  +'<div class="sub" style="margin:12px 0 6px">مبلغ شرط:</div><div class="chips" id="lnBets" style="margin:0">';
+  d.bets.forEach(function(b,i){
+   h+='<button class="chip'+(i===1?' on':'')+'" onclick="lnBet('+b+',this)">'+fa(b)+' 🪙</button>';
+  });
+  h+='</div></div>';
+  h+='<button class="btn primary wide glow" onclick="lnBetGo()">🎰 بچرخان!</button>';
+  h+='<div class="card section" style="text-align:center;font-size:9.5px;color:var(--muted)">پرداخت: '+esc(d.paytable)+'</div>';
+  el.innerHTML=h;
+  LNBET=100;
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">🎰</span>'+esc(e.message)+'</div>'}
+}
+var LNBET=100;
+function lnBet(b,btn){
+ LNBET=b;
+ [].forEach.call(document.querySelectorAll('#lnBets .chip'),function(x){x.classList.remove('on')});
+ if(btn)btn.classList.add('on');
+}
+async function lnFree(){
+ try{
+  var d=await api('/api/miniapp/game/ln/free',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  haptic('ok');confetti();toast(d.message,'ok');
+  lnStart();
+ }catch(e){toast(e.message,'err')}
+}
+async function lnBetGo(){
+ var n=parseInt(($('lnNum')||{}).value||'0',10);
+ if(!n||n<1||n>100){toast('عدد بین ۱ تا ۱۰۰','err');return}
+ try{
+  var d=await api('/api/miniapp/game/ln',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:n,bet:LNBET})});
+  haptic(d.ret>0?'ok':'warn');
+  var el=$('pg-games');
+  el.innerHTML=gmHead('🎰','نتیجه قرعه',d.diff===0?'💥 جکپات ×۲۵!':'فاصله: '+fa(d.diff),'lnStart()')
+  +'<div class="bigres"><span class="bico">'+(d.diff===0?'💎':d.ret>0?'🎉':'🍂')+'</span>'
+  +'<span class="bt" style="font-size:34px">'+fa(d.winning)+'</span>'
+  +'<div class="bs">'+esc(d.message)+'</div>'
+  +'<div class="bs">موجودی: '+faK(d.coins)+' سکه</div></div>'
+  +'<button class="btn primary wide" onclick="lnStart()">🔄 دوباره</button>'
+  +'<button class="btn wide" style="margin-top:8px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- FUN TOOLS ---------- */
+function funSheet(){
+ openSheet('<h3>🎲 ابزار شانس</h3>'
+ +'<p class="sub" style="margin-bottom:10px">تاس، شیر یا خط و هشت‌تو — سریع و بدون پاداش (مثل خود ربات).</p>'
+ +'<div class="list">'
+ +'<div class="row" onclick="funGo(\'dice\')" style="cursor:pointer"><div class="medal">🎲</div><div class="grow"><b>پرتاب تاس</b><small>عدد ۱ تا ۶</small></div><span style="color:var(--muted)">‹</span></div>'
+ +'<div class="row" onclick="funGo(\'coin\')" style="cursor:pointer"><div class="medal">🪙</div><div class="grow"><b>شیر یا خط</b><small>اپ‌تاس</small></div><span style="color:var(--muted)">‹</span></div>'
+ +'<div class="row" onclick="fun8b()" style="cursor:pointer"><div class="medal">🔮</div><div class="grow"><b>هشت‌تو</b><small>پاسخ شگفت‌انگیز</small></div><span style="color:var(--muted)">‹</span></div>'
+ +'</div>'
+ +'<div class="funbox" id="funBox" style="margin-top:14px"><span class="fres" id="funRes">✨</span></div>');
+}
+async function funGo(kind){
+ var box=$('funBox');
+ if(box){box.classList.add('spin');$('funRes').textContent=kind==='dice'?'🎲':'🪙'}
+ haptic('medium');
+ try{
+  var d=await api('/api/miniapp/game/fun',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kind})});
+  setTimeout(function(){
+   if(box)box.classList.remove('spin');
+   var r=$('funRes');
+   if(r)r.textContent=kind==='dice'?d.face:d.value;
+   haptic('ok');
+  },650);
+ }catch(e){toast(e.message,'err')}
+}
+function fun8b(){
+ openSheet('<h3>🔮 هشت‌تو</h3>'
+ +'<p class="sub">سوالت را بپرس — توپ جادویی جواب می‌دهد!</p>'
+ +'<input class="input" id="fbq" maxlength="120" placeholder="مثلاً: امشب شانسم خوبه؟">'
+ +'<button class="btn primary wide" style="margin-top:10px" onclick="fun8bGo()">🔮 بپرس!</button>'
+ +'<div class="funbox" id="funBox" style="margin-top:14px"><span class="fres" id="funRes">🔮</span></div>');
+}
+async function fun8bGo(){
+ var q=($('fbq')||{}).value||'';
+ haptic('medium');
+ try{
+  var d=await api('/api/miniapp/game/fun',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'8ball',q:q})});
+  var box=$('funBox');if(box)box.classList.add('spin');
+  setTimeout(function(){
+   if(box)box.classList.remove('spin');
+   var r=$('funRes');
+   if(r){r.style.fontSize='22px';r.textContent=d.value}
+   haptic('ok');
+  },800);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= SURVIVAL ================= */
+async function renderSurvival(){
+ var el=$('pg-survival');
+ el.innerHTML='<div class="sk tall"></div>';
+ try{
+  var d=await api('/api/miniapp/survival');
+  var h=gmHead('🔥','بقای تایتان','راگلایک واقعی — روزها، جان‌ها، رویدادها','renderGames()');
+  if(d.active&&d.session){
+   h+=svCard(d.session);
+  }else{
+   h+='<div class="section"><div class="shead"><b>🎯 سختی را انتخاب کن</b><small>۳ سطح</small></div>';
+   d.diffs.forEach(function(x){
+    h+='<div class="card" style="margin-bottom:10px;display:flex;align-items:center;gap:12px">'
+    +'<div style="font-size:28px">'+x.icon+'</div>'
+    +'<div style="flex:1"><b>'+esc(x.name)+'</b><div class="sub">'+fa(x.hearts)+' جان · پاداش ×'+fa(x.mult)+(x.best_points?' · رکورد: '+fa(x.best_points)+' امتیاز':'')+'</div></div>'
+    +'<button class="btn primary" onclick="svStart(\''+x.key+'\')">شروع 🔥</button></div>';
+   });
+   h+='</div>';
+   h+='<div class="card" style="text-align:center;color:var(--muted);font-size:10px">🏆 بهترین استریک کلی: '+fa(d.survival_best)+' روز</div>';
+  }
+  el.innerHTML=h;
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">🔥</span>'+esc(e.message)+'</div>'}
+}
+function svHearts(s){
+ var h='';
+ for(var i=0;i<s.max_hearts;i++)h+='<i class="'+(i<s.hearts?'':'off')+'">❤️</i>';
+ return '<div class="hearts">'+h+'</div>';
+}
+function svCard(s){
+ var h='<div class="qcard">'
+ +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'
+ +'<span class="qtag">'+s.diff_icon+' '+esc(s.diff_name)+' — روز '+fa(s.day)+'</span>'
+ +svHearts(s)+'</div>';
+ if(s.storm)h+='<div style="margin-top:8px;color:var(--orange);font-size:10.5px;font-weight:800">☄️ طوفان فعال — سوال سخت‌تر، پاداش دوبرابر!</div>';
+ h+='<div class="sub" style="margin-top:8px">🔥 زنجیره: '+fa(s.streak)+' · 🎲 رویدادها: '+fa(s.events_survived)+' · 🪙 این ماجراجویی: '+fa(s.total_coins)+'</div>';
+ h+='<div class="sub">پاداش این روز: ⭐+'+fa(s.reward.xp)+' 🪙+'+fa(s.reward.coins)+'</div>';
+ if(s.event){
+  var evs={medic:['🩺','چادر درمانگر — یک جان پس می‌گیری!'],shop:['🛒','فروشنده سیار — آیتم بخر'],storm:['☄️','طوفان شنی — پاداش دوبرابر'],gift:['🎁','جعبه رهاشده — بازش کن؟'],ambush:['🧛','کمین شبانه — یک جان می‌ری!']};
+  var ev=evs[s.event]||['❓','رویداد'];
+  h+='<div style="margin-top:12px;padding:14px;border:1px dashed var(--line2);border-radius:14px;text-align:center">'
+  +'<div style="font-size:30px;margin-bottom:6px">'+ev[0]+'</div><b>'+ev[1]+'</b>';
+  if(s.event==='gift')h+='<div style="display:flex;gap:8px;margin-top:10px"><button class="btn green" style="flex:1" onclick="svEvent(\'open\')">🎁 بازش کن</button><button class="btn" style="flex:1" onclick="svEvent(\'skip\')">🚶 رد شو</button></div>';
+  if(s.event==='shop')h+='<div style="display:flex;gap:8px;margin-top:10px"><button class="btn green" style="flex:1" onclick="svEvent(\'buyheal\')">🧪 ۳۰🪙</button><button class="btn green" style="flex:1" onclick="svEvent(\'buyshield\')">🛡 ۲۵🪙</button><button class="btn" style="flex:1" onclick="svEvent(\'skip\')">🚶</button></div>';
+  if(s.event==='medic'||s.event==='storm'||s.event==='ambush')h+='<button class="btn primary wide" style="margin-top:10px" onclick="svEvent(\'ok\')">ادامه ›</button>';
+  h+='</div>';
+ }else if(s.question){
+  h+='<div style="margin-top:12px;padding:15px;border:1px solid var(--line2);border-radius:15px;background:#ffffff05">'
+  +'<div class="sub" style="margin-bottom:6px">🎲 '+esc(s.mode_name)+':</div>'
+  +'<b style="font-size:13.5px;line-height:2">'+esc(s.question)+'</b></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:12px">'
+  +'<button class="btn green" style="flex:1" onclick="svAns(true)">✅ انجام دادم</button>'
+  +'<button class="btn red" style="flex:1" onclick="svAns(false)">❌ رد کردم</button></div>';
+ }
+ var it='';
+ if(s.items.heal>0)it+='<button class="btn" onclick="svItem(\'heal\')">🧪 ×'+fa(s.items.heal)+'</button>';
+ if(s.items.shield>0)it+='<button class="btn" onclick="svItem(\'shield\')">🛡 ×'+fa(s.items.shield)+'</button>';
+ if(it)h+='<div style="display:flex;gap:8px;margin-top:10px">'+it+'</div>';
+ h+='<button class="btn wide" style="margin-top:10px" onclick="svEnd()">🏁 پایان و برداشت</button>';
+ h+='</div>';
+ return h;
+}
+async function svStart(diff){
+ try{
+  var d=await api('/api/miniapp/survival/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({diff:diff})});
+  toast(d.message,'ok');
+  var el=$('pg-survival');
+  el.innerHTML=gmHead('🔥','بقای تایتان','راگلایک واقعی — روزها، جان‌ها، رویدادها','renderGames()')+svCard(d.session);
+ }catch(e){toast(e.message,'err')}
+}
+async function svAns(ok){
+ try{
+  var d=await api('/api/miniapp/survival/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ok:ok})});
+  haptic(ok?'ok':'warn');
+  if(d.ended&&d.finish)return svFinishView(d);
+  if(d.gained&&(d.gained.xp||d.gained.coins))toast('+'+fa(d.gained.xp)+' XP · +'+fa(d.gained.coins)+' سکه','ok');
+  if(d.milestone){confetti();toast('🎉 مایل‌استون! +'+fa(d.milestone)+' سکه','ok')}
+  var el=$('pg-survival');
+  el.innerHTML=gmHead('🔥','بقای تایتان','روز '+fa(d.session.day)+' — ادامه بده!','renderGames()')+svCard(d.session);
+ }catch(e){toast(e.message,'err')}
+}
+async function svItem(item){
+ try{
+  var d=await api('/api/miniapp/survival/item',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:item})});
+  toast(d.message,'ok');
+  var el=$('pg-survival');
+  el.innerHTML=gmHead('🔥','بقای تایتان','راگلایک واقعی','renderGames()')+svCard(d.session);
+ }catch(e){toast(e.message,'err')}
+}
+async function svEvent(choice){
+ try{
+  var d=await api('/api/miniapp/survival/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choice:choice})});
+  toast(d.message,'ok');
+  if(d.ended&&d.finish)return svFinishView(d);
+  var el=$('pg-survival');
+  el.innerHTML=gmHead('🔥','بقای تایتان','راگلایک واقعی','renderGames()')+svCard(d.session);
+ }catch(e){toast(e.message,'err')}
+}
+async function svEnd(){
+ if(!confirm2('ماجراجویی را تمام و پاداش‌ها را برداشت کنی؟'))return;
+ try{
+  var d=await api('/api/miniapp/survival/end',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  svFinishView(d);
+ }catch(e){toast(e.message,'err')}
+}
+function svFinishView(d){
+ var f=d.finish||{};
+ var el=$('pg-survival');
+ el.innerHTML=gmHead('🏁','پایان بقای تایتان',f.diff_icon+' '+esc(f.diff_name||''),'renderSurvival()')
+ +'<div class="bigres"><span class="bico">'+(f.record?'🏆':'🏁')+'</span><span class="bt">'+fa(f.day||0)+' روز بقا · '+fa(f.points||0)+' امتیاز</span>'
+ +'<div class="bs">🔥 زنجیره '+fa(f.streak||0)+' · 🎲 '+fa(f.events||0)+' رویداد</div>'
+ +'<div class="bs">⭐ +'+fa(f.total_xp||0)+' XP · 🪙 +'+fa(f.total_coins||0)+' سکه</div>'
+ +(f.record?'<div class="bs" style="color:var(--gold);font-weight:900">🎉 رکورد جدید برای این سختی!</div>':'')+'</div>'
+ +'<button class="btn primary wide" onclick="renderSurvival()">🔄 ماجراجویی جدید</button>';
+ confetti();
+}
+function confirm2(msg){toast(msg,'warn');return window.confirm(msg)}
+
+/* ================= LOBBY (چندنفره داخل اپ) ================= */
+var LOBBYCODE='';
+async function lobbyCreate(){
+ try{
+  var d=await api('/api/miniapp/lobby/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(!d.ok){toast(d.error,'err');return}
+  LOBBYCODE=d.code;
+  toast(d.message,'ok');
+  show('lobby');
+  lobbyWatch();
+ }catch(e){toast(e.message,'err')}
+}
+function lobbyJoinSheet(){
+ openSheet('<h3>➕ پیوستن به لابی</h3>'
+ +'<p class="sub" style="margin-bottom:12px">کد ۶ حرفی لابی را که سرگروه برایت فرستاده وارد کن:</p>'
+ +'<input class="input" id="ljCode" maxlength="6" placeholder="مثلاً: K7PX2M" style="text-align:center;font-size:17px;letter-spacing:4px;font-weight:900;text-transform:uppercase">'
+ +'<button class="btn primary wide" style="margin-top:12px" onclick="lobbyJoinGo()">🚀 پیوستن</button>');
+}
+async function lobbyJoinGo(){
+ var code=($('ljCode')||{}).value||'';
+ code=code.trim().toUpperCase();
+ if(code.length<4){toast('کد را کامل وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/lobby/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})});
+  if(!d.ok){toast(d.error,'err');return}
+  closeSheet();
+  LOBBYCODE=code;
+  toast(d.message||'پیوستی!','ok');
+  show('lobby');
+  lobbyWatch();
+ }catch(e){toast(e.message,'err')}
+}
+async function renderLobbyPage(){
+ if(!LOBBYCODE){
+  var el=$('pg-lobby');
+  el.innerHTML=gmHead('👥','لابی چندنفره','بازی کامل جرئت/حقیقت با دوستان','renderGames()')
+  +'<div class="card" style="text-align:center;padding:24px">'
+  +'<div style="font-size:34px;margin-bottom:10px">👥</div>'
+  +'<b>لابی فعالی نداری</b><div class="sub" style="margin:8px 0 14px">یک لابی بساز و کدش را برای دوستانت بفرست، یا با کد به لابی دیگر بپیوند.</div>'
+  +'<div style="display:flex;gap:8px"><button class="btn primary" style="flex:1" onclick="lobbyCreate()">🚀 ساخت لابی</button>'
+  +'<button class="btn" style="flex:1" onclick="lobbyJoinSheet()">➕ پیوستن</button></div></div>';
+  return;
+ }
+ lobbyWatch();
+}
+function lobbyWatch(){
+ stopPoll('lobby');
+ lobbyTick();
+ startPoll('lobby',lobbyTick,2000);
+}
+async function lobbyTick(){
+ if(PAGE!=='lobby'){stopPoll('lobby');return}
+ if(!LOBBYCODE)return;
+ try{
+  var d=await api('/api/miniapp/lobby/state?code='+encodeURIComponent(LOBBYCODE));
+  lobbyRender(d.lobby);
+ }catch(e){
+  if(String(e.message).indexOf('پیدا نشد')>=0){LOBBYCODE='';stopPoll('lobby');renderLobbyPage();toast('لابی بسته شد','warn')}
+ }
+}
+function lobbyRender(lb){
+ var el=$('pg-lobby');
+ var me=(D.user||{}).id||0;
+ var h=gmHead('👥','لابی '+lb.code,'راند '+fa(lb.round)+' · '+fa(lb.players.length)+' بازیکن','renderGames()');
+ /* code chip */
+ h+='<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">'
+ +'<span class="codechip">'+esc(lb.code)+'</span>'
+ +'<div style="display:flex;gap:7px">'
+ +'<button class="btn" onclick="copyText(\''+lb.code+'\')">📋 کپی</button>'
+ +'<button class="btn primary" onclick="shareLobby(\''+lb.code+'\')">✈️ دعوت</button></div></div>';
+ /* players */
+ h+='<div class="section"><div class="shead"><b>👥 بازیکنان</b><small>'+fa(lb.players.length)+'/۲۰</small></div><div class="pl-wrap">';
+ lb.players.forEach(function(p){
+  h+='<div class="pl'+(p.ready?' ready':'')+'">'
+  +avaHtml({id:p.id,name:p.name,online:p.online},'sm')
+  +'<div class="grow"><b>'+esc(p.name)+(p.id===lb.leader_id?' 👑':'')+(p.id===me?' <span class="tag cy">تو</span>':'')+'</b>'
+  +'<small>LV '+fa(p.level)+(lb.phase!=='lobby'?' · 🏆 '+fa(p.score)+' امتیاز':' · '+(p.ready?'✅ آماده':'⏳ در انتظار'))+'</small></div>'
+  +(p.vip?'<span class="tag vip">VIP</span>':'')
+  +'</div>';
+ });
+ h+='</div></div>';
+ /* phase logic */
+ if(lb.phase==='lobby'){
+  var amReady=(lb.players.filter(function(p){return p.id===me&&p.ready}).length>0);
+  h+='<div style="display:flex;gap:8px;margin-top:14px">'
+  +'<button class="btn'+(amReady?' green':' primary')+'" style="flex:1" onclick="lobbyAction(\'ready\')">'+(amReady?'✅ آماده‌ام':'⏡ اعلام آمادگی')+'</button>';
+  if(lb.is_leader)h+='<button class="btn green glow" style="flex:1" onclick="lobbyAction(\'start\')">🚀 شروع بازی</button>';
+  h+='<button class="btn red" onclick="lobbyAction(\'leave\')">خروج</button></div>';
+  if(lb.is_leader&&lb.players.length<2)h+='<div class="card" style="margin-top:10px;text-align:center;font-size:10px;color:var(--muted)">برای شروع حداقل ۲ بازیکن لازم است — کد را بفرست!</div>';
+ }else if(lb.phase==='topic'){
+  var q=lb.questioner;
+  if(q===me){
+   h+='<div class="qcard"><span class="qtag">🎤 نوبت تو — موضوع را انتخاب کن</span></div>';
+   h+='<div class="gtabs">';
+   lb.modes.forEach(function(m){
+    h+='<button class="gtab" onclick="lobbyAction(\'topic\',\''+m.key+'\')">'+m.label+'</button>';
+   });
+   h+='</div>';
+  }else{
+   var qn=(lb.players.filter(function(p){return p.id===q})[0]||{}).name||'؟';
+   h+='<div class="bigres"><span class="bico">🎤</span><span class="bt">'+esc(qn)+' دارد موضوع انتخاب می‌کند...</span>'
+   +'<div class="bs">راند '+fa(lb.round)+' · نوبت‌ها می‌چرخند</div></div>';
+  }
+  if(lb.is_leader)h+='<button class="btn red wide" style="margin-top:8px" onclick="lobbyAction(\'end\')">🏁 پایان بازی</button>';
+  h+='<button class="btn wide" style="margin-top:8px" onclick="lobbyAction(\'leave\')">🚪 خروج</button>';
+ }else if(lb.phase==='target'){
+  var q2=lb.questioner;
+  if(q2===me){
+   h+='<div class="qcard"><span class="qtag">🎯 هدف را انتخاب کن</span><div class="sub">سوال از بازیکن انتخابی پرسیده می‌شود</div></div>';
+   lb.players.forEach(function(p){
+    if(p.id===me)return;
+    h+='<div class="pl" onclick="lobbyAction(\'target\','+p.id+')" style="cursor:pointer">'+avaHtml({id:p.id,name:p.name},'sm')
+    +'<div class="grow"><b>'+esc(p.name)+'</b><small>LV '+fa(p.level)+' · '+fa(p.score)+' امتیاز</small></div><span class="sc">›</span></div>';
+   });
+  }else{
+   h+='<div class="bigres"><span class="bico">🎯</span><span class="bt">انتخاب هدف در جریان است...</span></div>';
+  }
+ }else if(lb.phase==='question'&&lb.prompt){
+  var pr=lb.prompt;
+  h+='<div class="qcard"><span class="qtag">'+esc(pr.mode_label)+' — راند '+fa(lb.round)+'</span>'
+  +'<div class="qtext">'+esc(pr.question)+'</div>'
+  +'<div style="display:flex;justify-content:space-between;margin-top:12px;align-items:center">'
+  +'<span class="sub">🎯 هدف: <b>'+esc(pr.target_name)+'</b></span>'
+  +timerRing(Math.max(0,Math.ceil(pr.timeout-(lb.now-pr.sent_ts))),'lbT')+'</div></div>';
+  if(pr.answered){
+   h+='<div class="card" style="border-color:#31e98144"><b style="color:var(--green);font-size:11px">✅ پاسخ ثبت شد</b>'
+   +'<p style="margin:8px 0 0;font-size:11.5px;line-height:2">'+esc(pr.answer_text)+'</p>'
+   +(pr.reward?'<div class="sub" style="margin-top:6px">پاداش: +'+fa(pr.reward.xp)+' XP · +'+fa(pr.reward.coins)+' سکه</div>':'')
+   +'<div class="sub" style="margin-top:8px">نوبت بعدی به‌زودی...</div></div>';
+  }else if(pr.target_uid===me){
+   h+='<textarea class="input" id="lbAns" maxlength="400" placeholder="جوابت را بنویس (هرچه مفصل‌تر، پاداش بیشتر!)..." style="min-height:90px"></textarea>'
+   +'<button class="btn primary wide glow" style="margin-top:10px" onclick="lobbyAnswer()">✍️ ثبت پاسخ</button>';
+  }else{
+   h+='<div class="bigres" style="padding:18px"><span class="bico">⏳</span><span class="bt">در انتظار پاسخ '+esc(pr.target_name)+'...</span></div>';
+   if(me===pr.questioner_uid||lb.is_leader)h+='<button class="btn wide" onclick="lobbyAction(\'skip\')">⏭ رد کردن</button>';
+  }
+ }else if(lb.phase==='done'){
+  h+='<div class="bigres"><span class="bico">🏆</span><span class="bt">بازی تمام شد!</span></div>';
+  if(lb.podium&&lb.podium.length){
+   h+='<div class="list">';
+   lb.podium.forEach(function(p,i){
+    h+='<div class="row'+(p.id===me?' me':'')+'"><div class="medal'+(i<3?' m'+(i+1):'')+'">'+(i===0?'🥇':i===1?'🥈':i===2?'🥉':fa(i+1))+'</div>'
+    +avaHtml({id:p.id,name:p.name},'sm')+'<div class="grow"><b>'+esc(p.name)+'</b><small>🏆 '+fa(p.score)+' امتیاز</small></div></div>';
+   });
+   h+='</div>';
+  }
+  h+='<button class="btn primary wide" style="margin-top:12px" onclick="LOBBYCODE=\'\';renderLobbyPage()">🏠 لابی جدید</button>';
+ }
+ el.innerHTML=h;
+}
+function shareLobby(code){
+ var un=(D.bot||'').replace(/^@/,'');
+ shareText('🎮 من داخل لابی ApexRival هستم! کد پیوستن: '+code+'\nمینی‌اپ ربات را باز کن و با این کد بیا جلو ⚔️');
+}
+async function lobbyAction(kind,extra){
+ var body={code:LOBBYCODE};
+ if(kind==='topic')body.mode=extra;
+ if(kind==='target')body.target=extra;
+ try{
+  var d=await api('/api/miniapp/lobby/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!d.ok){toast(d.error,'err');return}
+  if(d.message)toast(d.message,'ok');
+  if(kind==='leave'){stopPoll('lobby');LOBBYCODE='';show('play');return}
+  if(kind==='end'){confetti()}
+  if(d.lobby)lobbyRender(d.lobby);else lobbyTick();
+ }catch(e){toast(e.message,'err')}
+}
+async function lobbyAnswer(){
+ var t=($('lbAns')||{}).value||'';
+ if(t.trim().length<2){toast('جوابت را بنویس','err');return}
+ try{
+  var d=await api('/api/miniapp/lobby/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:LOBBYCODE,text:t})});
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');confetti();
+  toast(d.message,'ok');
+  lobbyRender(d.lobby);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= DUEL ================= */
+var DUELCODE=0;
+async function duelCreate(){
+ try{
+  var d=await api('/api/miniapp/duel/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(!d.ok){toast(d.error,'err');return}
+  DUELCODE=d.code;
+  toast(d.message,'ok');
+  show('duel');
+  duelWatch();
+ }catch(e){toast(e.message,'err')}
+}
+function duelJoinSheet(){
+ openSheet('<h3>🤺 پیوستن به دوئل</h3>'
+ +'<p class="sub" style="margin-bottom:12px">کد دوئل را که حریفت فرستاده وارد کن:</p>'
+ +'<input class="input" id="djCode" type="number" placeholder="مثلاً: ۱۰۴۲" style="text-align:center;font-size:17px;font-weight:900">'
+ +'<button class="btn primary wide" style="margin-top:12px" onclick="duelJoinGo()">⚔️ ورود به دوئل</button>');
+}
+async function duelJoinGo(){
+ var code=parseInt(($('djCode')||{}).value||'0',10);
+ if(!code){toast('کد را وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/duel/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})});
+  if(!d.ok){toast(d.error,'err');return}
+  closeSheet();
+  DUELCODE=code;
+  toast(d.message||'به دوئل پیوستی!','ok');
+  show('duel');
+  duelWatch();
+ }catch(e){toast(e.message,'err')}
+}
+async function renderDuelPage(){
+ if(!DUELCODE){
+  var el=$('pg-duel');
+  el.innerHTML=gmHead('🤺','دوئل دو نفره','۱۰ راند — هر جواب +۳ XP، برنده +۱۰XP +۵🪙','renderGames()')
+  +'<div class="card" style="text-align:center;padding:24px">'
+  +'<div style="font-size:34px;margin-bottom:10px">⚔️</div>'
+  +'<b>دوئل فعالی نداری</b><div class="sub" style="margin:8px 0 14px">دوئل بساز و کد را برای حریفت بفرست.</div>'
+  +'<div style="display:flex;gap:8px"><button class="btn primary" style="flex:1" onclick="duelCreate()">⚔️ ساخت دوئل</button>'
+  +'<button class="btn" style="flex:1" onclick="duelJoinSheet()">➕ پیوستن</button></div></div>';
+  /* لیست دوئل‌های فعال */
+  try{
+   var dl=await api('/api/miniapp/duel/list');
+   if((dl.items||[]).length){
+    var h2='<div class="section"><div class="shead"><b>🤺 دوئل‌های فعال من</b><small>'+fa(dl.items.length)+'</small></div><div class="list">';
+    dl.items.forEach(function(x){
+     h2+='<div class="row" onclick="DUELCODE='+x.code+';show(\'duel\');duelWatch()" style="cursor:pointer">'
+     +'<div class="medal">⚔️</div><div class="grow"><b>دوئل #'+fa(x.code)+'</b><small>'+esc(x.a.name)+' '+fa(x.a.score)+' - '+fa(x.b?x.b.score:0)+' '+(x.b?esc(x.b.name):'⏳')+'</small></div><span class="sc">›</span></div>';
+    });
+    el.innerHTML+=h2+'</div></div>';
+   }
+  }catch(e){}
+  return;
+ }
+ duelWatch();
+}
+function duelWatch(){
+ stopPoll('duel');
+ duelTick();
+ startPoll('duel',duelTick,2200);
+}
+async function duelTick(){
+ if(PAGE!=='duel'){stopPoll('duel');return}
+ if(!DUELCODE)return;
+ try{
+  var d=await api('/api/miniapp/duel/state?code='+DUELCODE);
+  duelRender(d.duel);
+ }catch(e){
+  if(String(e.message).indexOf('پیدا نشد')>=0){DUELCODE=0;stopPoll('duel');renderDuelPage()}
+ }
+}
+function duelRender(du){
+ var el=$('pg-duel');
+ var me=(D.user||{}).id||0;
+ var h=gmHead('🤺','دوئل #'+fa(du.code),'راند '+fa(Math.min(du.round+1,du.total_rounds))+' از '+fa(du.total_rounds),'renderGames()');
+ h+='<div class="duelbar">'
+ +'<div class="side'+(du.a.id===me?' me':'')+'">'+avaHtml({id:du.a.id,name:du.a.name},'sm')+'<b>'+esc(du.a.name)+'</b><div class="sc">'+fa(du.a.score)+'</div></div>'
+ +'<div class="vs">VS</div>'
+ +'<div class="side'+(du.b&&du.b.id===me?' me':'')+'">'+(du.b?avaHtml({id:du.b.id,name:du.b.name},'sm')+'<b>'+esc(du.b.name)+'</b><div class="sc">'+fa(du.b.score)+'</div>':'<b>⏳ منتظر حریف...</b><div class="sc">—</div>')+'</div></div>';
+ if(du.state==='waiting'){
+  h+='<div class="card" style="text-align:center">'
+  +'<span class="codechip" style="font-size:14px;letter-spacing:1px">کد: '+fa(du.code)+'</span>'
+  +'<div class="sub" style="margin:10px 0">این کد را برای حریفت بفرست تا وارد شود</div>'
+  +'<div style="display:flex;gap:8px"><button class="btn primary" style="flex:1" onclick="copyText(\''+du.code+'\')">📋 کپی کد</button>'
+  +'<button class="btn" style="flex:1" onclick="shareDuel('+du.code+')">✈️ دعوت</button></div></div>';
+ }else if(du.state==='topic'){
+  if(du.my_turn){
+   h+='<div class="qcard"><span class="qtag">🎤 نوبت تو — موضوع را انتخاب کن</span></div><div class="gtabs">';
+   du.modes.forEach(function(m){h+='<button class="gtab" onclick="duelAction(\'topic\',\''+m.key+'\')">'+m.label+'</button>'});
+   h+='</div>';
+  }else{
+   h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">نوبت انتخاب موضوع با حریف است...</span></div>';
+  }
+ }else if(du.state==='answer'&&du.question){
+  h+='<div class="qcard"><span class="qtag">'+esc(du.question.mode_label)+' — راند '+fa(du.round+1)+'</span>'
+  +'<div class="qtext">'+esc(du.question.text)+'</div>'
+  +'<div style="display:flex;justify-content:flex-end;margin-top:10px">'+timerRing(Math.max(0,Math.ceil(du.question.timeout-(Date.now()/1000-du.question.ts))),'duT')+'</div></div>';
+  if(du.answering){
+   h+='<textarea class="input" id="duAns" maxlength="400" placeholder="جوابت را بنویس..." style="min-height:80px"></textarea>'
+   +'<button class="btn primary wide glow" style="margin-top:10px" onclick="duelAnswer()">✍️ ثبت جواب (+۳ XP)</button>'
+   +'<button class="btn wide" style="margin-top:8px" onclick="duelAction(\'skip\')">⏭ رد کردن</button>';
+  }else{
+   h+='<div class="bigres" style="padding:16px"><span class="bico">⏳</span><span class="bt">حریف دارد جواب می‌دهد...</span></div>';
+  }
+ }else if(du.state==='done'){
+  var winner=du.winner;
+  h+='<div class="bigres"><span class="bico">'+(winner===me?'🏆':'🏁')+'</span><span class="bt">'+(winner===me?'قهرمان دوئل شدی! +۱۰ XP +۵ سکه':(winner===0?'مساوی!':'حریف برنده شد'))+'</span></div>'
+  +'<button class="btn primary wide" style="margin-top:10px" onclick="DUELCODE=0;renderDuelPage()">⚔️ دوئل جدید</button>';
+ }
+ el.innerHTML=h;
+}
+function shareDuel(code){
+ shareText('⚔️ من در دوئل ApexRival منتظرتم! کد دوئل: '+code+'\nمینی‌اپ ربات را باز کن و با این کد وارد شو 🤺');
+}
+async function duelAction(kind,extra){
+ var body={code:DUELCODE};
+ if(kind==='topic')body.mode=extra;
+ try{
+  var d=await api('/api/miniapp/duel/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!d.ok){toast(d.error,'err');return}
+  if(d.message)toast(d.message,'ok');
+  if(d.finished&&d.finish){confetti()}
+  if(d.duel)duelRender(d.duel);else duelTick();
+ }catch(e){toast(e.message,'err')}
+}
+async function duelAnswer(){
+ var t=($('duAns')||{}).value||'';
+ if(t.trim().length<2){toast('جوابت را بنویس','err');return}
+ try{
+  var d=await api('/api/miniapp/duel/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:DUELCODE,text:t})});
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');
+  if(d.finished&&d.finish)confetti();
+  toast(d.message,'ok');
+  duelRender(d.duel);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= ARENA (رنک‌دار) ================= */
+async function renderArenaPage(){
+ var el=$('pg-arena');
+ el.innerHTML='<div class="sk tall"></div>';
+ try{
+  var d=await api('/api/miniapp/arena');
+  var me=(D.user||{}).id||0;
+  var h=gmHead('🎯','آرنا رنک‌دار','اولین '+fa(d.target)+' امتیاز — برنده ELO می‌گیرد','renderGames()');
+  h+='<div class="grid g4" style="margin-bottom:12px">'
+  +'<div class="stat"><small>لیگ</small><b style="font-size:13px">'+d.tier_icon+' '+esc(d.tier)+'</b></div>'
+  +'<div class="stat"><small>ELO</small><b>'+fa(d.elo)+'</b></div>'
+  +'<div class="stat"><small>برد</small><b>'+fa(d.wins)+'</b></div>'
+  +'<div class="stat"><small>باخت</small><b>'+fa(d.losses)+'</b></div></div>';
+  if(d.active&&d.match){
+   var m=d.match;
+   h+='<div class="duelbar">'
+   +'<div class="side me"><b>تو</b><div class="sc">'+fa(m.me.score)+'</div></div>'
+   +'<div class="vs">'+fa(d.target)+' امتیازی</div>'
+   +'<div class="side"><b>'+esc(m.opp.name)+'</b><div class="sc">'+fa(m.opp.score)+'</div></div></div>';
+   if(m.my_turn&&m.question){
+    h+='<div class="qcard"><span class="qtag">❓ نوبت تو — جواب درست = ادامه نوبت</span>'
+    +'<div class="qtext">'+esc(m.question.text)+'</div></div>';
+    var letters=['🅰','🅱','🅲','🅳'];
+    m.question.options.forEach(function(o,i){
+     h+='<button class="opt" onclick="arenaAns('+i+',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
+    });
+   }else{
+    h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">حریف دارد جواب می‌دهد...</span><div class="bs">'+esc(m.opp.name)+' · ELO '+fa(m.opp.elo)+'</div></div>';
+   }
+  }else if(d.in_queue){
+   h+='<div class="bigres"><span class="bico">🎯</span><span class="bt">در صف جستجوی حریف...</span>'
+   +'<div class="bs">نزدیک‌ترین ELO به تو پیدا می‌شود · '+fa(d.queue_len)+' نفر در صف</div></div>'
+   +'<button class="btn red wide" onclick="arenaLeave()">🚪 خروج از صف</button>';
+  }else{
+   h+='<div class="bigres"><span class="bico">🏆</span><span class="bt">آرنا منتظر توست!</span>'
+   +'<div class="bs">با حریفی هم‌سطح خودت روبه‌رو شو — برنده ELO و جایزه می‌گیرد</div></div>'
+   +'<button class="btn primary wide glow" onclick="arenaJoin()">🎯 پیدا کردن حریف</button>';
+  }
+  el.innerHTML=h;
+  if(d.active||d.in_queue)arenaWatch();
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">🎯</span>'+esc(e.message)+'</div>'}
+}
+function arenaWatch(){
+ stopPoll('arena');
+ startPoll('arena',function(){
+  if(PAGE!=='arena'){stopPoll('arena');return}
+  renderArenaPage();
+ },2500);
+}
+async function arenaJoin(){
+ try{
+  var d=await api('/api/miniapp/arena/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(!d.ok){toast(d.error,'err');return}
+  if(d.matched){haptic('ok');confetti();toast(d.message,'ok')}
+  else toast(d.message,'ok');
+  renderArenaPage();
+ }catch(e){toast(e.message,'err')}
+}
+async function arenaLeave(){
+ try{
+  var d=await api('/api/miniapp/arena/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  toast(d.message,'ok');
+  renderArenaPage();
+ }catch(e){toast(e.message,'err')}
+}
+async function arenaAns(i,btn){
+ if(btn.disabled)return;
+ try{
+  var d=await api('/api/miniapp/arena/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idx:i})});
+  haptic(d.correct?'ok':'error');
+  if(d.correct)btn.classList.add('right');else btn.classList.add('wrong');
+  if(d.finished&&d.finish){
+   stopPoll('arena');
+   setTimeout(function(){
+    var f=d.finish;
+    var el=$('pg-arena');
+    el.innerHTML=gmHead('🏆','پایان نبرد آرنا','نبرد #'+fa(f.id||0),'renderArenaPage()')
+    +'<div class="bigres"><span class="bico">'+(f.winner===((D.user||{}).id||0)?'🏆':'🏁')+'</span>'
+    +'<span class="bt">'+esc(f.winner_name)+' برنده شد!</span>'
+    +'<div class="bs">'+fa(f.score[0])+' - '+fa(f.score[1])+'</div>'
+    +'<div class="bs">ELO جدید: '+fa(f.new_elo)+(f.promo?' · 🎉 ارتقای لیگ!':'')+'</div></div>'
+    +'<button class="btn primary wide" onclick="renderArenaPage()">🎯 نبرد جدید</button>';
+    confetti();
+   },900);
+   return;
+  }
+  setTimeout(function(){renderArenaPage()},d.correct?700:900);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= STATS PAGE ================= */
+async function renderStatsPage(){
+ var el=$('pg-stats');
+ el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/stats');
+  var g=d.general,mm=d.matchmaking,sv=d.survival,mg=d.mini_games,cas=d.casino;
+  var h=gmHead('📊','Stats Dashboard','داشبورد کامل شخصی — همان آمار ربات','renderGames()');
+  /* کلی */
+  h+='<div class="section"><div class="shead"><b>📈 آمار کلی</b><small>GENERAL</small></div>'
+  +'<div class="grid g4">'
+  +'<div class="stat"><small>بازی</small><b>'+fa(g.games)+'</b></div>'
+  +'<div class="stat"><small>برد</small><b>'+fa(g.wins)+'</b></div>'
+  +'<div class="stat"><small>باخت</small><b>'+fa(g.losses)+'</b></div>'
+  +'<div class="stat"><small>نرخ برد</small><b>'+fa(g.winrate)+'٪</b></div>'
+  +'<div class="stat"><small>سطح</small><b>'+fa(g.level)+'</b></div>'
+  +'<div class="stat"><small>XP کل</small><b>'+faK(g.xp)+'</b></div>'
+  +'<div class="stat"><small>استریک روز</small><b>'+fa(g.daily_streak)+'</b></div>'
+  +'<div class="stat"><small>رکورد استریک</small><b>'+fa(g.best_streak)+'</b></div>'
+  +'</div></div>';
+  /* matchmaking */
+  h+='<div class="section"><div class="shead"><b>🎯 آرنا و ELO</b><small>RANKED</small></div>'
+  +'<div class="grid g4">'
+  +'<div class="stat"><small>ELO</small><b>'+fa(mm.elo)+'</b></div>'
+  +'<div class="stat"><small>بهترین ELO</small><b>'+fa(mm.best_elo)+'</b></div>'
+  +'<div class="stat"><small>برد</small><b>'+fa(mm.wins)+'</b></div>'
+  +'<div class="stat"><small>باخت</small><b>'+fa(mm.losses)+'</b></div>'
+  +'<div class="stat"><small>مساوی</small><b>'+fa(mm.draws)+'</b></div>'
+  +'<div class="stat"><small>نبرد رنک‌دار</small><b>'+fa(mm.ranked_games)+'</b></div>'
+  +'<div class="stat"><small>بهترین استریک</small><b>'+fa(mm.mm_best)+'</b></div>'
+  +'<div class="stat"><small>دوئل</small><b>'+fa(d.duels)+'</b></div>'
+  +'</div></div>';
+  /* mode distribution */
+  if((d.mode_dist||[]).length){
+   h+='<div class="section"><div class="shead"><b>🎮 سبک بازی من</b><small>MODES</small></div><div class="card">';
+   var mx=Math.max.apply(null,d.mode_dist.map(function(m){return m.count}));
+   d.mode_dist.forEach(function(m){
+    var p=Math.round(m.count*100/mx);
+    h+='<div class="mbar"><div class="lb"><span>'+esc(m.label)+'</span><span>'+fa(m.count)+' · '+fa(m.pct)+'٪</span></div>'
+    +'<div class="bar" style="height:8px"><i style="width:'+Math.max(4,p)+'%"></i></div></div>';
+   });
+   h+='</div></div>';
+  }
+  /* survival + mini games + casino */
+  h+='<div class="section"><div class="shead"><b>🔥 بازی‌های ویژه</b><small>SPECIAL</small></div><div class="grid g2">';
+  var svr=sv.records||{};
+  h+='<div class="card"><b style="font-size:11px">🔥 رکورد Survival</b><p class="sub">'+fa(sv.best)+' روز'
+  +(svr.hard?' · سخت: '+fa((svr.hard||{}).points||0):'')+(svr.nightmare?' · کابوس: '+fa((svr.nightmare||{}).points||0):'')+'</p></div>';
+  h+='<div class="card"><b style="font-size:11px">🕹 مینی‌گیم</b><p class="sub">'+fa(mg.played)+' بازی · '+fa(mg.won)+' برد'
+  +(mg.best.trivia?' · رکورد Trivia: '+fa(mg.best.trivia):'')+'</p></div>';
+  h+='<div class="card"><b style="font-size:11px">🎰 کازینو</b><p class="sub">'+fa(cas.spins)+' چرخ · '+fa(cas.jackpots)+' جکپات · خالص: '+fa(cas.net)+'</p></div>';
+  h+='<div class="card"><b style="font-size:11px">👥 گروه‌های بازی</b><p class="sub">'+fa(d.groups_played)+' گروه · اعتبار: '+fa(d.reputation)+'</p></div>';
+  h+='</div></div>';
+  /* history */
+  if((d.history||[]).length){
+   h+='<div class="section"><div class="shead"><b>📜 تاریخچه بازی‌ها</b><small>HISTORY</small></div><div class="list">';
+   d.history.forEach(function(x){
+    h+='<div class="row"><div class="medal">'+(x.result==='win'?'🏆':x.result==='loss'?'💔':'🎮')+'</div>'
+    +'<div class="grow"><b>'+esc(x.mode||'بازی')+'</b><small>'+(x.ts?timeAgo(x.ts):'')+'</small></div></div>';
+   });
+   h+='</div></div>';
+  }
+  el.innerHTML=h;
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📊</span>'+esc(e.message)+'</div>'}
+}
+
+/* ================= SHEETS: AI / COMPARE / LOVE2 / TOOLS ================= */
+async function aiSheet(){
+ openSheet('<h3>🤖 AI Game Master</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--violet);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/ai');
+  var h='<h3>🤖 AI Game Master</h3>'
+  +'<div class="card" style="margin-bottom:12px;text-align:center">'
+  +'<div class="sub">سبک بازی تو</div><b style="font-size:14px">'+esc(d.style.name)+'</b>'
+  +'<div class="sub">'+fa(d.style.total_answers)+' پاسخ تحلیل شد</div></div>'
+  +'<div class="qcard"><span class="qtag">🎯 پیشنهاد من</span>'
+  +'<div class="qtext">'+esc(d.suggestion.mode_label)+' · سختی '+esc(d.suggestion.difficulty)+'</div>'
+  +'<div class="sub" style="margin-top:8px">⭐ XP مورد انتظار: +'+fa(d.suggestion.expected_xp)+'</div></div>'
+  +'<p style="font-size:11px;line-height:2;color:var(--muted)">💡 '+esc(d.suggestion.reason)+'</p>'
+  +'<div class="card" style="font-size:10px;color:var(--cyan);text-align:center">'+esc(d.smart_tip)+'</div>'
+  +'<button class="btn primary wide" style="margin-top:12px" onclick="closeSheet();lobbyCreate()">🚀 با پیشنهاد شروع کن</button>'
+  +'<button class="btn wide" style="margin-top:8px" onclick="aiSheet()">🔄 پیشنهاد دیگر</button>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">🤖</span>'+esc(e.message)+'</div>'}
+}
+async function compareSheet(target){
+ if(!target){
+  openSheet('<h3>⚖️ مقایسه بازیکنان</h3><p class="sub" style="margin-bottom:10px">آیدی عددی بازیکن دیگر را وارد کن (از پروفایلش کپی کن):</p>'
+  +'<input class="input" id="cmpId" type="number" placeholder="مثلاً: 123456789">'
+  +'<button class="btn primary wide" style="margin-top:10px" onclick="compareSheet(parseInt(document.getElementById(\'cmpId\').value||0,10))">⚖️ مقایسه کن</button>');
+  return;
+ }
+ openSheet('<div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--violet);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/compare?id='+Number(target));
+  var h='<h3>⚖️ مقایسه بازیکنان</h3>'
+  +'<div class="card" style="text-align:center;margin-bottom:12px"><b>'+esc(d.me.name)+'</b> <span class="tag cy">'+fa(d.score[0])+'</span>'
+  +' vs <span class="tag cy">'+fa(d.score[1])+'</span> <b>'+esc(d.them.name)+'</b></div>';
+  d.rows.forEach(function(r){
+   var mark=r.res==='win'?'🟢':(r.res==='lose'?'🔴':'🟡');
+   h+='<div class="row"><div class="medal">'+r.icon+'</div>'
+   +'<div class="grow"><b>'+esc(r.label)+'</b><small style="display:flex;justify-content:space-between"><span>'+faK(r.a)+'</span><span>'+mark+'</span><span>'+faK(r.b)+'</span></small></div></div>';
+  });
+  h+='<div class="card" style="margin-top:12px;text-align:center;font-size:10px;color:var(--muted)">🟢 = تو بهتری · 🔴 = حریف بهتر · 🟡 = مساوی</div>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">⚖️</span>'+esc(e.message)+'</div>'}
+}
+function love2Sheet(){
+ openSheet('<h3>💌 عشق‌سنج دو نفره</h3>'
+ +'<p class="sub" style="margin-bottom:10px">آیدی عددی طرف مقابل را وارد کن — هر دو نفر به ۴ سوال مخفیانه جواب می‌دهید و درصد هم‌صدایی محاسبه می‌شود!</p>'
+ +'<input class="input" id="lvId" type="number" placeholder="آیدی عددی بازیکن دیگر...">'
+ +'<button class="btn primary wide" style="margin-top:10px" onclick="love2Create()">💌 شروع عشق‌سنج</button>'
+ +'<input class="input" id="lvCode" type="number" placeholder="یا کد عشق‌سنجی که دریافت کردی..." style="margin-top:10px">'
+ +'<button class="btn wide" style="margin-top:8px" onclick="love2Open()">📬 باز کردن با کد</button>');
+}
+async function love2Create(){
+ var t=parseInt(($('lvId')||{}).value||'0',10);
+ if(!t){toast('آیدی را وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/love2/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:t})});
+  if(!d.ok){toast(d.error,'err');return}
+  LOVE2CODE=d.code;
+  closeSheet();
+  toast(d.message,'ok');
+  love2Flow();
+ }catch(e){toast(e.message,'err')}
+}
+async function love2Open(){
+ var c=parseInt(($('lvCode')||{}).value||'0',10);
+ if(!c){toast('کد را وارد کن','err');return}
+ LOVE2CODE=c;
+ closeSheet();
+ love2Flow();
+}
+var LOVE2CODE=0;
+async function love2Flow(){
+ var el=$('pg-games');
+ el.innerHTML='<div class="sk tall"></div>';
+ try{
+  var d=await api('/api/miniapp/love2/state?code='+LOVE2CODE);
+  var h=gmHead('💌','عشق‌سنج با '+esc(d.other.name),'۴ سوال مخفیانه — جواب‌ها فقط در نهایت مقایسه می‌شوند','renderGames()');
+  if(d.result){
+   h+='<div style="text-align:center"><div class="lovebar"><i style="width:'+d.result.score+'%"></i></div>'
+   +'<div style="font-size:23px;font-weight:900;color:var(--pink)">💘 '+fa(d.result.score)+'٪</div>'
+   +'<div class="sub">هم‌سویی: '+fa(d.result.matches)+' از '+fa(d.result.total)+' سوال</div></div>';
+   d.result.rows.forEach(function(r){
+    h+='<div class="card" style="margin-top:10px"><b style="font-size:10.5px">'+esc(r.q)+'</b>'
+    +'<div style="display:flex;gap:8px;margin-top:8px;font-size:10px">'
+    +'<div style="flex:1;padding:8px;border-radius:10px;background:#ff4fa312;border:1px solid #ff4fa33a">💜 '+esc(r.a)+'</div>'
+    +'<div style="flex:1;padding:8px;border-radius:10px;background:#15d8ff12;border:1px solid #15d8ff3a">💙 '+esc(r.b)+'</div></div>'
+    +(r.match?'<div style="text-align:center;color:var(--green);font-size:10px;margin-top:5px">✅ هم‌سو</div>':'')+'</div>';
+   });
+   h+='<button class="btn primary wide" style="margin-top:12px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+  }else if(d.my_done){
+   h+='<div class="bigres"><span class="bico">🤝</span><span class="bt">جواب‌هایت ثبت شد!</span>'
+   +'<div class="bs">منتظر '+esc(d.other.name)+' هستیم... '+(d.other_done?'✅ تمام کرد':'⏳ هنوز در جواب دادن است')+'</div></div>'
+   +'<button class="btn wide" onclick="love2Flow()">🔄 وضعیت را تازه کن</button>';
+  }else{
+   var qi=d.current_idx;
+   h+='<div class="qcard"><span class="qtag">سوال '+fa(qi+1)+' از '+fa(d.total)+' (مخفیانه)</span>'
+   +'<div class="qtext">'+esc(d.questions[qi])+'</div></div>'
+   +'<textarea class="input" id="lvAns" maxlength="400" placeholder="صادقانه و مخفیانه جواب بده..."></textarea>'
+   +'<button class="btn primary wide glow" style="margin-top:10px" onclick="love2Ans()">✍️ ثبت جواب مخفی</button>';
+  }
+  el.innerHTML=h;
+ }catch(e){el.innerHTML=gmHead('💌','عشق‌سنج','خطا','renderGames()')+'<div class="empty"><span class="ei">💌</span>'+esc(e.message)+'</div>'}
+}
+async function love2Ans(){
+ var t=($('lvAns')||{}).value||'';
+ if(t.trim().length<2){toast('جوابت را بنویس','err');return}
+ try{
+  var d=await api('/api/miniapp/love2/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:LOVE2CODE,text:t})});
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');toast(d.message,'ok');
+  love2Flow();
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- TOOLS SHEETS ---------- */
+function friendsSheet(){
+ var fr=D.friends||[];
+ var h='<h3>👥 دوستان من</h3>';
+ if(fr.length){
+  h+='<div class="list">';
+  fr.forEach(function(f){
+   h+='<div class="row">'+avaHtml({id:f.id,name:f.name},'sm')+'<div class="grow"><b>'+esc(f.name)+'</b><small>LV '+fa(f.level)+'</small></div>'
+   +'<button class="btn red" onclick="friendRemove('+f.id+')">✕</button></div>';
+  });
+  h+='</div>';
+ }else h+='<div class="empty" style="padding:16px"><span class="ei">👋</span>هنوز دوستی نداری!</div>';
+ h+='<div class="shead" style="margin-top:14px"><b>➕ افزودن دوست</b></div>'
+ +'<input class="input" id="frId" type="number" placeholder="آیدی عددی بازیکن...">'
+ +'<button class="btn primary wide" style="margin-top:8px" onclick="friendAdd(parseInt(document.getElementById(\'frId\').value||0,10))">➕ افزودن</button>';
+ openSheet(h);
+}
+async function friendAdd(id){
+ if(!id){toast('آیدی معتبر وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/friends',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',id:id})});
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');toast(d.message,'ok');
+  await refresh(true);friendsSheet();renderMe();
+ }catch(e){toast(e.message,'err')}
+}
+async function friendRemove(id){
+ try{
+  var d=await api('/api/miniapp/friends',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'remove',id:id})});
+  if(!d.ok){toast(d.error,'err');return}
+  toast(d.message,'ok');
+  await refresh(true);friendsSheet();renderMe();
+ }catch(e){toast(e.message,'err')}
+}
+function nameSheet(){
+ openSheet('<h3>🎭 نام نمایشی</h3>'
+ +'<p class="sub" style="margin-bottom:10px">نامی که در لابی‌ها، دوئل‌ها و رتبه‌بندی‌ها دیده می‌شود:</p>'
+ +'<input class="input" id="nmIn" maxlength="32" placeholder="نام جدید..." value="'+esc((D.user||{}).name||'')+'">'
+ +'<button class="btn primary wide" style="margin-top:10px" onclick="nameSave()">💾 ذخیره نام</button>');
+}
+async function nameSave(){
+ var n=($('nmIn')||{}).value||'';
+ if(n.trim().length<2){toast('نام معتبر وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/profile/name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})});
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');toast(d.message,'ok');
+  closeSheet();await refresh(true);
+ }catch(e){toast(e.message,'err')}
+}
+function reminderSheet(){
+ openSheet('<h3>⏰ یادآور شخصی</h3>'
+ +'<p class="sub" style="margin-bottom:10px">یادآور در اعلان‌های ربات برایت ارسال می‌شود:</p>'
+ +'<input class="input" id="rmMin" type="number" min="1" max="1440" placeholder="چند دقیقه بعد؟ (۱ تا ۱۴۴۰)">'
+ +'<input class="input" id="rmTxt" maxlength="200" placeholder="متن یادآور..." style="margin-top:8px">'
+ +'<button class="btn primary wide" style="margin-top:10px" onclick="reminderSave()">⏰ ثبت یادآور</button>');
+}
+async function reminderSave(){
+ var m=parseInt(($('rmMin')||{}).value||'0',10);
+ var t=($('rmTxt')||{}).value||'';
+ try{
+  var d=await api('/api/miniapp/reminder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({minutes:m,text:t})});
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');toast(d.message,'ok');closeSheet();
+ }catch(e){toast(e.message,'err')}
+}
+function inviteSheet(){
+ var un=(D.bot||'').replace(/^@/,'');
+ var u=D.user||{};
+ openSheet('<h3>🎁 دعوت دوستان</h3>'
+ +'<div class="card" style="text-align:center;margin-bottom:12px">'
+ +'<div style="font-size:30px;margin-bottom:8px">🎁</div>'
+ +'<b>+۵۰ سکه برای هر دوستی که با لینک تو ثبت‌نام کند</b>'
+ +'<div class="sub" style="margin-top:6px">دعوت‌شددها هم پاداش شروع می‌گیرند</div></div>'
+ +'<div class="card" style="text-align:center"><div class="sub" style="margin-bottom:6px">لینک دعوت اختصاصی تو:</div>'
+ +'<code style="color:var(--cyan);font-size:11px;word-break:break-all">https://t.me/'+esc(un)+'?start=ref_'+fa(u.id||0)+'</code></div>'
+ +'<div style="display:flex;gap:8px;margin-top:12px">'
+ +'<button class="btn primary" style="flex:1" onclick="copyText(\'https://t.me/'+esc(un)+'?start=ref_'+(u.id||0)+'\')">📋 کپی لینک</button>'
+ +'<button class="btn" style="flex:1" onclick="shareText(\'⚔️ بیا تو ApexRival بازی کنیم! با لینک من ثبت‌نام کن تا هر دو مان پاداش بگیریم: https://t.me/'+esc(un)+'?start=ref_'+(u.id||0)+'\')">✈️ اشتراک</button></div>');
+}
+function vipSheet(){
+ openSheet('<h3>👑 عضویت VIP</h3>'
+ +'<div class="card" style="text-align:center;margin-bottom:12px"><div style="font-size:30px">👑</div>'
+ +'<b>مزایای VIP</b><div class="sub" style="text-align:right;margin-top:10px;line-height:2.4">'
+ +'✨ ۱۰٪ پاداش XP و سکه بیشتر در همه‌ی بازی‌ها<br>'
+ +'🏷 قاب و نشان ویژه در پروفایل<br>'
+ +'⚡ اولویت در مچ‌میکینگ آرنا<br>'
+ +'🎫 خرید Season Pass Premium = ۳۰ روز VIP</div></div>'
+ +(D.user&&D.user.vip?'<div class="card" style="text-align:center;border-color:#ffc85744">✅ VIP فعال — '+fa(D.user.vip_days||0)+' روز مانده</div>'
+ :'<button class="btn gold wide" onclick="closeSheet();show(\'pass\')">🎫 گرفتن VIP با Season Pass</button>'));
+}
+function guideSheet(){
+ var pages=[
+  ['🎮 شروع سریع','مینی‌اپ را باز کن و از Play Hub یک لابی بساز. کد ۶ حرفی را برای دوستان بفرست تا بپیوندند. سرگروه «شروع بازی» را می‌زند و نوبت‌ها می‌چرخند.'],
+  ['🔄 چرخه نوبت','هر نوبت یک «پرسشگر» مشخص می‌شود. پرسشگر موضوع (مثل اعتراف یا جرئت) و سپس بازیکن هدف را انتخاب می‌کند. سوال صادر می‌شود و هدف جواب می‌دهد. با ثبت جواب، XP و سکه می‌گیری.'],
+  ['🌶 موتور گرما','سوال‌ها با پیشرفت بازی داغ‌تر می‌شوند: 🟢 آرام → 🟡 معتدل → 🟠 داغ → 🔴 آتیشی → 🔥 خطرناک'],
+  ['🤺 دوئل','۱۰ راند تن‌به‌تن. هر جواب +۳ XP و ۱ امتیاز. برنده‌ی نهایی +۱۰ XP و +۵ سکه.'],
+  ['🏆 آرنا رنک‌دار','حریف هم‌سطح با ELO پیدا کن. اولین ۵ امتیاز برنده است. برنده ELO و جایزه می‌گیرد و لیگش ارتقا می‌یابد.'],
+  ['🔥 Survival','راگلایک تک‌نفره: هر روز یک چالش. قبول = روز بعد و پاداش؛ رد = یک جان کم. رویدادها: گنج، درمانگر، فروشنده، طوفان، کمین.'],
+  ['🕹 گیم‌زون','۱۳ بازی کامل داخل اپ: Trivia زنجیره‌ای، کلمات، حدس عدد، حافظه، واکنش، دوز، مین‌یاب، کوییز ریاضی، گردونه، کازینو و ابزار شانس.'],
+  ['🎯 مأموریت‌ها','هر روز مأموریت و Quest تازه. مأموریت‌ها ساعت ۰۰:۰۰ و Quest هفتگی هر دوشنبه به‌روز می‌شوند.'],
+  ['🛍 فروشگاه','لقب، قاب، پاورآپ و جعبه — خریدها مستقیم روی حساب ربات اعمال می‌شوند.'],
+  ['📊 آمار','داشبورد کامل: نرخ برد، ELO، توزیع مودها، رکوردهای Survival و کازینو.'],
+  ['👑 VIP','۱۰٪ پاداش بیشتر در همه‌جا + قاب ویژه. با خرید Season Pass Premium فعال می‌شود.'],
+  ['💡 نکته طلایی','همه‌چیز داخل همین مینی‌اپ انجام می‌شود — پاداش‌ها و آمار دقیقاً روی حساب ربات ثبت می‌شوند!']
+ ];
+ var h='<h3>🎓 راهنمای بازی</h3>';
+ pages.forEach(function(p,i){
+  h+='<div class="card" style="margin-bottom:9px"><b style="font-size:11.5px">'+esc(p[0])+'</b><p style="margin:6px 0 0;font-size:10.5px;line-height:2;color:var(--muted)">'+esc(p[1])+'</p></div>';
+ });
+ openSheet(h);
 }
 
 /* ================= REFRESH + BOOT ================= */
@@ -29622,15 +33159,18 @@ async function refresh(silent){
   if(!silent)toast(e.message,'err');
  }
 }
-/* ================= BOT LINK ================= */
-function bot(c){
- haptic('medium');
- var un=(D.bot||'').replace(/^@/,'');
- if(!un){toast('این بخش را داخل تلگرام باز کن','err');return}
- var url='https://t.me/'+un+'?start='+encodeURIComponent(c);
- try{if(tg&&tg.openTelegramLink){tg.openTelegramLink(url);return}}catch(e){}
- try{window.open(url,'_blank');return}catch(e2){}
- location.href=url;
+/* ================= IN-APP SHARE (جایگزین کامل خروج به ربات) ================= */
+function shareText(txt){
+ /* اشتراک‌گذاری کد لابی/دوئل — از شیت اشتراک خود تلگرام، بدون ترک مینی‌اپ */
+ try{
+  var un=(D.bot||'').replace(/^@/,'');
+  var url='https://t.me/share/url?url='+encodeURIComponent('https://t.me/'+un)+'&text='+encodeURIComponent(txt);
+  if(tg&&tg.openTelegramLink){tg.openTelegramLink(url);return}
+ }catch(e){}
+ toast('متن دعوت کپی شد — برای دوستت بفرست','ok');
+}
+function copyText(t){
+ try{navigator.clipboard.writeText(t).then(function(){toast('کپی شد ✓','ok')},function(){toast('کپی نشد','err')})}catch(e){toast(t,'ok')}
 }
 /* pull-to-refresh */
 var pty0=null,ptdy=0;
@@ -29647,6 +33187,35 @@ document.addEventListener('visibilitychange',function(){if(document.visibilitySt
 /* keyboard: Esc closes sheet */
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSheet()});
 /* ================= BOOT ================= */
+function handleStartParam(){
+ /* دیپ‌لینک‌های ورودی مینی‌اپ: lobbyXXXXXX / duelNNNN / loveNNNN */
+ try{
+  var sp='';
+  try{if(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.start_param)sp=String(tg.initDataUnsafe.start_param)}catch(e){}
+  if(!sp)return;
+  var m=sp.match(/^lobby([A-Z2-9]{4,8})$/i);
+  if(m){
+   LOBBYCODE=m[1].toUpperCase();
+   show('lobby');
+   /* پیوستن خودکار به لابی دیپ‌لینک‌شده */
+   api('/api/miniapp/lobby/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:LOBBYCODE})})
+   .then(function(d){if(d&&d.message)toast(d.message,'ok');lobbyWatch()})
+   .catch(function(){lobbyWatch()});
+   return;
+  }
+  var m2=sp.match(/^duel(\d+)$/);
+  if(m2){
+   DUELCODE=parseInt(m2[1],10);
+   show('duel');
+   api('/api/miniapp/duel/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:DUELCODE})})
+   .then(function(d){if(d&&d.message)toast(d.message,'ok');duelWatch()})
+   .catch(function(){duelWatch()});
+   return;
+  }
+  var m3=sp.match(/^love(\d+)$/);
+  if(m3){LOVE2CODE=parseInt(m3[1],10);show('games');love2Flow();toast('عشق‌سنج باز شد 💌','ok');return}
+ }catch(e){}
+}
 (async function boot(){
  try{if(tg&&tg.ready)tg.ready();if(tg&&tg.expand)tg.expand()}catch(e){}
  buildShell();
@@ -29656,6 +33225,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSheet()
  }catch(e){}
  if(!document.querySelector('.page.on'))show('home');
  await refresh(true);
+ handleStartParam();
 })();
 </script>
 </body>
@@ -29852,6 +33422,10 @@ def start_health_server() -> None:
                     if section == "settings":
                         status = 200
                         return self._json({"ok": True, **_mini_admin_settings()})
+                    if section == "broadcast":
+                        status = 200
+                        queued = len(DATA.get("broadcast_queue", []) or [])
+                        return self._json({"ok": True, "queued": queued})
                     if section == "economy":
                         coins = 0
                         vip = 0
@@ -29888,6 +33462,180 @@ def start_health_server() -> None:
                     u = _mini_admin_user(target)
                     status = 200 if u else 404
                     return self._json(u or {"ok": False, "error": "کاربر پیدا نشد."}, status)
+
+                if path == "/api/miniapp/game/trivia":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_trivia_get(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/word":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_word_get(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/number":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_number_get(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/memory":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_memory_get(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/ttt":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_ttt_get(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/mine":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_mine_get(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/quiz":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_quiz_get(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/games":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    status = 200
+                    return self._json(_mg_view(uid))
+
+                if path == "/api/miniapp/game/ln":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_ln_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/survival":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_survival_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/state":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    code = (self._qs().get("code") or [""])[0]
+                    lb = _mini_lobby_get(code)
+                    if not lb:
+                        status = 404
+                        return self._json({"ok": False, "error": "لابی پیدا نشد."}, 404)
+                    status = 200
+                    return self._json({"ok": True, "lobby": _mini_lobby_view(lb, int(uid))})
+
+                if path == "/api/miniapp/duel/state":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    code = int((self._qs().get("code") or ["0"])[0] or 0)
+                    duel = _mini_duel_get(code)
+                    if not isinstance(duel, dict):
+                        status = 404
+                        return self._json({"ok": False, "error": "دوئل پیدا نشد."}, 404)
+                    status = 200
+                    return self._json({"ok": True, "duel": _mini_duel_view(duel, code, int(uid))})
+
+                if path == "/api/miniapp/duel/list":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_duel_list(int(uid))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/arena":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_arena_view(int(uid))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/love2/state":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    code = int((self._qs().get("code") or ["0"])[0] or 0)
+                    d, code2 = _mini_love2_state(int(uid), code)
+                    status = code2
+                    return self._json(d, code2)
+
+                if path == "/api/miniapp/stats":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_stats_full(int(uid))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/compare":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    target = int((self._qs().get("id") or ["0"])[0] or 0)
+                    d, code = _mini_compare(int(uid), target)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/ai":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_ai_view(int(uid))
+                    status = code
+                    return self._json(d, code)
 
                 status = 404
                 return self._json({"ok": False, "error": "Not Found"}, 404)
@@ -30053,6 +33801,370 @@ def start_health_server() -> None:
                     ok, msg = _mini_admin_action(uid, str(data.get("action", "")), data)
                     status = 200 if ok else 400
                     return self._json({"ok": ok, "message": msg}, status)
+
+                if path == "/api/miniapp/admin/broadcast":
+                    d, code = _mini_broadcast(uid, str(data.get("text", "")))
+                    status = code
+                    return self._json(d, code)
+
+                # ---------- مسیرهای بازی‌های داخل مینی‌اپ ----------
+                if path == "/api/miniapp/game/trivia":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_trivia_answer(uid, str(data.get("answer", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/word":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_word_answer(uid, str(data.get("answer", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/number":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_number_guess(uid, data.get("guess", 0))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/memory":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_memory_answer(uid, data.get("idx", -1))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/reaction/start":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_reaction_arm(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/reaction/hit":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_reaction_hit(uid, data.get("tap", 0))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/ttt":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    if "cell" not in data:
+                        d, code = _mini_ttt_get(uid)
+                    else:
+                        d, code = _mini_ttt_move(uid, data.get("cell", -1))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/mine/start":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_mine_start(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/mine":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    if data.get("cash"):
+                        d, code = _mini_mine_cash(uid)
+                    else:
+                        d, code = _mini_mine_open(uid, data.get("cell", -1))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/quiz":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    if "answer" in data:
+                        d, code = _mini_quiz_answer(uid, data.get("answer", ""))
+                    else:
+                        d, code = _mini_quiz_get(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/luck":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_luck_spin(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/ln":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_ln_bet(uid, data.get("number", 1), data.get("bet", 25))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/ln/free":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_ln_free(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/game/fun":
+                    d, code = _mini_fun(data.get("kind", ""), str(data.get("q", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/survival/start":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_survival_start(uid, str(data.get("diff", "normal")), str(data.get("mode", "mixed")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/survival/answer":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_survival_answer(uid, bool(data.get("ok", False)))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/survival/item":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_survival_item(uid, str(data.get("item", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/survival/event":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_survival_event(uid, str(data.get("choice", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/survival/end":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_survival_end(uid)
+                    status = code
+                    return self._json(d, code)
+
+                # ---------- لابی چندنفره ----------
+                if path == "/api/miniapp/lobby/create":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_lobby_create(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/join":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_lobby_join(uid, str(data.get("code", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/ready":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_lobby_ready(uid, str(data.get("code", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/start":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_lobby_start(uid, str(data.get("code", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/topic":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_lobby_topic(uid, str(data.get("code", "")), str(data.get("mode", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/target":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_lobby_target(uid, str(data.get("code", "")), data.get("target", 0))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/answer":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_lobby_answer(uid, str(data.get("code", "")), str(data.get("text", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/skip":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_lobby_skip(uid, str(data.get("code", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/leave":
+                    d, code = _mini_lobby_leave(uid, str(data.get("code", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/lobby/end":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_lobby_end(uid, str(data.get("code", "")))
+                    status = code
+                    return self._json(d, code)
+
+                # ---------- دوئل ----------
+                if path == "/api/miniapp/duel/create":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_duel_create(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/duel/join":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    try:
+                        dcode = int(data.get("code", 0) or 0)
+                    except Exception:
+                        dcode = 0
+                    d, code = _mini_duel_join(uid, dcode)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/duel/topic":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    try:
+                        dcode = int(data.get("code", 0) or 0)
+                    except Exception:
+                        dcode = 0
+                    d, code = _mini_duel_topic(uid, dcode, str(data.get("mode", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/duel/answer":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    try:
+                        dcode = int(data.get("code", 0) or 0)
+                    except Exception:
+                        dcode = 0
+                    d, code = _mini_duel_answer(uid, dcode, str(data.get("text", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/duel/skip":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    try:
+                        dcode = int(data.get("code", 0) or 0)
+                    except Exception:
+                        dcode = 0
+                    d, code = _mini_duel_skip(uid, dcode)
+                    status = code
+                    return self._json(d, code)
+
+                # ---------- آرنا رنک‌دار ----------
+                if path == "/api/miniapp/arena/join":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_arena_join(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/arena/answer":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_arena_answer(uid, data.get("idx", -1))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/arena/leave":
+                    d, code = _mini_arena_leave(uid)
+                    status = code
+                    return self._json(d, code)
+
+                # ---------- عشق‌سنج ----------
+                if path == "/api/miniapp/love2/create":
+                    if self._banned_guard(uid) or self._maintenance_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
+                    d, code = _mini_love2_create(uid, data.get("target", 0))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/love2/answer":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    try:
+                        lcode = int(data.get("code", 0) or 0)
+                    except Exception:
+                        lcode = 0
+                    d, code = _mini_love2_answer(uid, lcode, str(data.get("text", "")))
+                    status = code
+                    return self._json(d, code)
+
+                # ---------- ابزار پروفایل ----------
+                if path == "/api/miniapp/profile/name":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_set_name(uid, str(data.get("name", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/friends":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_friends_action(uid, str(data.get("action", "")), data.get("id", 0))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/reminder":
+                    d, code = _mini_reminder(uid, data.get("minutes", 0), str(data.get("text", "")))
+                    status = code
+                    return self._json(d, code)
 
                 status = 404
                 return self._json({"ok": False, "error": "Not Found"}, 404)
