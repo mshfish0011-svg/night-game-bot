@@ -472,6 +472,8 @@ import random
 import re
 import threading
 import time
+import hmac
+import urllib.parse
 from copy import deepcopy
 from datetime import datetime, timezone
 from html import escape
@@ -485,6 +487,8 @@ from telegram import (
     BotCommandScopeAllPrivateChats,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    MenuButtonWebApp,
+    WebAppInfo,
     Update,
 )
 from telegram.constants import ParseMode
@@ -506,7 +510,7 @@ from telegram.error import RetryAfter, BadRequest  # ۶.۳/۶.۵ — فلود-ک
 # ================================================================
 #  پیکربندی
 # ================================================================
-VERSION = "11.0"
+VERSION = "12.0"
 BOT_NAME = "ApexRival"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -517,6 +521,10 @@ BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
 SAVE_EVERY_SECONDS = 12
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@NovaLinkNETPN").strip() or "@NovaLinkNETPN"
 REQUIRED_CHANNEL_URL = os.getenv("REQUIRED_CHANNEL_URL", "https://t.me/NovaLinkNETPN").strip() or "https://t.me/NovaLinkNETPN"
+# Telegram Mini App — در Render معمولاً RENDER_EXTERNAL_URL خودکار تنظیم می‌شود.
+MINIAPP_URL = (os.getenv("MINIAPP_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()).rstrip("/")
+if MINIAPP_URL:
+    MINIAPP_URL += "/miniapp"
 BOOT_TS = time.time()
 
 # دکمه‌ی شروع عمومی (لینک گروه)
@@ -27725,39 +27733,146 @@ async def backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         print(f"ApexRival backup job warning: {exc!r}")
 
 
+
+# ================================================================
+#  Telegram Mini App — تک‌فایلی و متصل به داده‌های واقعی ربات
+# ================================================================
+MINIAPP_HTML = '<!doctype html>\n<html lang="fa" dir="rtl">\n<head>\n<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n<meta name="theme-color" content="#080b12"><title>ApexRival</title>\n<script src="https://telegram.org/js/telegram-web-app.js"></script>\n<style>\n:root{--bg:#080b12;--p:#101522;--p2:#171e2d;--line:#273044;--t:#f5f7fb;--m:#8995aa;--a:#7657ff;--b:#00cfff;--g:#ffc857}\n*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font-family:Tahoma,"Segoe UI",sans-serif;padding-bottom:90px}\n.app{max-width:760px;margin:auto;padding:18px 14px}.glow{position:fixed;width:260px;height:260px;border-radius:50%;filter:blur(100px);background:#7657ff2b;top:-100px;right:-100px;pointer-events:none}\n.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.brand{display:flex;gap:10px;align-items:center}.logo{width:45px;height:45px;border-radius:15px;display:grid;place-items:center;background:linear-gradient(135deg,var(--a),#479cff);font-weight:900}.brand b{font-size:18px}.brand small{display:block;color:var(--m);font-size:11px;margin-top:3px}.coins{background:var(--p);border:1px solid var(--line);border-radius:14px;padding:9px 12px;color:var(--g);font-weight:800}\n.hero{background:linear-gradient(145deg,#191631,#101522 60%,#0d1a28);border:1px solid #303452;border-radius:27px;padding:20px;box-shadow:0 16px 50px #0006}.hero h1{margin:0 0 7px;font-size:25px}.hero p{margin:0;color:var(--m);font-size:12px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:18px}.stat{background:#ffffff09;border:1px solid #ffffff0d;border-radius:16px;padding:12px}.stat span{display:block;color:var(--m);font-size:10px;margin-bottom:6px}.stat strong{font-size:18px}.xp{margin-top:14px}.xphead{display:flex;justify-content:space-between;color:var(--m);font-size:10px;margin-bottom:7px}.bar{height:9px;background:#080b12;border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--a),var(--b));border-radius:99px}\n.sec{margin-top:20px}.sec h2{font-size:16px;margin:0 0 10px}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.card{background:var(--p);border:1px solid var(--line);border-radius:20px;padding:15px}.action{text-align:right;min-height:115px}.action:active{transform:scale(.98)}.icon{font-size:25px;margin-bottom:9px}.action b{display:block;font-size:13px}.action small{display:block;color:var(--m);font-size:11px;line-height:1.7;margin-top:5px}\n.user{display:flex;align-items:center;gap:10px}.avatar{width:42px;height:42px;border-radius:14px;background:var(--p2);display:grid;place-items:center;font-weight:900}.um{flex:1}.um b{display:block;font-size:13px}.um small{color:var(--m)}.win{font-weight:900;color:var(--g)}\n.page{display:none}.page.active{display:block}.nav{position:fixed;z-index:10;bottom:9px;left:50%;transform:translateX(-50%);width:min(730px,calc(100% - 18px));display:grid;grid-template-columns:repeat(4,1fr);padding:7px;background:#111622ee;backdrop-filter:blur(18px);border:1px solid #293248;border-radius:22px;box-shadow:0 15px 40px #0008}.nav button{background:none;color:var(--m);border-radius:15px;padding:8px 3px;font-size:10px}.nav button.active{background:#7657ff25;color:#fff}.ni{display:block;font-size:18px;margin-bottom:3px}\n.toast{position:fixed;z-index:30;bottom:92px;left:50%;transform:translate(-50%,20px);opacity:0;background:#1b2230;border:1px solid #34405a;padding:10px 14px;border-radius:14px;font-size:11px;transition:.2s;white-space:nowrap}.toast.show{opacity:1;transform:translate(-50%,0)}\n@media(min-width:600px){.app{padding:25px 20px}.grid{grid-template-columns:repeat(3,1fr)}}\n</style></head>\n<body><div class="glow"></div><main class="app">\n<header class="top"><div class="brand"><div class="logo">AR</div><div><b>ApexRival</b><small>پنل بازی گروهی</small></div></div><div class="coins">🪙 <span id="coins">0</span></div></header>\n<section id="home" class="page active"><div class="hero"><h1 id="hello">خوش اومدی 👋</h1><p>پروفایل و امکانات ApexRival</p><div class="stats"><div class="stat"><span>سطح</span><strong id="level">1</strong></div><div class="stat"><span>XP</span><strong id="xp">0</strong></div><div class="stat"><span>بازی\u200cها</span><strong id="games">0</strong></div></div><div class="xp"><div class="xphead"><span>پیشرفت سطح</span><span id="xptext">0 / 100</span></div><div class="bar"><i id="xpbar"></i></div></div></div>\n<div class="sec"><h2>دسترسی سریع</h2><div class="grid"><button class="card action" onclick="page(\'profile\')"><div class="icon">👤</div><b>پروفایل من</b><small>اطلاعات و آمار حساب</small></button><button class="card action" onclick="page(\'leaderboard\')"><div class="icon">🏆</div><b>لیدربورد</b><small>رتبه بازیکن\u200cها</small></button><button class="card action" onclick="page(\'games\')"><div class="icon">🎮</div><b>بازی\u200cها</b><small>حالت\u200cهای بازی</small></button><button class="card action" onclick="page(\'achievements\')"><div class="icon">🎖️</div><b>دستاوردها</b><small>رکوردها و جوایز</small></button></div></div>\n<div class="sec"><h2>حساب</h2><div class="card"><div class="user"><div class="avatar" id="avatar">A</div><div class="um"><b id="name">بازیکن</b><small id="username">@player</small></div><div class="win" id="wins">0 برد</div></div></div></div></section>\n<section id="profile" class="page"><div class="hero"><h1>پروفایل 👤</h1><p>اطلاعات حساب تلگرام</p></div><div class="sec"><div class="card"><div class="user"><div class="avatar" id="pavatar">A</div><div class="um"><b id="pname">بازیکن</b><small id="pusername">@player</small></div></div><div class="stats"><div class="stat"><span>سطح</span><strong id="plevel">1</strong></div><div class="stat"><span>برد</span><strong id="pwins">0</strong></div><div class="stat"><span>سکه</span><strong id="pcoins">0</strong></div></div></div></div></section>\n<section id="leaderboard" class="page"><div class="hero"><h1>لیدربورد 🏆</h1><p>رتبه\u200cبندی واقعی بازیکن\u200cهای ApexRival</p></div><div class="sec"><div class="card" id="leaders"></div></div></section>\n<section id="games" class="page"><div class="hero"><h1>بازی\u200cها 🎮</h1><p>حالت موردنظر را انتخاب کن</p></div><div class="sec"><div class="grid"><button class="card action" onclick="toast(\'بخش بازی از طریق منطق اصلی ربات اجرا می\u200cشود.\')"><div class="icon">⚔️</div><b>رقابت</b><small>شروع رقابت گروهی</small></button><button class="card action" onclick="toast(\'مینی\u200cگیم\u200cها از منوی اصلی بات قابل اجرا هستند.\')"><div class="icon">🧠</div><b>مینی\u200cگیم</b><small>چالش سریع</small></button><button class="card action" onclick="toast(\'دوئل از منطق اصلی ApexRival استفاده می\u200cکند.\')"><div class="icon">🥊</div><b>دوئل</b><small>مقابله با بازیکن</small></button><button class="card action" onclick="toast(\'فروشگاه از اطلاعات واقعی ربات استفاده می\u200cکند.\')"><div class="icon">🛒</div><b>فروشگاه</b><small>آیتم\u200cها و امکانات</small></button></div></div></section>\n<section id="achievements" class="page"><div class="hero"><h1>دستاوردها 🎖️</h1><p>رکوردها و افتخارات حساب</p></div><div class="sec"><div class="grid"><div class="card action"><div class="icon">🔥</div><b>شروع\u200cکننده</b><small>اولین بازی را انجام بده.</small></div><div class="card action"><div class="icon">🏅</div><b>رقیب</b><small>بردهای بیشتری ثبت کن.</small></div><div class="card action"><div class="icon">💎</div><b>کلکسیونر</b><small>دستاوردهای مختلف جمع کن.</small></div><div class="card action"><div class="icon">👑</div><b>افسانه</b><small>برای بازیکن\u200cهای سطح بالا.</small></div></div></div></section>\n</main><nav class="nav"><button class="active" data-page="home" onclick="page(\'home\')"><span class="ni">⌂</span>خانه</button><button data-page="leaderboard" onclick="page(\'leaderboard\')"><span class="ni">🏆</span>رتبه\u200cها</button><button data-page="games" onclick="page(\'games\')"><span class="ni">🎮</span>بازی</button><button data-page="profile" onclick="page(\'profile\')"><span class="ni">👤</span>من</button></nav><div id="toast" class="toast"></div>\n<script>\n(()=>{const tg=window.Telegram?.WebApp||null;let s={user:{first_name:"بازیکن",username:"player"},coins:0,xp:0,level:1,games:0,wins:0};\nfunction full(){return[s.user.first_name,s.user.last_name].filter(Boolean).join(" ")||"بازیکن"}\nfunction render(){let n=full(),u=s.user.username?"@"+s.user.username:"کاربر تلگرام",i=n.charAt(0).toUpperCase(),need=Math.max(100,s.level*100);["name","pname"].forEach(x=>document.getElementById(x).textContent=n);["username","pusername"].forEach(x=>document.getElementById(x).textContent=u);["avatar","pavatar"].forEach(x=>document.getElementById(x).textContent=i);["level","plevel"].forEach(x=>document.getElementById(x).textContent=s.level);["coins","pcoins"].forEach(x=>document.getElementById(x).textContent=s.coins.toLocaleString("fa-IR"));document.getElementById("xp").textContent=s.xp.toLocaleString("fa-IR");document.getElementById("games").textContent=s.games.toLocaleString("fa-IR");document.getElementById("wins").textContent=s.wins.toLocaleString("fa-IR")+" برد";document.getElementById("pwins").textContent=s.wins.toLocaleString("fa-IR");document.getElementById("xptext").textContent=s.xp.toLocaleString("fa-IR")+" / "+need.toLocaleString("fa-IR");document.getElementById("xpbar").style.width=Math.min(100,Math.round(s.xp/need*100))+"%";document.getElementById("hello").textContent="خوش اومدی "+n+" 👋"}\nfunction leaders(data){let rows=data||[{rank:1,name:"در حال دریافت...",xp:0}];document.getElementById("leaders").innerHTML=rows.map(r=>\'<div class="user" style="margin-bottom:12px"><div style="width:30px;text-align:center;color:var(--g);font-weight:900">\'+r.rank+\'</div><div class="avatar">\'+String(r.name||"؟").charAt(0)+\'</div><div class="um"><b>\'+String(r.name||"بازیکن")+\'</b><small>XP</small></div><strong>\'+Number(r.xp||0).toLocaleString("fa-IR")+\'</strong></div>\').join("")}\nwindow.page=id=>{document.querySelectorAll(".page").forEach(x=>x.classList.remove("active"));document.getElementById(id).classList.add("active");document.querySelectorAll(".nav button").forEach(x=>x.classList.toggle("active",x.dataset.page===id));scrollTo({top:0,behavior:"smooth"})};\nwindow.toast=msg=>{let x=document.getElementById("toast");x.textContent=msg;x.classList.add("show");clearTimeout(window.__t);window.__t=setTimeout(()=>x.classList.remove("show"),2400)};\nasync function start(){if(tg){try{tg.ready();tg.expand();if(tg.initDataUnsafe?.user)s.user={...s.user,...tg.initDataUnsafe.user};if(tg.colorScheme==="light"){document.documentElement.style.setProperty("--bg","#f4f6fa");document.documentElement.style.setProperty("--p","#fff");document.documentElement.style.setProperty("--p2","#eef1f7");document.documentElement.style.setProperty("--line","#dfe4ed");document.documentElement.style.setProperty("--t","#111827");document.documentElement.style.setProperty("--m","#64748b")}}catch(e){}}\nrender();leaders([{rank:1,name:"—",xp:0}]);\ntry{if(tg?.initData){let r=await fetch("/api/miniapp/me",{headers:{"X-Telegram-Init-Data":tg.initData}});if(r.ok){let d=await r.json();s={...s,...d};render();leaders(d.leaderboard)}}}catch(e){}}\nstart()})();\n</script></body></html>'
+
 # ================================================================
 #  سرور سلامت (Render)
 # ================================================================
 
+def _miniapp_validate_init_data(init_data: str) -> dict | None:
+    """اعتبارسنجی رسمی Telegram WebApp initData در سمت سرور."""
+    if not BOT_TOKEN or not init_data:
+        return None
+    try:
+        pairs = urllib.parse.parse_qsl(init_data, keep_blank_values=True)
+        data = dict(pairs)
+        received_hash = str(data.pop("hash", "") or "")
+        if not received_hash:
+            return None
+        check_string = "\n".join(f"{k}={data[k]}" for k in sorted(data))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256).digest()
+        calculated = hmac.new(secret_key, check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calculated, received_hash):
+            return None
+        auth_date = int(data.get("auth_date", "0") or 0)
+        if auth_date and abs(time.time() - auth_date) > 86400:
+            return None
+        user_raw = data.get("user", "")
+        user = json.loads(user_raw) if user_raw else {}
+        if not isinstance(user, dict) or not user.get("id"):
+            return None
+        return user
+    except Exception:
+        return None
+
+
+def _miniapp_payload(user: dict) -> dict:
+    uid = int(user["id"])
+    name = " ".join(str(x) for x in (user.get("first_name"), user.get("last_name")) if x).strip() or "کاربر"
+    record = get_user(uid, name=name)
+    xp = max(0, int(record.get("xp", 0) or 0))
+    coins = max(0, int(record.get("coins", 0) or 0))
+    level = int(record.get("level", 1) or 1)
+    games = max(0, int(record.get("games", 0) or 0))
+    wins = max(0, int(record.get("wins", 0) or 0))
+    rows = []
+    try:
+        with LOCK:
+            for raw_uid, raw in DATA.get("users", {}).items():
+                if not isinstance(raw, dict):
+                    continue
+                rows.append({
+                    "uid": int(raw_uid),
+                    "name": str(raw.get("name", "کاربر") or "کاربر"),
+                    "xp": max(0, int(raw.get("xp", 0) or 0)),
+                })
+    except Exception:
+        rows = []
+    rows.sort(key=lambda x: x["xp"], reverse=True)
+    leaderboard = [
+        {"rank": i + 1, "name": r["name"], "xp": r["xp"]}
+        for i, r in enumerate(rows[:20])
+    ]
+    return {
+        "user": {
+            "id": uid,
+            "first_name": str(user.get("first_name", "") or ""),
+            "last_name": str(user.get("last_name", "") or ""),
+            "username": str(user.get("username", "") or ""),
+        },
+        "coins": coins,
+        "xp": xp,
+        "level": level,
+        "games": games,
+        "wins": wins,
+        "leaderboard": leaderboard,
+    }
+
+
 def start_health_server() -> None:
     class _HealthHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path not in ('/', '/health', '/healthz'):
-                self.send_response(404)
-                self.send_header('Content-Type', 'text/plain; charset=utf-8')
-                self.end_headers()
-                self.wfile.write(b'Not Found')
-                return
-            body = b'ApexRival OK'
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/plain; charset=utf-8')
-            self.send_header('Content-Length', str(len(body)))
+        def _send(self, code: int, body: bytes, content_type: str = "text/plain; charset=utf-8") -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "X-Telegram-Init-Data, Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.end_headers()
+
+        def do_GET(self):
+            path = urllib.parse.urlparse(self.path).path
+            if path == "/miniapp":
+                body = MINIAPP_HTML.encode("utf-8")
+                self._send(200, body, "text/html; charset=utf-8")
+                return
+
+            if path == "/api/miniapp/me":
+                init_data = self.headers.get("X-Telegram-Init-Data", "")
+                user = _miniapp_validate_init_data(init_data)
+                if not user:
+                    self._send(401, b'{"ok":false,"error":"invalid_init_data"}', "application/json; charset=utf-8")
+                    return
+                payload = _miniapp_payload(user)
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if path in ("/", "/health", "/healthz"):
+                self._send(200, b"ApexRival OK")
+                return
+
+            self._send(404, b"Not Found")
 
         def log_message(self, format, *args):
             return
 
     def _serve():
         try:
-            server = ThreadingHTTPServer(('0.0.0.0', PORT), _HealthHandler)
+            server = ThreadingHTTPServer(("0.0.0.0", PORT), _HealthHandler)
             server.daemon_threads = True
-            print(f'Health server listening on 0.0.0.0:{PORT}')
+            print(f"Health/MiniApp server listening on 0.0.0.0:{PORT}")
             server.serve_forever()
         except Exception as exc:
-            print(f'Health server error: {exc}')
+            print(f"Health/MiniApp server error: {exc}")
 
-    thread = threading.Thread(target=_serve, name='apexrival-health', daemon=True)
+    thread = threading.Thread(target=_serve, name="apexrival-health", daemon=True)
     thread.start()
 
 
@@ -27968,6 +28083,19 @@ async def post_init(app) -> None:
         BOT_USERNAME_CACHE["u"] = me.username or ""
     except Exception:
         pass
+    if MINIAPP_URL:
+        try:
+            await app.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="ApexRival",
+                    web_app=WebAppInfo(url=MINIAPP_URL),
+                )
+            )
+            print(f"ApexRival Mini App menu button: {MINIAPP_URL}")
+        except Exception as exc:
+            print(f"ApexRival Mini App menu warning: {exc!r}")
+    else:
+        print("ApexRival Mini App: MINIAPP_URL/RENDER_EXTERNAL_URL not available; menu button skipped.")
     try:
         await app.bot.set_my_commands(
             [BotCommand(c, d) for c, d in COMMANDS_PRIVATE],
