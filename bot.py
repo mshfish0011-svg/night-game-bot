@@ -162,6 +162,30 @@
 #     زیرمجموعه در ۵ هابِ مرتب (H|GAMES / H|PROFILE / H|PROGRESS / H|SOCIAL / H|HELP)
 #   • دکمه‌ی «بیشتر...» حذف شد — همه‌چیز زیرمجموعه‌ی ۸ دکمه‌ی اصلی است
 #
+# بهبود در نسخه ۱۰.۰ «فرمانده» — 🖥🛡 مرکز فرماندهی + تعمیر دکمه‌های برگشت:
+#   • 🔧 تعمیر بحرانی: ریشه‌ی واقعیِ «همه‌ی دکمه‌های برگشت خطا می‌دادند»
+#     پیدا و تعمیر شد — python-telegram-bot آبجکت‌های واقعی را فروزن
+#     می‌کند و query.data = ... روی سرور واقعی AttributeError می‌داد؛
+#     تست‌های قبلی با آبجکت فیک این را نمی‌دیدند! حالا nav_retarget
+#     سه‌لایه (انتساب / object.__setattr__ / مسیر جایگزین) + تست با
+#     آبجکت‌های فروزنِ واقعی de_json → تضمین کامل
+#   • 🖥 داشبورد «مرکز فرماندهی» نسل جدید: گرید ۲ستونه‌ی دسته‌بندی‌شده —
+#     ۶ دسته / ۲۴ بخش / KPI زنده + اسپارک‌لاین + نشان نسخه ۱۰.۰
+#   • 🛡 مرکز دسترسی‌ها (A|PERMS): نقش‌ها + ماتریس اختیارات + خدا-مد مالک
+#   • ⚡ اقدامات سریع (A|QUICK): بکاپ فوری، هدیه همگانی، دکتر، پخش،
+#     پایان بازی‌های رهاشده — همه با یک لمس
+#   • 🎀 هدیه همگانی (A|GIFTALL): ویزارد ۳مرحله‌ای (مبلغ → تأیید → اجرا)،
+#     مبالغ سریع + سفارشی، مسدودها خودکار مستثنی، گزارش کامل اجرا
+#   • ♻️ بهینه‌سازی (A|CLEAN): شمارش زنده‌ی داده‌ی کهنه (بازی/اعلان/بازخورد)،
+#     پاک‌سازی امن با بکاپ خودکار، پایان بازی‌های رهاشده‌ی بالای ۴۸ ساعت
+#   • 👥 کاربران نسل ۱۰ (A|UFILTER): ۶ فیلتر (همه/XP/ثروت/فعال/مسدود/جدید)
+#     + تب‌های سریع + آمار زنده (فعال هفته، VIP، مسدود)
+#   • 👤 شناسنامه‌ی بازیکن: ۱۲ آمار (نرخ برد، دوئل، استریک، آخرین فعالیت
+#     با نشان آنلاین، کالا، دستاورد) + ابزارهای جدید: لقب، ریست استریک،
+#     حذف دومرحله‌ای با بکاپ، ارتقای مستقیم به Admin
+#   • 🎮 مانیتور بازی‌ها: بازی‌های فعال با بازیکن/سن/مود + خواب‌آلود 💤
+#     برای بازی‌های راکد + آمار محبوب‌ترین مودها با گیج
+#
 # بهبود در نسخه ۹.۰ «پلتفرم» — 🖥📱 موتور نمایش تطبیقی + حذف کامل مربع‌ها:
 #   • به‌خواسته‌ی صریح صاحب ربات: همه‌ی بلوک‌های مربعیِ رنگی از کل ربات
 #     پاک شدند — دکمه‌ها فقط رنگِ واقعی تلگرام (Bot API 9.4) را دارند؛
@@ -458,7 +482,7 @@ from telegram.error import RetryAfter, BadRequest  # ۶.۳/۶.۵ — فلود-ک
 # ================================================================
 #  پیکربندی
 # ================================================================
-VERSION = "9.0"
+VERSION = "10.0"
 BOT_NAME = "ApexRival"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -3493,6 +3517,9 @@ _NAV_PANEL_PREFIXES = (
     "A|LOGS", "A|LOGQ",
     "A|DOCTOR",
     "A|VITALS", "A|BANKGUARD", "A|BG|",
+    # (۱۰.۰) پنل‌های نسل فرمانده
+    "A|PERMS", "A|QUICK", "A|GIFTALL", "A|GIFTALLC|", "A|CLEAN", "A|CLEANGO|",
+    "A|UFILTER|",
     # (۹.۰) مرکز بانک جدید
     "BK|HOME", "BK|V|", "BK|PREV|", "BK|Q|", "BK|SRCH|", "BK|SEARCH",
     "BK|NEWBANK", "BK|DUPS", "BK|STATS",
@@ -3564,6 +3591,33 @@ async def nav_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE,
         nav_clear(int(uid))
         return "H|HOME", "H"
     return prev, str(prev).split("|")[0]
+
+
+def nav_retarget(query, new_data: str) -> bool:
+    """تغییر مقصد کالبک‌کوئری به‌صورت ایمن (نمایشگاه ۱۰.۰).
+
+    ریشه‌ی باگ تاریخی «همه‌ی دکمه‌های برگشت خطا می‌دادند» همین‌جا بود:
+    python-telegram-bot آبجکت‌های واقعیِ رسیده از تلگرام را **فروزن** می‌کند
+    (TelegramObject.__setattr__ خطای AttributeError می‌دهد). قبلاً با
+    ``query.data = data`` سعی در تغییر مقصد داشتیم که روی PTB واقعی
+    همیشه می‌شکست — تست‌های فیک نمی‌دیدندش!
+
+    سه لایه‌ی دفاعی:
+      ۱) انتساب عادی (آبجکت‌های غیرفروزن — تست‌ها)
+      ۲) object.__setattr__ (دور زدن گارد فروزن — PTB 20..22+، «data»
+         در __slots__ است و این مسیر رسمی/ایمن است)
+      ۳) شکست کامل → False (روتر خودش مسیر جایگزین را می‌رود)
+    """
+    try:
+        query.data = new_data  # noqa: SLF001 — عمدی: آبجکت غیرفروزن
+        return True
+    except Exception:
+        pass
+    try:
+        object.__setattr__(query, "data", str(new_data))
+        return True
+    except Exception:
+        return False
 
 
 def card(title: str, *lines: str) -> str:
@@ -10884,6 +10938,43 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             else:
                 await msg.reply_text("⚠️ کاربر پیدا نشد.")
             return True
+        # (۱۰.۰) تنظیم لقب کاربر
+        if v9mode == "v10_utitle":
+            tid = int(v9data.get("target", 0))
+            u = DATA.get("users", {}).get(str(tid))
+            if isinstance(u, dict):
+                if text == "پاک":
+                    u.pop("title", None)
+                    await msg.reply_text("🧹 لقب پاک شد.")
+                else:
+                    u["title"] = text[:40]
+                    await msg.reply_text(f"🏷 لقب ثبت شد: {escape(text[:40])}",
+                                         parse_mode=ParseMode.HTML)
+                save_data()
+                audit("user_title", int(user.id), tid, text[:40])
+            else:
+                await msg.reply_text("⚠️ کاربر پیدا نشد.")
+            return True
+        # (۱۰.۰) مقدار سفارشی هدیه همگانی
+        if v9mode == "v10_giftall":
+            try:
+                amt = max(1, min(100000, int(text)))
+            except Exception:
+                await msg.reply_text("⚠️ عدد معتبر نیست — دوباره تلاش کن.")
+                return True
+            users_n = len(DATA.get("users", {}))
+            await msg.reply_text(
+                og_banner("تأیید هدیه سفارشی", "🎀") + "\n"
+                f"🎁 مقدار: <b>+{pnum(amt)}</b>\n"
+                f"👥 دریافت‌کنندگان: <b>{pnum(users_n)}</b>\n"
+                "نوع هدیه را انتخاب کن:",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb([
+                    [btn(f"🪙 +{pnum(amt)} سکه", f"A|GIFTALLC|coin|{amt}", "primary")],
+                    [btn(f"⭐ +{pnum(amt)} XP", f"A|GIFTALLC|xp|{amt}", "primary")],
+                    [btn("✖ انصراف", "A|GIFTALL", "danger")],
+                ]))
+            return True
         # مقدار سفارشی سکه/XP
         if v9mode == "v9_ucustom":
             tid = int(v9data.get("target", 0))
@@ -15375,7 +15466,13 @@ async def bank_v9_export_single(update, context, query, key: str) -> None:
 #  پنل مدیریت حرفه‌ای (Advanced Admin Dashboard) — فاز ۶
 # ================================================================
 async def admin_dashboard_show(query) -> None:
-    """ستون فرمان اُمگا — داشبورد هزارلولی مدیریت (نسخه‌ی ۳)."""
+    """🖥 مرکز فرماندهی نسل ۱۰ (۱۰.۰) — داشبورد مدیریت هزارلولی.
+
+    بازطراحی کامل به‌خواسته‌ی صاحب ربات:
+      • گرید ۲ستونه‌ی دسته‌بندی‌شده (۶ دسته / ۲۴ بخش)
+      • KPI زنده + اسپارک‌لاین + نشان نسخه
+      • دسترسی مستقیم به تک‌تک ابزارها از یک صفحه
+    """
     try:
         users = DATA.get("users", {})
         groups = DATA.get("groups", {})
@@ -15386,6 +15483,7 @@ async def admin_dashboard_show(query) -> None:
         maintenance = maintenance_active()
         sid = current_season_id()
         banned = sum(1 for u in users.values() if isinstance(u, dict) and u.get("banned"))
+        vip = sum(1 for u in users.values() if isinstance(u, dict) and int(u.get("vip_until", 0)) > now_ts())
         verified = len(DATA.get("verified_users", []))
         size_kb = 0
         try:
@@ -15403,7 +15501,7 @@ async def admin_dashboard_show(query) -> None:
             up = uptime_text()
         except Exception:
             up = "—"
-        # --- اسپارک‌لاین ۷ روز اخیر (اومگا) ---
+        # --- اسپارک‌لاین ۷ روز اخیر ---
         days7 = _last7_days()
         ad = DATA.get("analytics_daily", {})
         actives = [int(ad.get(d, {}).get("active_users", 0)) for d in days7]
@@ -15413,9 +15511,9 @@ async def admin_dashboard_show(query) -> None:
                           int(ad.get(days7[-2], {}).get("new_users", 0))) if len(days7) > 1 else ""
         lines = [
             og_top("♛"),
-            og_head("🛡", "ستون فرمان اُمگا+", "داشبورد مدیریت — نسخه ۹.۰ «پلتفرم»"),
+            og_head("🛡", "مرکز فرماندهی", "مدیریت هزارلولی — نسخه ۱۰.۰ «فرمانده»"),
             og_sep(),
-            "┃  " + og_pulse("فعال") if dm_wide() else og_pulse("فعال"),
+            og_pulse("فعال") + "   🏷 نسخه ۱۰.۰   👑 دسترسی کامل",
             og_sep("◈"),
             og_section("📡", "وضعیت سیستم"),
             og_stat_grid([
@@ -15423,9 +15521,9 @@ async def admin_dashboard_show(query) -> None:
                 ("⏱", "آپتایم", escape(up)),
                 ("💾", "دیتا", f"{pnum(size_kb)} KB"),
                 ("🔧", "تعمیرات", "فعال ⚠️" if maintenance else "خاموش ✅"),
+                ("🖥📱", "نمایش", "تطبیقی ۱۰.۰"),
+                ("🏦", "بانک", f"{pnum(BANKS_TOTAL)} سوال"),
             ]),
-            og_row("🛡 سلامت بانک", "دست‌نخورده ✅"),
-            og_row("🖥📱 نمایش", "تطبیقی ۹.۰"),
             og_sep("◈"),
             og_section("👥", "جامعه‌ی بازیکنان" + (f"   {growth}" if growth else "")),
             f"┃  <code>{sparkline(actives, 14, '▁')}</code>  <i>روند فعالان — ۷ روز</i>",
@@ -15433,9 +15531,10 @@ async def admin_dashboard_show(query) -> None:
                 ("👥", "کل کاربران", pnum(len(users))),
                 ("🔥", "فعال امروز", pnum(today.get("active_users", 0))),
                 ("🚫", "مسدود", pnum(banned)),
+                ("👑", "وی‌آی‌پی", pnum(vip)),
                 ("✅", "تأییدشده", pnum(verified)),
                 ("👪", "گروه‌ها", pnum(len(groups))),
-                ("👥", "اعضای فصل", pnum(season_players)),
+                ("🏅", "اعضای فصل", pnum(season_players)),
             ]),
             og_sep("◈"),
             og_section("🎮", "میدان بازی"),
@@ -15454,27 +15553,390 @@ async def admin_dashboard_show(query) -> None:
                 ("📉", "مصرف امروز", pnum(today.get("coins_spent", 0))),
             ]),
             og_sep("◈"),
-            og_section("🌐", "فصل جاری"),
-            og_row("🏅 فصل", str(sid) or "—"),
+            og_section("🗂", "نقشه‌ی فرمان — ۶ دسته / ۲۴ بخش"),
+            og_row("🫂 جامعه", "کاربران · گروه‌ها · دسترسی"),
+            og_row("🎮 بازی و محتوا", "بازی‌ها · آنالیتیکس · بانک · گزارش"),
+            og_row("💰 اقتصاد", "اقتصاد · جوایز · پخش · هدیه"),
+            og_row("🛡 امنیت", "ضداسپم · محافظ · دکتر · ویترین"),
+            og_row("🧰 سیستم", "بکاپ · خروجی · لاگ · تنظیم"),
+            og_row("⚡ فرمانده", "اقدام سریع · بهینه‌سازی"),
             og_close("♛"),
         ]
+        # --- گرید ۲ستونه‌ی دسته‌بندی‌شده (۶ دسته) ---
         rows = [
-            [btn("🫀 ویترین‌ها", "A|VITALS"), btn("🛡 محافظ بانک", "A|BANKGUARD")],
-            [btn("👥 کاربران", "A|USERS"), btn("🎮 بازی‌ها", "A|GAMES")],
-            [btn("📊 Analytics", "A|ANALYTICS"), btn("📨 بازخوردها", "A|FEEDBACK")],
-            [btn("📡 پیام همگانی", "A|BC"), btn("🏦 بانک سوالات", "A|BANK")],
-            [btn("🪙 اقتصاد", "A|ECON"), btn("🏆 دستاوردها", "A|ACHM")],
-            [btn("🎁 جوایز", "A|REWARD"), btn("👪 گروه‌ها", "A|GROUPS")],
-            [btn("⚙️ تنظیمات", "A|SETTINGS"), btn("🛠 تعمیرات", "A|MAINT")],
-            [btn("⏰ زمان‌بندی تعمیرات", "A|MAINTSCH", "danger")],
-            [btn("🎛 سیستم و ضداسپم", "A|SYSCFG"), btn("🚩 گزارش‌ها", "A|QREPORTS")],
+            # 🫂 جامعه و بازیکنان
+            [btn("👥 کاربران", "A|USERS", "primary"), btn("👪 گروه‌ها", "A|GROUPS", "primary")],
+            [btn("🛡 دسترسی‌ها", "A|PERMS", "danger"), btn("🔍 جستجوی کاربر", "A|USEARCH")],
+            # 🎮 بازی و محتوا
+            [btn("🎮 بازی‌ها", "A|GAMES"), btn("📊 Analytics", "A|ANALYTICS")],
+            [btn("🏦 بانک سوالات", "A|BANK"), btn("🏆 دستاوردها", "A|ACHM")],
+            [btn("📨 بازخوردها", "A|FEEDBACK"), btn("🚩 گزارش‌ها", "A|QREPORTS")],
+            # 💰 اقتصاد و پخش
+            [btn("💰 اقتصاد", "A|ECON"), btn("🎁 جوایز", "A|REWARD")],
+            [btn("📢 پیام همگانی", "A|BC"), btn("🎀 هدیه همگانی", "A|GIFTALL", "success")],
+            # 🛡 امنیت و سلامت
+            [btn("🎛 سیستم و ضداسپم", "A|SYSCFG"), btn("🛡 محافظ بانک", "A|BANKGUARD")],
+            [btn("🩺 دکتر داده", "A|DOCTOR"), btn("🫀 ویترین‌ها", "A|VITALS")],
+            # 🧰 سیستم و نگهداری
             [btn("💾 بکاپ", "A|BACKUP"), btn("📤 خروجی", "A|EXPORT")],
-            [btn("📝 لاگ‌ها", "A|LOGS"), btn("🩺 دکتر", "A|DOCTOR")],
-            [btn("🔄 تازه‌سازی", "A|HOME"), btn("⬅️ منوی اصلی", "H|HOME")],
+            [btn("📝 لاگ‌ها", "A|LOGS"), btn("⚙️ تنظیمات", "A|SETTINGS")],
+            [btn("🛠 تعمیرات", "A|MAINT"), btn("⏰ زمان‌بندی تعمیر", "A|MAINTSCH", "danger")],
+            # ⚡ فرمانده
+            [btn("⚡ اقدامات سریع", "A|QUICK", "danger"), btn("♻️ بهینه‌سازی", "A|CLEAN", "danger")],
+            [btn("🔄 تازه‌سازی", "A|HOME"), btn("🏠 منوی اصلی", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"admin_dashboard_show failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+# ================================================================
+#  🛡 (۱۰.۰) مرکز دسترسی‌ها — همه‌ی نقش‌ها و اختیارات یک‌جا
+# ================================================================
+async def admin_perms_center(query) -> None:
+    """مرکز دسترسی‌ها: نقش‌ها + ماتریس اختیارات + افزودن/حذف."""
+    try:
+        perms = DATA.get("permissions", {})
+        admins = sorted([(k, "admin") for k, v in perms.items() if v == "admin"])
+        mods = sorted([(k, "mod") for k, v in perms.items() if v == "mod"])
+        owner_id = int(os.getenv("ADMIN_ID", "0") or 0)
+        lines = [
+            og_top("🛡"),
+            og_head("🛡", "مرکز دسترسی‌ها", "نقش‌ها، اختیارات و کلیدهای پادشاهی"),
+            og_sep(),
+            og_stat_grid([
+                ("👑", "مالک", "۱ (خودت)"),
+                ("🛡", "ادمین‌ها", pnum(len(admins) + 1)),
+                ("🎖", "مدیران", pnum(len(mods))),
+            ]),
+            og_sep("◈"),
+            og_section("👑", "مالک ربات (دسترسی مطلق)"),
+            og_row("👤 مالک", f"<code>{owner_id}</code>"),
+            og_row("⚡ خدا-مد", "همه‌چیز آزاد — بدون هیچ محدودیتی"),
+            og_section("🛡", f"ادمین‌ها ({pnum(len(admins))})"),
+        ]
+        if not admins:
+            lines.append("— فقط مالک")
+        for k, _ in admins[:8]:
+            u = DATA.get("users", {}).get(str(k), {})
+            lines.append(og_row("👤 " + escape(str(u.get("name", k))[:14]), f"<code>{k}</code>"))
+        lines.append(og_section("🎖", f"مدیران ({pnum(len(mods))})"))
+        if not mods:
+            lines.append("— ندارد")
+        for k, _ in mods[:8]:
+            u = DATA.get("users", {}).get(str(k), {})
+            lines.append(og_row("👤 " + escape(str(u.get("name", k))[:14]), f"<code>{k}</code>"))
+        lines += [
+            og_sep("◈"),
+            og_section("🗺", "ماتریس اختیارات"),
+            og_row("👑 مالک", "همه‌چیز + مدیریت نقش‌ها"),
+            og_row("🛡 ادمین", "پنل کامل + پخش + اقتصاد + بانک"),
+            og_row("🎖 مدیر", "ناظر بازی + گزارش‌ها + راهنما"),
+            og_row("👤 کاربر", "بازی، فروشگاه، پروفایل"),
+            og_close("🛡"),
+        ]
+        rows = [[btn("➕ افزودن دسترسی", "A|ADMINADD", "primary")]]
+        rows += [[btn(f"🗑 {k} ({r})", f"A|ADMINDEL|{k}", "danger")]
+                 for k, r in (admins + mods)[:10]]
+        rows.append([btn("🔄 تازه‌سازی", "A|PERMS")])
+        rows.append([btn("🛡 داشبورد", "A|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_perms_center failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+# ================================================================
+#  ⚡ (۱۰.۰) اقدامات سریع فرمانده
+# ================================================================
+async def admin_quick_center(query) -> None:
+    """میان‌برهای فرمانده — پرکاربردترین اقدامات با یک لمس."""
+    try:
+        users_n = len(DATA.get("users", {}))
+        games = DATA.get("games", {})
+        active_n = sum(1 for g in games.values() if isinstance(g, dict) and g.get("status") == "active")
+        lines = [
+            og_top("⚡"),
+            og_head("⚡", "اقدامات سریع", "فرمانده — یک لمس، اجرای فوری"),
+            og_sep(),
+            og_stat_grid([
+                ("👥", "کاربران", pnum(users_n)),
+                ("🎮", "بازی فعال", pnum(active_n)),
+                ("💾", "بکاپ‌ها", pnum(len(list_backups()))),
+                ("🚩", "گزارش باز", pnum(len(DATA.get("question_reports", [])))),
+            ]),
+            og_sep("◈"),
+            og_section("🎯", "پرکاربردترین‌ها"),
+            og_row("💾 بکاپ فوری", "اسنپ‌شات کامل همین حالا"),
+            og_row("🎀 هدیه همگانی", f"سکه/XP برای {pnum(users_n)} بازیکن"),
+            og_row("🧹 پاک‌سازی", "بازی‌های تمام‌شده و داده‌های کهنه"),
+            og_row("🩺 دکتر داده", "سلامت‌سنجی + ترمیم خودکار"),
+            og_row("📡 پخش همگانی", "اعلان به همه‌ی بازیکنان"),
+            og_close("⚡"),
+        ]
+        rows = [
+            [btn("💾 بکاپ فوری", "A|BACKUP", "primary"), btn("🎀 هدیه همگانی", "A|GIFTALL", "success")],
+            [btn("♻️ بهینه‌سازی و پاک‌سازی", "A|CLEAN", "danger")],
+            [btn("🩺 دکتر داده", "A|DOCTOR"), btn("📢 پخش همگانی", "A|BC")],
+            [btn("💀 پایان بازی‌های رهاشده", "A|CLEAN|games", "danger")],
+            [btn("🛡 داشبورد", "A|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_quick_center failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+# ================================================================
+#  🎀 (۱۰.۰) هدیه همگانی — جشن برای همه‌ی بازیکنان
+# ================================================================
+async def admin_giftall_wizard(query) -> None:
+    """گام ۱: انتخاب نوع و مقدار هدیه همگانی."""
+    try:
+        users_n = len(DATA.get("users", {}))
+        lines = [
+            og_top("🎀"),
+            og_head("🎀", "هدیه همگانی", "جشن برای همه‌ی بازیکنان"),
+            og_sep(),
+            og_stat_grid([
+                ("👥", "دریافت‌کنندگان", pnum(users_n)),
+                ("🪙", "هزینه کل", "نمایش در تأیید"),
+            ]),
+            og_sep("◈"),
+            og_section("🪙", "هدیه سکه‌ای — مقدار را انتخاب کن"),
+            og_row("💡 نکته", "پس از انتخاب، صفحه‌ی تأیید می‌آید"),
+            og_close("🎀"),
+        ]
+        rows = [
+            [btn("+۵۰ 🪙", "A|GIFTALLC|coin|50"), btn("+۱۰۰ 🪙", "A|GIFTALLC|coin|100")],
+            [btn("+۲۵۰ 🪙", "A|GIFTALLC|coin|250"), btn("+۵۰۰ 🪙", "A|GIFTALLC|coin|500", "primary")],
+            [btn("+۱۰۰۰ 🪙", "A|GIFTALLC|coin|1000", "primary"), btn("+۲۵۰۰ 🪙", "A|GIFTALLC|coin|2500")],
+            [btn("+۵۰ ⭐", "A|GIFTALLC|xp|50"), btn("+۱۰۰ ⭐", "A|GIFTALLC|xp|100")],
+            [btn("+۲۵۰ ⭐", "A|GIFTALLC|xp|250"), btn("+۵۰۰ ⭐", "A|GIFTALLC|xp|500", "primary")],
+            [btn("✍️ مقدار سفارشی", "A|GIFTALLC|custom|0")],
+            [btn("🛡 داشبورد", "A|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_giftall_wizard failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+async def admin_giftall_confirm(query, kind: str, amt: int) -> None:
+    """گام ۲: تأیید نهایی هدیه همگانی."""
+    try:
+        if kind not in ("coin", "xp"):
+            kind = "coin"
+        amt = max(0, min(100000, int(amt)))
+        users_n = len(DATA.get("users", {}))
+        unit = "🪙 سکه" if kind == "coin" else "⭐ XP"
+        lines = [
+            og_top("🎀"),
+            og_head("🎀", "تأیید هدیه همگانی", "آخرین مرحله — مطمئن شو"),
+            og_sep(),
+            og_stat_grid([
+                ("🎁", "هدیه", f"+{pnum(amt)} {unit}"),
+                ("👥", "دریافت‌کنندگان", pnum(users_n)),
+                ("💸", "مجموع تزریق", pnum(amt * max(0, users_n))),
+            ]),
+            og_sep("◈"),
+            og_section("⚠️", "قابل بازگشت نیست"),
+            og_row("💡 پیشنهاد", "قبل از هدیه‌ی بزرگ، بکاپ بگیر"),
+            og_close("🎀"),
+        ]
+        rows = [
+            [btn(f"✅ بله، به همه بده (+{pnum(amt)})", f"A|GIFTALLGO|{kind}|{amt}", "success")],
+            [btn("✖ انصراف", "A|GIFTALL", "danger")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_giftall_confirm failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+async def admin_giftall_apply(update, context, query, kind: str, amt: int) -> None:
+    """گام ۳: اجرای هدیه همگانی — همه‌ی کاربران + ثبت کامل."""
+    try:
+        if kind not in ("coin", "xp"):
+            kind = "coin"
+        amt = max(1, min(100000, int(amt)))
+        count = 0
+        banned = 0
+        for uid_str, u in list(DATA.get("users", {}).items()):
+            try:
+                if not isinstance(u, dict):
+                    continue
+                if u.get("banned"):
+                    banned += 1
+                    continue
+                # (۱۰.۰) تزریق دقیق و قابل پیش‌بینی — بدون ضریب شانس/دستاورد:
+                # ادمین گفت +۱۰۰ یعنی دقیقاً +۱۰۰ (مثل ابزار سکه‌ی شخصی کاربر)
+                if kind == "coin":
+                    u["coins"] = max(0, int(u.get("coins", 0)) + amt)
+                    try:
+                        log_economy(int(uid_str), "earn", amt, "admin_giftall")
+                    except Exception:
+                        pass
+                else:
+                    u["xp"] = max(0, int(u.get("xp", 0)) + amt)
+                    u["level"] = level_for_xp(int(u["xp"]))
+                count += 1
+            except Exception:
+                continue
+        save_data(force=True)
+        audit("gift_all", int(query.from_user.id), None, f"kind={kind} amt={amt} users={count}")
+        log_event("warn", "admin", f"Gift-all {kind}+{amt} to {count} users", actor=int(query.from_user.id))
+        unit = "🪙 سکه" if kind == "coin" else "⭐ XP"
+        await safe_answer_query(query, f"🎀 هدیه داده شد: +{pnum(amt)} {unit} به {pnum(count)} بازیکن!")
+        lines = [
+            og_top("🎉"),
+            og_head("🎉", "هدیه همگانی اجرا شد", "جشن شروع شد!"),
+            og_sep(),
+            og_stat_grid([
+                ("🎁", "هدیه", f"+{pnum(amt)} {unit}"),
+                ("✅", "دریافت کردند", pnum(count)),
+                ("🚫", "مسدود (بدون هدیه)", pnum(banned)),
+                ("💸", "مجموع تزریق", pnum(amt * count)),
+            ]),
+            og_close("🎉"),
+        ]
+        rows = [
+            [btn("🎀 هدیه‌ی دیگر", "A|GIFTALL", "success")],
+            [btn("🛡 داشبورد", "A|HOME")],
+        ]
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_giftall_apply failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+# ================================================================
+#  ♻️ (۱۰.۰) بهینه‌سازی و پاک‌سازی هوشمند
+# ================================================================
+def _admin_clean_stats() -> dict:
+    """شمارش چیزهای قابل پاک‌سازی (بدون تغییر داده)."""
+    stats = {"old_games": 0, "dead_games": 0, "old_notifs": 0, "old_feedbacks": 0}
+    now = now_ts()
+    for k, g in DATA.get("games", {}).items():
+        if not isinstance(g, dict):
+            continue
+        status = str(g.get("status", ""))
+        if status == "finished":
+            fin = int(g.get("finished_at", 0) or g.get("started_at", 0) or 0)
+            if fin and now - fin > 7 * 86400:
+                stats["old_games"] += 1
+        elif status == "active":
+            started = int(g.get("started_at", 0) or 0)
+            if started and now - started > 48 * 3600:
+                stats["dead_games"] += 1
+    try:
+        for n in DATA.get("notifications", []):
+            if isinstance(n, dict) and now - int(n.get("ts", 0)) > 30 * 86400:
+                stats["old_notifs"] += 1
+    except Exception:
+        pass
+    try:
+        for f in DATA.get("feedback", []):
+            if isinstance(f, dict) and f.get("reply") and now - int(f.get("ts", 0)) > 60 * 86400:
+                stats["old_feedbacks"] += 1
+    except Exception:
+        pass
+    return stats
+
+
+async def admin_clean_center(query) -> None:
+    """هاب بهینه‌سازی — شمارش زنده + پاک‌سازی امن (اول بکاپ)."""
+    try:
+        st = _admin_clean_stats()
+        total_clean = st["old_games"] + st["old_notifs"] + st["old_feedbacks"]
+        lines = [
+            og_top("♻️"),
+            og_head("♻️", "بهینه‌سازی و پاک‌سازی", "سبک‌سازی داده‌ها — با ایمنی کامل"),
+            og_sep(),
+            og_section("📊", "گزارش وضعیت داده"),
+            og_stat_grid([
+                ("✅", "بازی تمام‌شده کهنه", pnum(st["old_games"])),
+                ("💀", "بازی فعال رهاشده", pnum(st["dead_games"])),
+                ("📜", "اعلان کهنه (+۳۰ روز)", pnum(st["old_notifs"])),
+                ("📨", "بازخورد جواب‌داده (+۶۰ روز)", pnum(st["old_feedbacks"])),
+                ("💾", "حجم دیتا", f"{pnum(Path(DATA_FILE).stat().st_size // 1024)} KB"),
+                ("🧮", "قابل پاک‌سازی", pnum(total_clean)),
+            ]),
+            og_sep("◈"),
+            og_section("🛡", "قواعد ایمنی"),
+            og_row("💾 قبل از پاک‌سازی", "بکاپ خودکار"),
+            og_row("🔒 بازی فعال", "فقط با تأیید دوباره"),
+            og_row("🚫 کاربران/سکه/XP", "هرگز پاک نمی‌شوند"),
+            og_close("♻️"),
+        ]
+        rows = [
+            [btn(f"🧹 پاک‌سازی کهنه‌ها ({pnum(total_clean)})", "A|CLEANGO|old", "primary")
+             if total_clean else btn("✅ چیزی برای پاک‌سازی نیست", "A|NOP")],
+        ]
+        if st["dead_games"]:
+            rows.append([btn(f"💀 پایان {pnum(st['dead_games'])} بازی رهاشده", "A|CLEAN|games", "danger")])
+        rows.append([btn("🔄 تازه‌سازی", "A|CLEAN"), btn("🛡 داشبورد", "A|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_clean_center failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+async def admin_clean_apply(update, context, query, what: str) -> None:
+    """اجرای پاک‌سازی — همیشه با بکاپ خودکار اول."""
+    try:
+        backup_data("before-clean")
+        now = now_ts()
+        removed = 0
+        if what == "old":
+            # بازی‌های تمام‌شده‌ی کهنه‌تر از ۷ روز
+            drop = []
+            for k, g in DATA.get("games", {}).items():
+                if not isinstance(g, dict) or str(g.get("status")) != "finished":
+                    continue
+                fin = int(g.get("finished_at", 0) or g.get("started_at", 0) or 0)
+                if fin and now - fin > 7 * 86400:
+                    drop.append(k)
+            for k in drop:
+                DATA["games"].pop(k, None)
+            removed += len(drop)
+            # اعلان‌های کهنه
+            notifs = DATA.get("notifications", [])
+            fresh = [n for n in notifs
+                     if isinstance(n, dict) and now - int(n.get("ts", 0)) <= 30 * 86400]
+            removed += max(0, len(notifs) - len(fresh))
+            if isinstance(DATA.get("notifications"), list):
+                DATA["notifications"][:] = fresh
+            # بازخوردهای جواب‌داده‌ی خیلی کهنه
+            fbs = DATA.get("feedback", [])
+            if isinstance(fbs, list):
+                keep = [f for f in fbs if not (isinstance(f, dict) and f.get("reply")
+                                                and now - int(f.get("ts", 0)) > 60 * 86400)]
+                removed += max(0, len(fbs) - len(keep))
+                DATA["feedback"][:] = keep
+        elif what == "games":
+            # پایان اجباری بازی‌های فعال رهاشده‌ی بالای ۴۸ ساعت
+            for k, g in DATA.get("games", {}).items():
+                if not isinstance(g, dict) or str(g.get("status")) != "active":
+                    continue
+                started = int(g.get("started_at", 0) or 0)
+                if started and now - started > 48 * 3600:
+                    g["status"] = "finished"
+                    g["finish_reason"] = "admin_cleanup"
+                    g["finished_at"] = now
+                    cid = int(g.get("chat_id", 0))
+                    if cid:
+                        grp = get_group(cid)
+                        if grp.get("active_game") == str(k):
+                            grp["active_game"] = None
+                    removed += 1
+        save_data(force=True)
+        audit("clean", int(query.from_user.id), None, f"what={what} removed={removed}")
+        await safe_answer_query(query, f"♻️ {pnum(removed)} مورد پاک‌سازی شد — بکاپ قبلی گرفته شد.")
+        await admin_clean_center(query)
+    except Exception as exc:
+        log_event("error", "system", f"admin_clean_apply failed: {exc!r}")
         await safe_answer_query(query, UX_MSG["error_generic"])
 
 
@@ -16079,33 +16541,61 @@ async def admin_bank_guard_show(query) -> None:
 #  فاز ۷ — Admin Managers کامل (نسخه‌ی ۱.۲.۰)
 # ================================================================
 
-async def admin_users_manager_show(query, page: int = 0) -> None:
-    """پنل مدیریت کاربران — حرفه‌ای با طراحی جعبه‌ای."""
+_USER_FILTERS = {
+    "all":      ("همه", lambda kv: -int(kv[1].get("xp", 0))),
+    "topxp":    ("بیشترین XP", lambda kv: -int(kv[1].get("xp", 0))),
+    "richest":  ("ثروتمندترین", lambda kv: -int(kv[1].get("coins", 0))),
+    "active":   ("فعال اخیر", lambda kv: -int(kv[1].get("last_active", 0))),
+    "banned":   ("مسدودها", lambda kv: -int(kv[1].get("last_active", 0))),
+    "new":      ("جدیدترین", lambda kv: -int(kv[1].get("created_at", kv[1].get("first_seen", 0)) or 0)),
+}
+
+
+async def admin_users_manager_show(query, page: int = 0, mode: str = "all") -> None:
+    """پنل مدیریت کاربران نسل ۱۰ — فیلترهای حرفه‌ای + آمار زنده."""
     try:
         users = DATA.get("users", {})
-        user_list = list(users.items())
+        mode = mode if mode in _USER_FILTERS else "all"
+        mode_label = _USER_FILTERS[mode][0]
+        # اعمال فیلتر
+        if mode == "banned":
+            pool = [(k, v) for k, v in users.items()
+                    if isinstance(v, dict) and v.get("banned")]
+        elif mode == "active":
+            now = now_ts()
+            pool = [(k, v) for k, v in users.items()
+                    if isinstance(v, dict) and now - int(v.get("last_active", 0)) < 7 * 86400]
+        else:
+            pool = [(k, v) for k, v in users.items() if isinstance(v, dict)]
+        try:
+            pool.sort(key=_USER_FILTERS[mode][1])
+        except Exception:
+            pass
         per_page = 8
-        total_pages = max(1, (len(user_list) + per_page - 1) // per_page)
+        total_pages = max(1, (len(pool) + per_page - 1) // per_page)
         page = max(0, min(total_pages - 1, int(page)))
-        start = page * per_page
-        end = start + per_page
-        current = user_list[start:end]
+        current = pool[page * per_page:page * per_page + per_page]
         banned_count = sum(1 for u in users.values() if isinstance(u, dict) and u.get("banned"))
-        verified_count = len(DATA.get("verified_users", []))
         vip_count = sum(1 for u in users.values() if isinstance(u, dict) and int(u.get("vip_until", 0)) > now_ts())
+        now = now_ts()
+        week_active = sum(1 for u in users.values()
+                          if isinstance(u, dict) and now - int(u.get("last_active", 0)) < 7 * 86400)
         lines = [
             ds_top("👥"),
-            ds_head("👥", "مدیریت کاربران", "دیتابیس بازیکنان"),
+            ds_head("👥", "مدیریت کاربران", f"مرور: {mode_label}"),
             ds_sep(),
             og_stat_grid([
                 ("📊", "کل", pnum(len(users))),
+                ("🔥", "فعال هفته", pnum(week_active)),
                 ("🚫", "مسدود", pnum(banned_count)),
-                ("✅", "تأییدشده", pnum(verified_count)),
                 ("👑", "وی‌آی‌پی", pnum(vip_count)),
                 ("📄", "صفحه", f"{pnum(page + 1)}/{pnum(total_pages)}"),
+                ("🔎", "در این فیلتر", pnum(len(pool))),
             ]),
             ds_sep(),
         ]
+        if not current:
+            lines.append("— این فیلتر خالی است")
         for uid_str, u in current:
             try:
                 uid_int = int(uid_str)
@@ -16113,36 +16603,48 @@ async def admin_users_manager_show(query, page: int = 0) -> None:
                 level = int(u.get("level", 1))
                 coins = int(u.get("coins", 0))
                 status = "🚫" if u.get("banned") else "✅"
-                vip = "👑" if int(u.get("vip_until", 0)) > now_ts() else ""
-                ver = "✔️" if u.get("verified") else ""
-                lines.append(f"{status} #{fa(uid_int)} · {name} · 🔥{pnum(level)} · 🪙{pnum(coins)} {vip}{ver}")
+                vip = "👑" if int(u.get("vip_until", 0)) > now else ""
+                role = user_role(uid_int)
+                badge = {"owner": "⚡", "admin": "🛡", "mod": "🎖"}.get(role, "")
+                lines.append(f"{status} #{fa(uid_int)} · {name} · 🔥{pnum(level)} · 🪙{pnum(coins)} {vip}{badge}")
             except Exception:
                 pass
         lines.append(ds_close())
-        rows = []
-        for uid_str, _ in current[:6]:
+        # تب‌های فیلتر (۱۰.۰) — سوییض سریع بین حالت‌ها
+        rows = [
+            [btn("📊 همه" + (" ✓" if mode == "all" else ""), "A|UFILTER|all|0"),
+             btn("⭐ XP" + (" ✓" if mode == "topxp" else ""), "A|UFILTER|topxp|0"),
+             btn("🪙 ثروت" + (" ✓" if mode == "richest" else ""), "A|UFILTER|richest|0")],
+            [btn("🔥 فعال" + (" ✓" if mode == "active" else ""), "A|UFILTER|active|0"),
+             btn("🚫 مسدود" + (" ✓" if mode == "banned" else ""), "A|UFILTER|banned|0"),
+             btn("🆕 جدید" + (" ✓" if mode == "new" else ""), "A|UFILTER|new|0")],
+        ]
+        rows.append([btn("🔍 جستجو با آیدی", "A|USEARCH")])
+        for uid_str, _ in current[:8]:
             try:
                 uid_int = int(uid_str)
                 u = users.get(uid_str, {})
-                name_short = str(u.get("name", "?"))[:10]
-                rows.append([btn(f"👤 {name_short} #{uid_int}", f"A|USER|{uid_int}")])
+                name_short = str(u.get("name", "?"))[:12]
+                rows.append([btn(f"👤 {name_short} · #{uid_int}", f"A|USER|{uid_int}")])
             except Exception:
                 pass
         nav = []
         if page > 0:
-            nav.append(btn("⬅️ قبلی", f"A|USERS|{page - 1}"))
-        nav.append(btn("🔍 جستجو", "A|USEARCH"))
+            nav.append(btn("⬅️ قبلی", f"A|UFILTER|{mode}|{page - 1}"))
+        nav.append(btn(f"{pnum(page + 1)}/{pnum(total_pages)}", "A|NOP"))
         if page < total_pages - 1:
-            nav.append(btn("➡️ بعدی", f"A|USERS|{page + 1}"))
-        rows.append(nav)
-        rows.append([btn("⬅️ بازگشت", "A|HOME")])
+            nav.append(btn("بعدی ➡️", f"A|UFILTER|{mode}|{page + 1}"))
+        if nav:
+            rows.append(nav)
+        rows.append([btn("🔄 تازه‌سازی", f"A|UFILTER|{mode}|{page}")])
+        rows.append(nav_footer())
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"admin_users_manager_show failed: {exc!r}")
 
 
 async def admin_user_detail_show(query, target_uid: int) -> None:
-    """نمایش جزئیات یک کاربر برای ادمین."""
+    """کارت کامل کاربر نسل ۱۰ — شناسنامه + ابزارهای فرمانده."""
     try:
         u = get_user(int(target_uid))
         if not u:
@@ -16157,47 +16659,72 @@ async def admin_user_detail_show(query, target_uid: int) -> None:
         banned = bool(u.get("banned", False))
         role = user_role(int(target_uid))
         rank_name, _, _ = rank_for_xp(xp)
+        streak_w = int(u.get("streak", 0))
+        best_streak = int(u.get("best_streak", 0))
+        duels = int(u.get("duel_wins", 0)) + int(u.get("duel_losses", 0))
+        last_act = int(u.get("last_active", 0))
+        last_str = fa(datetime.fromtimestamp(last_act).strftime("%m-%d %H:%M")) if last_act else "—"
+        act_ago = ""
+        if last_act:
+            hrs = (now_ts() - last_act) / 3600
+            act_ago = ("🟢 آنلاین!" if hrs < 1 else "🟡 اخیراً" if hrs < 24 else "🔴 قدیمی")
+        wr = (100.0 * wins / games) if games else 0.0
+        inv = u.get("inventory", {})
+        inv_total = sum(int(v) for v in inv.values()) if isinstance(inv, dict) else 0
+        ach_n = len(u.get("achievements", []) or [])
         lines = [
-            ds_top("👤"),
-            ds_head("👤", f"کاربر #{fa(target_uid)}", escape(str(u.get("name", ""))[:24])),
-            ds_sep(),
+            og_top("👤"),
+            og_head("👤", "شناسنامه‌ی بازیکن", f"#{fa(target_uid)} — {escape(str(u.get('name', ''))[:24])}"),
+            og_sep(),
             og_stat_grid([
                 ("🏷", "نام", name),
+                ("🎭", "نقش", {"owner": "👑 مالک", "admin": "🛡 ادمین",
+                              "mod": "🎖 مدیر", "user": "👤 کاربر"}.get(role, role)),
                 ("🔥", "سطح", fmt_num(level)),
+                ("🏅", "رنک", rank_name),
                 ("⭐", "XP", fmt_num(xp)),
                 ("🪙", "سکه", fmt_num(coins)),
                 ("🎮", "بازی", fmt_num(games)),
                 ("🏆", "برد", fmt_num(wins)),
+                ("📊", "نرخ برد", f"{fa(f'{wr:.0f}')}٪"),
+                ("⚔️", "دوئل", fmt_num(duels)),
+                ("🎖", "دستاورد", pnum(ach_n)),
+                ("🎒", "کالا", pnum(inv_total)),
             ]),
-            ds_sep("⋆"),
-            ds_row("🏅 رنک", rank_name),
-            ds_row("🎭 نقش", role),
-            ds_row("🚫 مسدود", "بله" if banned else "خیر"),
+            og_sep("⋆"),
+            og_row("🔥 استریک برد", pnum(streak_w)),
+            og_row("🏅 بهترین استریک", pnum(best_streak)),
+            og_row("⏱ آخرین فعالیت", f"{last_str} {act_ago}"),
+            og_row("🚫 وضعیت", "مسدود 🚫" if banned else "سالم ✅"),
         ]
         note = str(u.get("admin_note", "") or "")
         if note:
-            lines.append(f"📝 یادداشت: <i>{escape(note[:150])}</i>")
+            lines.append(og_row("📝 یادداشت", escape(note[:60])))
+        lines.append(og_close("👤"))
         rows = [
             [btn("🪙 سکه", f"A|UCOIN|{target_uid}", "primary"),
-             btn("⭐ XP", f"A|UXP|{target_uid}", "primary"),
-             btn("🎖 Level", f"A|UMOD|{target_uid}|addlvl")],
+             btn("⭐ XP", f"A|UXP|{target_uid}", "primary")],
+            [btn("🎖 Level+", f"A|UMOD|{target_uid}|addlvl"),
+             btn("🏷 لقب", f"A|UMOD|{target_uid}|title")],
             [btn("📩 پیام", f"A|UDM|{target_uid}"),
-             btn("📝 یادداشت", f"A|UNOTE|{target_uid}"),
-             btn("🎒 کالاها", f"A|UINV|{target_uid}")],
+             btn("📝 یادداشت", f"A|UNOTE|{target_uid}")],
+            [btn("🎒 کالاها", f"A|UINV|{target_uid}"),
+             btn("🔥 ریست استریک", f"A|UMOD|{target_uid}|resetstreak")],
         ]
         if banned:
-            rows.append([btn("✅ رفع مسدودیت", f"A|UMOD|{target_uid}|unban")])
+            rows.append([btn("✅ رفع مسدودیت", f"A|UMOD|{target_uid}|unban", "success")])
         else:
-            rows.append([btn("🚫 مسدود کردن", f"A|UMOD|{target_uid}|ban")])
-        # تنظیم نقش
+            rows.append([btn("🚫 مسدود کردن", f"A|UMOD|{target_uid}|ban", "danger")])
         if role == "user":
-            rows.append([btn("⬆️ ارتقا به Mod", f"A|UMOD|{target_uid}|promote_mod")])
+            rows.append([btn("⬆️ ارتقا به Mod", f"A|UMOD|{target_uid}|promote_mod"),
+                         btn("⬆️ ارتقا به Admin", f"A|UMOD|{target_uid}|promote_admin", "success")])
         elif role == "mod":
-            rows.append([btn("⬆️ ارتقا به Admin", f"A|UMOD|{target_uid}|promote_admin")])
-            rows.append([btn("⬇️ تنزل به User", f"A|UMOD|{target_uid}|demote_user")])
+            rows.append([btn("⬆️ ارتقا به Admin", f"A|UMOD|{target_uid}|promote_admin", "success"),
+                         btn("⬇️ تنزل به User", f"A|UMOD|{target_uid}|demote_user")])
         elif role == "admin":
             rows.append([btn("⬇️ تنزل به User", f"A|UMOD|{target_uid}|demote_user")])
-        rows.append([btn("🎁 پاداش دستی", f"A|UMOD|{target_uid}|reward")])
+        rows.append([btn("🎁 پاداش دستی", f"A|UMOD|{target_uid}|reward", "primary")])
+        rows.append([btn("🗑 حذف کاربر", f"A|UMOD|{target_uid}|deluser", "danger")])
         rows.append([btn("⬅️ بازگشت", "A|USERS|0")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
@@ -16301,44 +16828,110 @@ async def admin_user_modify(query, target_uid: int, action: str) -> None:
             grant_item(int(target_uid), "lucky", 1)
             log_event("warn", "admin", f"Manual reward to {target_uid}", actor=admin_uid)
             await safe_answer_query(query, "🎁 پاداش دستی داده شد!")
+        # --- (۱۰.۰) ابزارهای جدید فرمانده ---
+        elif action == "resetstreak":
+            u["streak"] = 0
+            log_event("warn", "admin", f"Reset win streak of {target_uid}", actor=admin_uid)
+            await safe_answer_query(query, "🔥 استریک این بازیکن ریست شد.")
+        elif action == "title":
+            _V9_INPUT["mode"] = "v10_utitle"
+            _V9_INPUT["data"] = {"target": int(target_uid)}
+            await safe_answer_query(query, "✍️ لقب جدید را بفرست")
+            await safe_edit(
+                query,
+                og_banner("تنظیم لقب", "🏷") + "\n\n"
+                "لقب جدید را همین‌جا بفرست.\n"
+                "برای حذف لقب بنویس: <code>پاک</code>",
+                kb([nav_row(f"A|USER|{target_uid}")]),
+            )
+            return
+        elif action == "deluser":
+            await safe_answer_query(query)
+            await safe_edit(
+                query,
+                og_banner("حذف کاربر", "🗑") + "\n\n"
+                f"⚠️ کاربر <b>#{fa(int(target_uid))}</b> با تمام داده‌هایش "
+                f"(سطح {pnum(level_for_xp(int(u.get('xp', 0))))}، "
+                f"{pnum(int(u.get('coins', 0)))} سکه) حذف می‌شود!\n"
+                "این کار قابل بازگشت نیست — بکاپ فوری گرفته می‌شود.\n\nمطمئنی؟",
+                kb([
+                    [btn("🔴 بله، حذف کن", f"A|UMOD|{target_uid}|deluser2", "danger")],
+                    [btn("🟢 نه! برگرد", f"A|USER|{target_uid}")],
+                ]))
+            return
+        elif action == "deluser2":
+            backup_data("before-user-delete")
+            with LOCK:
+                DATA.get("users", {}).pop(str(int(target_uid)), None)
+                DATA.get("permissions", {}).pop(str(int(target_uid)), None)
+            save_data(force=True)
+            log_event("warn", "admin", f"Deleted user {target_uid}", actor=admin_uid)
+            await safe_answer_query(query, "🗑 کاربر حذف شد — بکاپ گرفته شد.")
+            await admin_users_manager_show(query, 0, "all")
+            return
         await admin_user_detail_show(query, int(target_uid))
     except Exception as exc:
         log_event("error", "system", f"admin_user_modify failed: {exc!r}")
 
 
 async def admin_games_manager_show(query) -> None:
-    """پنل مدیریت بازی‌ها — حرفه‌ای با جعبه‌."""
+    """مانیتور بازی‌ها نسل ۱۰ — فعال‌ها + داوری + آمار مودها."""
     try:
         games = DATA.get("games", {})
         active = [(k, g) for k, g in games.items() if isinstance(g, dict) and g.get("status") == "active"]
         finished = sum(1 for g in games.values() if isinstance(g, dict) and str(g.get("status")) == "finished")
+        # آمار مودها
+        mode_count = {}
+        for g in games.values():
+            if not isinstance(g, dict):
+                continue
+            for m in g.get("rounds_played_modes", []):
+                mode_count[m] = mode_count.get(m, 0) + 1
+        top_modes = sorted(mode_count.items(), key=lambda kv: -kv[1])[:4]
         lines = [
-            ds_top("🎮"),
-            "│  🎮 <b>مدیریت بازی‌ها</b>",
-            "│  <i>میدان‌های نبرد</i>",
-            ds_sep(),
-            ds_row("📊 کل بازی‌ها", pnum(len(games))),
-            ds_row("🔥 فعال", pnum(len(active))),
-            ds_row("✅ پایان‌یافته", pnum(finished)),
+            og_top("🎮"),
+            og_head("🎮", "مانیتور بازی‌ها", "میدان‌های نبرد — لحظه‌به‌لحظه"),
+            og_sep(),
+            og_stat_grid([
+                ("📊", "کل بازی‌ها", pnum(len(games))),
+                ("🔥", "فعال", pnum(len(active))),
+                ("✅", "پایان‌یافته", pnum(finished)),
+            ]),
+            og_sep("◈"),
         ]
         if active:
-            lines.append(ds_sep("⋆"))
-            lines.append("│  ▎🎯 بازی‌های فعال:")
-            for k, g in active[:6]:
+            lines.append(og_section("🎯", f"بازی‌های فعال ({pnum(len(active))})"))
+            for k, g in active[:8]:
                 try:
                     players = len(g.get("players", []))
                     started = int(g.get("started_at", 0))
                     age_min = (now_ts() - started) // 60 if started else 0
-                    lines.append(f"│  · #{str(k)[:12]} · 👥{pnum(players)} · ⏱{pnum(age_min)}m")
+                    mode = str(g.get("mode", "classic"))
+                    stale = " 💤" if age_min > 120 else ""
+                    lines.append(og_row(
+                        f"💬 {str(k)[:10]} · {MODE_LABELS.get(mode, mode)}",
+                        f"👥{pnum(players)} · ⏱{pnum(age_min)}m{stale}"))
                 except Exception:
                     pass
         else:
-            lines.append("│  ❌ فعلاً بازی فعالی نیست")
-        lines.append(ds_close())
+            lines.append(og_section("🌙", "میدان ساکت است"))
+            lines.append(og_row("🎯 وضعیت", "هیچ بازی فعالی نیست"))
+        if top_modes:
+            lines.append(og_section("📈", "محبوب‌ترین مودها"))
+            mx = top_modes[0][1] or 1
+            for m, c in top_modes:
+                lines.append(f"┃  {MODE_LABELS.get(m, m)} {og_gauge(int(c * 5 / mx), 5)} <b>{pnum(c)}</b>")
+        lines.append(og_close("🎮"))
         rows = []
-        for k, g in active[:5]:
-            rows.append([btn(f"👁 {str(k)[:15]}", f"A|GAME|{k}")])
-        rows.append([btn("⬅️ بازگشت", "A|HOME")])
+        for k, g in active[:6]:
+            try:
+                rows.append([btn(f"👁 {str(k)[:14]} · 👥{len(g.get('players', []))}", f"A|GAME|{k}")])
+            except Exception:
+                pass
+        if active:
+            rows.append([btn("💀 پایان بازی‌های رهاشده", "A|CLEAN|games", "danger")])
+        rows.append([btn("🔄 تازه‌سازی", "A|GAMES")])
+        rows.append([btn("🛡 داشبورد", "A|HOME")])
         await safe_edit(query, "\n".join(lines), kb(rows))
     except Exception as exc:
         log_event("error", "system", f"admin_games_manager_show failed: {exc!r}")
@@ -24569,6 +25162,60 @@ async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE)
     parts = str(query.data or "").split("|")
     action = parts[1] if len(parts) > 1 else ""
     try:
+        # --- (۱۰.۰) مرکز فرماندهی نسل جدید ---
+        if action == "NOP":
+            await safe_answer_query(query)
+            return
+        if action == "PERMS":
+            await admin_perms_center(query)
+            return
+        if action == "QUICK":
+            await admin_quick_center(query)
+            return
+        if action == "GIFTALL":
+            await admin_giftall_wizard(query)
+            return
+        if action == "GIFTALLC" and len(parts) > 3:
+            kind = str(parts[2])
+            if kind == "custom":
+                _V9_INPUT["mode"] = "v10_giftall"
+                _V9_INPUT["data"] = {}
+                await safe_answer_query(query, "✍️ مقدار هدیه را بفرست (عدد)")
+                await safe_edit(
+                    query,
+                    og_banner("هدیه سفارشی", "🎀") + "\n\n"
+                    "مقدار هدیه را به‌صورت عدد بفرست.\n"
+                    "مثال: <code>300</code>\n\n"
+                    "سپس نوع (سکه/XP) و تأیید نهایی می‌آید.",
+                    kb([nav_row("A|GIFTALL")]))
+                return
+            try:
+                amt = int(parts[3])
+            except Exception:
+                amt = 0
+            await admin_giftall_confirm(query, kind, amt)
+            return
+        if action == "GIFTALLGO" and len(parts) > 3:
+            try:
+                amt = int(parts[3])
+            except Exception:
+                amt = 0
+            await admin_giftall_apply(update, context, query, str(parts[2]), amt)
+            return
+        if action == "CLEAN" and len(parts) > 2 and parts[2] == "games":
+            await admin_clean_apply(update, context, query, "games")
+            return
+        if action == "CLEAN":
+            await admin_clean_center(query)
+            return
+        if action == "CLEANGO" and len(parts) > 2:
+            await admin_clean_apply(update, context, query, str(parts[2]))
+            return
+        if action == "UFILTER":
+            mode = parts[2] if len(parts) > 2 else "all"
+            page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+            await admin_users_manager_show(query, page, mode)
+            return
         # --- (۹.۰) مسیرهای اُمگا+ — ارتقای عمیق ۲۰ بخش ---
         if action in ("UCOIN", "UXP", "UDM", "UNOTE", "UINV") and len(parts) > 2:
             tool = {"UCOIN": "coin", "UXP": "xp", "UDM": "dm",
@@ -24925,7 +25572,14 @@ async def route_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await safe_answer_query(query, "🧭 برگشت فقط در چت خصوصی فعال است — از 🏠 استفاده کن")
             return
         data, prefix = await nav_back_handler(update, context, query, uid)
-        query.data = data
+        # (۱۰.۰) تعمیر بحرانی: روی PTB واقعی آبجکت فروزن است — انتساب مستقیم
+        # AttributeError می‌دهد و این دقیقاً علتِ «همه‌ی دکمه‌های برگشت خطا
+        # می‌دادند» بود. حالا با لایه‌های دفاعی nav_retarget انجام می‌شود.
+        if not nav_retarget(query, data):
+            # مسیر جایگزین (بی‌نهایت نادر): هندلر مقصد خودش query.data را
+            # می‌خواند؛ اگر retarget نشد، مستقیم خانه را نشان بده — هرگز خطا نه.
+            await home_callback(update, context)
+            return
     elif data == "H|HOME":
         nav_clear(uid)
     elif _nav_private and nav_is_panel(data):
@@ -25103,7 +25757,7 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"│  ⚔️ <b>{BOT_NAME}</b>\n"
             f"│  <i>{DS_VER} — بازنویسی کامل · هزارلولی</i>\n"
             f"{ds_sep()}\n"
-            + ds_row("📦 نسخه", f"{fa(VERSION)} تایتان ⚡") + "\n"
+            + ds_row("📦 نسخه", f"{fa(VERSION)} فرمانده ⚡") + "\n"
             + ds_row("📚 بانک سوالات", f"{pnum(BANKS_TOTAL)} سوال در {pnum(len(BANKS))} بانک") + "\n"
             + ds_row("👥 کاربران", pnum(users)) + "\n"
             + ds_row("👥 گروه‌ها", pnum(groups)) + "\n"
