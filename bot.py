@@ -162,6 +162,30 @@
 #     زیرمجموعه در ۵ هابِ مرتب (H|GAMES / H|PROFILE / H|PROGRESS / H|SOCIAL / H|HELP)
 #   • دکمه‌ی «بیشتر...» حذف شد — همه‌چیز زیرمجموعه‌ی ۸ دکمه‌ی اصلی است
 #
+# بهبود در نسخه ۱۱.۰ «نبض» — ⏱🫀 موتور نبض هوشمند پنل‌های گروه + اتاق فرمان:
+#   • 🔧 FIX بحرانی «دکمه‌ی موضوعات بیشتر کار نمی‌کند»: موتور رفرش قدیمی،
+#     نمای «موضوعات بیشتر» و «امتیازها» را ظرف ~۱ ثانیه می‌بلعید (نمای فرعی
+#     اصلاً شناخته نمی‌شد و کارت نوبت رویش بازنویسی می‌شد) — حالا هر بازی
+#     «نمای فرعی» (_panel_view) دارد که موتور آن را هم رندر می‌کند
+#   • 🫀 موتور نبض هوشمند: تعامل-نگه‌دار (بعد از هر کلیک، پنل ۱۲ ثانیه
+#     آرام می‌گیرد و موتور با آن «نمی‌جنگد»)، هش محتوا (ویرایش تکراری = صفر)،
+#     بک‌آف پن‌محور (RetryAfter فقط همان پنل را متوقف می‌کند نه کل موتور)،
+#     کند-خودکار در فاز سوال، رعایت تنظیم اختصاصی هر گروه
+#   • ⏱ شمارش معکوس زیبا: نوار پیشرفت ▰▰▰▱▱ + ثانیه‌ی فارسی + آیکون چرخان
+#   • ⏱ اتاق کنترل موتور (A|PULSE): آمار زنده (ویرایش ارسالی/صرفه‌جویی/مکث)،
+#     پیچ ±۱ و ±۵ فاصله (۳-۶۰)، سوییچ موتور و ثانیه‌شمار، رفرش فوری همه،
+#     پاک‌سازی پنل‌های مرده
+#   • 🌐 مدیر پنل گروه‌ها (A|GPANELS): فهرست تک‌تک گروه‌های دارای پنل زنده
+#     با نشان وضعیت (لابی/موضوع/هدف/سوال) + اتاق فرمان هر گروه (A|GPC):
+#     رفرش فوری، رد کردن نوبت، پایان بازی، بستن لابی، +۱۸، حداقل/حداکثر
+#     بازیکن، فاصله‌ی اختصاصی و سوییچ رفرشِ همان گروه
+#   • 📋 نمای «موضوعات بیشتر» نسل جدید: دسته‌بندی سه‌گانه (ذهن و خیال /
+#     احساسات / رازها و جنجال) + تعداد سوال هر موضوع از بانک + دکمه‌های رنگی
+#   • 🏆 نمای امتیازها نسل جدید: سکوی مدال + نوار امتیاز هر بازیکن + چیدمان
+#     جعبه‌ای موبایل-امن — دیگر با رفرش بلعیده نمی‌شود
+#   • 🔧 FIX سازگاری مودها: scenario از مودهای اصلی به «موضوعات بیشتر» رفت
+#     و تکرار drama حذف شد (پوشش کامل ۱۵ مود بدون هیچ گم‌شدگی)
+#
 # بهبود در نسخه ۱۰.۰ «فرمانده» — 🖥🛡 مرکز فرماندهی + تعمیر دکمه‌های برگشت:
 #   • 🔧 تعمیر بحرانی: ریشه‌ی واقعیِ «همه‌ی دکمه‌های برگشت خطا می‌دادند»
 #     پیدا و تعمیر شد — python-telegram-bot آبجکت‌های واقعی را فروزن
@@ -482,7 +506,7 @@ from telegram.error import RetryAfter, BadRequest  # ۶.۳/۶.۵ — فلود-ک
 # ================================================================
 #  پیکربندی
 # ================================================================
-VERSION = "10.0"
+VERSION = "11.0"
 BOT_NAME = "ApexRival"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -3520,6 +3544,8 @@ _NAV_PANEL_PREFIXES = (
     # (۱۰.۰) پنل‌های نسل فرمانده
     "A|PERMS", "A|QUICK", "A|GIFTALL", "A|GIFTALLC|", "A|CLEAN", "A|CLEANGO|",
     "A|UFILTER|",
+    # (۱۱.۰) موتور نبض + پنل گروه‌ها
+    "A|PULSE", "A|GPANELS", "A|GPC|",
     # (۹.۰) مرکز بانک جدید
     "BK|HOME", "BK|V|", "BK|PREV|", "BK|Q|", "BK|SRCH|", "BK|SEARCH",
     "BK|NEWBANK", "BK|DUPS", "BK|STATS",
@@ -5475,8 +5501,8 @@ def lobby_markup(game: dict, uid: int = 0) -> InlineKeyboardMarkup:
         btn("🦵 اخراج", "L|KICK"),
         btn("👑 انتقال", "L|HOST"),
     ])
-    # ردیف ۵ — لغو
-    rows.append([btn("❌ لغو بازی", "L|CANCEL")])
+    # ردیف ۵ — لغو + تازه‌سازی دستی (راحتی کاربر وقتی موتور نبض خاموش است)
+    rows.append([btn("🔄 تازه‌سازی", "L|REFRESH"), btn("❌ لغو بازی", "L|CANCEL")])
     return kb(rows)
 
 
@@ -6099,6 +6125,7 @@ def advance_turn(game: dict) -> int | None:
     game["phase"] = "topic"
     game.pop("reply_prompt", None)
     game.pop("selected_mode", None)
+    game.pop("_panel_view", None)   # (۱۱.۰) نوبت جدید = نمای فرعی قبلی باطل
     touch_game(game)
     try:
         daily_tick(game, alive[idx])
@@ -6375,6 +6402,7 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if action == "TURN" or action == "STATUS":
         await safe_answer_query(query)
+        panel_subview_clear(game)   # (۱۱.۰) درخواست کارت نوبت = خروج از نمای فرعی
         panel_reset_timer(game)
         q = current_questioner(game)
         if q is None:
@@ -6384,37 +6412,22 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if action == "MOREMODES":
-        # نمایش مودهای بیشتر
+        # (۱۱.۰) نمای «موضوعات بیشتر» — دیگر هرگز با رفرش بلعیده نمی‌شود:
+        # نما داخل بازی ثبت می‌شود و موتور نبض همان را رندر می‌کند.
         q = current_questioner(game)
         if q is None or int(q) != uid:
             await safe_answer_query(query, "فقط پرسشگر فعلی می‌تواند موضوع انتخاب کند.", True)
             return
-        off = set(topics_off())
-        adult_ok = get_group(chat_id).get("adult_mode", False)
-        main_keys = {"truth", "dare", "scenario", "flirty"}
-        rows = []
-        pair = []
-        for key, label in MODE_ORDER:
-            if key in main_keys:
-                continue
-            if key in off:
-                continue
-            if key == "adult" and not adult_ok:
-                continue
-            pair.append(btn(label, f"G|MODE|{key}"))
-            if len(pair) == 2:
-                rows.append(pair)
-                pair = []
-        if pair:
-            rows.append(pair)
-        rows.append([btn("⬅️ بازگشت به موضوع‌ها", "G|TURN")])
         await safe_answer_query(query)
-        await safe_edit(query,
-            f"{ds_top('📋')}\n"
-            "│  📋 <b>موضوعات بیشتر</b>\n"
-            f"{ds_sep()}\n"
-            "⏳ دست نزن — این‌ها همه‌ی موضوعات ویژه‌ست. یکی رو انتخاب کن:",
-            kb(rows))
+        panel_subview_set(game, "moremodes")
+        panel_reset_timer(game)
+        text, markup = moremodes_view(game)
+        await safe_edit(query, text, markup)
+        # (۱۱.۰) هش همین رندر ثبت شود تا موتور بعد از مهلت، ویرایش تکراری نزند
+        try:
+            game["_panel_hash"] = _panel_hash(text, markup)
+        except Exception:
+            pass
         return
 
     if action == "MODE":
@@ -6432,6 +6445,7 @@ async def game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 return
         game["selected_mode"] = mode
         game["phase"] = "target"
+        panel_subview_clear(game)   # (۱۱.۰) انتخاب موضوع = خروج از نمای فرعی
         panel_reset_timer(game)
         touch_game(game)
         save_data()
@@ -6584,6 +6598,159 @@ async def game_show_targets(query, game: dict, mode: str) -> None:
     """نمایش لیست اهداف — کارت بازیکنان + چرخش شیشه‌ی سرنوشت."""
     text, markup = targets_view(game)
     await safe_edit(query, text, markup)
+
+
+# ================================================================
+#  (۱۱.۰) نمای‌های فرعی پنل گروه — موضوعات بیشتر / امتیازها
+#  ریشه‌ی باگ «دکمه‌ی موضوعات بیشتر کار نمی‌کند» همین‌جا بود: موتور رفرش
+#  هیچ اطلاعی از نمای فرعی نداشت و ظرف ~۱ ثانیه کارت نوبت را روی آن
+#  بازنویسی می‌کرد. حالا نما داخل خودِ بازی ثبت می‌شود و موتور هم همان
+#  را رندر می‌کند — تا وقتی کاربر خودش با دکمه از آن خارج شود.
+# ================================================================
+MODE_SUBVIEW_TTL = 120            # عمر نمای فرعی (ثانیه) — بعدش خودکار برمی‌گردد
+MODE_MAIN_KEYS = {"truth", "dare", "flirty", "drama"}   # مودهای کارت اصلی
+MODE_CATEGORIES = [                # دسته‌بندی زیبای «موضوعات بیشتر»
+    ("🧠", "ذهن و خیال", ("mind", "wouldyou", "dream", "future")),
+    ("💔", "احساسات", ("relation", "regret", "memory")),
+    ("🤫", "رازها و جنجال", ("secret", "scenario", "cringe")),
+]
+
+
+def panel_subview_set(game: dict, view_id: str) -> None:
+    """ثبت نمای فرعی فعال — موتور نبض از این پس همان را رندر می‌کند (۱۱.۰)."""
+    try:
+        game["_panel_view"] = {
+            "id": str(view_id),
+            "ts": time.time(),
+            "phase": str(game.get("phase", "")),
+        }
+    except Exception:
+        pass
+
+
+def panel_subview_clear(game: dict) -> None:
+    """خروج از نمای فرعی — بازگشت به نمای فاز."""
+    try:
+        game.pop("_panel_view", None)
+    except Exception:
+        pass
+
+
+def panel_subview_active(game: dict) -> str | None:
+    """نمای فرعیِ معتبر را برمی‌گرداند (با انقضا و بطلان خودکار)."""
+    try:
+        sv = game.get("_panel_view")
+        if not isinstance(sv, dict):
+            return None
+        vid = str(sv.get("id", ""))
+        if vid not in ("moremodes", "scores"):
+            game.pop("_panel_view", None)
+            return None
+        if time.time() - float(sv.get("ts", 0) or 0) > MODE_SUBVIEW_TTL:
+            game.pop("_panel_view", None)
+            return None
+        # «موضوعات بیشتر» فقط در فاز انتخاب موضوع معنی دارد
+        if vid == "moremodes" and str(game.get("phase", "")) != str(sv.get("phase", "topic")):
+            game.pop("_panel_view", None)
+            return None
+        return vid
+    except Exception:
+        return None
+
+
+def moremodes_view(game: dict) -> tuple:
+    """📋 «موضوعات بیشتر» نسل ۱۱ — دسته‌بندی + تعداد سوال هر موضوع + رنگ."""
+    off = set(topics_off())
+    adult_ok = bool(get_group(int(game.get("chat_id", 0))).get("adult_mode", False))
+    lines = [
+        ds_top("📋"),
+        "│  📋 <b>موضوعات بیشتر</b>",
+        "│  <i>گنجینه‌ی کامل موضوع‌های ویژه</i>",
+        ds_sep(),
+    ]
+    rows: list = []
+    # — 🔞 موضوع ویژه +۱۸ (اگر گروه روشن کرده باشد) —
+    if "adult" not in off:
+        if adult_ok:
+            cnt = len(BANKS.get("adult", []))
+            lines.append(f"│  🔞 <b>موضوع ویژه</b> — {pnum(cnt)} سوال داغ")
+            rows.append([btn(f"🔞 +۱۸ · {pnum(cnt)} سوال", "G|MODE|adult", "danger")])
+        else:
+            lines.append("│  🔞 +۱۸: خاموش (سرگروه از لابی روشنش می‌کند)")
+    # — دسته‌های سه‌گانه —
+    total_shown = 0
+    for icon, cat, keys in MODE_CATEGORIES:
+        cat_modes = []
+        for key in keys:
+            if key in off or key in MODE_MAIN_KEYS:
+                continue
+            cnt = len(BANKS.get(key, []))
+            if cnt > 0:
+                cat_modes.append((key, cnt))
+        if not cat_modes:
+            continue
+        total_shown += len(cat_modes)
+        lines.append(f"│  {icon} <b>{cat}</b> · {pnum(len(cat_modes))} موضوع")
+        pair = []
+        for key, cnt in cat_modes:
+            pair.append(btn(f"{MODE_LABELS.get(key, key)} · {pnum(cnt)}", f"G|MODE|{key}", "primary"))
+            if len(pair) == 2:
+                rows.append(pair)
+                pair = []
+        if pair:
+            rows.append(pair)
+    if total_shown == 0 and "adult" not in off and not adult_ok:
+        lines.append("│  همه‌ی موضوع‌های ویژه خاموش شده‌اند.")
+    lines += [
+        ds_sep("⋆"),
+        "│  💡 هر موضوع، بانک سوال مخصوص خودش را دارد",
+        ds_close("📋"),
+    ]
+    rows.append([btn("⬅️ موضوع‌های اصلی", "G|TURN")])
+    rows.append([btn("🎲 رد کردن نوبت", "G|SKIP"), btn("📊 امتیازها", "G|SCORES")])
+    return "\n".join(lines), kb(rows)
+
+
+def scores_view(game: dict) -> tuple:
+    """🏆 «امتیازها» نسل ۱۱ — سکوی مدال + نوار امتیاز هر بازیکن."""
+    scores = game.get("round_scores", {})
+    players = [int(x) for x in game.get("players", [])]
+    entries = sorted(((int(scores.get(str(p), 0)), p) for p in players),
+                     key=lambda x: (-x[0], name_of(x[1], game)))
+    max_score = max((s for s, _ in entries), default=0)
+    heat_info = game_heat_advanced(game)
+    round_num = int(game.get("round", 0)) + 1
+    started = int(game.get("started_at", 0))
+    duration_min = (now_ts() - started) // 60 if started else 0
+    total_q = int(game.get("_question_stats", {}).get("total", 0))
+    lines = [
+        ds_top("🏆"),
+        "│  🏆 <b>امتیازهای بازی</b>",
+        "│  <i>سکوی قهرمانان — زنده و لحظه‌ای</i>",
+        ds_sep(),
+        ds_row("🎯 دور", pnum(round_num)),
+        ds_row("🌡 گرما", heat_info.get("name", "🟢 آرام")),
+        ds_row("⏱ مدت", f"{pnum(duration_min)} دقیقه"),
+        ds_row("📊 سوالات", pnum(total_q)),
+        ds_sep("⋆"),
+    ]
+    medals = ["🥇", "🥈", "🥉"]
+    if not entries:
+        lines.append("│  هنوز امتیازی ثبت نشده — اولین قهرمان کی می‌شه؟")
+    for i, (score, p) in enumerate(entries, 1):
+        prefix = medals[i - 1] if i <= 3 else f"<b>{pnum(i)}.</b>"
+        try:
+            level = int(get_user(p).get("level", 1))
+        except Exception:
+            level = 1
+        bar = pbar(score, max(1, max_score), 10, pct=False) if max_score > 0 else "░" * 10
+        lines.append(f"│  {prefix} {mention_user(p, name_of(p, game))} 🔥{pnum(level)}")
+        lines.append(f"│  ▸ {bar} ⭐ {pnum(score)}")
+    lines.append(ds_close("🏆"))
+    rows = [
+        [btn("↻ تازه‌سازی", "G|SCORES"), btn("🎤 کارت نوبت", "G|TURN")],
+    ]
+    return "\n".join(lines), kb(rows)
 
 
 async def game_ask_question(context, game: dict, questioner: int, target: int, mode: str, query=None) -> None:
@@ -7175,38 +7342,17 @@ async def handle_game_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def game_show_scores(query, game: dict) -> None:
-    rows = []
-    entries = []
-    for uid in game.get("players", []):
-        score = int(game.get("round_scores", {}).get(str(uid), 0))
-        entries.append((score, int(uid)))
-    entries.sort(key=lambda x: (-x[0], name_of(x[1], game)))
-    medals = ["🥇", "🥈", "🥉"]
-    for i, (score, uid) in enumerate(entries, 1):
-        try:
-            u = get_user(int(uid))
-            level = int(u.get("level", 1))
-            rank_name, rank_icon, _ = rank_for_xp(int(u.get("xp", 0)))
-        except Exception:
-            level = 1
-            _, rank_icon = "تازه‌کار", "🌱"
-        prefix = medals[i - 1] if i <= 3 else f"<b>{fmt_num(i)}</b>"
-        rows.append(f"{prefix} {mention_user(uid, name_of(uid, game))} 🔥{level} {rank_icon} · ⭐ {fmt_num(score)}")
-    # اطلاعات بازی
-    heat_info = game_heat_advanced(game)
-    heat_name = heat_info.get("name", "🟢 آرام")
-    round_num = int(game.get("round", 0)) + 1
-    started = int(game.get("started_at", 0))
-    duration_min = (now_ts() - started) // 60 if started else 0
-    game_stats = game.get("_question_stats", {})
-    total_q = int(game_stats.get("total", 0))
-    await safe_edit(query,
-                    f"📊 <b>امتیازهای بازی</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"🎯 دور: <b>{fmt_num(round_num)}</b> · 🌡 {heat_name} · ⏱ {fmt_num(duration_min)}م\n"
-                    f"📊 سوالات: <b>{fmt_num(total_q)}</b>\n\n"
-                    + "\n".join(rows or ["هنوز امتیازی ثبت نشده."]),
-                    kb([[btn("↻ تازه‌سازی", "G|SCORES"), btn("🔙 نوبت", "G|TURN")]]))
+    """(۱۱.۰) امتیازها با سازنده‌ی مشترک scores_view — و ثبت به‌عنوان نمای فرعی
+    تا موتور نبض آن را رندر کند و دیگر با رفرش بلعیده نشود."""
+    panel_subview_set(game, "scores")
+    panel_reset_timer(game)
+    text, markup = scores_view(game)
+    await safe_edit(query, text, markup)
+    # (۱۱.۰) هش همین رندر ثبت شود تا موتور بعد از مهلت، ویرایش تکراری نزند
+    try:
+        game["_panel_hash"] = _panel_hash(text, markup)
+    except Exception:
+        pass
 
 
 async def cmd_apexend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -15511,9 +15657,9 @@ async def admin_dashboard_show(query) -> None:
                           int(ad.get(days7[-2], {}).get("new_users", 0))) if len(days7) > 1 else ""
         lines = [
             og_top("♛"),
-            og_head("🛡", "مرکز فرماندهی", "مدیریت هزارلولی — نسخه ۱۰.۰ «فرمانده»"),
+            og_head("🛡", "مرکز فرماندهی", "مدیریت هزارلولی — نسخه ۱۱.۰ «نبض»"),
             og_sep(),
-            og_pulse("فعال") + "   🏷 نسخه ۱۰.۰   👑 دسترسی کامل",
+            og_pulse("فعال") + "   🏷 نسخه ۱۱.۰   👑 دسترسی کامل",
             og_sep("◈"),
             og_section("📡", "وضعیت سیستم"),
             og_stat_grid([
@@ -15553,13 +15699,13 @@ async def admin_dashboard_show(query) -> None:
                 ("📉", "مصرف امروز", pnum(today.get("coins_spent", 0))),
             ]),
             og_sep("◈"),
-            og_section("🗂", "نقشه‌ی فرمان — ۶ دسته / ۲۴ بخش"),
+            og_section("🗂", "نقشه‌ی فرمان — ۶ دسته / ۲۶ بخش"),
             og_row("🫂 جامعه", "کاربران · گروه‌ها · دسترسی"),
             og_row("🎮 بازی و محتوا", "بازی‌ها · آنالیتیکس · بانک · گزارش"),
             og_row("💰 اقتصاد", "اقتصاد · جوایز · پخش · هدیه"),
             og_row("🛡 امنیت", "ضداسپم · محافظ · دکتر · ویترین"),
             og_row("🧰 سیستم", "بکاپ · خروجی · لاگ · تنظیم"),
-            og_row("⚡ فرمانده", "اقدام سریع · بهینه‌سازی"),
+            og_row("⚡ فرمانده", "اقدام سریع · بهینه‌سازی · نبض · پنل گروه‌ها"),
             og_close("♛"),
         ]
         # --- گرید ۲ستونه‌ی دسته‌بندی‌شده (۶ دسته) ---
@@ -15583,6 +15729,7 @@ async def admin_dashboard_show(query) -> None:
             [btn("🛠 تعمیرات", "A|MAINT"), btn("⏰ زمان‌بندی تعمیر", "A|MAINTSCH", "danger")],
             # ⚡ فرمانده
             [btn("⚡ اقدامات سریع", "A|QUICK", "danger"), btn("♻️ بهینه‌سازی", "A|CLEAN", "danger")],
+            [btn("⏱ موتور نبض", "A|PULSE", "primary"), btn("🌐 پنل گروه‌ها", "A|GPANELS", "primary")],
             [btn("🔄 تازه‌سازی", "A|HOME"), btn("🏠 منوی اصلی", "H|HOME")],
         ]
         await safe_edit(query, "\n".join(lines), kb(rows))
@@ -16309,6 +16456,433 @@ async def admin_syscfg_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         await safe_answer_query(query)
     except Exception as exc:
         log_event("error", "system", f"admin_syscfg_action failed: {action} {exc!r}",
+                  actor=int(query.from_user.id))
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+# ================================================================
+#  (۱۱.۰) ⏱🫀 اتاق کنترل موتور نبض + 🌐 مدیر پنل گروه‌ها
+#  درخواست صاحب ربات: کنترل کامل رفرش خودکار (ثانیه‌شمار کم/زیاد/
+#  خاموش/روشن) + دسترسی به تک‌تک پنل‌هایی که داخل گروه‌ها ساخته
+#  می‌شود — با امکان تغییر و ویرایش هر چیز، از داخل پنل مدیریت.
+# ================================================================
+PULSE_INTERVAL_MIN, PULSE_INTERVAL_MAX = 3, 60
+GPANELS_PAGE_SIZE = 5
+
+
+def _panel_group_title(chat_id: int) -> str:
+    """عنوان کوتاه گروه برای فهرست‌ها (۱۱.۰)."""
+    try:
+        g = get_group(int(chat_id))
+        t = str(g.get("title") or g.get("name") or "").strip()
+        if t:
+            return escape(t[:24])
+    except Exception:
+        pass
+    return f"گروه {pnum(abs(int(chat_id)) % 100000)}"
+
+
+def _panel_phase_chip(game: dict) -> str:
+    """نشان وضعیت بازی — چیپ رنگی فهرست پنل‌ها (۱۱.۰)."""
+    status = str(game.get("status", ""))
+    phase = str(game.get("phase", ""))
+    if status == "lobby" or phase == "lobby":
+        return "🟢 لابی"
+    if phase == "topic":
+        return "🔵 انتخاب موضوع"
+    if phase == "target":
+        return "🎯 انتخاب هدف"
+    if phase == "question":
+        return "❓ در انتظار جواب"
+    return "🎮 فعال"
+
+
+def _panel_game_uptime(game: dict) -> str:
+    """مدت عمر پنل — از ساخت لابی یا شروع بازی (۱۱.۰)."""
+    try:
+        started = int(game.get("started_at", 0) or int(game.get("created_at", 0) or 0))
+        if not started:
+            return "—"
+        mins = max(0, (now_ts() - started) // 60)
+        if mins < 60:
+            return f"{pnum(mins)} دقیقه"
+        return f"{pnum(mins // 60)} ساعت و {pnum(mins % 60)} دقیقه"
+    except Exception:
+        return "—"
+
+
+def _pulse_rate_health() -> str:
+    """سلامت موتور — نسبت ویرایش واقعی به تیک‌های مفید (۱۱.۰)."""
+    try:
+        floods = int(PULSE_STATS.get("floods", 0))
+        if floods == 0:
+            return "عالی ✅"
+        if floods < 3:
+            return "خوب ✅"
+        if floods < 10:
+            return "پرتنش ⚠️"
+        return "پرفشار 🔴"
+    except Exception:
+        return "—"
+
+
+async def admin_pulse_center(query) -> None:
+    """⏱🫀 اتاق کنترل موتور نبض — آمار زنده + تنظیم صفر تا صد (۱۱.۰)."""
+    try:
+        cfg = syscfg()
+        live = pulse_live_panels()
+        last_flood = float(PULSE_STATS.get("last_flood", 0) or 0)
+        last_flood_s = "—"
+        if last_flood:
+            ago = max(0, int(time.time() - last_flood))
+            last_flood_s = f"{pnum(ago)} ثانیه پیش" if ago < 120 else f"{pnum(ago // 60)} دقیقه پیش"
+        lines = [
+            og_top("⏱"),
+            og_head("⏱", "موتور نبض پنل‌های گروه", "اتاق کنترل — نسخه ۱۱.۰ «نبض»"),
+            og_sep(),
+            og_pulse("زنده") if cfg["panel_refresh"] else "┃  ⚪️ موتور خاموش است",
+            og_section("📡", "نبض زنده"),
+            og_stat_grid([
+                ("🌐", "پنل زنده", pnum(len(live))),
+                ("📡", "ویرایش ارسالی", pnum(PULSE_STATS.get("sent", 0))),
+                ("♻️", "ویرایش صرفه‌جویی", pnum(PULSE_STATS.get("skipped", 0))),
+                ("🤝", "احترام به تعامل", pnum(PULSE_STATS.get("held", 0))),
+                ("🐢", "فلود تلگرام", pnum(PULSE_STATS.get("floods", 0))),
+                ("🕐", "آخرین فلود", last_flood_s),
+                ("🧹", "پنل مرده پاک‌شده", pnum(PULSE_STATS.get("cleaned", 0))),
+                ("❤️", "سلامت", _pulse_rate_health()),
+            ]),
+            og_sep("◈"),
+            og_section("🎛", "تنظیمات زنده"),
+            og_row("وضعیت موتور", "روشن ✅" if cfg["panel_refresh"] else "خاموش ❌"),
+            og_row("فاصله‌ی رفرش", f"{pnum(cfg['panel_interval'])} ثانیه"),
+            og_row("ثانیه‌شمار زنده", "روشن ✅" if cfg["panel_countdown"] else "خاموش ❌"),
+            og_row("حالت تعامل-نگه‌دار", f"{pnum(PANEL_HOLD_SECONDS)} ثانیه بعد از هر کلیک"),
+            og_row("فاز سوال (خودکار)", f"حداقل {pnum(PANEL_QUESTION_MIN_INTERVAL)} ثانیه"),
+            og_sep("⋆"),
+            "┃  💡 همه‌ی تنظیم‌ها بلافاصله اعمال می‌شوند — بدون ری‌استارت",
+            "┃  🌐 برای تنظیم اختصاصی هر گروه: «پنل گروه‌ها»",
+            og_close("⏱"),
+        ]
+        engine_label = "موتور رفرش"
+        counter_label = "ثانیه‌شمار زنده"
+        rows = [
+            [btn(("🟢" if cfg["panel_refresh"] else "⚪️") + " " + engine_label,
+                 "A|PULSET|panel_refresh", "success" if cfg["panel_refresh"] else "danger")],
+            [btn(("🔢" if cfg["panel_countdown"] else "⚪️") + " " + counter_label,
+                 "A|PULSET|panel_countdown")],
+        ]
+        cur = int(cfg["panel_interval"])
+        rows.append([
+            btn("➖ ۵", "A|PULSEN|-5"),
+            btn(f"⏱ {pnum(cur)} ثانیه", "A|SYNOP"),
+            btn("➕ ۵", "A|PULSEN|5"),
+        ])
+        rows.append([
+            btn("➖ ۱", "A|PULSEN|-1"),
+            btn("دقیق", "A|SYNOP"),
+            btn("➕ ۱", "A|PULSEN|1"),
+        ])
+        rows.append([btn("⚡ رفرش فوری همه‌ی پنل‌ها", "A|PULSERUN", "primary")])
+        rows.append([btn("🧹 پاک‌سازی پنل‌های مرده", "A|PULSECLEAN")])
+        rows.append([btn("🌐 پنل گروه‌ها", "A|GPANELS", "primary"), btn("⚙️ سیستم", "A|SYSCFG")])
+        rows.append([btn("🛡 داشبورد", "A|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_pulse_center failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+async def admin_gpanels_show(query, page: int = 0) -> None:
+    """🌐 مدیر پنل گروه‌ها — فهرست تک‌تک پنل‌های زنده (۱۱.۰)."""
+    try:
+        live = pulse_live_panels()
+        total = len(live)
+        pages = max(1, (total + GPANELS_PAGE_SIZE - 1) // GPANELS_PAGE_SIZE)
+        page = max(0, min(page, pages - 1))
+        lobbies = sum(1 for _, g in live if str(g.get("status", "")) == "lobby" or str(g.get("phase", "")) == "lobby")
+        in_game = total - lobbies
+        players = sum(len(g.get("players", [])) for _, g in live)
+        lines = [
+            og_top("🌐"),
+            og_head("🌐", "پنل گروه‌ها", "مدیریت تک‌تک پنل‌های زنده — نسخه ۱۱.۰"),
+            og_sep(),
+            og_stat_grid([
+                ("🌐", "پنل زنده", pnum(total)),
+                ("🟢", "لابی", pnum(lobbies)),
+                ("🎮", "در بازی", pnum(in_game)),
+                ("👥", "بازیکنان", pnum(players)),
+            ]),
+            og_sep("◈"),
+        ]
+        if not live:
+            lines.append("┃  الان هیچ گروهی پنل زنده ندارد.")
+            lines.append("┃  هر وقت لابی یا بازی ساخته شود، همین‌جا ظاهر می‌شود.")
+        else:
+            lines.append(og_section("🗂", f"فهرست پنل‌ها — صفحه {pnum(page + 1)} از {pnum(pages)}"))
+            for gid, g in live[page * GPANELS_PAGE_SIZE:(page + 1) * GPANELS_PAGE_SIZE]:
+                chat_id = int(g.get("chat_id", 0))
+                lines.append(
+                    f"┃  ▸ {_panel_group_title(chat_id)}\n"
+                    f"┃    {_panel_phase_chip(g)} · 👥 {pnum(len(g.get('players', [])))} نفر · ⏱ {_panel_game_uptime(g)}"
+                )
+        lines += [
+            og_sep("⋆"),
+            "┃  💡 برای فرمان دادن به هر پنل، روی نام گروهش بزن",
+            og_close("🌐"),
+        ]
+        rows = []
+        for gid, g in live[page * GPANELS_PAGE_SIZE:(page + 1) * GPANELS_PAGE_SIZE]:
+            chat_id = int(g.get("chat_id", 0))
+            rows.append([btn(f"🌐 {_panel_group_title(chat_id)} · {_panel_phase_chip(g)}",
+                             f"A|GPC|{gid}", "primary")])
+        if pages > 1:
+            nav = []
+            if page > 0:
+                nav.append(btn(f"⬅️ صفحه {pnum(page)}", f"A|GPANELS|{page - 1}"))
+            nav.append(btn(f"{pnum(page + 1)}/{pnum(pages)}", "A|SYNOP"))
+            if page < pages - 1:
+                nav.append(btn(f"صفحه {pnum(page + 2)} ➡️", f"A|GPANELS|{page + 1}"))
+            rows.append(nav)
+        rows.append([btn("⚡ رفرش فوری همه", "A|PULSERUN", "success"), btn("🧹 پاک‌سازی مرده‌ها", "A|PULSECLEAN")])
+        rows.append([btn("⏱ موتور نبض", "A|PULSE"), btn("🔄 تازه‌سازی", "A|GPANELS")])
+        rows.append([btn("🛡 داشبورد", "A|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_gpanels_show failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+async def admin_gpanel_control(query, gid: str) -> None:
+    """🌐 اتاق فرمان پنلِ یک گروه — هر ریزکار از همین‌جا (۱۱.۰)."""
+    try:
+        game = DATA.get("games", {}).get(str(gid))
+        if not isinstance(game, dict) or str(game.get("status", "")) not in ("lobby", "active"):
+            await safe_answer_query(query, "⚠️ این پنل دیگر زنده نیست.")
+            await admin_gpanels_show(query)
+            return
+        chat_id = int(game.get("chat_id", 0))
+        group = get_group(chat_id)
+        pcfg = group.get("panel") if isinstance(group.get("panel"), dict) else {}
+        is_lobby = str(game.get("status", "")) == "lobby" or str(game.get("phase", "")) == "lobby"
+        giv = int(pcfg.get("interval", 0) or 0)
+        gcounter = pcfg.get("counter")
+        mn = max(2, int(group.get("min_players", 2)))
+        mx = max(mn, int(group.get("max_players", 20)))
+        players = [int(x) for x in game.get("players", [])]
+        ready = [int(x) for x in game.get("ready", [])]
+        # لیست بازیکنان (حداکثر ۸ نفر + ...)
+        p_parts = []
+        for p in players[:8]:
+            mark = "✅" if p in ready else "⏳"
+            p_parts.append(f"{mark} {escape(name_of(p, game))}")
+        if len(players) > 8:
+            p_parts.append(f"و {pnum(len(players) - 8)} نفر دیگر")
+        players_line = " · ".join(p_parts) if p_parts else "—"
+        g_interval_txt = f"{pnum(giv)} ثانیه (اختصاصی)" if giv >= 3 else f"جهانی ({pnum(int(syscfg().get('panel_interval', 5)))} ثانیه)"
+        if gcounter is True:
+            g_counter_txt = "اختصاصی: روشن ✅"
+        elif gcounter is False:
+            g_counter_txt = "اختصاصی: خاموش ❌"
+        else:
+            g_counter_txt = "جهانی"
+        lines = [
+            og_top("🌐"),
+            og_head("🌐", "اتاق فرمان پنل گروه", _panel_group_title(chat_id)),
+            og_sep(),
+            og_pulse("زنده") if pcfg.get("on") is not False else "┃  ⚪️ رفرش این گروه خاموش است",
+            og_section("📊", "وضعیت"),
+            og_row("وضعیت بازی", _panel_phase_chip(game)),
+            og_row("👑 سرگروه", escape(str(game.get("leader_name") or name_of(int(game.get("leader_id", 0)), game)))),
+            og_row("👥 بازیکنان", f"{pnum(len(players))}/{pnum(mx)}" + (f" — آماده {pnum(len(ready))}" if is_lobby else "")),
+            og_row("🔞 حالت +۱۸", "روشن 🔥" if group.get("adult_mode") else "خاموش"),
+            og_row("⏱ عمر پنل", _panel_game_uptime(game)),
+            og_row("🪪 پیام پنل", f"#{pnum(int(game.get('_panel_msg_id', 0) or 0))}"),
+            og_sep("◈"),
+            og_section("🎮", "بازیکنان"),
+            f"┃  {players_line}",
+            og_sep("◈"),
+            og_section("⏱", "رفرشِ این گروه"),
+            og_row("موتور گروه", "روشن ✅" if pcfg.get("on") is not False else "خاموش ❌"),
+            og_row("فاصله", g_interval_txt),
+            og_row("ثانیه‌شمار", g_counter_txt),
+            og_row("حداقل بازیکن", pnum(mn)),
+            og_sep("⋆"),
+            "┃  💡 همه‌ی تغییرات همین لحظه روی پنل گروه اعمال می‌شوند",
+            og_close("🌐"),
+        ]
+        gpc_engine_label = "رفرش این گروه"
+        rows = [
+            [btn("⚡ رفرش فوری پنل", f"A|GPCR|{gid}", "success")],
+            [btn(("🟢" if pcfg.get("on") is not False else "⚪️") + " " + gpc_engine_label,
+                 f"A|GPCT|{gid}", "success" if pcfg.get("on") is not False else "danger")],
+            [
+                btn("➖", f"A|GPCI|{gid}|-"),
+                btn(f"⏱ {g_interval_txt}", "A|SYNOP"),
+                btn("➕", f"A|GPCI|{gid}|+"),
+            ],
+            [btn("🔢 ثانیه‌شمار: " + g_counter_txt, f"A|GPCCT|{gid}")],
+            [btn("🔞 حالت +۱۸ گروه", f"A|GPCA|{gid}", "danger")],
+            [
+                btn("➖ حداقل", f"A|GPCMIN|{gid}|-"),
+                btn(f"👥 {pnum(mn)}", "A|SYNOP"),
+                btn("حداقل ➕", f"A|GPCMIN|{gid}|+"),
+            ],
+            [
+                btn("➖ حداکثر", f"A|GPCMAX|{gid}|-"),
+                btn(f"👥 {pnum(mx)}", "A|SYNOP"),
+                btn("حداکثر ➕", f"A|GPCMAX|{gid}|+"),
+            ],
+        ]
+        if is_lobby:
+            rows.append([btn("❌ بستن لابی", f"A|GPCCLOSE|{gid}", "danger")])
+        else:
+            rows.append([btn("🎲 رد کردن نوبت", f"A|GPCSKIP|{gid}"),
+                         btn("🏁 پایان بازی", f"A|GPCEND|{gid}", "danger")])
+        rows.append([btn("⬅️ پنل گروه‌ها", "A|GPANELS"), btn("🛡 داشبورد", "A|HOME")])
+        await safe_edit(query, "\n".join(lines), kb(rows))
+    except Exception as exc:
+        log_event("error", "system", f"admin_gpanel_control failed: {exc!r}")
+        await safe_answer_query(query, UX_MSG["error_generic"])
+
+
+async def admin_gpanel_action(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                              query, action: str, parts: list) -> None:
+    """اجرای فرمان‌های اتاق کنترل پنل گروه (۱۱.۰)."""
+    try:
+        uid = int(query.from_user.id)
+        gid = parts[2] if len(parts) > 2 else ""
+        game = DATA.get("games", {}).get(str(gid))
+        if not isinstance(game, dict) or str(game.get("status", "")) not in ("lobby", "active"):
+            await safe_answer_query(query, "⚠️ این پنل دیگر زنده نیست.")
+            await admin_gpanels_show(query)
+            return
+        chat_id = int(game.get("chat_id", 0))
+        group = get_group(chat_id)
+
+        def _pcfg() -> dict:
+            pc = group.get("panel")
+            if not isinstance(pc, dict):
+                pc = {}
+                group["panel"] = pc
+            return pc
+
+        # ⚡ رفرش فوری همین پنل
+        if action == "GPCR":
+            await safe_answer_query(query, "⚡ در حال رفرش فوری...")
+            n = await pulse_force_refresh(context, game)
+            await safe_answer_query(query, f"✅ پنل تازه شد ({pnum(n)})")
+            await admin_gpanel_control(query, gid)
+            return
+        # 🟢 سوییچ رفرش این گروه
+        if action == "GPCT":
+            pc = _pcfg()
+            pc["on"] = not (pc.get("on") is not False)
+            save_data(force=True)
+            audit("gpanel_toggle", uid, chat_id, f"on={pc['on']}")
+            await safe_answer_query(query, "✅ رفرش این گروه روشن شد" if pc["on"] else "🌙 رفرش این گروه خاموش شد")
+            await admin_gpanel_control(query, gid)
+            return
+        # ⏱ فاصله‌ی اختصاصی (۰ = جهانی)
+        if action == "GPCI" and len(parts) > 3:
+            pc = _pcfg()
+            cur = int(pc.get("interval", 0) or 0)
+            nxt = cur + (1 if parts[3] == "+" else -1)
+            nxt = max(0, min(PULSE_INTERVAL_MAX, nxt))
+            pc["interval"] = nxt
+            save_data(force=True)
+            audit("gpanel_interval", uid, chat_id, f"{nxt}")
+            await safe_answer_query(query, "✅ فاصله: جهانی" if nxt == 0 else f"✅ فاصله: {pnum(nxt)} ثانیه")
+            await admin_gpanel_control(query, gid)
+            return
+        # 🔢 ثانیه‌شمار اختصاصی (چرخه‌ی سه‌حالته)
+        if action == "GPCCT":
+            pc = _pcfg()
+            cur = pc.get("counter")
+            if cur is None:
+                pc["counter"] = True
+            elif cur is True:
+                pc["counter"] = False
+            else:
+                pc.pop("counter", None)
+            save_data(force=True)
+            state = {"True": "روشن ✅", "False": "خاموش ❌"}.get(str(pc.get("counter")), "جهانی")
+            await safe_answer_query(query, f"🔢 ثانیه‌شمار این گروه: {state}")
+            await admin_gpanel_control(query, gid)
+            return
+        # 🔞 +۱۸ گروه
+        if action == "GPCA":
+            group["adult_mode"] = not bool(group.get("adult_mode", False))
+            save_data(force=True)
+            audit("gpanel_adult", uid, chat_id, f"on={group['adult_mode']}")
+            await safe_answer_query(query, "🔞 +۱۸: روشن 🔥" if group["adult_mode"] else "🔞 +۱۸: خاموش")
+            await pulse_force_refresh(context, game)
+            await admin_gpanel_control(query, gid)
+            return
+        # 👥 حداقل بازیکن
+        if action == "GPCMIN" and len(parts) > 3:
+            cur = max(2, int(group.get("min_players", 2)))
+            nxt = max(2, min(10, cur + (1 if parts[3] == "+" else -1)))
+            group["min_players"] = nxt
+            save_data(force=True)
+            audit("gpanel_min", uid, chat_id, f"{nxt}")
+            await safe_answer_query(query, f"👥 حداقل بازیکن: {pnum(nxt)}")
+            await admin_gpanel_control(query, gid)
+            return
+        # 👥 حداکثر بازیکن
+        if action == "GPCMAX" and len(parts) > 3:
+            cur = max(2, int(group.get("max_players", 20)))
+            nxt = max(int(group.get("min_players", 2)), min(50, cur + (1 if parts[3] == "+" else -1)))
+            group["max_players"] = nxt
+            save_data(force=True)
+            audit("gpanel_max", uid, chat_id, f"{nxt}")
+            await safe_answer_query(query, f"👥 حداکثر بازیکن: {pnum(nxt)}")
+            await admin_gpanel_control(query, gid)
+            return
+        # 🎲 رد کردن نوبت (قدرت ادمین)
+        if action == "GPCSKIP":
+            if str(game.get("status", "")) != "active":
+                await safe_answer_query(query, "⚠️ بازی هنوز شروع نشده.")
+                return
+            await safe_answer_query(query, "🎲 نوبت رد شد")
+            nxt_q = advance_turn(game)
+            save_data(force=True)
+            audit("gpanel_skip_turn", uid, chat_id)
+            try:
+                await context.bot.send_message(
+                    chat_id,
+                    f"🎲 <b>نوبت توسط مدیریت رد شد!</b>\nنوبت جدید: {mention_user(int(nxt_q or 0), name_of(int(nxt_q or 0), game))}",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+            if nxt_q is not None:
+                await game_send_turn_card(context, game)
+            await admin_gpanel_control(query, gid)
+            return
+        # 🏁 پایان بازی
+        if action == "GPCEND":
+            await safe_answer_query(query, "🏁 بازی در حال پایان...")
+            await end_game_flow(context, game, reason="admin")
+            await admin_gpanels_show(query)
+            return
+        # ❌ بستن لابی
+        if action == "GPCCLOSE":
+            game["status"] = "finished"
+            game["finish_reason"] = "admin_cancelled"
+            group["active_game"] = None
+            save_data(force=True)
+            audit("gpanel_close_lobby", uid, chat_id)
+            await safe_answer_query(query, "❌ لابی بسته شد")
+            try:
+                await context.bot.send_message(chat_id, "❌ <b>لابی توسط مدیریت بسته شد.</b>\nبرای شروع دوباره: /apex")
+            except Exception:
+                pass
+            await admin_gpanels_show(query)
+            return
+        await safe_answer_query(query)
+    except Exception as exc:
+        log_event("error", "system", f"admin_gpanel_action failed: {action} {exc!r}",
                   actor=int(query.from_user.id))
         await safe_answer_query(query, UX_MSG["error_generic"])
 
@@ -25162,6 +25736,56 @@ async def admin_callback_v11(update: Update, context: ContextTypes.DEFAULT_TYPE)
     parts = str(query.data or "").split("|")
     action = parts[1] if len(parts) > 1 else ""
     try:
+        # --- (۱۱.۰) ⏱ موتور نبض + 🌐 پنل گروه‌ها ---
+        if action == "PULSE":
+            await admin_pulse_center(query)
+            return
+        if action == "PULSET" and len(parts) > 2:
+            key = parts[2]
+            if key in ("panel_refresh", "panel_countdown"):
+                store = DATA.setdefault("syscfg", {})
+                store[key] = not bool(syscfg().get(key))
+                save_data(force=True)
+                audit("pulse_toggle", uid, None, f"{key}={store[key]}")
+                await safe_answer_query(query, "✅ روشن شد" if store[key] else "🌙 خاموش شد")
+            await admin_pulse_center(query)
+            return
+        if action == "PULSEN" and len(parts) > 2:
+            try:
+                delta = int(parts[2])
+            except Exception:
+                delta = 0
+            cur = max(3, int(syscfg().get("panel_interval", 5)))
+            nxt = max(PULSE_INTERVAL_MIN, min(PULSE_INTERVAL_MAX, cur + delta))
+            DATA.setdefault("syscfg", {})["panel_interval"] = nxt
+            save_data(force=True)
+            audit("pulse_interval", uid, None, f"{nxt}")
+            await safe_answer_query(query, f"⏱ فاصله‌ی رفرش: {pnum(nxt)} ثانیه")
+            await admin_pulse_center(query)
+            return
+        if action == "PULSERUN":
+            await safe_answer_query(query, "⚡ در حال رفرش فوری همه‌ی پنل‌ها...")
+            n = await pulse_force_refresh(context)
+            await safe_answer_query(query, f"✅ {pnum(n)} پنل تازه شد")
+            await admin_pulse_center(query)
+            return
+        if action == "PULSECLEAN":
+            n = pulse_cleanup_dead_panels()
+            save_data(force=True)
+            await safe_answer_query(query, f"🧹 {pnum(n)} پنل مرده پاک شد")
+            await admin_gpanels_show(query)
+            return
+        if action == "GPANELS":
+            page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            await admin_gpanels_show(query, page)
+            return
+        if action == "GPC" and len(parts) > 2:
+            await admin_gpanel_control(query, parts[2])
+            return
+        if action in ("GPCR", "GPCT", "GPCI", "GPCCT", "GPCA",
+                      "GPCMIN", "GPCMAX", "GPCSKIP", "GPCEND", "GPCCLOSE"):
+            await admin_gpanel_action(update, context, query, action, parts)
+            return
         # --- (۱۰.۰) مرکز فرماندهی نسل جدید ---
         if action == "NOP":
             await safe_answer_query(query)
@@ -25757,7 +26381,7 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"│  ⚔️ <b>{BOT_NAME}</b>\n"
             f"│  <i>{DS_VER} — بازنویسی کامل · هزارلولی</i>\n"
             f"{ds_sep()}\n"
-            + ds_row("📦 نسخه", f"{fa(VERSION)} فرمانده ⚡") + "\n"
+            + ds_row("📦 نسخه", f"{fa(VERSION)} نبض ⏱") + "\n"
             + ds_row("📚 بانک سوالات", f"{pnum(BANKS_TOTAL)} سوال در {pnum(len(BANKS))} بانک") + "\n"
             + ds_row("👥 کاربران", pnum(users)) + "\n"
             + ds_row("👥 گروه‌ها", pnum(groups)) + "\n"
@@ -26498,29 +27122,78 @@ async def _legacy_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> No
         pass
 
 
-# ---- تنظیمات موتور رفرش (۶.۲) ----
+# ---- ⏱🫀 موتور نبض هوشمند (۱۱.۰ «نبض») ----
 PANEL_TICK_EDIT_CAP = 12          # حداکثر ویرایش پنل در هر تیکِ ۱ ثانیه (ضد محدودیت نرخ تلگرام)
 _panel_tick_cursor = 0            # نشانگر گردشی برای انصاف بین گروه‌ها
 PANEL_SPIN_ICONS = "◐◓◑◒"         # آیکون چرخان ثانیه‌شمار
-# ۶.۳ — فلود-کنترل تلگرام: وقتی RetryAfter می‌آید، کل موتور تا این زمان مکث می‌کند
+PANEL_HOLD_SECONDS = 12           # تعامل-نگه‌دار: بعد از هر کلیک، پنل این‌قدر آرام می‌گیرد
+PANEL_QUESTION_MIN_INTERVAL = 15  # فاز سوال: تازه‌سازی کندتر — پنل در انتظار جواب است
 _PANEL_FLOOD_UNTIL = 0.0
 
+# آمار زنده‌ی موتور نبض — نمایش در اتاق کنترل ادمین (A|PULSE)
+PULSE_STATS = {
+    "sent": 0,        # ویرایش‌های ارسالی به تلگرام
+    "skipped": 0,     # ویرایش‌های صرفه‌جویی‌شده (هش یکسان)
+    "held": 0,        # تیک‌هایی که به تعامل کاربر احترام گذاشتند
+    "floods": 0,      # دفعات فلود (RetryAfter)
+    "last_flood": 0.0,
+    "forced": 0,      # رفرش‌های فوری (دست ادمین)
+    "cleaned": 0,     # پنل‌های مرده‌ی پاک‌شده
+    "ticks": 0,       # کل تیک‌های اجرا شده
+}
 
-def _panel_counter_line(remaining: int) -> str:
-    """سطر ثانیه‌شمار زنده — با آیکون چرخان، هر ثانیه تغییر می‌کند."""
+
+def pulse_stats_bump(key: str, n: int = 1) -> None:
+    """شمارنده‌ی آمار موتور — امن در برابر هر خطا."""
+    try:
+        PULSE_STATS[key] = int(PULSE_STATS.get(key, 0)) + int(n)
+    except Exception:
+        pass
+
+
+def panel_group_cfg(game: dict) -> dict:
+    """تنظیم اختصاصی پنلِ همین گروه (از اتاق فرمان ادمین — A|GPC).
+    {'on': bool, 'interval': int (۰ = جهانی), 'counter': bool}
+    """
+    try:
+        g = get_group(int(game.get("chat_id", 0)))
+        cfg = g.get("panel")
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+def _panel_counter_line(remaining: int, interval: int = 5) -> str:
+    """سطر ثانیه‌شمار زنده — نوار پیشرفت ▰▱ + ثانیه‌ی فارسی + آیکون چرخان (۱۱.۰)."""
     spin = PANEL_SPIN_ICONS[int(time.time()) % 4]
     rem = max(0, int(remaining))
-    return f"┃  ⏱ رفرش خودکار: <b>{pnum(rem)}</b> ثانیه {spin}"
+    iv = max(1, int(interval))
+    filled = int(round(min(1.0, rem / float(iv)) * 10))
+    bar = "▰" * filled + "▱" * (10 - filled)
+    return f"┃  ⏱ {bar} <b>{pnum(rem)}</b> ثانیه {spin}"
 
 
 def panel_reset_timer(game: dict) -> None:
-    """ریست شمارنده‌ی رفرش پنل — بعد از هر تعامل یا تغییر فاز (۶.۲)."""
+    """ریست شمارنده‌ی رفرش + فعال‌سازی «تعامل-نگه‌دار» (۱۱.۰).
+
+    بعد از هر تعامل کاربر با پنل، موتور تا PANEL_HOLD_SECONDS ثانیه
+    هیچ ویرایشی نمی‌کند تا با دستِ کاربر «نجنگد» و دکمه زیر انگشتش
+    عوض نشود. بعد از آن، با شمارش تازه ادامه می‌دهد.
+    """
     try:
         try:
             interval = int(syscfg().get("panel_interval", 5))
         except Exception:
             interval = 5
-        game["_panel_next_full"] = time.time() + max(3, interval)
+        try:
+            giv = int(panel_group_cfg(game).get("interval", 0) or 0)
+        except Exception:
+            giv = 0
+        if giv >= 3:
+            interval = giv
+        now = time.time()
+        game["_panel_next_full"] = now + max(3, interval)
+        game["_panel_hold_until"] = now + PANEL_HOLD_SECONDS
     except Exception:
         pass
 
@@ -26566,14 +27239,20 @@ def panel_waiting_view(game: dict) -> tuple:
 
 
 def _panel_views_for(game: dict) -> tuple:
-    """نمای درست برای وضعیت فعلی بازی — آگاه از فاز (۶.۲).
+    """نمای درست برای وضعیت فعلی بازی — آگاه از فاز «و» نمای فرعی (۱۱.۰).
 
-    FIX بحرانی: رفرش قدیمی همیشه نمای «وضعیت» می‌ساخت و دکمه‌های
+    FIX بحرانی (۶.۲): رفرش قدیمی همیشه نمای «وضعیت» می‌ساخت و دکمه‌های
     انتخاب موضوعِ پرسشگر را روی کارت نوبت می‌بلعید!
-    ۶.۳ FIX بحرانی‌تر: در لابی status همیشه "active" و phase=="lobby" است؛
-    چکِ status=="lobby" هرگز صادق نبود و رفرش، دکمه‌های لابی (پیوستن/آماده/
-    شروع) را می‌بلعید و لابی را عملاً می‌کشت. حالا فازِ لابی هم چک می‌شود.
+    FIX بحرانی‌تر (۶.۳): چک فاز لابی هم اضافه شد.
+    FIX ریشه‌ای (۱۱.۰): نمای فرعی (موضوعات بیشتر / امتیازها) که کاربر با
+    دکمه باز کرده، حالا داخل خود بازی ثبت می‌شود و موتور همین نما را
+    رندر می‌کند — دیگر هیچ نمای باز‌شده‌ای با رفرش بلعیده نمی‌شود.
     """
+    sub = panel_subview_active(game)
+    if sub == "moremodes":
+        return moremodes_view(game)
+    if sub == "scores":
+        return scores_view(game)
     status = str(game.get("status", ""))
     phase = str(game.get("phase", ""))
     if status == "lobby" or phase == "lobby":
@@ -26589,13 +27268,45 @@ def _panel_views_for(game: dict) -> tuple:
     return game_home_text(game), game_home_markup(game, 0)
 
 
-async def _panel_apply_edit(bot, game: dict, chat_id: int, message_id: int,
-                           counter_remaining=None) -> bool:
-    """اعمال ویرایش پنل با مدیریت خطاهای تلگرام (۶.۲ + فلود-کنترل ۶.۳)."""
+def _panel_hash(text: str, markup) -> int:
+    """اثر انگشت محتوای پنل — برای تشخیص «ویرایش بی‌فایده» (۱۱.۰)."""
     try:
+        parts = [str(text)]
+        try:
+            kb_rows = markup.inline_keyboard if markup is not None else None
+            if kb_rows:
+                for row in kb_rows:
+                    for b in row:
+                        parts.append(str(getattr(b, "text", "")))
+                        parts.append(str(getattr(b, "callback_data", None) or getattr(b, "url", None) or ""))
+        except Exception:
+            pass
+        return hash("\x1f".join(parts))
+    except Exception:
+        return 0
+
+
+async def _panel_apply_edit(bot, game: dict, chat_id: int, message_id: int,
+                           counter_remaining=None, interval: int = 5,
+                           force: bool = False) -> bool:
+    """اعمال ویرایش پنل — هش‌آگاه + بک‌آف پن‌محور (۱۱.۰).
+
+    • هش محتوا: اگر متن و دکمه‌ها تغییری نکرده‌اند، به تلگرام چیزی
+      نمی‌فرستیم — نه فلیکر، نه خطای «message is not modified».
+    • RetryAfter: فقط «همین پنل» برای چند ثانیه می‌ایستد؛ بقیه‌ی
+      گروه‌ها سالم به کارشان ادامه می‌دهند (قبلاً کل موتور می‌مرد!).
+    """
+    fp = 0
+    try:
+        if not force and time.time() < float(game.get("_panel_backoff_until", 0) or 0):
+            return False
         text, markup = _panel_views_for(game)
         if counter_remaining is not None:
-            text = text + "\n" + _panel_counter_line(counter_remaining)
+            text = text + "\n" + _panel_counter_line(counter_remaining, interval)
+        fp = _panel_hash(text, markup)
+        if not force and fp and fp == game.get("_panel_hash"):
+            pulse_stats_bump("skipped")
+            return True   # محتوا یکسان — ویرایش بی‌فایده
         await bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
@@ -26604,19 +27315,28 @@ async def _panel_apply_edit(bot, game: dict, chat_id: int, message_id: int,
             reply_markup=markup,
             disable_web_page_preview=True,
         )
+        game["_panel_hash"] = fp
+        pulse_stats_bump("sent")
         return True
     except RetryAfter as ra:
-        # ۶.۳ — تلگرام گفت: آهسته‌تر! کل موتور رفرش چند ثانیه مکث می‌کند
-        global _PANEL_FLOOD_UNTIL
+        # (۱۱.۰) فقط همین پنل مکث می‌کند — بقیه‌ی گروه‌ها سالم می‌مانند
         try:
             wait_s = float(getattr(ra, "retry_after", 5) or 5)
         except Exception:
             wait_s = 5.0
-        _PANEL_FLOOD_UNTIL = time.time() + wait_s + 1.5
+        try:
+            game["_panel_backoff_until"] = time.time() + wait_s + 2.0
+        except Exception:
+            pass
+        pulse_stats_bump("floods")
+        PULSE_STATS["last_flood"] = time.time()
         return False
     except Exception as exc:
         msg = str(exc).lower()
         if "not modified" in msg:
+            if fp:
+                game["_panel_hash"] = fp
+            pulse_stats_bump("skipped")
             return True  # محتوا یکی بود — عادی است
         if ("message to edit not found" in msg or "message id is invalid" in msg
                 or "message to edit not found" in msg or "chat not found" in msg
@@ -26624,29 +27344,35 @@ async def _panel_apply_edit(bot, game: dict, chat_id: int, message_id: int,
             # پنل مرده — دیگر مزاحم نشو
             game["_panel_msg_id"] = 0
             game["_panel_next_full"] = 0
+            pulse_stats_bump("cleaned")
             return False
         return False
 
 
 async def auto_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """⏱ موتور رفرش زنده‌ی پنل‌های گروه (۶.۲).
+    """⏱🫀 موتور نبض هوشمند پنل‌های گروه (۱۱.۰ «نبض").
 
-    • هر تیک ۱ ثانیه اجرا می‌شود.
-    • محتوای پنل هر «فاصله‌ی تنظیم‌شده» (پیش‌فرض ۵ ثانیه) کامل تازه می‌شود.
-    • بین دو رفرش کامل، «ثانیه‌شمار زنده» روی پنل می‌چرخد (قابل خاموش‌کردن).
-    • رندر آگاه از فاز است: کارت نوبت دکمه‌های خودش را نگه می‌دارد.
+    • هر تیک ۱ ثانیه؛ محتوا هر «فاصله‌ی تنظیمی» کامل تازه می‌شود.
+    • تعامل-نگه‌دار: بعد از هر کلیک، پنل ۱۲ ثانیه ساکت می‌ماند تا موتور
+      با دست کاربر نجنگد (رفع ریشه‌ای «دکمه‌ها زیر انگشت عوض می‌شدند").
+    • نمای فرعی (موضوعات بیشتر / امتیازها) هرگز بلعیده نمی‌شود.
+    • هش محتوا: ویرایش تکراری = صفر (نه فلیکر، نه خطای not modified).
+    • بک‌آف پن‌محور: RetryAfter فقط همان پنل را می‌ایستاند — نه کل موتور.
+    • فاز سوال: خودکار آرام‌تر (حداقل ۱۵ ثانیه).
+    • تنظیم اختصاصی هر گروه (اتاق فرمان ادمین — A|GPC) رعایت می‌شود.
     """
     global _panel_tick_cursor
     try:
-        # ۶.۳ — احترام به فلود-کنترل تلگرام: در زمان مکث، هیچ ویرایشی نکن
+        pulse_stats_bump("ticks")
+        # فلود-کنترل سراسری فقط در بدترین حالت (تنظیم دستی/خطای غیرپن‌محور)
         if time.time() < _PANEL_FLOOD_UNTIL:
             return
         cfg = syscfg()
         if not cfg.get("panel_refresh", True):
             return
-        interval = max(3, int(cfg.get("panel_interval", 5)))
+        g_interval = max(3, int(cfg.get("panel_interval", 5)))
         show_counter = bool(cfg.get("panel_countdown", True))
-        # جمع‌آوری پنل‌های واجد شرایط
+        # جمع‌آوری پنل‌های واجد شرایط (با تنظیم اختصاصی گروه)
         eligible: list = []
         for gid, game in list(DATA.get("games", {}).items()):
             if not isinstance(game, dict):
@@ -26658,6 +27384,8 @@ async def auto_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> None:
             panel_msg_id = int(game.get("_panel_msg_id", 0))
             if not chat_id or not panel_msg_id:
                 continue
+            if panel_group_cfg(game).get("on") is False:
+                continue   # (۱۱.۰) این گروه از اتاق فرمان خاموش شده
             eligible.append((game, chat_id, panel_msg_id))
         if not eligible:
             return
@@ -26671,22 +27399,114 @@ async def auto_refresh_group_panels(context: ContextTypes.DEFAULT_TYPE) -> None:
         now = time.time()
         for game, chat_id, panel_msg_id in eligible:
             try:
+                # (۱۱.۰) تعامل-نگه‌دار: کاربر دارد با پنل کار می‌کند
+                if now < float(game.get("_panel_hold_until", 0) or 0):
+                    pulse_stats_bump("held")
+                    continue
+                # (۱۱.۰) تنظیم اختصاصی گروه: فاصله و ثانیه‌شمار
+                pcfg = panel_group_cfg(game)
+                try:
+                    giv = int(pcfg.get("interval", 0) or 0)
+                except Exception:
+                    giv = 0
+                interval = giv if giv >= 3 else g_interval
+                counter_on = show_counter
+                if isinstance(pcfg.get("counter"), bool):
+                    counter_on = bool(pcfg["counter"])
+                # (۱۱.۰) فاز سوال: آرام‌تر — پنل در انتظار جواب است
+                if str(game.get("phase", "")) == "question":
+                    interval = max(interval, PANEL_QUESTION_MIN_INTERVAL)
+                sub = panel_subview_active(game)
                 nxt = float(game.get("_panel_next_full", 0) or 0)
                 if now >= nxt or nxt <= 0:
-                    # رفرش کامل + شروع شمارش جدید
+                    # رفرش کامل + شروع شمارش جدید (نمای فرعی بدون ثانیه‌شمار)
                     await _panel_apply_edit(context.bot, game, chat_id, panel_msg_id,
-                                            counter_remaining=interval if show_counter else None)
+                                            counter_remaining=interval if (counter_on and sub is None) else None,
+                                            interval=interval)
                     game["_panel_next_full"] = now + interval
                     game["_last_auto_refresh"] = now_ts()
-                elif show_counter:
-                    # فقط ثانیه‌شمار جلو برود
+                elif counter_on and sub is None:
+                    # فقط ثانیه‌شمار جلو برود (هش داخل apply چک می‌شود)
                     remaining = max(0, int(round(nxt - now)))
                     await _panel_apply_edit(context.bot, game, chat_id, panel_msg_id,
-                                            counter_remaining=remaining)
+                                            counter_remaining=remaining, interval=interval)
             except Exception:
                 continue
     except Exception:
         pass
+
+
+async def pulse_force_refresh(context, game: dict | None = None) -> int:
+    """⚡ رفرش فوری پنل(ها) — دست ادمین از اتاق کنترل (A|PULSE / A|GPC)."""
+    ok = 0
+    try:
+        games: list = []
+        if game is not None:
+            games = [game]
+        else:
+            games = [g for g in DATA.get("games", {}).values()
+                     if isinstance(g, dict) and str(g.get("status", "")) in ("lobby", "active")
+                     and int(g.get("_panel_msg_id", 0) or 0)]
+        for g in games:
+            try:
+                chat_id = int(g.get("chat_id", 0))
+                msg_id = int(g.get("_panel_msg_id", 0))
+                if not chat_id or not msg_id:
+                    continue
+                g["_panel_hold_until"] = 0.0
+                g["_panel_next_full"] = 0.0
+                if await _panel_apply_edit(context.bot, g, chat_id, msg_id,
+                                           counter_remaining=None, force=True):
+                    ok += 1
+            except Exception:
+                continue
+        pulse_stats_bump("forced", ok)
+    except Exception:
+        pass
+    return ok
+
+
+def pulse_cleanup_dead_panels() -> int:
+    """🧹 پاک‌سازی پنل‌های مرده/بازی‌های تمام‌شده (۱۱.۰)."""
+    n = 0
+    try:
+        reg = DATA.get("_panel_registry", {})
+        if isinstance(reg, dict):
+            now = now_ts()
+            for k, info in list(reg.items()):
+                if not isinstance(info, dict):
+                    reg.pop(k, None)
+                    n += 1
+                    continue
+                if now - float(info.get("ts", 0) or 0) > 43200:
+                    reg.pop(k, None)
+                    n += 1
+        for g in DATA.get("games", {}).values():
+            if isinstance(g, dict) and str(g.get("status", "")) not in ("lobby", "active"):
+                if int(g.get("_panel_msg_id", 0) or 0):
+                    g["_panel_msg_id"] = 0
+                    n += 1
+        pulse_stats_bump("cleaned", n)
+    except Exception:
+        pass
+    return n
+
+
+def pulse_live_panels() -> list:
+    """فهرست (کلید، بازی)های دارای پنل زنده — برای مدیر پنل گروه‌ها (A|GPANELS)."""
+    out = []
+    try:
+        for gid, g in DATA.get("games", {}).items():
+            if not isinstance(g, dict):
+                continue
+            if str(g.get("status", "")) not in ("lobby", "active"):
+                continue
+            if not int(g.get("_panel_msg_id", 0) or 0):
+                continue
+            out.append((gid, g))
+    except Exception:
+        pass
+    return out
 
 
 async def home_living_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
