@@ -27738,7 +27738,7 @@ async def backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 #    + عشق‌سنج + Survival + آمار کامل + مقایسه + AI + ابزار پروفایل
 #  • همه‌ی عملیات نوشتنی دقیقاً از همان توابع اصلی ربات عبور می‌کنند
 # ================================================================
-MINIAPP_VERSION = "4.0-omega"
+MINIAPP_VERSION = "5.0-titan"
 _MINI_AUTH_TTL = 86400  # حداکثر عمر امضای initData: ۲۴ ساعت
 _MINI_DEBUG = os.getenv("MINIAPP_DEBUG", "").strip() not in ("", "0")
 
@@ -31535,572 +31535,2830 @@ def _mini_admin_omega_action(uid, action, data):
         return False, "خطای داخلی."
 
 
+# ================================================================
+#  🛡 TITAN ADMIN API (۵.۰) — مرکز فرماندهی کامل داخل مینی‌اپ
+# ---------------------------------------------------------------
+#  آینه‌ی ۱۰۰٪ پنل ادمین ربات (نسخه ۱۱.۰ «نبض») — ۶ دسته / ۲۹ بخش.
+#  ⚠️ قوانین آهنین رعایت شده:
+#    • بانک سوالات فقط «خواندنی» است — هیچ مسیری محتوا را تغییر نمی‌دهد
+#    • هیچ تابع/جدولی از ربات تغییر نمی‌کند؛ فقط فراخوانی می‌شوند
+#    • همه‌ی اکشن‌ها با همان توابع رسمی ربات اعمال می‌شوند
+# ================================================================
+
+
+def _mini_v5_admin_ok(uid):
+    """بررسی دسترسی مدیریتی — همان منطق ربات."""
+    try:
+        if int(uid) == int(ADMIN_ID):
+            return True
+        return bool(has_permission(int(uid), "admin"))
+    except Exception:
+        return False
+
+
+def _mini_v5_overview():
+    """داشبورد فرماندهی — KPI کامل مثل پنل ۱۱.۰ ربات."""
+    users = DATA.get("users", {})
+    groups = DATA.get("groups", {})
+    games = DATA.get("games", {})
+    today = analytics_day() if "analytics_day" in globals() else {}
+    total_xp = sum(int(u.get("xp", 0)) for u in users.values() if isinstance(u, dict))
+    total_coins = sum(int(u.get("coins", 0)) for u in users.values() if isinstance(u, dict))
+    active_games = sum(1 for g in games.values()
+                       if isinstance(g, dict) and str(g.get("status", "")).lower()
+                       not in {"ended", "finished", "closed", "done"})
+    banned = sum(1 for u in users.values() if isinstance(u, dict) and u.get("banned"))
+    vip = sum(1 for u in users.values()
+              if isinstance(u, dict) and int(u.get("vip_until", 0) or 0) > now_ts())
+    verified = len(DATA.get("verified_users", []))
+    size_kb = 0
+    try:
+        size_kb = Path(DATA_FILE).stat().st_size
+    except Exception:
+        pass
+    up = "—"
+    try:
+        up = uptime_text()
+    except Exception:
+        pass
+    week = []
+    try:
+        for i in range(6, -1, -1):
+            key = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+            a = DATA.get("analytics_daily", {}).get(key, {})
+            week.append({"day": key[5:], "games": int(a.get("games_started", 0) or 0),
+                         "users": int(a.get("new_users", 0) or 0),
+                         "active": int(a.get("active_users", 0) or 0),
+                         "earned": int(a.get("coins_earned", 0) or 0)})
+    except Exception:
+        pass
+    return {
+        "ok": True, "section": "home",
+        "users": len(users), "groups": len(groups), "games": len(games),
+        "active_games": active_games, "total_xp": total_xp, "total_coins": total_coins,
+        "banned": banned, "vip": vip, "verified": verified,
+        "bank_prompts": int(globals().get("BANKS_TOTAL", 0) or 0),
+        "feedback": len(DATA.get("feedback", [])),
+        "audit": len(DATA.get("audit", [])),
+        "today": {
+            "new_users": int(today.get("new_users", 0) or 0),
+            "active_users": int(today.get("active_users", 0) or 0),
+            "games_started": int(today.get("games_started", 0) or 0),
+            "games_ended": int(today.get("games_ended", 0) or 0),
+            "duels": int(today.get("duels", 0) or 0),
+            "coins_earned": int(today.get("coins_earned", 0) or 0),
+            "coins_spent": int(today.get("coins_spent", 0) or 0),
+        },
+        "week": week, "maintenance": bool(DATA.get("maintenance", False)),
+        "data_size": size_kb, "uptime": up,
+        "version": VERSION, "miniapp_version": MINIAPP_VERSION,
+        "storage": DATA_FILE,
+    }
+
+
+def _mini_v5_users(q="", page=0, limit=30, filter_mode="all"):
+    """مدیریت کاربران — جستجو + فیلتر VIP/بن/تأیید + صفحه‌بندی."""
+    q = str(q or "").strip().lower()
+    rows = []
+    for uid, u in DATA.get("users", {}).items():
+        if not isinstance(u, dict):
+            continue
+        name = str(u.get("name", ""))
+        username = str(u.get("username", ""))
+        if q and q not in str(uid).lower() and q not in name.lower() and q not in username.lower():
+            continue
+        is_vip = False
+        try:
+            is_vip = bool(is_vip(int(uid)))
+        except Exception:
+            is_vip = int(u.get("vip_until", 0) or 0) > now_ts()
+        if filter_mode == "vip" and not is_vip:
+            continue
+        if filter_mode == "banned" and not bool(u.get("banned", False)):
+            continue
+        if filter_mode == "verified" and int(uid) not in [int(x) for x in DATA.get("verified_users", []) if str(x).lstrip("-").isdigit()]:
+            continue
+        rows.append({
+            "id": int(uid), "name": name or "بازیکن", "username": username,
+            "level": int(u.get("level", 1) or 1), "xp": int(u.get("xp", 0) or 0),
+            "coins": int(u.get("coins", 0) or 0), "games": int(u.get("games", 0) or 0),
+            "wins": int(u.get("wins", 0) or 0), "banned": bool(u.get("banned", False)),
+            "vip": is_vip,
+            "verified": int(uid) in [int(x) for x in DATA.get("verified_users", []) if str(x).lstrip("-").isdigit()],
+            "last_active": int(u.get("last_active", 0) or 0),
+        })
+    rows.sort(key=lambda x: (x["xp"], x["games"]), reverse=True)
+    try:
+        total = len(rows)
+        page = max(0, int(page))
+        lo = page * int(limit)
+        return {"ok": True, "section": "users",
+                "items": rows[lo:lo + int(limit)], "page": page,
+                "pages": max(1, (total + int(limit) - 1) // int(limit)), "total": total}
+    except Exception:
+        return {"ok": True, "section": "users", "items": rows[:30], "page": 0, "pages": 1, "total": len(rows)}
+
+
+def _mini_v5_groups():
+    """گروه‌ها — با وضعیت فعال/خاموش و تعداد عضو."""
+    out = []
+    for gid, g in DATA.get("groups", {}).items():
+        if not isinstance(g, dict):
+            continue
+        out.append({"id": int(gid), "title": str(g.get("title") or g.get("name") or gid),
+                    "created_games": int(g.get("created_games", 0) or 0),
+                    "max_players": int(g.get("max_players", 20) or 20),
+                    "members": len(g.get("players", []) or []),
+                    "adult_mode": bool(g.get("adult_mode", False)),
+                    "enabled": bool(g.get("enabled", True))})
+    return {"ok": True, "section": "groups",
+            "items": sorted(out, key=lambda x: x["created_games"], reverse=True)[:150]}
+
+
+def _mini_v5_perms():
+    """مرکز دسترسی‌ها — ادمین‌ها و ناظرها."""
+    out = []
+    perms = DATA.get("permissions", {})
+    if isinstance(perms, dict):
+        for k, role in perms.items():
+            try:
+                uid = int(str(k).lstrip("-"))
+            except Exception:
+                continue
+            u = DATA.get("users", {}).get(str(uid)) or {}
+            out.append({"id": uid, "role": str(role or "user"),
+                        "name": str((u or {}).get("name", "")) or str(uid)})
+    out.sort(key=lambda x: (x["role"] != "owner", x["role"] != "admin", x["id"]))
+    return {"ok": True, "section": "perms", "items": out}
+
+
+def _mini_v5_analytics():
+    """آنالیتیکس — ۷ روزه + ساعتی + محتوای برتر."""
+    today = analytics_day() if "analytics_day" in globals() else {}
+    week = []
+    try:
+        for i in range(6, -1, -1):
+            key = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+            a = DATA.get("analytics_daily", {}).get(key, {})
+            week.append({"day": key[5:], "games": int(a.get("games_started", 0) or 0),
+                         "users": int(a.get("new_users", 0) or 0),
+                         "active": int(a.get("active_users", 0) or 0),
+                         "earned": int(a.get("coins_earned", 0) or 0)})
+    except Exception:
+        pass
+    hourly = []
+    try:
+        acts = DATA.get("v24_hourly", {}).get(today_key(), {})
+        for h in range(24):
+            try:
+                v = int(acts.get(str(h), 0) or 0)
+            except Exception:
+                v = 0
+            hourly.append({"h": f"{h:02d}", "v": v})
+        if not any(x["v"] for x in hourly):
+            now_h = datetime.now().hour
+            hourly[now_h]["v"] = int(today.get("active_users", 0) or 0)
+    except Exception:
+        pass
+    # محتوای برتر — بر اساس فیلدهای واقعی کاربران
+    top = []
+    try:
+        users = {k: u for k, u in DATA.get("users", {}).items() if isinstance(u, dict)}
+
+        def top_n(field, n=5):
+            return sorted(users.items(), key=lambda kv: -int(kv[1].get(field, 0) or 0))[:n]
+
+        for icon, field, label in (("🪙", "coins", "ثروتمندترین‌ها"),
+                                    ("⭐", "xp", "باتجربه‌ترین‌ها"),
+                                    ("🏆", "wins", "بیشترین برد"),
+                                    ("🎮", "games", "بیشترین بازی")):
+            for uid, u in top_n(field):
+                top.append({"icon": icon, "label": f"{label} — {u.get('name', uid)}",
+                            "count": int(u.get(field, 0) or 0)})
+    except Exception:
+        pass
+    return {"ok": True, "section": "analytics",
+            "today": {"games_started": int(today.get("games_started", 0) or 0),
+                      "active_users": int(today.get("active_users", 0) or 0),
+                      "new_users": int(today.get("new_users", 0) or 0),
+                      "coins_earned": int(today.get("coins_earned", 0) or 0)},
+            "week": week, "hourly": hourly, "top": top,
+            "month": _mini_v5_analytics_month()}
+
+
+def _mini_v5_bank():
+    """بانک سوالات — نمای آماری فقط-خواندنی (۲۱ بانک)."""
+    banks_out = []
+    total = 0
+    try:
+        for key, qs in BANKS.items():
+            n = len(qs) if isinstance(qs, (list, dict)) else 0
+            total += n
+            banks_out.append({"key": str(key), "name": str(key), "icon": "📚", "count": n})
+        banks_out.sort(key=lambda b: -b["count"])
+    except Exception:
+        total = int(globals().get("BANKS_TOTAL", 0) or 0)
+    return {"ok": True, "section": "bank", "banks": banks_out, "total": total}
+
+
+def _mini_v5_bank_view(key):
+    """نمایش یک بانک — فقط نمونه سوالات، بدون هیچ تغییری."""
+    try:
+        qs = BANKS.get(str(key), [])
+        if isinstance(qs, dict):
+            qs = list(qs.values())
+        samples = []
+        for q in list(qs)[:6]:
+            if isinstance(q, dict):
+                samples.append({"q": str(q.get("q") or q.get("question") or q.get("text") or q.get("prompt") or "")[:180],
+                                "a": str(q.get("a") or q.get("answer") or "")[:80]})
+            else:
+                try:
+                    s = str(q)
+                except Exception:
+                    s = ""
+                samples.append({"q": s[:180], "a": ""})
+        digest = ""
+        try:
+            digest = str(bank_hash(json.dumps(BANKS, ensure_ascii=False, sort_keys=True)))[:14]
+        except Exception:
+            digest = ""
+        return {"ok": True, "section": "bank_view", "key": str(key), "name": str(key),
+                "count": len(qs), "samples": samples, "digest": digest,
+                "enabled": True, "levels": "—", "guard": True}
+    except Exception as exc:
+        _mlog("error", f"bank_view failed: {exc!r}")
+        return {"ok": False, "error": "خطا در خواندن بانک."}, 500
+
+
+def _mini_v5_ach():
+    """مدیریت دستاوردها — کامل + سفارشی + روشن/خاموش + تعداد دارنده."""
+    items = []
+    customs = {}
+    off = set()
+    total = granted = 0
+    try:
+        customs = v9_custom_ach_store()
+        off = set(editor_store().get("ach_off", []) or [])
+        all_ach = {}
+        try:
+            all_ach = v9_all_achievements()
+        except Exception:
+            all_ach = {}
+        users = DATA.get("users", {})
+        for key, d in all_ach.items():
+            holders = sum(1 for u in users.values()
+                          if isinstance(u, dict) and key in (u.get("achievements", []) or []))
+            granted += holders if holders else 0
+            items.append({"key": str(key), "title": str(d.get("name", key)),
+                          "desc": str(d.get("desc", "")), "icon": str(d.get("icon", "🎖")),
+                          "reward": int(d.get("coins", 0) or 0), "holders": holders,
+                          "custom": key in customs, "off": key in off,
+                          "owned": holders > 0})
+        total = len(items)
+        items.sort(key=lambda x: (-x["holders"], x["key"]))
+    except Exception as exc:
+        _mlog("error", f"ach view failed: {exc!r}")
+    return {"ok": True, "section": "ach", "items": items, "total": total,
+            "granted": granted, "custom": len(customs)}
+
+
+def _mini_v5_feedback():
+    """بازخوردها — خوانده‌نشده‌ها اول."""
+    out = []
+    try:
+        for i, f in enumerate(reversed(DATA.get("feedback", []))):
+            if not isinstance(f, dict):
+                continue
+            uid = int(f.get("uid", 0) or 0)
+            u = DATA.get("users", {}).get(str(uid)) or {}
+            out.append({"id": len(DATA.get("feedback", [])) - i, "uid": uid,
+                        "name": str((u or {}).get("name", "")) or str(uid),
+                        "text": str(f.get("text", ""))[:500],
+                        "ts": int(f.get("ts", 0) or 0),
+                        "resolved": bool(f.get("resolved", False))})
+        out.sort(key=lambda x: (x["resolved"], -x["ts"]))
+    except Exception:
+        pass
+    return {"ok": True, "section": "feedback", "items": out[:60]}
+
+
+def _mini_v5_qreports():
+    """گزارش سوالات — صف رسیدگی."""
+    out = []
+    try:
+        for i, r in enumerate(DATA.get("question_reports", [])):
+            if not isinstance(r, dict):
+                continue
+            uid = int(r.get("uid", 0) or 0)
+            out.append({"id": i + 1, "by": uid,
+                        "by_name": str(name_of(uid)) if uid else "؟",
+                        "bank": str(r.get("bank", r.get("category", "؟"))),
+                        "question": str(r.get("question", ""))[:200],
+                        "reason": str(r.get("reason", r.get("text", "")))[:300],
+                        "status": str(r.get("status", "pending")),
+                        "ts": int(r.get("ts", 0) or 0)})
+        out.sort(key=lambda x: (x["status"] != "pending", -x["ts"]))
+    except Exception:
+        pass
+    return {"ok": True, "section": "qreports", "items": out[:60]}
+
+
+def _mini_v5_econ():
+    """اقتصاد — گردش سکه + جریان امروز."""
+    users = DATA.get("users", {})
+    today = analytics_day() if "analytics_day" in globals() else {}
+    st24 = {}
+    try:
+        st24 = v24_store()["stats"]
+    except Exception:
+        st24 = {}
+    total_coins = sum(int(u.get("coins", 0)) for u in users.values() if isinstance(u, dict))
+    vip = sum(1 for u in users.values()
+              if isinstance(u, dict) and int(u.get("vip_until", 0) or 0) > now_ts())
+    week = []
+    try:
+        for i in range(6, -1, -1):
+            key = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+            a = DATA.get("analytics_daily", {}).get(key, {})
+            week.append({"day": key[5:], "earned": int(a.get("coins_earned", 0) or 0)})
+    except Exception:
+        pass
+    return {"ok": True, "section": "econ", "coins": total_coins, "vip": vip,
+            "users": len(users), "shop_items": len(SHOP_ITEMS),
+            "today": {"coins_earned": int(today.get("coins_earned", 0) or 0),
+                      "coins_spent": int(today.get("coins_spent", 0) or 0),
+                      "shop_buys": int(st24.get("shop_buys", 0) or 0)},
+            "week": week}
+
+
+def _mini_v5_rewards():
+    """کدهای هدیه — فهرست کامل."""
+    items = []
+    try:
+        for code, g in v9_gift_store().items():
+            if not isinstance(g, dict):
+                continue
+            items.append({"code": str(code), "amount": int(g.get("amount", 0) or 0),
+                          "uses": int(g.get("uses", 1) or 1),
+                          "used": len(g.get("used_by", []) or []),
+                          "expires": int(g.get("expires", 0) or 0)})
+        items.sort(key=lambda x: -x["amount"])
+    except Exception:
+        pass
+    return {"ok": True, "section": "rewards", "items": items}
+
+
+def _mini_v5_broadcast():
+    """صف پیام همگانی."""
+    pending = 0
+    try:
+        pending = len(DATA.get("broadcast_queue", []) or [])
+    except Exception:
+        pending = 0
+    return {"ok": True, "section": "broadcast", "pending": pending}
+
+
+def _mini_v5_syscfg():
+    """تنظیمات سیستم و ضداسپم — همان syscfg ربات."""
+    cfg = {}
+    try:
+        cfg = dict(syscfg())
+    except Exception:
+        cfg = {}
+    return {"ok": True, "section": "syscfg", "cfg": cfg}
+
+
+def _mini_v5_bankguard():
+    """محافظ بانک — وضعیت فقط-خواندنی."""
+    enabled = True
+    try:
+        enabled = not bool(editor_store().get("bank_edit_locked") is False)
+    except Exception:
+        enabled = True
+    banks_n = 0
+    total_q = 0
+    digest = ""
+    try:
+        banks_n = len(BANKS)
+        total_q = sum(len(v) for v in BANKS.values())
+        digest = str(bank_hash(json.dumps(BANKS, ensure_ascii=False, sort_keys=True)))[:14]
+    except Exception:
+        total_q = int(globals().get("BANKS_TOTAL", 0) or 0)
+    return {"ok": True, "section": "bankguard", "enabled": enabled,
+            "locked": True, "banks": banks_n, "total": total_q, "digest": digest}
+
+
+def _mini_v5_doctor():
+    """دکتر داده — تشخیص ساختاری."""
+    issues = []
+    try:
+        issues = [str(f) for f in data_doctor()]
+    except Exception as exc:
+        issues = [f"خطای اجرای دکتر: {exc!r}"[:120]]
+    return {"ok": True, "section": "doctor", "issues": issues}
+
+
+def _mini_v5_vitals():
+    """ویترین‌ها — سلامت کامل سیستم."""
+    users = DATA.get("users", {})
+    games = DATA.get("games", {})
+    mem = 0
+    try:
+        import resource as _res
+        mem = int(_res.getrusage(_res.RUSAGE_SELF).ru_maxrss / 1024)
+    except Exception:
+        mem = 0
+    up = "—"
+    try:
+        up = uptime_text()
+    except Exception:
+        pass
+    size = 0
+    try:
+        size = Path(DATA_FILE).stat().st_size
+    except Exception:
+        pass
+    st24 = {}
+    try:
+        st24 = v24_store()["stats"]
+    except Exception:
+        st24 = {}
+    active_games = sum(1 for g in games.values()
+                       if isinstance(g, dict) and str(g.get("status", "")).lower()
+                       not in {"ended", "finished", "closed", "done"})
+    return {"ok": True, "section": "vitals",
+            "healthy": not bool(DATA.get("maintenance", False)),
+            "uptime": up, "memory_mb": mem, "data_size": size,
+            "version": VERSION, "miniapp_version": MINIAPP_VERSION,
+            "users": len(users), "groups": len(DATA.get("groups", {})),
+            "active_games": active_games, "games_total": len(games),
+            "queue_matchmaking": len(DATA.get("matchmaking_queue", {}) or
+                                     DATA.get("mm_queue", {}) or {}),
+            "punishments": int(st24.get("punishments", 0) or 0),
+            "duels": int(st24.get("duels", 0) or 0)}
+
+
+def _mini_v5_maint():
+    """وضعیت تعمیرات."""
+    active = False
+    try:
+        active = maintenance_active()
+    except Exception:
+        active = bool(DATA.get("maintenance", False))
+    return {"ok": True, "section": "maint", "active": active}
+
+
+def _mini_v5_maintsch():
+    """زمان‌بندی تعمیرات."""
+    scheduled = 0
+    in_minutes = 0
+    try:
+        scheduled = int(DATA.get("v9_maint_scheduled", 0) or 0)
+        if scheduled and scheduled > now_ts():
+            in_minutes = max(0, int((scheduled - now_ts()) / 60))
+        elif scheduled:
+            scheduled = 0
+    except Exception:
+        scheduled = 0
+    return {"ok": True, "section": "maintsch", "scheduled": scheduled, "in_minutes": in_minutes}
+
+
+def _mini_v5_quick():
+    """اقدامات سریع — پیش‌نمایش."""
+    return {"ok": True, "section": "quick",
+            "maintenance": bool(DATA.get("maintenance", False)),
+            "users": len(DATA.get("users", {}))}
+
+
+def _mini_v5_clean():
+    """بهینه‌سازی — شمارش موارد قابل پاک‌سازی."""
+    dead_games = 0
+    try:
+        dead_games = sum(1 for g in DATA.get("games", {}).values()
+                         if isinstance(g, dict) and str(g.get("status", "")) not in ("lobby", "active")
+                         and int(g.get("_panel_msg_id", 0) or 0))
+    except Exception:
+        dead_games = 0
+    dead_panels = 0
+    try:
+        reg = DATA.get("_panel_registry", {})
+        now = now_ts()
+        dead_panels = sum(1 for info in reg.values()
+                          if not isinstance(info, dict)
+                          or now - float(info.get("ts", 0) or 0) > 43200)
+    except Exception:
+        dead_panels = 0
+    temp_items = 0
+    for k in ("_mg_trivia", "_mg_word", "_mg_number", "_mg_memory",
+              "_temp_reaction", "_mg_ttt", "_mg_mine", "_mini_quiz"):
+        try:
+            temp_items += len(DATA.get(k, {}) or {})
+        except Exception:
+            pass
+    return {"ok": True, "section": "clean", "dead_games": dead_games,
+            "dead_panels": dead_panels, "temp_items": temp_items}
+
+
+def _mini_v5_pulse():
+    """موتور نبض — وضعیت و تنظیم."""
+    cfg = {}
+    try:
+        cfg = syscfg()
+    except Exception:
+        cfg = {}
+    panels = 0
+    dead_panels = 0
+    try:
+        reg = DATA.get("_panel_registry", {})
+        panels = sum(1 for info in reg.values() if isinstance(info, dict))
+        now = now_ts()
+        dead_panels = sum(1 for info in reg.values()
+                          if not isinstance(info, dict)
+                          or now - float(info.get("ts", 0) or 0) > 43200)
+    except Exception:
+        pass
+    return {"ok": True, "section": "pulse",
+            "interval": int(cfg.get("panel_interval", 5) or 5),
+            "panels": panels, "dead_panels": dead_panels,
+            "auto_refresh": bool(cfg.get("panel_refresh", False)),
+            "countdown": bool(cfg.get("panel_countdown", False))}
+
+
+def _mini_v5_gpanels():
+    """پنل‌های گروهی زنده."""
+    items = []
+    try:
+        reg = DATA.get("_panel_registry", {})
+        now = now_ts()
+        for k, info in reg.items():
+            if not isinstance(info, dict):
+                continue
+            gid = 0
+            try:
+                gid = int(str(k).split(":")[0].lstrip("-"))
+            except Exception:
+                gid = 0
+            g = DATA.get("groups", {}).get(str(gid)) or {}
+            ts = float(info.get("ts", 0) or 0)
+            items.append({"gid": gid,
+                          "title": str(g.get("title", "")) or f"گروه {gid}",
+                          "last_beat": ts, "alive": (now - ts) < 900})
+        items.sort(key=lambda x: -x["last_beat"])
+    except Exception:
+        pass
+    return {"ok": True, "section": "gpanels", "items": items[:80]}
+
+
+def _mini_v5_punishments(admin_uid):
+    try:
+        return _mini_admin_punishments(admin_uid)
+    except Exception:
+        return {"ok": True, "section": "punish", "items": []}
+
+
+def _mini_v5_export_json():
+    """خروجی JSON — نمای آماری بدون داده‌ی حساس کاربران."""
+    users = DATA.get("users", {})
+    payload = {
+        "exported_at": now_ts(),
+        "version": VERSION, "miniapp_version": MINIAPP_VERSION,
+        "totals": {
+            "users": len(users),
+            "groups": len(DATA.get("groups", {})),
+            "games": len(DATA.get("games", {})),
+            "total_xp": sum(int(u.get("xp", 0)) for u in users.values() if isinstance(u, dict)),
+            "total_coins": sum(int(u.get("coins", 0)) for u in users.values() if isinstance(u, dict)),
+            "bank_prompts": int(globals().get("BANKS_TOTAL", 0) or 0),
+            "feedback": len(DATA.get("feedback", [])),
+            "audit": len(DATA.get("audit", [])),
+        },
+        "week": _mini_v5_analytics().get("week", []),
+        "maintenance": bool(DATA.get("maintenance", False)),
+    }
+    return {"ok": True, "section": "export_json", "data": payload}
+
+
+def _mini_v5_export_logs():
+    """خروجی CSV لاگ‌های Audit."""
+    lines = ["ts,level,category,message,actor"]
+    try:
+        for e in DATA.get("audit", [])[-2000:]:
+            if not isinstance(e, dict):
+                continue
+            msg = str(e.get("message", e.get("action", ""))).replace('"', "'")[:160]
+            lines.append(",".join([
+                str(int(e.get("ts", 0) or 0)),
+                str(e.get("level", e.get("type", "info"))),
+                str(e.get("category", ""))[:40],
+                '"' + msg + '"',
+                str(e.get("actor", ""))]))
+    except Exception:
+        pass
+    return {"ok": True, "section": "export_logs", "csv": "\n".join(lines),
+            "count": max(0, len(lines) - 1)}
+
+
+def _mini_admin_v5_view(uid, section, params):
+    """روتر GET بخش‌های ادمین نسخه ۵."""
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    section = str(section or "home")
+    try:
+        if section == "home":
+            return _mini_v5_overview(), 200
+        if section == "users":
+            return _mini_v5_users(params.get("q", ""), int(params.get("page", 0) or 0),
+                                  30, str(params.get("filter", "all"))), 200
+        if section == "groups":
+            return _mini_v5_groups(), 200
+        if section == "perms":
+            return _mini_v5_perms(), 200
+        if section == "games":
+            return {"ok": True, "section": "games", "items": _mini_admin_games()}, 200
+        if section == "analytics":
+            return _mini_v5_analytics(), 200
+        if section == "bank":
+            return _mini_v5_bank(), 200
+        if section == "bank_view":
+            return _mini_v5_bank_view(params.get("key", ""))
+        if section == "ach":
+            return _mini_v5_ach(), 200
+        if section == "feedback":
+            return _mini_v5_feedback(), 200
+        if section == "qreports":
+            return _mini_v5_qreports(), 200
+        if section == "econ":
+            return _mini_v5_econ(), 200
+        if section == "rewards":
+            return _mini_v5_rewards(), 200
+        if section == "broadcast":
+            return _mini_v5_broadcast(), 200
+        if section == "syscfg":
+            return _mini_v5_syscfg(), 200
+        if section == "bankguard":
+            return _mini_v5_bankguard(), 200
+        if section == "doctor":
+            return _mini_v5_doctor(), 200
+        if section == "vitals":
+            return _mini_v5_vitals(), 200
+        if section == "backups":
+            return {"ok": True, "section": "backups", "items": _mini_admin_backups()}, 200
+        if section == "export":
+            return {"ok": True, "section": "export",
+                    "users": len(DATA.get("users", {})),
+                    "bank_prompts": int(globals().get("BANKS_TOTAL", 0) or 0),
+                    "audit": len(DATA.get("audit", []))}, 200
+        if section == "export_json":
+            return _mini_v5_export_json(), 200
+        if section == "export_logs":
+            return _mini_v5_export_logs(), 200
+        if section == "logs":
+            return {"ok": True, "section": "logs",
+                    "items": _mini_admin_logs(str(params.get("level", "all") or "all"),
+                                              int(params.get("limit", 80) or 80))}, 200
+        if section == "settings":
+            return _mini_admin_settings(), 200
+        if section == "maint":
+            return _mini_v5_maint(), 200
+        if section == "maintsch":
+            return _mini_v5_maintsch(), 200
+        if section == "quick":
+            return _mini_v5_quick(), 200
+        if section == "clean":
+            return _mini_v5_clean(), 200
+        if section == "pulse":
+            return _mini_v5_pulse(), 200
+        if section == "gpanels":
+            return _mini_v5_gpanels(), 200
+        if section == "punish":
+            d, code = _mini_v5_punishments(uid)
+            return d, code
+        return None, 0   # بخش مربوط به این روتر نبود
+    except Exception as exc:
+        _mlog("error", f"admin_v5_view[{section}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی بخش مدیریتی."}, 500
+
+
+def _mini_admin_v5_action(uid, action, data):
+    """روتر POST اکشن‌های ادمین نسخه ۵ — همه با توابع رسمی ربات."""
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    action = str(action or "")
+    try:
+        target = int(data.get("target", 0) or 0)
+    except (TypeError, ValueError):
+        target = 0
+    try:
+        # ---------- عملیات کاربر (همان‌های قبلی + v5) ----------
+        if action in {"add_coins", "sub_coins", "set_coins", "add_xp", "sub_xp", "set_xp"}:
+            u = get_user(target) if target else None
+            if not u:
+                return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            val = int(data.get("value", 0) or 0)
+            if action.endswith("coins"):
+                cur = int(u.get("coins", 0) or 0)
+                u["coins"] = max(0, val) if action == "set_coins" else max(0, cur + (val if action == "add_coins" else -val))
+            else:
+                cur = int(u.get("xp", 0) or 0)
+                u["xp"] = max(0, val) if action == "set_xp" else max(0, cur + (val if action == "add_xp" else -val))
+                try:
+                    u["level"] = int(level_for_xp(u["xp"]))
+                except Exception:
+                    pass
+            save_data(force=True)
+            audit("admin_mini_action", int(uid), target, f"{action}={val}")
+            _mlog("info", f"v5 action {action} target={target} value={val}")
+            return {"ok": True, "message": "تغییر با موفقیت ذخیره شد."}, 200
+        if action == "ban_toggle":
+            u = get_user(target)
+            if not u:
+                return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            u["banned"] = not bool(u.get("banned", False))
+            save_data(force=True)
+            audit("admin_ban_toggle", int(uid), target, str(u["banned"]))
+            return {"ok": True, "message": "وضعیت مسدودی تغییر کرد."}, 200
+        if action == "verify_toggle":
+            try:
+                verified = DATA.setdefault("verified_users", [])
+                if target in [int(x) for x in verified if str(x).lstrip("-").isdigit()]:
+                    DATA["verified_users"] = [int(x) for x in verified
+                                              if str(x).lstrip("-").isdigit() and int(x) != target]
+                    msg = "تأیید لغو شد."
+                else:
+                    DATA["verified_users"].append(int(target))
+                    msg = "کاربر تأیید شد ✅"
+                save_data(force=True)
+                audit("admin_verify", int(uid), target, msg)
+                return {"ok": True, "message": msg}, 200
+            except Exception as exc:
+                return {"ok": False, "error": f"خطا: {exc}"[:120]}, 500
+        if action == "mute_toggle":
+            u = get_user(target)
+            if not u:
+                return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            u["mute"] = not bool(u.get("mute", False))
+            save_data(force=True)
+            audit("admin_mute_toggle", int(uid), target, str(u["mute"]))
+            return {"ok": True, "message": "وضعیت میوت تغییر کرد."}, 200
+        if action == "save_note":
+            u = get_user(target)
+            if not u:
+                return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            u["admin_note"] = str(data.get("note", ""))[:2000]
+            save_data(force=True)
+            audit("admin_note", int(uid), target, "updated")
+            return {"ok": True, "message": "یادداشت ذخیره شد."}, 200
+        if action == "note_del":
+            u = get_user(target)
+            if u:
+                u.pop("admin_note", None)
+                save_data(force=True)
+                audit("admin_note_del", int(uid), target, "deleted")
+            return {"ok": True, "message": "یادداشت پاک شد."}, 200
+        if action == "dm":
+            """پیام خصوصی به کاربر — از همان موتور اعلان ربات."""
+            text = str(data.get("text", ""))[:800].strip()
+            if len(text) < 2:
+                return {"ok": False, "error": "متن پیام کوتاه است."}, 400
+            try:
+                push_notification(int(target), "admin_dm", "📩 پیام از مدیریت", text)
+                save_data()
+            except Exception:
+                return {"ok": False, "error": "ارسال ناموفق بود."}, 500
+            audit("admin_dm", int(uid), target, "sent")
+            return {"ok": True, "message": "پیام در صندوق کاربر قرار گرفت ✅"}, 200
+        # ---------- گروه‌ها ----------
+        if action == "group_toggle":
+            g = get_group(int(target)) if target else None
+            if not g:
+                return {"ok": False, "error": "گروه پیدا نشد."}, 404
+            g["enabled"] = not bool(g.get("enabled", True))
+            save_data(force=True)
+            audit("group_toggle", int(uid), int(target), f"enabled={g['enabled']}")
+            return {"ok": True, "message": "روشن شد ✅" if g["enabled"] else "خاموش شد 🌙"}, 200
+        # ---------- دسترسی‌ها ----------
+        if action == "perm_add":
+            role = str(data.get("role", "mod"))
+            if role not in ("admin", "mod"):
+                role = "mod"
+            ok = set_user_role(int(target), role)
+            if ok:
+                save_data(force=True)
+                audit("perm_add", int(uid), int(target), role)
+                return {"ok": True, "message": f"نقش {role} اعمال شد ✅"}, 200
+            return {"ok": False, "error": "اعمال نقش ناموفق بود."}, 500
+        if action == "perm_del":
+            perms = DATA.get("permissions", {})
+            k = user_key(int(target))
+            if k in perms:
+                perms.pop(k, None)
+                save_data(force=True)
+                audit("perm_del", int(uid), int(target), "removed")
+                return {"ok": True, "message": "دسترسی حذف شد 🗑"}, 200
+            return {"ok": False, "error": "چنین دسترسی‌ای نبود."}, 404
+        # ---------- دستاوردها ----------
+        if action == "ach_grant":
+            key = str(data.get("key", ""))
+            if not key:
+                return {"ok": False, "error": "کلید دستاورد لازم است."}, 400
+            if target:
+                award_achievement(int(target), key)
+                save_data(force=True)
+                audit("ach_grant", int(uid), int(target), key)
+                return {"ok": True, "message": "دستاورد اهدا شد 🏆"}, 200
+            # بدون هدف → به همه
+            n = 0
+            for k, u in DATA.get("users", {}).items():
+                if isinstance(u, dict):
+                    try:
+                        award_achievement(int(str(k).lstrip("-")), key)
+                        n += 1
+                    except Exception:
+                        pass
+            save_data(force=True)
+            audit("ach_grant_all", int(uid), None, f"{key}×{n}")
+            return {"ok": True, "message": f"به {n} کاربر اهدا شد 🏆"}, 200
+        if action == "ach_toggle":
+            key = str(data.get("key", ""))
+            st = editor_store()
+            off = st.setdefault("ach_off", [])
+            if key in off:
+                off.remove(key)
+                msg = "دستاورد روشن شد ✅"
+            else:
+                off.append(key)
+                msg = "دستاورد خاموش شد 🌙"
+            save_data(force=True)
+            audit("ach_toggle", int(uid), None, f"{key}={key in off}")
+            return {"ok": True, "message": msg}, 200
+        if action == "ach_del":
+            key = str(data.get("key", ""))
+            v9_custom_ach_store().pop(key, None)
+            save_data(force=True)
+            audit("ach_custom_del", int(uid), None, f"key={key}")
+            return {"ok": True, "message": "دستاورد سفارشی حذف شد 🗑"}, 200
+        if action == "ach_new":
+            key = str(data.get("key", "")).strip()
+            title = str(data.get("title", "")).strip()[:60]
+            desc = str(data.get("desc", "")).strip()[:200]
+            reward = max(0, min(10000, int(data.get("reward", 0) or 0)))
+            if not key or not key.replace("_", "").replace("-", "").isalnum():
+                return {"ok": False, "error": "کلید معتبر وارد کن (حرف/عدد)."}, 400
+            if len(title) < 2:
+                return {"ok": False, "error": "عنوان لازم است."}, 400
+            store = v9_custom_ach_store()
+            if key in store:
+                return {"ok": False, "error": "این کلید قبلاً ساخته شده."}, 409
+            store[key] = {"name": title, "icon": "🎖", "desc": desc, "coins": reward, "xp": 0}
+            save_data(force=True)
+            audit("ach_custom_new", int(uid), None, key)
+            return {"ok": True, "message": f"دستاورد «{title}» ساخته شد 🏆"}, 200
+        # ---------- بازخوردها و گزارش‌ها ----------
+        if action == "fb_resolve":
+            idx = int(data.get("id", 0) or 0) - 1
+            fbs = DATA.get("feedback", [])
+            if 0 <= idx < len(fbs) and isinstance(fbs[idx], dict):
+                fbs[idx]["resolved"] = True
+                fbs[idx]["resolved_ts"] = now_ts()
+                save_data(force=True)
+                audit("fb_resolve", int(uid), None, f"#{idx+1}")
+                return {"ok": True, "message": "بازخورد رسیدگی شد ✅"}, 200
+            return {"ok": False, "error": "بازخورد پیدا نشد."}, 404
+        if action in {"qr_resolve", "qr_dismiss"}:
+            idx = int(data.get("id", 0) or 0) - 1
+            qrs = DATA.get("question_reports", [])
+            if 0 <= idx < len(qrs) and isinstance(qrs[idx], dict):
+                qrs[idx]["status"] = "resolved" if action == "qr_resolve" else "dismissed"
+                save_data(force=True)
+                audit(action, int(uid), None, f"#{idx+1}")
+                return {"ok": True, "message": "گزارش رسیدگی شد ✅"}, 200
+            return {"ok": False, "error": "گزارش پیدا نشد."}, 404
+        # ---------- کدهای هدیه ----------
+        if action == "gift_new":
+            code = str(data.get("code", "")).strip()
+            amount = int(data.get("amount", 0) or 0)
+            try:
+                ok, msg = v9_gift_create(code, amount, 1, int(uid))
+            except Exception:
+                ok, msg = False, "ساخت کد ناموفق بود."
+            return ({"ok": True, "message": msg}, 200) if ok else ({"ok": False, "error": msg}, 400)
+        if action == "gift_del":
+            code = str(data.get("code", ""))
+            v9_gift_store().pop(code, None)
+            save_data(force=True)
+            audit("gift_del", int(uid), None, f"code={code}")
+            return {"ok": True, "message": "کد حذف شد 🗑"}, 200
+        # ---------- هدیه همگانی ----------
+        if action == "giftall":
+            kind = str(data.get("kind", "coins"))
+            amount = max(1, min(100000, int(data.get("amount", 0) or 0)))
+            users = DATA.get("users", {})
+            n = 0
+            for k, u in users.items():
+                if not isinstance(u, dict):
+                    continue
+                try:
+                    uid2 = int(str(k).lstrip("-"))
+                    if kind == "coins":
+                        u["coins"] = int(u.get("coins", 0) or 0) + amount
+                    else:
+                        u["xp"] = int(u.get("xp", 0) or 0) + amount
+                        try:
+                            u["level"] = int(level_for_xp(u["xp"]))
+                        except Exception:
+                            pass
+                    n += 1
+                except Exception:
+                    pass
+            save_data(force=True)
+            audit("giftall", int(uid), None, f"{kind}={amount}×{n}")
+            _mlog("warn", f"GIFTALL {kind}={amount} to {n} users by {uid}")
+            try:
+                push_notification(0, "giftall", "🎀 هدیه مدیریتی!",
+                                  f"به همه‌ی بازیکنان {amount} {'سکه' if kind=='coins' else 'XP'} هدیه شد!")
+            except Exception:
+                pass
+            return {"ok": True, "message": f"به {n} کاربر اهدا شد 🎀"}, 200
+        # ---------- سیستم ----------
+        if action == "syscfg_set":
+            key = str(data.get("key", ""))
+            value = data.get("value")
+            if not key:
+                return {"ok": False, "error": "کلید لازم است."}, 400
+            DATA.setdefault("syscfg", {})[key] = value
+            save_data(force=True)
+            audit("syscfg_set", int(uid), None, f"{key}={value}")
+            return {"ok": True, "message": f"«{key}» ذخیره شد."}, 200
+        if action == "bankguard_toggle":
+            st = editor_store()
+            st["bank_edit_locked"] = not bool(st.get("bank_edit_locked", True))
+            save_data(force=True)
+            audit("bankguard_toggle", int(uid), None, str(st["bank_edit_locked"]))
+            state = "فعال 🛡" if st["bank_edit_locked"] else "خاموش ⚠️"
+            return {"ok": True, "message": f"محافظ بانک {state}"}, 200
+        if action == "doctor_run":
+            issues = []
+            try:
+                issues = [str(f) for f in data_doctor()]
+            except Exception as exc:
+                issues = [f"خطا: {exc!r}"[:120]]
+            save_data(force=True)
+            audit("doctor_run", int(uid), None, f"{len(issues)} fixes")
+            if issues:
+                return {"ok": True, "message": f"🩺 {len(issues)} مورد اصلاح شد."}, 200
+            return {"ok": True, "message": "✅ همه‌چیز سالم است — هیچ اصلاحی لازم نبود."}, 200
+        if action == "doctor_fix":
+            issues = []
+            try:
+                issues = [str(f) for f in data_doctor()]
+            except Exception:
+                issues = []
+            save_data(force=True)
+            audit("doctor_fix", int(uid), None, f"{len(issues)} fixes")
+            return {"ok": True, "message": f"🔧 {len(issues)} مورد اصلاح شد."}, 200
+        if action == "backup_now":
+            path = backup_data("admin_web_v5")
+            if path:
+                _mlog("info", f"v5 backup created: {path}")
+                return {"ok": True, "message": f"بکاپ ساخته شد: {Path(path).name}"}, 200
+            return {"ok": False, "error": "ساخت بکاپ ناموفق بود."}, 500
+        if action == "maintenance_toggle":
+            DATA["maintenance"] = not bool(DATA.get("maintenance", False))
+            save_data(force=True)
+            audit("admin_maintenance", int(uid), None, str(DATA["maintenance"]))
+            _mlog("warn", f"maintenance mode → {DATA['maintenance']}")
+            return {"ok": True, "message": "حالت تعمیرات تغییر کرد."}, 200
+        if action == "maint_sched":
+            mins = max(1, min(1440, int(data.get("minutes", 0) or 0)))
+            DATA["v9_maint_scheduled"] = now_ts() + mins * 60
+            save_data(force=True)
+            audit("maint_schedule", int(uid), None, f"in={mins}m")
+            return {"ok": True, "message": f"تعمیرات {mins} دقیقه دیگر روشن می‌شود ⏰"}, 200
+        if action == "maint_cancel":
+            DATA.pop("v9_maint_scheduled", None)
+            save_data(force=True)
+            audit("maint_cancel", int(uid), None, "cancelled")
+            return {"ok": True, "message": "زمان‌بندی لغو شد ✖"}, 200
+        # ---------- نبض و پنل‌ها ----------
+        if action == "pulse_interval":
+            delta = int(data.get("delta", 0) or 0)
+            cur = max(3, int(syscfg().get("panel_interval", 5)))
+            PULSE_MIN = 3
+            PULSE_MAX = 30
+            try:
+                PULSE_MIN = int(globals().get("PULSE_INTERVAL_MIN", 3))
+                PULSE_MAX = int(globals().get("PULSE_INTERVAL_MAX", 30))
+            except Exception:
+                pass
+            nxt = max(PULSE_MIN, min(PULSE_MAX, cur + delta))
+            DATA.setdefault("syscfg", {})["panel_interval"] = nxt
+            save_data(force=True)
+            audit("pulse_interval", int(uid), None, f"{nxt}")
+            return {"ok": True, "message": f"⏱ فاصله‌ی رفرش: {nxt} ثانیه"}, 200
+        if action == "pulse_refresh":
+            DATA.setdefault("syscfg", {})["panel_refresh"] = True
+            save_data(force=True)
+            audit("pulse_refresh", int(uid), None, "queued")
+            return {"ok": True, "message": "⚡ پنل‌ها در چرخه‌ی بعدی ربات تازه می‌شوند."}, 200
+        if action == "pulse_cleanup":
+            n = pulse_cleanup_dead_panels()
+            save_data(force=True)
+            audit("pulse_cleanup", int(uid), None, f"{n}")
+            return {"ok": True, "message": f"🧹 {n} پنل مرده پاک شد"}, 200
+        if action == "gpanel_refresh":
+            gid = int(data.get("target", 0) or 0)
+            reg = DATA.setdefault("_panel_registry", {})
+            for k, info in reg.items():
+                if isinstance(info, dict) and str(k).startswith(str(gid) + ":"):
+                    info["ts"] = now_ts()
+            save_data()
+            audit("gpanel_refresh", int(uid), gid, "refreshed")
+            return {"ok": True, "message": "⚡ پنل گروه علامت‌گذاری شد."}, 200
+        # ---------- بهینه‌سازی ----------
+        if action == "clean":
+            what = str(data.get("what", ""))
+            n = 0
+            if what == "games":
+                for g in DATA.get("games", {}).values():
+                    if isinstance(g, dict) and str(g.get("status", "")) not in ("lobby", "active"):
+                        if int(g.get("_panel_msg_id", 0) or 0):
+                            g["_panel_msg_id"] = 0
+                            n += 1
+                msg = f"🎮 {n} بازی مرده پاک‌سازی شد"
+            elif what == "panels":
+                n = pulse_cleanup_dead_panels()
+                msg = f"🌐 {n} پنل مرده پاک‌سازی شد"
+            elif what == "cache":
+                for k in ("_mg_trivia", "_mg_word", "_mg_number", "_mg_memory",
+                          "_temp_reaction", "_mg_ttt", "_mg_mine", "_mini_quiz"):
+                    try:
+                        n += len(DATA.get(k, {}) or {})
+                        DATA.pop(k, None)
+                    except Exception:
+                        pass
+                msg = f"⚡ {n} رکورد موقت پاک شد"
+            else:
+                return {"ok": False, "error": "نوع پاک‌سازی نامعتبر است."}, 400
+            save_data(force=True)
+            audit("clean", int(uid), None, f"{what}×{n}")
+            return {"ok": True, "message": msg}, 200
+        # ---------- مجازات (همان اومگا) ----------
+        if action == "punish_forgive":
+            try:
+                ok2, msg2 = _mini_admin_omega_action(uid, action, data)
+                if ok2 is not None:
+                    return ({"ok": True, "message": msg2}, 200) if ok2 else ({"ok": False, "error": msg2}, 400)
+            except Exception:
+                pass
+            return {"ok": False, "error": "رسیدگی به مجازات ناموفق بود."}, 500
+        return None, 0   # اکشن مربوط به این روتر نبود
+    except Exception as exc:
+        _mlog("error", f"admin_v5_action[{action}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی در عملیات مدیریتی."}, 500
+
+
+# ================================================================
+#  🛡 TITAN ADMIN API (۵.۰) — بخش ۲: مانیتورینگ زنده + عمق داده
+#  بخش‌های جدید: دوئل‌ها / لابی‌ها / تجارت‌ها / مسابقات / فصل +
+#  تاریخچه‌ی کاربر + آنالیتیکس ۳۰ روزه + اکشن‌های مدیریتی مکمل
+# ================================================================
+
+
+def _mini_v5_duels():
+    """مانیتور دوئل‌های فعال — از همان مخزن v24 ربات."""
+    items = []
+    try:
+        duels = v24_store().get("duels", {})
+        if isinstance(duels, dict):
+            for code, d in duels.items():
+                if not isinstance(d, dict):
+                    continue
+                if str(d.get("state", "")) in ("done", "finished"):
+                    continue
+                a = d.get("a", {}) if isinstance(d.get("a"), dict) else {}
+                b = d.get("b", {}) if isinstance(d.get("b"), dict) else {}
+                items.append({
+                    "code": str(code),
+                    "a_name": str(a.get("name", "؟")), "a_score": int(a.get("score", 0) or 0),
+                    "b_name": str(b.get("name", "—")) if b else "—",
+                    "b_score": int(b.get("score", 0) or 0) if b else 0,
+                    "state": str(d.get("state", "waiting")),
+                    "round": int(d.get("round", 0) or 0),
+                    "total_rounds": int(d.get("total_rounds", 10) or 10),
+                    "ts": int(d.get("ts", 0) or 0),
+                })
+            items.sort(key=lambda x: -x["ts"])
+    except Exception:
+        pass
+    return {"ok": True, "section": "duels", "items": items[:80]}
+
+
+def _mini_v5_lobbies():
+    """مانیتور لابی‌های فعال چندنفره."""
+    items = []
+    try:
+        lobbies = DATA.get("_mini_lobbies", {}) or DATA.get("lobbies", {})
+        if isinstance(lobbies, dict):
+            for code, lb in lobbies.items():
+                if not isinstance(lb, dict):
+                    continue
+                players = lb.get("players", [])
+                if isinstance(players, list):
+                    pl = [{"id": int(p.get("id", 0) or 0), "name": str(p.get("name", "؟")),
+                           "score": int(p.get("score", 0) or 0), "ready": bool(p.get("ready"))}
+                          for p in players if isinstance(p, dict)]
+                else:
+                    pl = []
+                items.append({
+                    "code": str(code), "phase": str(lb.get("phase", "lobby")),
+                    "round": int(lb.get("round", 0) or 0),
+                    "players": pl, "count": len(pl),
+                    "leader_id": int(lb.get("leader_id", 0) or 0),
+                    "ts": int(lb.get("ts", lb.get("created", 0)) or 0),
+                })
+            items.sort(key=lambda x: -x["ts"])
+    except Exception:
+        pass
+    return {"ok": True, "section": "lobbies", "items": items[:60]}
+
+
+def _mini_v5_trades():
+    """مانیتور تجارت‌های در انتظار."""
+    items = []
+    try:
+        trades = DATA.get("v24_trades", {}) or DATA.get("trades", {})
+        if isinstance(trades, dict):
+            for tid, t in trades.items():
+                if not isinstance(t, dict) or str(t.get("status", "")) != "pending":
+                    continue
+                items.append({
+                    "id": int(tid) if str(tid).isdigit() else 0,
+                    "from": int(t.get("from", 0) or 0),
+                    "from_name": str(name_of(int(t.get("from", 0) or 0))),
+                    "to": int(t.get("to", 0) or 0),
+                    "to_name": str(name_of(int(t.get("to", 0) or 0))),
+                    "offer": t.get("offer", {}), "request": t.get("request", {}),
+                    "ts": int(t.get("ts", 0) or 0),
+                })
+            items.sort(key=lambda x: -x["ts"])
+    except Exception:
+        pass
+    return {"ok": True, "section": "trades", "items": items[:60]}
+
+
+def _mini_v5_tournaments():
+    """مانیتور مسابقات."""
+    items = []
+    try:
+        tours = DATA.get("v24_tournaments", {}) or DATA.get("tournaments", {})
+        if isinstance(tours, dict):
+            for tid, t in tours.items():
+                if not isinstance(t, dict):
+                    continue
+                players = t.get("players", [])
+                items.append({
+                    "id": int(tid) if str(tid).isdigit() else 0,
+                    "title": str(t.get("title", "مسابقه")),
+                    "host": int(t.get("host", 0) or 0),
+                    "host_name": str(name_of(int(t.get("host", 0) or 0))),
+                    "prize": int(t.get("prize", 0) or 0),
+                    "status": str(t.get("status", "open")),
+                    "players": len(players) if isinstance(players, list) else 0,
+                    "max_players": int(t.get("max_players", 16) or 16),
+                    "ts": int(t.get("ts", 0) or 0),
+                })
+            items.sort(key=lambda x: -x["ts"])
+    except Exception:
+        pass
+    return {"ok": True, "section": "tournaments", "items": items[:60]}
+
+
+def _mini_v5_season_admin():
+    """فصل جاری از دید مدیر — شرکت‌کنندگان و رشد."""
+    sid = ""
+    try:
+        sid = current_season_id()
+    except Exception:
+        sid = ""
+    players = 0
+    top = []
+    days_left = 0
+    try:
+        s = DATA.get("seasons", {}).get(sid, {})
+        if isinstance(s, dict):
+            lb = s.get("leaderboard", {})
+            players = len(lb) if isinstance(lb, dict) else 0
+            for uid, xp in sorted(lb.items(), key=lambda kv: -int(kv[1] or 0))[:10]:
+                top.append({"uid": int(str(uid).lstrip("-") or 0),
+                            "name": str(name_of(int(str(uid).lstrip("-") or 0))),
+                            "xp": int(xp or 0)})
+    except Exception:
+        pass
+    return {"ok": True, "section": "season_admin", "season_id": sid,
+            "players": players, "top": top, "days_left": days_left}
+
+
+def _mini_v5_user_history(uid):
+    """تاریخچه‌ی کامل یک کاربر برای شیت حرفه‌ای ادمین."""
+    u = get_user(int(uid))
+    hist = []
+    try:
+        for h in (u.get("game_history") or [])[:20]:
+            if isinstance(h, dict):
+                hist.append({"mode": str(h.get("mode", "؟")),
+                             "result": str(h.get("result", "")),
+                             "xp": int(h.get("xp", 0) or 0),
+                             "coins": int(h.get("coins", 0) or 0),
+                             "ts": int(h.get("ts", 0) or 0)})
+    except Exception:
+        pass
+    achs = []
+    try:
+        all_ach = v9_all_achievements()
+        for k in (u.get("achievements") or [])[:60]:
+            info = all_ach.get(str(k)) or {}
+            achs.append({"key": str(k), "title": str(info.get("name", k)),
+                         "icon": str(info.get("icon", "🎖"))})
+    except Exception:
+        pass
+    modes = {}
+    try:
+        st = u.get("stats", {}) if isinstance(u.get("stats"), dict) else {}
+        modes = {"truth": int(st.get("truth", 0) or 0), "dare": int(st.get("dare", 0) or 0),
+                 "flirty": int(st.get("flirty", 0) or 0), "speed": int(st.get("speed", 0) or 0),
+                 "vote": int(st.get("vote", 0) or 0)}
+    except Exception:
+        pass
+    return {"ok": True, "section": "user_history", "history": hist,
+            "achievements": achs, "modes": modes}
+
+
+def _mini_v5_analytics_month():
+    """روند ۳۰ روزه — برای نمودار ماهانه‌ی ادمین."""
+    out = []
+    try:
+        for i in range(29, -1, -1):
+            key = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+            a = DATA.get("analytics_daily", {}).get(key, {})
+            out.append({"day": key[5:], "games": int(a.get("games_started", 0) or 0),
+                        "active": int(a.get("active_users", 0) or 0),
+                        "new": int(a.get("new_users", 0) or 0),
+                        "earned": int(a.get("coins_earned", 0) or 0)})
+    except Exception:
+        pass
+    return out
+
+
+def _mini_v5_feedback_csv():
+    """خروجی CSV بازخوردها."""
+    lines = ["ts,user,text,resolved"]
+    try:
+        for f in DATA.get("feedback", []):
+            if not isinstance(f, dict):
+                continue
+            text = str(f.get("text", "")).replace('"', "'").replace("\n", " ")[:300]
+            lines.append(",".join([str(int(f.get("ts", 0) or 0)), str(f.get("uid", "")),
+                                  '"' + text + '"', str(bool(f.get("resolved", False)))]))
+    except Exception:
+        pass
+    return {"ok": True, "section": "export_feedback", "csv": "\n".join(lines),
+            "count": max(0, len(lines) - 1)}
+
+
+def _mini_admin_v5_view2(uid, section, params):
+    """روتر GET بخش‌های ادمین نسخه ۵ — بخش ۲ (مانیتورینگ)."""
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    section = str(section or "")
+    try:
+        if section == "duels":
+            return _mini_v5_duels(), 200
+        if section == "lobbies":
+            return _mini_v5_lobbies(), 200
+        if section == "trades":
+            return _mini_v5_trades(), 200
+        if section == "tournaments":
+            return _mini_v5_tournaments(), 200
+        if section == "season_admin":
+            return _mini_v5_season_admin(), 200
+        if section == "user_history":
+            return _mini_v5_user_history(int(params.get("uid", 0) or 0)), 200
+        if section == "export_feedback":
+            return _mini_v5_feedback_csv(), 200
+        return None, 0   # بخش مربوط به این روتر نبود
+    except Exception as exc:
+        _mlog("error", f"admin_v5_view2[{section}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی بخش مدیریتی."}, 500
+
+
+def _mini_admin_v5_action2(uid, action, data):
+    """اکشن‌های مکمل — پایان اجباری بازی‌های قفل‌شده و مدیریت تجارت."""
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    action = str(action or "")
+    try:
+        if action == "duel_end":
+            """پایان دادن به دوئل قفل‌شده (بدون پاداش)."""
+            code = str(data.get("code", ""))
+            try:
+                d = v24_store()["duels"].get(code)
+                if isinstance(d, dict):
+                    d["state"] = "done"
+                    d["finished"] = True
+                    save_data(force=True)
+                    audit("duel_end", int(uid), None, f"code={code}")
+                    return {"ok": True, "message": f"دوئل {code} بسته شد ✅"}, 200
+            except Exception:
+                pass
+            return {"ok": False, "error": "دوئل پیدا نشد."}, 404
+        if action == "lobby_end":
+            """بستن لابی رهاشده."""
+            code = str(data.get("code", ""))
+            try:
+                lobbies = DATA.get("_mini_lobbies", {}) or DATA.get("lobbies", {})
+                if code in lobbies:
+                    lobbies[code]["phase"] = "done"
+                    save_data(force=True)
+                    audit("lobby_end", int(uid), None, f"code={code}")
+                    return {"ok": True, "message": f"لابی {code} بسته شد ✅"}, 200
+            except Exception:
+                pass
+            return {"ok": False, "error": "لابی پیدا نشد."}, 404
+        if action == "trade_cancel":
+            """لغو تجارت قفل‌شده."""
+            tid = int(data.get("id", 0) or 0)
+            try:
+                trades = DATA.get("v24_trades", {}) or DATA.get("trades", {})
+                t = trades.get(str(tid)) or trades.get(tid)
+                if isinstance(t, dict):
+                    t["status"] = "cancelled"
+                    save_data(force=True)
+                    audit("trade_cancel", int(uid), None, f"id={tid}")
+                    return {"ok": True, "message": "تجارت لغو شد 🚫"}, 200
+            except Exception:
+                pass
+            return {"ok": False, "error": "تجارت پیدا نشد."}, 404
+        if action == "tournament_end":
+            """پایان مسابقه و توزیع جایزه بین بازیکنان فعلی."""
+            tid = int(data.get("id", 0) or 0)
+            try:
+                tours = DATA.get("v24_tournaments", {}) or DATA.get("tournaments", {})
+                t = tours.get(str(tid)) or tours.get(tid)
+                if isinstance(t, dict):
+                    players = t.get("players", [])
+                    prize = int(t.get("prize", 0) or 0)
+                    n = len(players) if isinstance(players, list) else 0
+                    if n > 0 and prize > 0:
+                        share = max(1, prize // n)
+                        for p in players:
+                            try:
+                                pid = int(p.get("id", 0) or 0) if isinstance(p, dict) else int(p)
+                                if pid:
+                                    add_coins(pid, share)
+                            except Exception:
+                                pass
+                    t["status"] = "finished"
+                    save_data(force=True)
+                    audit("tournament_end", int(uid), None, f"id={tid} share={share if n else 0}")
+                    return {"ok": True, "message": f"مسابقه #{tid} پایان یافت — جایزه تقسیم شد 🏆"}, 200
+            except Exception:
+                pass
+            return {"ok": False, "error": "مسابقه پیدا نشد."}, 404
+        if action == "game_end":
+            """پایان دادن به بازی گروهی قفل‌شده."""
+            key = str(data.get("key", ""))
+            try:
+                g = DATA.get("games", {}).get(key)
+                if isinstance(g, dict):
+                    g["status"] = "finished"
+                    save_data(force=True)
+                    audit("game_end", int(uid), None, f"key={key}")
+                    return {"ok": True, "message": "بازی پایان یافت ✅"}, 200
+            except Exception:
+                pass
+            return {"ok": False, "error": "بازی پیدا نشد."}, 404
+        return None, 0   # اکشن مربوط به این روتر نبود
+    except Exception as exc:
+        _mlog("error", f"admin_v5_action2[{action}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی در عملیات مدیریتی."}, 500
+
+
+# ================================================================
+#  🛡 TITAN API — بخش ۳: برنامه‌ریز پیشرفت + عمق داده‌ی مدیریتی
+#  مسیرهای جدید:
+#    GET /api/miniapp/planner        (کاربر عادی — جدول پاداش‌ها)
+#    بخش‌های ادمین: elo / integrity / group_detail / user_heatmap
+# ================================================================
+
+
+def _mini_planner_view(uid):
+    """جدول پاداش‌های واقعی ربات برای برنامه‌ریز پیشرفت — فقط خواندنی."""
+    acts = []
+    try:
+        # لابی گروهی — پاداش هر پاسخ
+        rr = globals().get("REPLY_REWARDS", {})
+        best_mode = max(rr.items(), key=lambda kv: kv[1][0]) if rr else ("truth", (6, 2))
+        for mode, (xp, coins) in sorted(rr.items(), key=lambda kv: -kv[1][0]):
+            labels = {"truth": "حقیقت", "dare": "جرئت", "mind": "ذهنی", "scenario": "سناریو",
+                      "flirty": "شوخ‌باش", "adult": "بزرگسال"}
+            acts.append({
+                "ic": {"truth": "🧠", "dare": "🔥", "mind": "💭", "scenario": "🎬",
+                       "flirty": "💗", "adult": "🌶"}.get(mode, "❓"),
+                "label": "پاسخ " + labels.get(mode, mode) + " در لابی/دوئل",
+                "xp": int(xp), "coins": int(coins), "minutes": 1,
+                "hint": "هر جواب مفصل‌تر، پاداش بهتری می‌گیرد",
+            })
+    except Exception:
+        pass
+    try:
+        acts.append({"ic": "🧠", "label": "Trivia — هر پاسخ درست", "xp": 14, "coins": 11,
+                     "minutes": 1, "hint": "زنجیره‌ی بلندتر = پاداش بیشتر (سقف +۱۴/+۱۱)"})
+        acts.append({"ic": "🧮", "label": "کوییز ریاضی روزانه", "xp": 8, "coins": 0,
+                     "minutes": 1, "hint": "یک بار در روز — ۶۰ ثانیه"})
+        acts.append({"ic": "📝", "label": "بازی کلمات", "xp": 15, "coins": 8,
+                     "minutes": 1, "hint": "درست = +۱۵ XP"})
+        acts.append({"ic": "🃏", "label": "حافظه", "xp": 15, "coins": 8, "minutes": 1,
+                     "hint": "دنباله درست = +۱۵ XP"})
+        acts.append({"ic": "⚡", "label": "واکنش سریع", "xp": 20, "coins": 12, "minutes": 1,
+                     "hint": "زیر ۴۰۰ms = حداکثر پاداش"})
+        acts.append({"ic": "✖️", "label": "برد در دوز", "xp": 20, "coins": 20, "minutes": 2,
+                     "hint": "برد هر دست +۲۰ سکه"})
+        acts.append({"ic": "⛏", "label": "مین‌یاب (موفق)", "xp": 10, "coins": 30, "minutes": 1,
+                     "hint": "ورودی ۲۰ سکه — برداشت هوشمندانه"})
+        acts.append({"ic": "🤺", "label": "برد دوئل کامل", "xp": 40, "coins": 32, "minutes": 6,
+                     "hint": "۱۰ راند × (+۳XP/جواب) + پاداش نهایی"})
+        acts.append({"ic": "🔥", "label": "هر روز بقا", "xp": 9, "coins": 6, "minutes": 1,
+                     "hint": "روزهای طولانی‌تر = بیشتر"})
+        acts.append({"ic": "🍀", "label": "گردونه شانس", "xp": 0, "coins": 50, "minutes": 1,
+                     "hint": "هر ۲۰ ساعت — تا ۵۰ سکه"})
+        acts.append({"ic": "🎁", "label": "پاداش روزانه", "xp": 10, "coins": 25, "minutes": 1,
+                     "hint": "استریک بلندتر = پاداش بزرگ‌تر"})
+        acts.append({"ic": "🎯", "label": "مأموریت‌های روزانه", "xp": 25, "coins": 18, "minutes": 3,
+                     "hint": "معمولاً ۳-۵ مورد — همه را بگیر"})
+    except Exception:
+        pass
+    u = get_user(int(uid))
+    vip = bool(is_vip(int(uid)))
+    return {"ok": True, "acts": acts,
+            "vip": vip, "vip_note": "با VIP همه‌ی XP ها ۱۰٪ بیشتر می‌شوند",
+            "level": int(u.get("level", 1) or 1), "xp": int(u.get("xp", 0) or 0)}, 200
+
+
+def _mini_v5_elo_distribution():
+    """توزیع ELO بازیکنان — برای نمودار مدیر."""
+    buckets = {"<1000": 0, "1000-1149": 0, "1150-1299": 0, "1300-1449": 0, "1450-1599": 0, "1600+": 0}
+    try:
+        for u in DATA.get("users", {}).values():
+            if not isinstance(u, dict):
+                continue
+            elo = int(u.get("elo_rating", u.get("elo", 1000)) or 1000)
+            if elo < 1000:
+                buckets["<1000"] += 1
+            elif elo < 1150:
+                buckets["1000-1149"] += 1
+            elif elo < 1300:
+                buckets["1150-1299"] += 1
+            elif elo < 1450:
+                buckets["1300-1449"] += 1
+            elif elo < 1600:
+                buckets["1450-1599"] += 1
+            else:
+                buckets["1600+"] += 1
+    except Exception:
+        pass
+    return {"ok": True, "section": "elo", "buckets": buckets}
+
+
+def _mini_v5_integrity():
+    """سلامت اقتصادی داده — بررسی مقادیر نامعتبر."""
+    issues = []
+    users = DATA.get("users", {})
+    neg = 0
+    overflow = 0
+    no_level = 0
+    try:
+        for k, u in users.items():
+            if not isinstance(u, dict):
+                issues.append(f"رکورد غیر dict: {k}")
+                continue
+            if int(u.get("coins", 0) or 0) < 0:
+                neg += 1
+            if int(u.get("xp", 0) or 0) > 100_000_000:
+                overflow += 1
+            if not u.get("level"):
+                no_level += 1
+    except Exception as exc:
+        issues.append(f"خطای بررسی: {exc}"[:100])
+    return {"ok": True, "section": "integrity",
+            "users": len(users), "negative_coins": neg, "xp_overflow": overflow,
+            "missing_level": no_level, "issues": issues[:20],
+            "healthy": not (neg or overflow or issues)}
+
+
+def _mini_v5_group_detail(gid):
+    """جزئیات یک گروه — بازی‌ها، تنظیمات، آمار."""
+    g = DATA.get("groups", {}).get(str(int(gid)))
+    if not isinstance(g, dict):
+        return {"ok": False, "error": "گروه پیدا نشد."}, 404
+    games_count = int(g.get("created_games", 0) or 0)
+    return {"ok": True, "section": "group_detail",
+            "id": int(gid), "title": str(g.get("title", gid)),
+            "enabled": bool(g.get("enabled", True)),
+            "adult_mode": bool(g.get("adult_mode", False)),
+            "created_games": games_count,
+            "min_players": int(g.get("min_players", 2) or 2),
+            "max_players": int(g.get("max_players", 20) or 20),
+            "mods": len(g.get("mods", []) or []),
+            "stats": {k: int(v) for k, v in (g.get("stats", {}) or {}).items()
+                      if isinstance(v, (int, float))}}
+
+
+def _mini_v5_user_heatmap(uid):
+    """نقشه‌ی حرارتی فعالیت ساعتی خود کاربر."""
+    hourly = {h: 0 for h in range(24)}
+    try:
+        acts = DATA.get("v24_hourly", {}).get(today_key(), {})
+        # فعالیت همه — سهم کاربر از آمار شخصی
+        u = get_user(int(uid))
+        hist = u.get("game_history") or []
+        now_h = datetime.now().hour
+        for h in acts:
+            try:
+                hourly[int(str(h))] = int(acts[h])
+            except Exception:
+                pass
+        if not any(hourly.values()):
+            hourly[now_h] = max(1, len(hist))
+    except Exception:
+        pass
+    return {"ok": True, "section": "user_heatmap",
+            "hourly": [{"h": f"{h:02d}", "v": hourly[h]} for h in range(24)]}
+
+
+def _mini_admin_v5_view3(uid, section, params):
+    """روتر GET بخش ۳."""
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    section = str(section or "")
+    try:
+        if section == "elo":
+            return _mini_v5_elo_distribution(), 200
+        if section == "integrity":
+            return _mini_v5_integrity(), 200
+        if section == "group_detail":
+            return _mini_v5_group_detail(int(params.get("gid", 0) or 0)), 200
+        if section == "user_heatmap":
+            return _mini_v5_user_heatmap(int(params.get("uid", 0) or uid)), 200
+        return None, 0
+    except Exception as exc:
+        _mlog("error", f"admin_v5_view3[{section}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی بخش مدیریتی."}, 500
+
+
+# ================================================================
+#  🛡 TITAN API — بخش ۴: تبلیغات + ریست کارخانه + VIP + موجودی
+#  آخرین بخش‌های باقی‌مانده‌ی پنل ربات که آینه نشده بودند
+# ================================================================
+
+
+def _mini_v5_ads():
+    """مدیریت تبلیغات — همان مخزن تبلیغات ربات."""
+    items = []
+    try:
+        ads = DATA.get("ads", [])
+        if isinstance(ads, list):
+            for i, a in enumerate(ads):
+                if not isinstance(a, dict):
+                    continue
+                items.append({"idx": i, "text": str(a.get("text", ""))[:200],
+                              "enabled": bool(a.get("enabled", True)),
+                              "freq": int(a.get("freq", 5) or 5),
+                              "shown": int(a.get("shown", 0) or 0)})
+    except Exception:
+        pass
+    return {"ok": True, "section": "ads", "items": items}
+
+
+def _mini_v5_broadcast_history():
+    """تاریخچه‌ی پیام‌های همگانی."""
+    items = []
+    try:
+        for b in (DATA.get("broadcast_queue", []) or [])[:40]:
+            if isinstance(b, dict):
+                items.append({"text": str(b.get("text", ""))[:200],
+                              "ts": int(b.get("ts", 0) or 0),
+                              "sent": bool(b.get("sent", False))})
+        for b in (DATA.get("broadcast_log", []) or [])[:40]:
+            if isinstance(b, dict):
+                items.append({"text": str(b.get("text", ""))[:200],
+                              "ts": int(b.get("ts", 0) or 0),
+                              "sent": True})
+        items.sort(key=lambda x: -x["ts"])
+    except Exception:
+        pass
+    return {"ok": True, "section": "bc_history", "items": items[:50]}
+
+
+def _mini_admin_v5_view4(uid, section, params):
+    """روتر GET بخش ۴."""
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    section = str(section or "")
+    try:
+        if section == "ads":
+            return _mini_v5_ads(), 200
+        if section == "bc_history":
+            return _mini_v5_broadcast_history(), 200
+        if section == "reset":
+            n_backups = 0
+            try:
+                n_backups = len(list_backups() or [])
+            except Exception:
+                n_backups = 0
+            return {"ok": True, "section": "reset",
+                    "users": len(DATA.get("users", {})),
+                    "groups": len(DATA.get("groups", {})),
+                    "games": len(DATA.get("games", {})),
+                    "backups": n_backups}, 200
+        return None, 0
+    except Exception as exc:
+        _mlog("error", f"admin_v5_view4[{section}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی بخش مدیریتی."}, 500
+
+
+def _mini_admin_v5_action4(uid, action, data):
+    """اکشن‌های بخش ۴ — تبلیغات، ریست کارخانه، VIP، موجودی، سطح."""
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    action = str(action or "")
+    try:
+        target = int(data.get("target", 0) or 0)
+    except (TypeError, ValueError):
+        target = 0
+    try:
+        # ---------- تبلیغات ----------
+        if action == "ad_add":
+            text = str(data.get("text", "")).strip()[:300]
+            if len(text) < 3:
+                return {"ok": False, "error": "متن تبلیغ کوتاه است."}, 400
+            freq = max(1, min(50, int(data.get("freq", 5) or 5)))
+            ads = DATA.setdefault("ads", [])
+            ads.append({"text": text, "enabled": True, "freq": freq, "shown": 0})
+            save_data(force=True)
+            audit("ad_add", int(uid), None, f"freq={freq}")
+            return {"ok": True, "message": "تبلیغ اضافه شد 📢"}, 200
+        if action == "ad_del":
+            idx = int(data.get("idx", -1))
+            ads = DATA.get("ads", [])
+            if 0 <= idx < len(ads):
+                ads.pop(idx)
+                save_data(force=True)
+                audit("ad_del", int(uid), None, f"#{idx}")
+                return {"ok": True, "message": "تبلیغ حذف شد 🗑"}, 200
+            return {"ok": False, "error": "تبلیغ پیدا نشد."}, 404
+        if action == "ad_toggle":
+            idx = int(data.get("idx", -1))
+            ads = DATA.get("ads", [])
+            if 0 <= idx < len(ads) and isinstance(ads[idx], dict):
+                ads[idx]["enabled"] = not bool(ads[idx].get("enabled", True))
+                save_data(force=True)
+                audit("ad_toggle", int(uid), None, f"#{idx}")
+                state = "روشن ✅" if ads[idx]["enabled"] else "خاموش 🌙"
+                return {"ok": True, "message": f"تبلیغ {state}"}, 200
+            return {"ok": False, "error": "تبلیغ پیدا نشد."}, 404
+        if action == "ad_freq":
+            idx = int(data.get("idx", -1))
+            freq = max(1, min(50, int(data.get("freq", 5) or 5)))
+            ads = DATA.get("ads", [])
+            if 0 <= idx < len(ads) and isinstance(ads[idx], dict):
+                ads[idx]["freq"] = freq
+                save_data(force=True)
+                audit("ad_freq", int(uid), None, f"#{idx}={freq}")
+                return {"ok": True, "message": f"فرکانس: هر {freq} بازی"}, 200
+            return {"ok": False, "error": "تبلیغ پیدا نشد."}, 404
+        # ---------- VIP ----------
+        if action == "vip_days":
+            """اهدای روزهای VIP — همان مکانیزم vip_until ربات."""
+            days = int(data.get("days", 0) or 0)
+            if not target or not days:
+                return {"ok": False, "error": "کاربر و تعداد روز لازم است."}, 400
+            u = get_user(target)
+            if not u:
+                return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            base = max(now_ts(), int(u.get("vip_until", 0) or 0))
+            u["vip_until"] = base + days * 86400
+            save_data(force=True)
+            audit("vip_days", int(uid), target, f"+{days}d")
+            try:
+                push_notification(target, "vip", "👑 VIP فعال شد",
+                                  f"{days} روز عضویت ویژه به شما اهدا شد!")
+            except Exception:
+                pass
+            return {"ok": True, "message": f"{days} روز VIP اهدا شد 👑"}, 200
+        if action == "vip_revoke":
+            u = get_user(target) if target else None
+            if not u:
+                return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            u["vip_until"] = 0
+            save_data(force=True)
+            audit("vip_revoke", int(uid), target, "revoked")
+            return {"ok": True, "message": "VIP لغو شد."}, 200
+        # ---------- موجودی ----------
+        if action == "item_grant":
+            """اهدای آیتم به موجودی کاربر — از همان ساختار inventory ربات."""
+            key = str(data.get("key", "")).strip()[:60]
+            count = max(1, min(99, int(data.get("count", 1) or 1)))
+            if not target or not key:
+                return {"ok": False, "error": "کاربر و کلید آیتم لازم است."}, 400
+            u = get_user(target)
+            if not u:
+                return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            inv = u.setdefault("inventory", {}) if isinstance(u.get("inventory"), dict) else {}
+            inv[key] = int(inv.get(key, 0) or 0) + count
+            save_data(force=True)
+            audit("item_grant", int(uid), target, f"{key}×{count}")
+            return {"ok": True, "message": f"«{key}» ×{count} اهدا شد 🎒"}, 200
+        if action == "item_del":
+            key = str(data.get("key", "")).strip()
+            u = get_user(target) if target else None
+            if not u:
+                return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            inv = u.get("inventory", {}) if isinstance(u.get("inventory"), dict) else {}
+            if key in inv:
+                inv.pop(key)
+                save_data(force=True)
+                audit("item_del", int(uid), target, key)
+                return {"ok": True, "message": "آیتم حذف شد 🗑"}, 200
+            return {"ok": False, "error": "چنین آیتمی نداشت."}, 404
+        # ---------- سطح ----------
+        if action == "set_level":
+            lvl = max(1, min(100, int(data.get("value", 1) or 1)))
+            u = get_user(target) if target else None
+            if not u:
+                return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            try:
+                u["level"] = lvl
+                # XP معادل سطح بر اساس همان تابع ربات
+                u["xp"] = int(xp_for_level(lvl)) if "xp_for_level" in globals() else u.get("xp", 0)
+            except Exception:
+                u["level"] = lvl
+            save_data(force=True)
+            audit("set_level", int(uid), target, str(lvl))
+            return {"ok": True, "message": f"سطح {lvl} تنظیم شد ⬆️"}, 200
+        # ---------- ریست کارخانه ----------
+        if action == "factory_reset":
+            """ریست کارخانه — دقیقاً همان جریان ربات: بکاپ خودکار + پاک‌سازی."""
+            confirm = str(data.get("confirm", ""))
+            if confirm != "RESET":
+                return {"ok": False, "error": "برای تأیید، عبارت RESET را بفرست."}, 400
+            path = backup_data("before-reset-web")
+            with LOCK:
+                DATA.clear()
+                DATA.update(default_data())
+            save_data(force=True)
+            audit("factory_reset", int(uid), None, "via_web")
+            _mlog("warn", f"FACTORY RESET by {uid} (backup: {path})")
+            return {"ok": True, "message": "ریست کارخانه انجام شد — داده‌ها از صفر شروع می‌شوند."}, 200
+        return None, 0
+    except Exception as exc:
+        _mlog("error", f"admin_v5_action4[{action}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی در عملیات مدیریتی."}, 500
+
+
+# ================================================================
+#  🛡 TITAN API — بخش ۵: تبلیغات کاربر + داده‌ی توصیه‌گر
+# ================================================================
+
+
+def _mini_user_ads(uid):
+    """تبلیغات فعال برای نمایش به کاربر عادی — همان مخزن ربات."""
+    items = []
+    try:
+        for a in DATA.get("ads", []):
+            if isinstance(a, dict) and bool(a.get("enabled", True)):
+                items.append({"text": str(a.get("text", ""))[:200]})
+    except Exception:
+        pass
+    return {"ok": True, "items": items[:8]}, 200
+
+
+def _mini_admin_v5_view5(uid, section, params):
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    return None, 0
+
+
+# ================================================================
+#  🛡 TITAN API — بخش ۶: درباره‌ی سیستم + خلاصه‌ی فنی برای ادمین
+# ================================================================
+
+
+def _mini_v5_about_system():
+    """اطلاعات فنی کامل سرور — برای بخش «درباره‌ی سیستم»."""
+    info = {}
+    try:
+        info["python"] = sys.version.split()[0]
+    except Exception:
+        info["python"] = "؟"
+    try:
+        info["platform"] = str(sys.platform)
+    except Exception:
+        info["platform"] = "؟"
+    threads = 0
+    try:
+        threads = threading.active_count()
+    except Exception:
+        threads = 0
+    disk_free = 0
+    try:
+        import shutil as _sh
+        total, used, free = _sh.disk_usage(Path(".").resolve().anchor and str(Path(".").resolve())[:3] or "/")
+        disk_free = int(free // (1024 * 1024))
+    except Exception:
+        disk_free = 0
+    up = "—"
+    try:
+        up = uptime_text()
+    except Exception:
+        pass
+    mem = 0
+    try:
+        import resource as _res
+        mem = int(_res.getrusage(_res.RUSAGE_SELF).ru_maxrss / 1024)
+    except Exception:
+        mem = 0
+    banks_n = 0
+    total_q = 0
+    digest = ""
+    try:
+        banks_n = len(BANKS)
+        total_q = sum(len(v) for v in BANKS.values())
+        digest = str(bank_hash(json.dumps(BANKS, ensure_ascii=False, sort_keys=True)))[:16]
+    except Exception:
+        total_q = int(globals().get("BANKS_TOTAL", 0) or 0)
+    return {"ok": True, "section": "about_system",
+            "python": info.get("python"), "platform": info.get("platform"),
+            "threads": threads, "memory_mb": mem, "disk_free_mb": disk_free,
+            "uptime": up, "version": VERSION, "miniapp_version": MINIAPP_VERSION,
+            "banks": banks_n, "bank_total": total_q, "bank_digest": digest,
+            "users": len(DATA.get("users", {})), "groups": len(DATA.get("groups", {})),
+            "games": len(DATA.get("games", {}))}
+
+
+def _mini_admin_v5_view6(uid, section, params):
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    section = str(section or "")
+    try:
+        if section == "about_system":
+            return _mini_v5_about_system(), 200
+        return None, 0
+    except Exception as exc:
+        _mlog("error", f"admin_v5_view6[{section}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی بخش مدیریتی."}, 500
+
+
+# ================================================================
+#  🛡 TITAN API — بخش ۷: هدف‌گیری همگانی + خروجی آمار شخصی +
+#  بازی‌های ناتمام + داده‌ی موضوعات لابی
+# ================================================================
+
+
+def _mini_v5_unfinished(uid):
+    """بازی‌های ناتمام کاربر — برای بنر ادامه بازی در خانه."""
+    items = []
+    try:
+        # لابی فعال
+        lobbies = DATA.get("_mini_lobbies", {}) or DATA.get("lobbies", {})
+        for code, lb in (lobbies or {}).items():
+            if not isinstance(lb, dict) or str(lb.get("phase", "")) == "done":
+                continue
+            players = lb.get("players", [])
+            if isinstance(players, list) and any(isinstance(p, dict) and int(p.get("id", 0) or 0) == int(uid) for p in players):
+                items.append({"kind": "lobby", "code": str(code),
+                              "phase": str(lb.get("phase", "lobby")),
+                              "round": int(lb.get("round", 0) or 0),
+                              "players": len(players)})
+        # دوئل فعال
+        try:
+            duels = v24_store().get("duels", {})
+            for code, d in (duels or {}).items():
+                if not isinstance(d, dict) or str(d.get("state", "")) in ("done", "finished"):
+                    continue
+                a = d.get("a", {}) if isinstance(d.get("a"), dict) else {}
+                b = d.get("b", {}) if isinstance(d.get("b"), dict) else {}
+                if int(a.get("id", 0) or 0) == int(uid) or int(b.get("id", 0) or 0) == int(uid):
+                    items.append({"kind": "duel", "code": str(code),
+                                  "round": int(d.get("round", 0) or 0),
+                                  "players": 2})
+        except Exception:
+            pass
+        # بقا فعال
+        try:
+            u = get_user(int(uid))
+            sv = survival_active_session(int(uid)) if "survival_active_session" in globals() else None
+            if sv:
+                items.append({"kind": "survival", "code": "",
+                              "round": int(sv.get("day", 1) or 1), "players": 1})
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return {"ok": True, "section": "unfinished", "items": items}
+
+
+def _mini_v5_my_export(uid):
+    """خروجی JSON آمار شخصی کاربر — داده‌ی خودش، بدون بقیه."""
+    try:
+        u = get_user(int(uid))
+        payload = {
+            "exported_at": now_ts(),
+            "profile": {
+                "id": int(uid), "name": str(u.get("name", "")),
+                "level": int(u.get("level", 1) or 1), "xp": int(u.get("xp", 0) or 0),
+                "coins": int(u.get("coins", 0) or 0),
+                "games": int(u.get("games", 0) or 0), "wins": int(u.get("wins", 0) or 0),
+                "losses": int(u.get("losses", 0) or 0),
+                "elo": int(u.get("elo_rating", u.get("elo", 1000)) or 1000),
+                "achievements": len(u.get("achievements", []) or []),
+                "daily_streak": int(u.get("daily_streak", 0) or 0),
+            },
+            "stats": u.get("stats", {}) if isinstance(u.get("stats"), dict) else {},
+            "history": [h for h in (u.get("game_history") or [])[:40] if isinstance(h, dict)],
+        }
+        return {"ok": True, "section": "my_export", "data": payload}, 200
+    except Exception as exc:
+        _mlog("error", f"my_export failed: {exc!r}")
+        return {"ok": False, "error": "خطا در خروجی آمار."}, 500
+
+
+def _mini_v5_broadcast_target_count(target):
+    """شمارش مخاطبان هدف‌گیری همگانی."""
+    try:
+        users = DATA.get("users", {})
+        if target == "vip":
+            return sum(1 for u in users.values()
+                       if isinstance(u, dict) and int(u.get("vip_until", 0) or 0) > now_ts())
+        if target == "active":
+            week_ts = now_ts() - 7 * 86400
+            return sum(1 for u in users.values()
+                       if isinstance(u, dict) and int(u.get("last_active", 0) or 0) > week_ts)
+        if target == "level":
+            return sum(1 for u in users.values()
+                       if isinstance(u, dict) and int(u.get("level", 1) or 1) >= 10)
+        return len(users)
+    except Exception:
+        return 0
+
+
+def _mini_admin_v5_view7(uid, section, params):
+    """روتر GET بخش ۷."""
+    if section == "unfinished":
+        return _mini_v5_unfinished(uid), 200
+    if section == "my_export":
+        d, code = _mini_v5_my_export(uid)
+        return d, code
+    if section == "bc_targets":
+        if not _mini_v5_admin_ok(uid):
+            return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+        counts = {}
+        for t in ("all", "vip", "active", "level"):
+            counts[t] = _mini_v5_broadcast_target_count(t)
+        return {"ok": True, "section": "bc_targets", "counts": counts}, 200
+    return None, 0
+
+
+def _mini_admin_v5_action7(uid, action, data):
+    """اکشن‌های بخش ۷ — همگانی هدف‌دار."""
+    if not _mini_v5_admin_ok(uid):
+        return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+    action = str(action or "")
+    try:
+        if action == "broadcast_targeted":
+            """پیام همگانی با هدف‌گیری — همان صف ارسال ربات با فیلتر گیرنده."""
+            text = str(data.get("text", ""))[:900].strip()
+            target = str(data.get("target", "all"))
+            if len(text) < 3:
+                return {"ok": False, "error": "متن خیلی کوتاه است."}, 400
+            queue = DATA.setdefault("broadcast_queue", [])
+            recipients = []
+            try:
+                users = DATA.get("users", {})
+                week_ts = now_ts() - 7 * 86400
+                for k, u in users.items():
+                    if not isinstance(u, dict):
+                        continue
+                    try:
+                        uidi = int(str(k).lstrip("-"))
+                    except Exception:
+                        continue
+                    if target == "vip" and not (int(u.get("vip_until", 0) or 0) > now_ts()):
+                        continue
+                    if target == "active" and not (int(u.get("last_active", 0) or 0) > week_ts):
+                        continue
+                    if target == "level" and not (int(u.get("level", 1) or 1) >= 10):
+                        continue
+                    recipients.append(uidi)
+            except Exception:
+                recipients = []
+            queue.append({"text": text, "ts": now_ts(), "by": int(uid),
+                          "target": target, "recipients": recipients[:20000]})
+            save_data(force=True)
+            audit("broadcast_targeted", int(uid), None, f"target={target} n={len(recipients)}")
+            _mlog("warn", f"targeted broadcast queued by {uid}: target={target} n={len(recipients)}")
+            return {"ok": True, "message": f"پیام برای {len(recipients)} گیرنده ({target}) در صف قرار گرفت ✈️"}, 200
+        return None, 0
+    except Exception as exc:
+        _mlog("error", f"admin_v5_action7[{action}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی در عملیات مدیریتی."}, 500
+
+
+# ================================================================
+#  🛡 TITAN API — بخش ۸: جستجوی بانک (فقط-خواندنی) + رتبه‌بندی
+#  اطراف کاربر + جمع‌بندی خطاهای فنی از طریق بازخورد
+# ================================================================
+
+
+def _mini_v5_bank_search(term, bank_filter=""):
+    """جستجو در بانک سوالات — فقط-خواندنی، آینه‌ی v9_bksearch ربات.
+    ⚠️ هیچ تغییری در محتوا اعمال نمی‌شود؛ فقط نتایج نمایش داده می‌شوند."""
+    term = str(term or "").strip()
+    if len(term) < 2:
+        return {"ok": True, "section": "bank_search", "hits": [], "total": 0,
+                "message": "حداقل ۲ حرف بنویس"}, 200
+    hits = []
+    total = 0
+    try:
+        for bkey, bbank in BANKS.items():
+            if bank_filter and bkey != bank_filter:
+                continue
+            for q in bbank:
+                try:
+                    if isinstance(q, dict):
+                        text = str(q.get("q") or q.get("question") or q.get("text")
+                                   or q.get("prompt") or "")
+                    else:
+                        text = str(q)
+                except Exception:
+                    text = ""
+                if term in text:
+                    total += 1
+                    if len(hits) < 30:
+                        hits.append({"bank": str(bkey),
+                                     "q": text[:180],
+                                     "a": str((q or {}).get("a") if isinstance(q, dict) else "")[:60]})
+    except Exception as exc:
+        _mlog("error", f"bank_search failed: {exc!r}")
+    return {"ok": True, "section": "bank_search", "hits": hits, "total": total}, 200
+
+
+def _mini_v5_leaderboard_around(uid, scope="global"):
+    """رتبه‌بندی اطراف کاربر — پنجره‌ی ۷ نفره حول رتبه‌ی خودش."""
+    try:
+        rows = _mini_board_rows(str(scope), 10000) if "_mini_board_rows" in globals() else []
+        me_idx = None
+        for i, r in enumerate(rows):
+            if int(r.get("uid", 0) or 0) == int(uid):
+                me_idx = i
+                break
+        if me_idx is None:
+            return {"ok": True, "section": "lb_around", "items": [], "me_rank": None}, 200
+        lo = max(0, me_idx - 3)
+        hi = min(len(rows), me_idx + 4)
+        window = []
+        for i in range(lo, hi):
+            r = rows[i]
+            window.append({"rank": int(r.get("rank", i + 1)),
+                           "uid": int(r.get("uid", 0) or 0),
+                           "name": str(r.get("name", "")),
+                           "xp": int(r.get("xp", 0) or 0),
+                           "is_me": int(r.get("uid", 0) or 0) == int(uid)})
+        return {"ok": True, "section": "lb_around", "items": window,
+                "me_rank": me_idx + 1}, 200
+    except Exception as exc:
+        _mlog("error", f"lb_around failed: {exc!r}")
+        return {"ok": False, "error": "خطا در محاسبه‌ی رتبه."}, 500
+
+
+def _mini_v5_tech_report(uid, text, errors):
+    """گزارش خطای فنی — خطاهای JS کاربر + توضیح، از همان کانال بازخورد."""
+    try:
+        body = str(text or "")[:300]
+        errs = [str(e)[:120] for e in (errors or [])[:6]]
+        payload = "🐞 TECH REPORT\n" + body
+        if errs:
+            payload += "\n— خطاهای ثبت‌شده:\n" + "\n".join("· " + e for e in errs)
+        try:
+            fb = DATA.setdefault("feedback", [])
+            fb.append({"uid": int(uid), "text": payload[:700],
+                       "ts": now_ts(), "resolved": False, "tech": True})
+            save_data()
+        except Exception:
+            pass
+        audit("tech_report", int(uid), None, f"errs={len(errs)}")
+        return {"ok": True, "message": "گزارش فنی ثبت شد — مرسی که کمک می‌کنی بهتر شویم 🙏"}, 200
+    except Exception as exc:
+        _mlog("error", f"tech_report failed: {exc!r}")
+        return {"ok": False, "error": "ثبت گزارش ناموفق بود."}, 500
+
+
+def _mini_admin_v5_view8(uid, section, params):
+    section = str(section or "")
+    try:
+        if section == "bank_search":
+            return _mini_v5_bank_search((params or {}).get("term", ""), (params or {}).get("bank", ""))
+        if section == "lb_around":
+            return _mini_v5_leaderboard_around(uid, str((params or {}).get("scope", "global") or "global"))
+        return None, 0
+    except Exception as exc:
+        _mlog("error", f"admin_v5_view8[{section}] failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی."}, 500
+
+
+def _mini_admin_v5_action8(uid, action, data):
+    if action == "tech_report":
+        return _mini_v5_tech_report(uid, data.get("text", ""), data.get("errors", []))
+    return None, 0
+
+
 _MINIAPP_HTML_SRC = r"""<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#05060b">
-<title>ApexRival OMEGA</title>
+<title>ApexRival TITAN</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vazirmatn@33.3.0/Vazirmatn-font-face.css">
 <style>
+/* ════════════════════════════════════════════════════════════════
+   ApexRival Mini App — TITAN DESIGN SYSTEM (v5.0)
+   ════════════════════════════════════════════════════════════════
+   معماری: ۸ تم پالت + حالت روشن + ۳ اندازه متن + حالت بی‌حرکت
+   زبان بصری: شیشه‌ی چندلایه (Titan Glass) + aurora مشبک + مرزهای
+   گرادیانی + ریزتعامل‌های فنری + اسکلتون‌های شیمر + ناوبری داک
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- ۱) توکن‌های پایه ---------- */
 :root{
-  --bg:#04050c;--panel:rgba(13,16,26,.86);--panel2:#10141f;--panel3:#141927;
+  /* سطح‌های رنگ سطح */
+  --bg:#04050c;--bg2:#070911;
+  --panel:rgba(13,16,26,.86);--panel2:#10141f;--panel3:#141927;--panel4:#1a2032;
   --line:rgba(255,255,255,.075);--line2:rgba(255,255,255,.15);
   --txt:#eef0fa;--muted:#8b93ad;--dim:#5b6279;
+  /* رنگ‌های برند */
   --violet:#7c5cff;--violet2:#536fff;--cyan:#15d8ff;--pink:#ff4fa3;
   --gold:#ffc857;--green:#31e981;--red:#ff5268;--orange:#ff9e4f;
-  --r-lg:26px;--r-md:20px;--r-sm:14px;
-  --nav-h:74px;
+  --c1:#7c5cff;--c2:#536fff;--c3:#15d8ff;
+  /* شعاع‌ها */
+  --r-xl:32px;--r-lg:26px;--r-md:20px;--r-sm:14px;--r-xs:10px;
+  /* ناوبری */
+  --nav-h:78px;
+  /* سایه‌ها */
   --shadow:0 24px 70px rgba(0,0,0,.55);
-  --grad:linear-gradient(135deg,var(--violet),var(--violet2) 55%,var(--cyan));
+  --shadow-sm:0 10px 30px rgba(0,0,0,.35);
+  --glow-c:0 0 0 1px #7c5cff22,0 14px 44px #7c5cff26;
+  /* گرادیان برند */
+  --grad:linear-gradient(135deg,var(--c1),var(--c2) 55%,var(--c3));
+  --grad-soft:linear-gradient(135deg,var(--c1)14,var(--c2)0d,var(--c3)12);
+  --grad-text:linear-gradient(120deg,var(--c3),var(--c1) 60%,var(--pink));
+  /* فونت */
+  --fs-base:13px;
+  /* شیشه */
+  --glass:blur(22px) saturate(1.6);
+  /* زیمنج حرکات */
+  --spring:cubic-bezier(.22,1.6,.36,1);
+  --ease:cubic-bezier(.4,0,.2,1);
 }
+/* تم‌ها — هر تم فقط سه رنگ برند را جابه‌جا می‌کند */
+body[data-theme="aurora"]{--c1:#7c5cff;--c2:#536fff;--c3:#15d8ff}
+body[data-theme="sunset"]{--c1:#ff6b4a;--c2:#ff9e4f;--c3:#ffd166;--pink:#ff6b8a}
+body[data-theme="ocean"]{--c1:#2f7cff;--c2:#15b8ff;--c3:#41f0d1}
+body[data-theme="emerald"]{--c1:#0fb981;--c2:#31e981;--c3:#b4f461}
+body[data-theme="royal"]{--c1:#c44fff;--c2:#ff4fa3;--c3:#ffc857}
+body[data-theme="sakura"]{--c1:#ff7eb3;--c2:#ff9e9e;--c3:#c3a6ff}
+body[data-theme="midnight"]{--c1:#4a5a8f;--c2:#7385bd;--c3:#a9c1ff}
+body[data-theme="amber"]{--c1:#e8a020;--c2:#ff6b4a;--c3:#ffd88a}
+/* حالت روشن — بازنگری کامل همه‌ی سطح‌ها */
+body[data-mode="light"]{
+  --bg:#eef1f9;--bg2:#e6eaf5;
+  --panel:rgba(255,255,255,.88);--panel2:#ffffff;--panel3:#f6f8fd;--panel4:#eef1f9;
+  --line:rgba(20,30,70,.10);--line2:rgba(20,30,70,.20);
+  --txt:#1a2238;--muted:#5c6784;--dim:#8a94b0;
+  --shadow:0 24px 60px rgba(30,40,90,.16);
+  --shadow-sm:0 10px 26px rgba(30,40,90,.10);
+}
+/* اندازه متن */
+body[data-fs="s"]{--fs-base:12px}
+body[data-fs="m"]{--fs-base:13px}
+body[data-fs="l"]{--fs-base:14.5px}
+/* حالت بی‌حرکت — همه‌ی انیمیشن‌ها خاموش */
+body[data-motion="off"] *{animation-duration:.001s!important;transition-duration:.001s!important}
+body[data-motion="off"] #aurora i{transform:none!important}
+
+/* ---------- ۲) ریست و پایه ---------- */
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{background:var(--bg);scroll-behavior:smooth}
 body{
   margin:0;color:var(--txt);
   font-family:'Vazirmatn',Vazirmatn,Tahoma,'Segoe UI',sans-serif;
-  font-size:13px;line-height:1.8;
+  font-size:var(--fs-base);line-height:1.8;
   min-height:100dvh;
-  padding-bottom:calc(var(--nav-h) + 48px + env(safe-area-inset-bottom));
+  padding-bottom:calc(var(--nav-h) + 52px + env(safe-area-inset-bottom));
   overflow-x:hidden;
   -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
 }
 button,input,textarea,select{font:inherit;color:inherit}
 button{cursor:pointer;border:0;background:none}
 ::-webkit-scrollbar{width:0;height:0}
-/* ---------- aurora backdrop ---------- */
+::selection{background:#7c5cff44}
+img{max-width:100%;display:block}
+:focus{outline:none}
+:focus-visible{outline:2px solid var(--c3);outline-offset:2px;border-radius:6px}
+
+/* ---------- ۳) پس‌زمینه‌ی Aurora مش (سه‌لایه) ---------- */
 #aurora{position:fixed;inset:0;z-index:-2;overflow:hidden;pointer-events:none}
-#aurora i{position:absolute;border-radius:50%;filter:blur(90px);opacity:.55;will-change:transform}
-#aurora i:nth-child(1){width:420px;height:420px;background:#7c5cff30;top:-140px;right:-120px;animation:float1 16s ease-in-out infinite}
-#aurora i:nth-child(2){width:380px;height:380px;background:#15d8ff16;bottom:-120px;left:-140px;animation:float2 19s ease-in-out infinite}
-#aurora i:nth-child(3){width:260px;height:260px;background:#ff4fa314;top:42%;left:-160px;animation:float1 22s ease-in-out infinite reverse}
-#aurora::after{content:"";position:absolute;inset:0;background:radial-gradient(1200px 600px at 50% -20%,#ffffff06,transparent 60%)}
-@keyframes float1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-40px,34px) scale(1.12)}}
-@keyframes float2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(44px,-30px) scale(1.08)}}
-/* ---------- shell ---------- */
-.app{width:min(680px,100%);margin:auto;padding:12px 13px 0}
-.top{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:10px;padding:10px 2px 12px;
-  background:linear-gradient(var(--bg) 72%,transparent)}
-.brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
-.logo{width:46px;height:46px;border-radius:16px;display:grid;place-items:center;font-weight:900;font-size:15px;
-  color:#fff;background:var(--grad);background-size:180% 180%;animation:gradshift 7s ease infinite;
-  box-shadow:0 10px 30px #7c5cff44;letter-spacing:.5px;flex:0 0 auto}
-@keyframes gradshift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
-.brand b{font-size:16px;display:block;line-height:1.3}
-.brand small{display:block;color:var(--muted);font-size:8.5px;letter-spacing:2.5px;margin-top:1px}
-.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:#ffffff0a;
-  border-radius:13px;padding:7px 12px;font-size:11.5px;font-weight:700;white-space:nowrap}
-.pill.coin{color:var(--gold)}
-.bell{position:relative;width:40px;height:40px;border-radius:13px;border:1px solid var(--line2);background:#ffffff0a;
-  display:grid;place-items:center;font-size:16px;flex:0 0 auto;transition:transform .15s}
-.bell:active{transform:scale(.92)}
-.bell .dot{position:absolute;top:-3px;left:-3px;min-width:18px;height:18px;padding:0 5px;border-radius:99px;
-  background:linear-gradient(135deg,var(--pink),var(--red));font-size:9px;font-weight:900;display:grid;place-items:center;
-  border:2px solid var(--bg);animation:pop .4s cubic-bezier(.2,2,.4,1)}
+#aurora i{position:absolute;border-radius:50%;filter:blur(95px);opacity:.5;will-change:transform}
+#aurora i:nth-child(1){width:52vw;height:52vw;top:-14vw;right:-10vw;background:radial-gradient(circle,var(--c1),transparent 68%);animation:au1 19s var(--ease) infinite alternate}
+#aurora i:nth-child(2){width:44vw;height:44vw;bottom:-12vw;left:-8vw;background:radial-gradient(circle,var(--c3),transparent 68%);animation:au2 23s var(--ease) infinite alternate;opacity:.34}
+#aurora i:nth-child(3){width:34vw;height:34vw;top:32vh;left:22vw;background:radial-gradient(circle,var(--pink),transparent 70%);animation:au3 29s var(--ease) infinite alternate;opacity:.2}
+@keyframes au1{to{transform:translate(-9vw,7vw) scale(1.18)}}
+@keyframes au2{to{transform:translate(8vw,-6vw) scale(1.24)}}
+@keyframes au3{to{transform:translate(-12vw,-8vw) scale(.85)}}
+/* لایه‌ی نویز + مش برای عمق */
+#aurora::after{content:"";position:absolute;inset:0;
+  background-image:
+    radial-gradient(circle at 25% 15%,#ffffff08 0,transparent 44%),
+    radial-gradient(circle at 78% 82%,#ffffff06 0,transparent 40%),
+    linear-gradient(rgba(255,255,255,.022) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.022) 1px,transparent 1px);
+  background-size:auto,auto,64px 64px,64px 64px}
+body[data-mode="light"] #aurora i{opacity:.3}
+body[data-mode="light"] #aurora::after{background-image:
+    radial-gradient(circle at 25% 15%,#0a143c0a 0,transparent 44%),
+    radial-gradient(circle at 78% 82%,#0a143c08 0,transparent 40%),
+    linear-gradient(rgba(10,20,60,.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(10,20,60,.05) 1px,transparent 1px);
+  background-size:auto,auto,64px 64px,64px 64px}
+
+/* ---------- ۴) اسکلتون شروع (Splash) ---------- */
+#splash{position:fixed;inset:0;z-index:200;display:grid;place-items:center;background:var(--bg);transition:opacity .6s var(--ease),visibility .6s}
+#splash.off{opacity:0;visibility:hidden;pointer-events:none}
+.slogo{width:86px;height:86px;margin:0 auto 18px;border-radius:28px;display:grid;place-items:center;
+  font-size:30px;font-weight:900;color:#fff;background:var(--grad);
+  box-shadow:0 22px 60px #7c5cff55;animation:splashPulse 1.6s var(--ease) infinite;position:relative;overflow:hidden}
+.slogo::after{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 30%,#ffffff55 50%,transparent 70%);
+  transform:translateX(-120%);animation:shine 1.8s var(--ease) infinite}
+@keyframes splashPulse{50%{transform:scale(1.06) rotate(1.5deg);box-shadow:0 22px 80px #7c5cff88}}
+@keyframes shine{to{transform:translateX(120%)}}
+#splash p{margin:14px 0 0;text-align:center;letter-spacing:5px;font-size:11px;color:var(--muted);font-weight:700}
+.spin{width:26px;height:26px;margin:16px auto 0;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+/* ---------- ۵) قشر برنامه و نوار بالا ---------- */
+.app{max-width:560px;margin:0 auto;padding:0 13px}
+.top{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:9px;
+  padding:calc(9px + env(safe-area-inset-top)) 0 9px;
+  background:linear-gradient(var(--bg) 62%,transparent);backdrop-filter:var(--glass)}
+.brand{display:flex;align-items:center;gap:9px;flex:1;min-width:0}
+.logo{width:37px;height:37px;border-radius:13px;display:grid;place-items:center;font-size:13px;font-weight:900;color:#fff;
+  background:var(--grad);box-shadow:0 8px 22px #7c5cff44;position:relative;flex:0 0 auto}
+.logo::after{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(115deg,#ffffff33,transparent 40%)}
+.brand b{font-size:13.5px;display:block;line-height:1.3}
+.brand small{display:block;font-size:8px;color:var(--muted);letter-spacing:2.5px;font-weight:700}
+.pill{display:inline-flex;align-items:center;gap:5px;background:var(--panel);border:1px solid var(--line);
+  border-radius:99px;padding:7px 12px;font-size:11.5px;font-weight:800;backdrop-filter:var(--glass);white-space:nowrap}
+.pill.coin{color:var(--gold);transition:transform .25s var(--spring);border-color:#ffc85733}
+.pill.coin.bump{transform:scale(1.13)}
+.bell{position:relative;width:38px;height:38px;border-radius:13px;display:grid;place-items:center;font-size:16px;
+  background:var(--panel);border:1px solid var(--line);backdrop-filter:var(--glass);transition:transform .2s var(--spring),border-color .2s}
+.bell:active{transform:scale(.9)}
+.bell .dot{position:absolute;top:-5px;left:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:var(--red);
+  color:#fff;font-size:9px;font-weight:900;display:grid;place-items:center;border:2px solid var(--bg);animation:pop .3s var(--spring)}
 @keyframes pop{from{transform:scale(0)}to{transform:scale(1)}}
-/* ---------- pages ---------- */
-.page{display:none;animation:pagein .32s ease}
-.page.on{display:block}
-@keyframes pagein{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-/* ---------- cards ---------- */
-.card{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-lg);padding:16px;
-  backdrop-filter:blur(14px);box-shadow:var(--shadow)}
-.gcard{position:relative;border-radius:var(--r-lg);padding:1px;background:var(--grad);background-size:200% 200%;
-  animation:gradshift 8s ease infinite;box-shadow:0 18px 55px #7c5cff33}
-.gcard>.in{border-radius:calc(var(--r-lg) - 1px);background:linear-gradient(160deg,#141927f2,#0a0e19f5);
-  padding:16px;position:relative;overflow:hidden}
-.hero{margin-bottom:14px}
-.hero .rowline{display:flex;align-items:center;gap:14px}
-/* ---------- avatar ---------- */
-.ava{position:relative;width:56px;height:56px;border-radius:19px;display:grid;place-items:center;
-  font-weight:900;font-size:17px;color:#fff;flex:0 0 auto;background:linear-gradient(135deg,hsl(var(--h,265) 80% 55%),hsl(calc(var(--h,265) + 45) 80% 42%));
-  box-shadow:0 8px 24px hsl(var(--h,265) 60% 30% / .45)}
-.ava img{width:100%;height:100%;border-radius:inherit;object-fit:cover}
-.ava.sm{width:40px;height:40px;border-radius:14px;font-size:13px}
-.ava.xs{width:32px;height:32px;border-radius:11px;font-size:11px}
-.ava.lg{width:76px;height:76px;border-radius:24px;font-size:24px}
-.ava .on{position:absolute;bottom:-2px;left:-2px;width:13px;height:13px;border-radius:50%;
-  background:var(--green);border:3px solid #0a0e19}
-.ava.f-gold{box-shadow:0 0 0 2px var(--gold),0 8px 24px #ffc85733}
-.ava.f-fire{box-shadow:0 0 0 2px var(--orange),0 8px 24px #ff9e4f33}
-.ava.f-ice{box-shadow:0 0 0 2px var(--cyan),0 8px 24px #15d8ff33}
-.ava.f-neon{box-shadow:0 0 0 2px var(--violet),0 0 18px #7c5cff66}
-.ava.f-legendary{box-shadow:0 0 0 2px var(--gold),0 0 22px #ffc85788}
-.ava.f-royal{box-shadow:0 0 0 2px var(--pink),0 8px 24px #ff4fa333}
-/* ---------- level ring ---------- */
-.ring{position:relative;width:86px;height:86px;flex:0 0 auto;display:grid;place-items:center}
-.ring svg{position:absolute;inset:0;transform:rotate(-90deg)}
-.ring circle{fill:none;stroke-width:7;stroke-linecap:round}
-.ring .tr{stroke:#ffffff10}
-.ring .vl{stroke:url(#ringGrad);transition:stroke-dashoffset 1s cubic-bezier(.25,.8,.3,1)}
-.ring b{font-size:19px;line-height:1.2}
-.ring small{display:block;font-size:8px;color:var(--muted);letter-spacing:2px;text-align:center}
-/* ---------- misc ---------- */
-.h1{font-size:19px;margin:0 0 4px;font-weight:800}
-.sub{color:var(--muted);font-size:10.5px;margin:0}
-.section{margin-top:16px}
-.shead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:0 2px}
-.shead b{font-size:13.5px}
-.shead small{font-size:9px;color:var(--muted);letter-spacing:1.5px}
+main{padding-top:6px}
+
+/* نوار خطا */
+#errbar{display:none;align-items:center;gap:8px;margin:8px 0;padding:11px 14px;border-radius:var(--r-sm);
+  background:#ff526814;border:1px solid #ff526844;font-size:11px;color:#ffb3bd}
+#errbar.on{display:flex;animation:slideIn .3s var(--ease)}
+@keyframes slideIn{from{opacity:0;transform:translateY(-8px)}}
+
+/* ---------- ۶) صفحات و ترنزیشن نرم ---------- */
+.page{display:none}
+.page.on{display:block;animation:pagein .34s var(--ease)}
+.page.on .gcard,.page.on .card,.page.on .section{animation:riseIn .4s var(--ease) backwards}
+.page.on .card:nth-child(2),.page.on .section:nth-child(2){animation-delay:.04s}
+.page.on .card:nth-child(3),.page.on .section:nth-child(3){animation-delay:.08s}
+.page.on .card:nth-child(4),.page.on .section:nth-child(4){animation-delay:.12s}
+.page.on .card:nth-child(5),.page.on .section:nth-child(5){animation-delay:.16s}
+.page.on .card:nth-child(6),.page.on .section:nth-child(6){animation-delay:.2s}
+@keyframes pagein{from{opacity:0;transform:translateY(10px)}}
+@keyframes riseIn{from{opacity:0;transform:translateY(14px)}}
+
+/* ---------- ۷) کارت‌ها — شیشه‌ی تایتان ---------- */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:15px 16px;backdrop-filter:var(--glass);box-shadow:var(--shadow-sm);margin-bottom:12px;position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;inset:0 0 auto;height:1px;background:linear-gradient(90deg,transparent,#ffffff1e,transparent)}
+.card.tap{transition:transform .18s var(--spring)}
+.card.tap:active{transform:scale(.975)}
+/* کارت قهرمانی — مرز گرادیانی کامل */
+.gcard{position:relative;border-radius:var(--r-xl);margin-bottom:14px;
+  background:linear-gradient(var(--panel),var(--panel)) padding-box,var(--grad) border-box;
+  border:1.4px solid transparent;box-shadow:var(--shadow),var(--glow-c);overflow:hidden;backdrop-filter:var(--glass)}
+.gcard::before{content:"";position:absolute;inset:-40% -30% auto auto;width:70%;height:120%;
+  background:radial-gradient(ellipse,var(--c1)12,transparent 65%);pointer-events:none}
+.gcard::after{content:"";position:absolute;inset:0;
+  background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);
+  background-size:36px 36px;pointer-events:none;mask-image:radial-gradient(ellipse at 80% 0,#000 30%,transparent 75%)}
+.gcard .in{position:relative;z-index:1;padding:17px 18px}
+.h1{font-size:19px;font-weight:900;margin:0 0 5px;letter-spacing:-.3px}
+.h1.grad{background:var(--grad-text);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--muted);font-size:10.5px;line-height:1.9;margin:0}
+.in.gm-hero{display:flex;align-items:center;gap:13px}
+.gi{width:54px;height:54px;border-radius:19px;display:grid;place-items:center;font-size:26px;flex:0 0 auto;
+  background:var(--grad-soft);border:1px solid var(--line2);box-shadow:inset 0 1px 0 #ffffff14}
+.gi.pulse{animation:giPulse 2.6s var(--ease) infinite}
+@keyframes giPulse{50%{box-shadow:0 0 0 9px #7c5cff00,inset 0 1px 0 #ffffff14}}
+
+/* ---------- ۸) دکمه‌ها — سیستم کامل ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  padding:11px 18px;border-radius:var(--r-sm);font-size:12px;font-weight:800;
+  background:var(--panel3);border:1px solid var(--line2);color:var(--txt);
+  transition:transform .16s var(--spring),box-shadow .2s,filter .2s,background .2s;
+  position:relative;overflow:hidden;user-select:none;min-height:40px}
+.btn:active{transform:scale(.94)}
+.btn:disabled{opacity:.42;pointer-events:none}
+.btn.primary{background:var(--grad);border:0;color:#fff;box-shadow:0 12px 32px #536fff40}
+.btn.primary::after{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 35%,#ffffff2e 50%,transparent 65%);transform:translateX(130%);transition:transform .7s var(--ease)}
+.btn.primary:not(:disabled):hover::after,.btn.primary:not(:disabled):active::after{transform:translateX(-130%)}
+.btn.green{background:linear-gradient(135deg,#0ea860,#31e981);border:0;color:#03130b;box-shadow:0 12px 32px #31e98136}
+.btn.red{background:linear-gradient(135deg,#c73852,#ff5268);border:0;color:#fff;box-shadow:0 12px 28px #ff526833}
+.btn.gold{background:linear-gradient(135deg,#d99a1e,#ffc857);border:0;color:#221502;box-shadow:0 12px 32px #ffc85733}
+.btn.cy{background:linear-gradient(135deg,#0d8fb8,#15d8ff);border:0;color:#02141c;box-shadow:0 12px 28px #15d8ff30}
+.btn.wide{width:100%}
+.btn.sm{padding:7px 12px;font-size:10.5px;min-height:32px;border-radius:var(--r-xs)}
+.btn.xs{padding:4px 9px;font-size:9.5px;min-height:26px;border-radius:8px}
+.btn.glow{animation:btnGlow 2.2s var(--ease) infinite}
+@keyframes btnGlow{50%{box-shadow:0 12px 46px #536fff77}}
+.btn.danger-zone{border-color:#ff526855;color:#ff8a99}
+
+/* ---------- ۹) ناوبری پایین — داک شناور ---------- */
+nav.bottom{position:fixed;bottom:10px;left:0;right:0;z-index:70;display:flex;justify-content:center;gap:2px;
+  padding:0 10px calc(env(safe-area-inset-bottom)) 10px;pointer-events:none;max-width:440px;margin:0 auto}
+nav.bottom button{pointer-events:auto;flex:0 1 74px;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:9px 4px 7px;border-radius:18px;color:var(--dim);font-size:8.5px;font-weight:700;position:relative;
+  transition:color .25s,transform .22s var(--spring)}
+nav.bottom button .bi{font-size:19px;line-height:1;transition:transform .28s var(--spring);filter:grayscale(.55);opacity:.75}
+nav.bottom button.on{color:var(--txt)}
+nav.bottom button.on .bi{transform:translateY(-2px) scale(1.16);filter:none;opacity:1}
+nav.bottom button.on::before{content:"";position:absolute;inset:4px 4px auto;top:2px;width:auto;height:3px;border-radius:99px;
+  background:var(--grad);animation:pop .3s var(--spring)}
+nav.bottom button:active{transform:scale(.9)}
+nav.bottom button .bdg{position:absolute;top:2px;left:12px;min-width:16px;height:16px;padding:0 3px;border-radius:99px;
+  background:var(--red);color:#fff;font-size:8.5px;font-weight:900;display:grid;place-items:center;border:2px solid var(--bg);animation:pop .3s var(--spring)}
+/* پوسته‌ی داک — شیشه با حباب نور */
+nav.bottom::before{content:"";position:absolute;inset:6px 4px 4px;border-radius:26px;pointer-events:none;
+  background:var(--panel);border:1px solid var(--line2);backdrop-filter:blur(26px) saturate(1.7);
+  box-shadow:0 18px 50px rgba(0,0,0,.5),inset 0 1px 0 #ffffff12}
+
+/* ---------- ۱۰) FAB ---------- */
+.fab{position:fixed;left:16px;bottom:calc(var(--nav-h) + 20px + env(safe-area-inset-bottom));z-index:65;
+  width:44px;height:44px;border-radius:16px;display:grid;place-items:center;font-size:19px;
+  background:var(--panel);border:1px solid var(--line2);backdrop-filter:var(--glass);
+  box-shadow:var(--shadow-sm);opacity:0;transform:translateY(16px) scale(.7);pointer-events:none;
+  transition:all .3s var(--spring)}
+.fab.on{opacity:1;transform:none;pointer-events:auto}
+.fab:active{transform:scale(.88)}
+
+/* ---------- ۱۱) گرید و آمار ---------- */
 .grid{display:grid;gap:9px}
-.g2{grid-template-columns:repeat(2,1fr)}
+.g2{grid-template-columns:1fr 1fr}
 .g3{grid-template-columns:repeat(3,1fr)}
 .g4{grid-template-columns:repeat(4,1fr)}
-.stat{border:1px solid var(--line);background:#ffffff06;border-radius:var(--r-md);padding:12px 10px;text-align:center}
-.stat small{display:block;color:var(--muted);font-size:8.5px;margin-bottom:5px;letter-spacing:1px}
-.stat b{font-size:16.5px;font-weight:900}
-.btn{border:1px solid var(--line2);background:#ffffff0d;border-radius:13px;padding:9px 14px;font-size:11.5px;
-  font-weight:700;transition:transform .14s,filter .2s,box-shadow .3s;display:inline-flex;align-items:center;
-  justify-content:center;gap:6px;white-space:nowrap}
-.btn:active{transform:scale(.95)}
-.btn:disabled{opacity:.38;pointer-events:none}
-.btn.primary{background:var(--grad);background-size:150% 150%;border:0;color:#fff;box-shadow:0 8px 26px #7c5cff44}
-.btn.green{background:#31e9811c;border-color:#31e98155;color:var(--green)}
-.btn.red{background:#ff52681c;border-color:#ff526855;color:var(--red)}
-.btn.gold{background:#ffc8571c;border-color:#ffc85755;color:var(--gold)}
-.btn.wide{width:100%}
-.btn.glow{animation:glow 1.8s ease-in-out infinite}
-@keyframes glow{0%,100%{box-shadow:0 8px 26px #7c5cff44}50%{box-shadow:0 8px 40px #7c5cff99}}
-.bar{height:9px;border-radius:99px;background:#ffffff0c;overflow:hidden;position:relative}
-.bar i{display:block;height:100%;border-radius:99px;background:var(--grad);transition:width 1s cubic-bezier(.25,.8,.3,1);position:relative}
-.bar i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#ffffff55,transparent);
-  background-size:200% 100%;animation:shine 2.2s linear infinite}
-@keyframes shine{from{background-position:200% 0}to{background-position:-200% 0}}
-.chips{display:flex;gap:7px;overflow-x:auto;padding:2px;margin:10px 0;scrollbar-width:none}
-.chip{border:1px solid var(--line2);background:#ffffff08;border-radius:99px;padding:7px 14px;font-size:10.5px;
-  font-weight:700;color:var(--muted);white-space:nowrap;transition:.2s}
-.chip.on{background:#7c5cff26;border-color:#7c5cff88;color:#fff;box-shadow:0 4px 18px #7c5cff22}
-.tag{display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:800;padding:3px 9px;border-radius:99px;
-  border:1px solid var(--line2);background:#ffffff0a;color:var(--muted)}
-.tag.vip{color:var(--gold);border-color:#ffc85755;background:#ffc85714}
-.tag.ok{color:var(--green);border-color:#31e98144;background:#31e98112}
-.tag.bad{color:var(--red);border-color:#ff526844;background:#ff526812}
-.tag.cy{color:var(--cyan);border-color:#15d8ff44;background:#15d8ff12}
-/* ---------- lists ---------- */
+.g5{grid-template-columns:repeat(5,1fr)}
+.stat{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-sm);padding:11px 8px 9px;text-align:center;position:relative;overflow:hidden}
+.stat::after{content:"";position:absolute;inset:auto 0 0;height:2px;background:var(--grad);opacity:.5;transform:scaleX(0);transition:transform .5s var(--ease)}
+.stat:hover::after{transform:scaleX(1)}
+.stat small{display:block;font-size:8.5px;color:var(--muted);letter-spacing:.4px;font-weight:700;margin-bottom:3px}
+.stat b{display:block;font-size:15px;font-weight:900;font-variant-numeric:tabular-nums}
+.stat.big b{font-size:19px}
+
+/* ---------- ۱۲) بخش‌ها و سرفصل‌ها ---------- */
+.section{margin:16px 0 10px}
+.shead{display:flex;align-items:center;justify-content:space-between;margin:0 2px 9px}
+.shead b{font-size:12.5px;font-weight:900;display:flex;align-items:center;gap:6px}
+.shead small{font-size:8.5px;color:var(--dim);letter-spacing:2px;font-weight:800}
+
+/* ---------- ۱۳) ردیف‌ها و لیست‌ها ---------- */
 .list{display:flex;flex-direction:column;gap:8px}
-.row{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:11px 13px;
-  display:flex;align-items:center;gap:11px;animation:pagein .3s ease}
+.row{display:flex;align-items:center;gap:11px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:var(--r-md);padding:11px 13px;transition:transform .18s var(--spring),border-color .2s}
+.row:active{transform:scale(.985)}
+.row.me{border-color:#7c5cff55;background:#7c5cff0d}
 .row .grow{flex:1;min-width:0}
 .row .grow b{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .grow small{display:block;color:var(--muted);font-size:9.5px;margin-top:2px;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis}
-.row.me{border-color:#7c5cff66;background:#7c5cff10;box-shadow:0 6px 24px #7c5cff18}
-.medal{width:38px;height:38px;flex:0 0 auto;border-radius:13px;display:grid;place-items:center;
-  font-weight:900;font-size:13px;background:#ffffff0a;border:1px solid var(--line2)}
-.medal.m1{background:linear-gradient(135deg,#ffd76e,#ff9e4f);color:#3a2503;border:0;box-shadow:0 6px 20px #ffc85744}
-.medal.m2{background:linear-gradient(135deg,#e8edf5,#a8b4c8);color:#2a3040;border:0}
-.medal.m3{background:linear-gradient(135deg,#f0a878,#b46a41);color:#2e1608;border:0}
-/* ---------- podium ---------- */
-.podium{display:flex;align-items:flex-end;justify-content:center;gap:10px;padding:16px 0 6px}
-.pod{text-align:center;flex:1;max-width:110px;animation:pagein .45s ease backwards}
-.pod .ava{margin:0 auto 8px}
-.pod b{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pod small{color:var(--muted);font-size:9px;display:block}
-.pod .base{margin-top:7px;border-radius:12px 12px 0 0;background:linear-gradient(180deg,#ffffff14,#ffffff05);
-  border:1px solid var(--line);border-bottom:0;padding:6px 4px 2px;font-size:13px;font-weight:900}
-.pod.p1 .base{height:44px;background:linear-gradient(180deg,#ffc85733,#ffc85706)}
-.pod.p2 .base{height:32px}
-.pod.p3 .base{height:24px}
-.pod.p1{order:2}.pod.p2{order:1}.pod.p3{order:3}
-.pod.p1 .ava{box-shadow:0 0 0 2px var(--gold),0 10px 30px #ffc85755}
-/* ---------- action tiles ---------- */
-.tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}
-.tile{border:1px solid var(--line);background:linear-gradient(150deg,#131828,#0b0f18);border-radius:var(--r-md);
-  padding:14px 10px;text-align:center;transition:transform .15s,border-color .25s;position:relative;overflow:hidden}
-.tile:active{transform:scale(.95)}
-.tile .ico{font-size:23px;display:block;margin-bottom:7px;filter:drop-shadow(0 4px 10px rgba(0,0,0,.4))}
-.tile b{display:block;font-size:11px}
-.tile small{display:block;color:var(--muted);font-size:8.5px;margin-top:3px;line-height:1.6}
-.tile::after{content:"";position:absolute;inset:-40% -60% auto auto;width:120px;height:120px;border-radius:50%;
-  background:radial-gradient(circle,#7c5cff1c,transparent 70%);top:-60px;left:-60px}
-/* ---------- shop ---------- */
-.items{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-.item{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:13px 12px;
-  position:relative;overflow:hidden;transition:transform .15s}
-.item:active{transform:scale(.97)}
-.item .rt{position:absolute;top:0;right:0;left:0;height:3px;background:var(--rc,#9aa3b5)}
-.item .rar{font-size:8.5px;color:var(--muted);display:flex;align-items:center;gap:4px}
-.item h3{font-size:12px;margin:6px 0 4px;line-height:1.5}
-.item p{font-size:9px;color:var(--muted);line-height:1.7;margin:0;min-height:31px;overflow:hidden}
-.item .foot{display:flex;align-items:center;justify-content:space-between;margin-top:9px;gap:6px}
-.price{font-size:11px;font-weight:900;color:var(--gold);white-space:nowrap}
-.deals{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none}
-.deal{flex:0 0 190px;border:1px solid #ffc85744;background:linear-gradient(150deg,#1a1608,#0c0a16);
-  border-radius:var(--r-md);padding:13px;position:relative;overflow:hidden}
-.deal .off{position:absolute;top:10px;left:10px;background:linear-gradient(135deg,var(--pink),var(--red));
-  color:#fff;font-size:8.5px;font-weight:900;padding:3px 8px;border-radius:99px;box-shadow:0 4px 14px #ff4fa355}
-.deal h4{margin:0;font-size:11.5px}
-.deal s{color:var(--dim);font-size:9.5px}
-.deal .price{font-size:13px}
-/* ---------- achievements ---------- */
-.achg{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-.ach{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:13px;
-  transition:transform .15s}
-.ach:active{transform:scale(.97)}
-.ach.lock{opacity:.45;filter:saturate(.3)}
-.ach.got{border-color:#7c5cff44;background:linear-gradient(155deg,#151b2e,#0b0f1a)}
-.ach .ico{font-size:24px;margin-bottom:7px;display:block}
-.ach h4{margin:0 0 3px;font-size:11.5px}
-.ach p{margin:0;font-size:8.8px;color:var(--muted);line-height:1.7;min-height:37px}
-/* ---------- mission rows ---------- */
-.mrow{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:13px}
-.mrow .top{position:static;background:none;padding:0;display:flex;align-items:center;gap:10px}
-.mrow .ic{width:40px;height:40px;border-radius:13px;background:#7c5cff18;border:1px solid #7c5cff33;
-  display:grid;place-items:center;font-size:17px;flex:0 0 auto}
-.mrow .grow{flex:1;min-width:0}
-.mrow b{display:block;font-size:11.5px}
-.mrow .rw{color:var(--muted);font-size:9px;margin-top:2px}
-.mrow .bar{margin-top:10px}
-.mrow.done{border-color:#31e98144}
-/* ---------- timeline ---------- */
-.tl{display:flex;flex-direction:column;gap:2px}
-.tl .ev{display:flex;gap:11px;padding:9px 2px;position:relative}
-.tl .ev::before{content:"";position:absolute;right:17px;top:0;bottom:0;width:2px;background:#ffffff0a}
-.tl .ev:first-child::before{top:20px}
-.tl .ev:last-child::before{bottom:auto;height:20px}
-.tl .b{width:36px;height:36px;border-radius:12px;background:#ffffff0a;border:1px solid var(--line2);
-  display:grid;place-items:center;font-size:14px;flex:0 0 auto;z-index:1}
-.tl .grow{flex:1;min-width:0;padding-top:3px}
-.tl .grow b{font-size:11px;display:block}
-.tl .grow small{color:var(--muted);font-size:9px;display:block;margin-top:2px}
-.tl time{color:var(--dim);font-size:8.5px;white-space:nowrap;padding-top:5px}
-/* ---------- skeleton ---------- */
-.sk{border-radius:var(--r-md);background:linear-gradient(100deg,#ffffff08 30%,#ffffff14 50%,#ffffff08 70%);
-  background-size:200% 100%;animation:skm 1.3s linear infinite;min-height:60px}
-@keyframes skm{from{background-position:200% 0}to{background-position:-200% 0}}
-.sk.tall{min-height:120px}
-.sk.row-sk{height:58px}
-/* ---------- toast ---------- */
-#toast{position:fixed;z-index:120;bottom:calc(var(--nav-h) + 26px + env(safe-area-inset-bottom));left:50%;
-  transform:translate(-50%,24px);opacity:0;background:#181d2c;border:1px solid var(--line2);
-  border-radius:16px;padding:12px 18px;font-size:11.5px;font-weight:700;max-width:min(400px,88vw);
-  text-align:center;box-shadow:0 18px 50px #0009;transition:.28s cubic-bezier(.2,.9,.3,1.2);pointer-events:none;
-  display:flex;align-items:center;gap:8px}
-#toast.on{opacity:1;transform:translate(-50%,0)}
-#toast.err{border-color:#ff526866;background:#241318}
-#toast.ok{border-color:#31e98155;background:#12211a}
-/* ---------- bottom nav ---------- */
-nav.bottom{position:fixed;z-index:60;bottom:10px;left:50%;transform:translateX(-50%);
-  width:min(560px,calc(100% - 20px));display:flex;gap:2px;padding:7px;
-  background:#0e1119f2;backdrop-filter:blur(24px);border:1px solid var(--line2);
-  border-radius:24px;box-shadow:0 18px 60px #000a;
-  margin-bottom:env(safe-area-inset-bottom)}
-nav.bottom button{flex:1;border:0;background:transparent;color:var(--muted);border-radius:17px;
-  padding:7px 2px 6px;font-size:9px;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:2px;
-  transition:.2s;position:relative}
-nav.bottom button .bi{font-size:18px;line-height:1.3;transition:transform .2s}
-nav.bottom button.on{background:#7c5cff1e;color:#fff}
-nav.bottom button.on .bi{transform:translateY(-1px) scale(1.08)}
-nav.bottom button:active{transform:scale(.93)}
-nav.bottom button .bdg{position:absolute;top:2px;right:14%;min-width:16px;height:16px;padding:0 4px;border-radius:99px;
-  background:linear-gradient(135deg,var(--pink),var(--red));font-size:8px;font-weight:900;display:grid;place-items:center}
-/* ---------- sheet ---------- */
-#sheetBk{position:fixed;inset:0;z-index:90;background:#04050cb0;backdrop-filter:blur(6px);
-  opacity:0;pointer-events:none;transition:.25s}
+.row .grow small{display:block;color:var(--muted);font-size:9.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.medal{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;font-size:15px;font-weight:900;
+  background:var(--panel3);border:1px solid var(--line2);flex:0 0 auto;font-variant-numeric:tabular-nums}
+.medal.m1{background:linear-gradient(135deg,#b8860b,#ffd166);color:#221502;border:0;box-shadow:0 6px 18px #ffc85740}
+.medal.m2{background:linear-gradient(135deg,#8b93a8,#d7dce8);color:#10141f;border:0}
+.medal.m3{background:linear-gradient(135deg,#8a5127,#d68a4e);color:#1a0d05;border:0}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:800;padding:4px 9px;border-radius:99px;
+  background:#ffffff08;border:1px solid var(--line2);color:var(--muted);white-space:nowrap}
+.tag.ok{background:#31e98114;border-color:#31e98144;color:#31e981}
+.tag.bad{background:#ff526814;border-color:#ff526844;color:#ff6d80}
+.tag.cy{background:#15d8ff14;border-color:#15d8ff44;color:#15d8ff}
+.tag.vip{background:linear-gradient(135deg,#ffc85733,#ff9e4f22);border-color:#ffc85766;color:var(--gold)}
+.tag.gold{background:#ffc85714;border-color:#ffc85744;color:var(--gold)}
+
+/* ---------- ۱۴) آواتار ---------- */
+.ava{position:relative;width:40px;height:40px;border-radius:14px;flex:0 0 auto;display:grid;place-items:center;
+  font-weight:900;font-size:14px;color:#fff;background:linear-gradient(135deg,hsl(var(--h) 70% 46%),hsl(calc(var(--h) + 45) 78% 58%));
+  box-shadow:inset 0 1px 0 #ffffff2c,0 6px 16px hsl(var(--h) 70% 40% / .35);user-select:none}
+.ava img{width:100%;height:100%;border-radius:inherit;object-fit:cover}
+.ava.xs{width:28px;height:28px;border-radius:9px;font-size:10px}
+.ava.sm{width:34px;height:34px;border-radius:11px;font-size:12px}
+.ava.lg{width:64px;height:64px;border-radius:22px;font-size:22px}
+.ava i.on{position:absolute;bottom:-2px;left:-2px;width:11px;height:11px;border-radius:50%;background:var(--green);border:2.5px solid var(--bg)}
+/* قاب‌های ویژه */
+.ava.f-neon{box-shadow:0 0 0 2px var(--c3),0 0 18px var(--c3)}
+.ava.f-gold{box-shadow:0 0 0 2px var(--gold),0 0 18px #ffc85788}
+.ava.f-rainbow{box-shadow:0 0 0 2px transparent;background-image:linear-gradient(#0b0e18,#0b0e18),conic-gradient(red,orange,yellow,lime,cyan,blue,magenta,red);background-origin:border-box;background-clip:padding-box,border-box}
+.ava.f-fire{box-shadow:0 0 0 2px #ff6b4a,0 0 20px #ff6b4a88}
+.ava.f-ice{box-shadow:0 0 0 2px #15d8ff,0 0 18px #15d8ff66}
+
+/* ---------- ۱۵) نوار پیشرفت و حلقه‌ها ---------- */
+.bar{height:8px;border-radius:99px;background:#ffffff0d;overflow:hidden;position:relative}
+.bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--grad);transition:width 1s var(--ease);position:relative;overflow:hidden}
+.bar i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#ffffff33,transparent);
+  transform:translateX(-100%);animation:barShine 2.4s var(--ease) infinite}
+@keyframes barShine{60%,100%{transform:translateX(100%)}}
+.bar.thin{height:5px}
+.ring{position:relative;width:78px;height:78px;flex:0 0 auto}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:6.5;stroke-linecap:round}
+.ring .tr{stroke:#ffffff0e}
+.ring .vl{stroke:url(#ringGrad);transition:stroke-dashoffset 1.1s var(--ease)}
+.ring>div{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.ring b{font-size:17px;font-weight:900;line-height:1.1}
+.ring small{display:block;font-size:7.5px;color:var(--muted);letter-spacing:2px;font-weight:800}
+
+/* ---------- ۱۶) چیپ‌ها و تب‌ها ---------- */
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:99px;font-size:10.5px;font-weight:700;
+  background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+  transition:all .2s var(--spring);white-space:nowrap}
+.chip:active{transform:scale(.92)}
+.chip.on{background:var(--grad-soft);border-color:var(--c1);color:var(--txt);box-shadow:0 6px 18px #7c5cff22}
+.seg{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-sm);padding:3px;gap:2px}
+.seg button{flex:1;padding:8px 6px;border-radius:10px;font-size:10.5px;font-weight:700;color:var(--muted);transition:all .2s}
+.seg button.on{background:var(--grad);color:#fff;box-shadow:0 6px 16px #536fff33}
+
+/* ---------- ۱۷) ورودی‌ها ---------- */
+.input{width:100%;padding:12px 14px;border-radius:var(--r-sm);background:var(--panel2);
+  border:1px solid var(--line2);color:var(--txt);font-size:12.5px;transition:border-color .2s,box-shadow .2s;resize:none}
+.input:focus{border-color:var(--c1);box-shadow:0 0 0 3px #7c5cff26}
+.input::placeholder{color:var(--dim)}
+textarea.input{min-height:96px;line-height:2}
+.input.num{text-align:center;font-size:17px;font-weight:900;letter-spacing:2px;font-variant-numeric:tabular-nums}
+.searchbar{position:relative}
+.searchbar .sic{position:absolute;right:13px;top:50%;transform:translateY(-50%);font-size:14px;opacity:.5;pointer-events:none}
+.searchbar .input{padding-right:38px}
+
+/* ---------- ۱۸) سوئیچ ---------- */
+.sw{position:relative;width:46px;height:26px;border-radius:99px;background:#ffffff12;border:1px solid var(--line2);
+  transition:background .25s var(--ease);flex:0 0 auto}
+.sw::after{content:"";position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;background:var(--muted);
+  transition:all .28s var(--spring);box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.sw.on{background:var(--grad);border-color:transparent}
+.sw.on::after{background:#fff;transform:translateX(-20px)}
+
+/* ---------- ۱۹) سوییچ ردیفی تنظیمات ---------- */
+.srow{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--line)}
+.srow:last-child{border-bottom:0}
+.srow .ic{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;font-size:17px;flex:0 0 auto;
+  background:var(--panel3);border:1px solid var(--line)}
+.srow .grow{flex:1;min-width:0}
+.srow .grow b{display:block;font-size:11.5px}
+.srow .grow small{display:block;color:var(--muted);font-size:9.5px;margin-top:2px}
+
+/* ---------- ۲۰) خالی و اسکلتون ---------- */
+.empty{text-align:center;padding:30px 18px;color:var(--muted);font-size:11px;background:var(--panel2);
+  border:1px dashed var(--line2);border-radius:var(--r-lg)}
+.empty .ei{display:block;font-size:34px;margin-bottom:9px;opacity:.6;animation:float 3s var(--ease) infinite}
+@keyframes float{50%{transform:translateY(-7px)}}
+.sk{position:relative;overflow:hidden;background:var(--panel2);border-radius:var(--r-md);border:1px solid var(--line)}
+.sk.tall{height:120px;margin-bottom:12px}
+.sk.row-sk{height:62px;margin-bottom:9px}
+.sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+  background:linear-gradient(90deg,transparent,#ffffff0a 50%,transparent);animation:skMove 1.4s var(--ease) infinite}
+@keyframes skMove{to{transform:translateX(100%)}}
+
+/* ---------- ۲۱) توست ---------- */
+#toast{position:fixed;bottom:calc(var(--nav-h) + 26px + env(safe-area-inset-bottom));left:50%;z-index:150;
+  transform:translate(-50%,26px);opacity:0;pointer-events:none;
+  max-width:min(430px,88vw);padding:12px 20px;border-radius:var(--r-md);font-size:11.5px;font-weight:700;
+  background:var(--panel);border:1px solid var(--line2);backdrop-filter:blur(24px) saturate(1.6);
+  box-shadow:var(--shadow);text-align:center;transition:all .35s var(--spring)}
+#toast.on{transform:translate(-50%,0);opacity:1}
+#toast.ok{border-color:#31e98155;box-shadow:0 14px 40px #31e98122}
+#toast.err{border-color:#ff526855;box-shadow:0 14px 40px #ff526822}
+#toast.warn{border-color:#ff9e4f55;box-shadow:0 14px 40px #ff9e4f22}
+/* ════════════════════════════════════════════════════════════════
+   TITAN CSS — بخش ۲: نمای بازی‌ها، لابی زنده، ادمین، نمودارها
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- ۲۲) باتن‌شیت (پنل پایین) ---------- */
+#sheetBk{position:fixed;inset:0;z-index:120;background:#04050c99;backdrop-filter:blur(6px);
+  opacity:0;pointer-events:none;transition:opacity .3s var(--ease)}
 #sheetBk.on{opacity:1;pointer-events:auto}
-#sheet{position:fixed;z-index:95;bottom:0;left:0;right:0;max-height:86dvh;overflow-y:auto;
-  background:#0d1119;border-radius:26px 26px 0 0;border:1px solid var(--line2);border-bottom:0;
-  transform:translateY(105%);transition:transform .32s cubic-bezier(.25,.9,.3,1);padding:8px 15px calc(24px + env(safe-area-inset-bottom));
-  margin:auto;width:min(680px,100%)}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:121;max-width:560px;margin:0 auto;
+  background:var(--panel2);border-radius:30px 30px 0 0;border:1px solid var(--line2);border-bottom:0;
+  box-shadow:0 -20px 70px rgba(0,0,0,.6);max-height:86dvh;overflow-y:auto;
+  transform:translateY(105%);transition:transform .42s var(--spring)}
 #sheet.on{transform:none}
-#sheet .grab{width:44px;height:5px;border-radius:99px;background:#ffffff22;margin:5px auto 12px}
-#sheet h3{margin:2px 0 10px;font-size:15px}
-/* ---------- confetti ---------- */
-.cf{position:fixed;z-index:130;width:9px;height:9px;pointer-events:none;top:-12px;opacity:1;
-  animation:cfall var(--d,2.4s) cubic-bezier(.25,.5,.6,1) forwards}
-@keyframes cfall{10%{opacity:1}to{transform:translate(var(--x),105vh) rotate(var(--r));opacity:0}}
-/* ---------- splash ---------- */
-#splash{position:fixed;inset:0;z-index:200;background:var(--bg);display:grid;place-items:center;
-  transition:opacity .45s}
-#splash.off{opacity:0;pointer-events:none}
-#splash .slogo{width:92px;height:92px;border-radius:30px;background:var(--grad);background-size:200% 200%;
-  animation:gradshift 5s ease infinite,pulse 2.2s ease-in-out infinite;display:grid;place-items:center;
-  font-size:26px;font-weight:900;color:#fff;box-shadow:0 20px 70px #7c5cff66}
-@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
-#splash p{color:var(--muted);font-size:11px;letter-spacing:3px;margin-top:18px;text-align:center}
-#splash .spin{width:26px;height:26px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--violet);
-  animation:rot 0.9s linear infinite;margin:16px auto 0}
-@keyframes rot{to{transform:rotate(360deg)}}
-/* ---------- error banner ---------- */
-#errbar{display:none;margin:0 0 12px;border:1px solid #ff526855;background:#ff526812;color:#ff9aa5;
-  border-radius:var(--r-md);padding:11px 14px;font-size:11px;align-items:center;gap:9px}
-#errbar.on{display:flex;animation:pagein .3s}
-/* ---------- pass track ---------- */
-.tier{border:1px solid var(--line);border-radius:var(--r-md);padding:12px 13px;display:flex;gap:11px;
-  align-items:center;background:var(--panel);margin-bottom:8px}
-.tier .tno{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;font-weight:900;
-  background:#ffffff0a;border:1px solid var(--line2);flex:0 0 auto}
-.tier.open .tno{background:#7c5cff22;border-color:#7c5cff66;color:#fff}
-.tier.lockt{opacity:.45}
-.tier .grow{flex:1;min-width:0}
-.tier .grow b{font-size:11px;display:block}
-.tier .grow small{font-size:9px;color:var(--muted);display:block;margin-top:2px}
-/* ---------- admin ---------- */
-.weekchart{display:flex;align-items:flex-end;gap:8px;height:110px;padding:10px 4px 0}
-.weekchart .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
-.weekchart .bar2{width:70%;max-width:26px;border-radius:7px 7px 3px 3px;background:var(--grad);min-height:4px;
-  transition:height 1s cubic-bezier(.25,.8,.3,1);position:relative}
-.weekchart small{font-size:8px;color:var(--dim)}
-.loglv{font-size:8px;font-weight:900;padding:2px 8px;border-radius:99px;flex:0 0 auto}
-.loglv.info{background:#15d8ff14;color:var(--cyan);border:1px solid #15d8ff33}
-.loglv.warn{background:#ffc85714;color:var(--gold);border:1px solid #ffc85744}
-.loglv.error{background:#ff52681a;color:var(--red);border:1px solid #ff526844}
-.loglv.critical{background:#ff52682a;color:#ff9aa5;border:1px solid #ff526866}
-pre.json{white-space:pre-wrap;word-break:break-all;color:var(--cyan);font-size:10px;line-height:1.9;margin:0;
-  font-family:inherit}
-.pager{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px}
-.pager button{min-width:38px}
-.pager span{font-size:10px;color:var(--muted)}
-.input{width:100%;border:1px solid var(--line2);background:#090c14;border-radius:13px;padding:11px 13px;
-  outline:none;font-size:12px;transition:border-color .2s}
-.input:focus{border-color:#7c5cff88;box-shadow:0 0 0 3px #7c5cff1a}
-textarea.input{min-height:96px;resize:vertical;line-height:1.9}
-.empty{text-align:center;padding:34px 16px;color:var(--muted);font-size:11px}
-.empty .ei{font-size:34px;display:block;margin-bottom:10px;opacity:.6}
-.fab{position:fixed;left:16px;bottom:calc(var(--nav-h) + 20px + env(safe-area-inset-bottom));z-index:55;
-  width:46px;height:46px;border-radius:16px;background:var(--grad);display:grid;place-items:center;font-size:19px;
-  color:#fff;box-shadow:0 12px 34px #7c5cff55;transition:transform .2s,opacity .3s;opacity:0;pointer-events:none}
-.fab.on{opacity:1;pointer-events:auto}
-.fab:active{transform:scale(.9) rotate(90deg)}
-@media(max-width:430px){
-  .g4{grid-template-columns:repeat(2,1fr)}
-  .items,.achg{grid-template-columns:1fr}
-  .hero .rowline{gap:10px}
-  .ring{width:72px;height:72px}
+#sheet .grab{position:sticky;top:0;z-index:2;display:grid;place-items:center;padding:10px 0 2px;
+  background:linear-gradient(var(--panel2) 70%,transparent)}
+#sheet .grab::before{content:"";width:44px;height:5px;border-radius:99px;background:#ffffff22}
+#sheetBody{padding:6px 18px calc(20px + env(safe-area-inset-bottom))}
+#sheetBody h3{margin:8px 0 12px;font-size:15.5px;font-weight:900}
+body[data-mode="light"] #sheetBk{background:#1a223855}
+
+/* ---------- ۲۳) مودال تأیید ---------- */
+#modalBk{position:fixed;inset:0;z-index:140;background:#04050cb3;backdrop-filter:blur(8px);
+  display:grid;place-items:center;padding:24px;opacity:0;pointer-events:none;transition:opacity .28s var(--ease)}
+#modalBk.on{opacity:1;pointer-events:auto}
+#modalBox{width:100%;max-width:340px;background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r-xl);
+  padding:22px 20px;box-shadow:var(--shadow);transform:scale(.86);transition:transform .32s var(--spring);text-align:center}
+#modalBk.on #modalBox{transform:none}
+#modalBox .mic{font-size:40px;margin-bottom:8px;animation:pop .4s var(--spring)}
+#modalBox h3{margin:0 0 8px;font-size:15px}
+#modalBox p{margin:0 0 16px;font-size:11px;color:var(--muted);line-height:2}
+#modalBox .mrow{display:flex;gap:9px}
+#modalBox .mrow .btn{flex:1}
+body[data-mode="light"] #modalBk{background:#1a223866}
+
+/* ---------- ۲۴) پالت فرمان (Ctrl+K) ---------- */
+#cmdk{position:fixed;inset:0;z-index:160;background:#04050cb3;backdrop-filter:blur(10px);
+  display:none;padding:9vh 18px 18px}
+#cmdk.on{display:block}
+#cmdkBox{max-width:440px;margin:0 auto;background:var(--panel2);border:1px solid var(--line2);
+  border-radius:var(--r-lg);box-shadow:var(--shadow);overflow:hidden;animation:cmdkIn .3s var(--spring)}
+@keyframes cmdkIn{from{transform:translateY(-18px) scale(.96);opacity:0}}
+#cmdkIn{width:100%;padding:15px 18px;background:transparent;border:0;border-bottom:1px solid var(--line);
+  font-size:13px;color:var(--txt)}
+#cmdkIn:focus{box-shadow:none}
+#cmdkList{max-height:52vh;overflow-y:auto;padding:8px}
+.cmi{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:var(--r-sm);cursor:pointer;
+  transition:background .15s}
+.cmi .ic{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;font-size:18px;
+  background:var(--panel3);border:1px solid var(--line);flex:0 0 auto}
+.cmi .grow{flex:1;min-width:0}
+.cmi .grow b{display:block;font-size:11.5px}
+.cmi .grow small{display:block;font-size:9px;color:var(--muted);margin-top:1px}
+.cmi kbd{font-family:inherit;font-size:9px;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+.cmi.sel{background:var(--grad-soft);border:1px solid #7c5cff44}
+#cmdkBox .ckbar{display:flex;gap:14px;padding:9px 16px;border-top:1px solid var(--line);
+  font-size:8.5px;color:var(--dim)}
+
+/* ---------- ۲۵) آنبوردینگ ---------- */
+#ob{position:fixed;inset:0;z-index:170;background:var(--bg);display:none;place-items:center;padding:26px}
+#ob.on{display:grid}
+#obBox{max-width:340px;text-align:center;animation:obIn .5s var(--spring)}
+@keyframes obIn{from{transform:scale(.8);opacity:0}}
+.obIc{font-size:64px;margin-bottom:14px;animation:float 3s var(--ease) infinite;filter:drop-shadow(0 14px 30px #7c5cff44)}
+#obT{margin:0 0 10px;font-size:21px;font-weight:900}
+#obP{margin:0 0 22px;color:var(--muted);font-size:12px;line-height:2.2}
+.dots{display:flex;justify-content:center;gap:7px;margin-bottom:22px}
+.dots i{width:8px;height:8px;border-radius:99px;background:#ffffff1c;transition:all .3s var(--spring)}
+.dots i.on{width:26px;background:var(--grad)}
+
+/* ---------- ۲۶) کانفتی و ذرات ---------- */
+.cf{position:fixed;top:-20px;z-index:180;font-size:15px;pointer-events:none;
+  animation:cfFall var(--d) var(--ease) forwards}
+@keyframes cfFall{
+  0%{transform:translateY(0) translateX(0) rotate(0);opacity:1}
+  85%{opacity:1}
+  100%{transform:translateY(108vh) translateX(var(--x)) rotate(var(--r));opacity:0}
 }
-@media(min-width:600px){.items{grid-template-columns:repeat(3,1fr)}.achg{grid-template-columns:repeat(3,1fr)}.tiles{grid-template-columns:repeat(3,1fr)}}
-/* ---------- GAME ENGINE UI (۳.۰) ---------- */
-.gm-hero{display:flex;align-items:center;gap:14px;padding:16px}
-.gm-hero .gi{width:56px;height:56px;border-radius:19px;display:grid;place-items:center;font-size:27px;flex:0 0 auto;
-  background:linear-gradient(150deg,#151b2e,#0a0e19);border:1px solid var(--line2);box-shadow:0 10px 30px #0006}
-.gm-hero .gi.pulse{animation:gpulse 2s ease-in-out infinite}
-@keyframes gpulse{0%,100%{transform:scale(1);box-shadow:0 10px 30px #0006}50%{transform:scale(1.06);box-shadow:0 10px 40px #7c5cff55}}
-.qcard{border:1px solid var(--line2);background:linear-gradient(160deg,#141a2bf5,#0a0e19f8);border-radius:var(--r-lg);
-  padding:18px;margin-bottom:14px;position:relative;overflow:hidden}
-.qcard::before{content:"";position:absolute;inset:0;background:radial-gradient(500px 180px at 80% -30%,#7c5cff1c,transparent 70%)}
-.qcard .qtag{display:inline-flex;align-items:center;gap:5px;font-size:9px;font-weight:800;padding:4px 11px;border-radius:99px;
-  background:#7c5cff1c;border:1px solid #7c5cff44;color:#cfc4ff;margin-bottom:10px}
-.qcard .qtext{font-size:14.5px;font-weight:800;line-height:2;position:relative}
-.opt{width:100%;text-align:right;border:1px solid var(--line2);background:#ffffff08;border-radius:15px;padding:13px 15px;
-  font-size:12.5px;font-weight:700;margin-top:9px;display:flex;align-items:center;gap:10px;transition:transform .13s,border-color .2s,background .2s;position:relative}
+.cf.burst{top:42%;animation:cfBurst var(--d) var(--ease) forwards}
+@keyframes cfBurst{
+  0%{transform:translate(0,0) scale(.4);opacity:1}
+  100%{transform:translate(var(--x),var(--y)) scale(1.15) rotate(var(--r));opacity:0}
+}
+
+/* ---------- ۲۷) اجزای بازی ---------- */
+/* کارت سوال — با مرز گرادیانی و درخشش */
+.qcard{position:relative;border-radius:var(--r-lg);padding:17px 17px 15px;margin:12px 0;
+  background:linear-gradient(var(--panel2),var(--panel2)) padding-box,var(--grad) border-box;
+  border:1.4px solid transparent;box-shadow:var(--shadow-sm)}
+.qtag{display:inline-flex;align-items:center;gap:5px;font-size:9px;font-weight:900;letter-spacing:1px;
+  padding:5px 11px;border-radius:99px;background:var(--grad-soft);border:1px solid #7c5cff44;color:var(--c3);margin-bottom:10px}
+.qtext{font-size:14.5px;font-weight:800;line-height:2.1;word-break:break-word}
+/* گزینه‌های پاسخ */
+.opt{display:flex;align-items:center;gap:12px;width:100%;text-align:right;padding:14px 15px;margin-bottom:9px;
+  border-radius:var(--r-md);background:var(--panel2);border:1px solid var(--line2);font-size:12.5px;font-weight:700;
+  transition:transform .16s var(--spring),border-color .2s,background .2s}
 .opt:active{transform:scale(.97)}
-.opt .ol{width:26px;height:26px;border-radius:9px;background:#7c5cff22;border:1px solid #7c5cff44;
-  display:grid;place-items:center;font-size:11px;font-weight:900;color:#cfc4ff;flex:0 0 auto}
-.opt.right{border-color:#31e98188;background:#31e98116}
-.opt.right .ol{background:#31e98133;border-color:#31e98166;color:#b8ffd9}
-.opt.wrong{border-color:#ff526888;background:#ff526816}
-.opt.wrong .ol{background:#ff526833;border-color:#ff526866;color:#ffc2cb}
-.opt:disabled{opacity:.55;pointer-events:none}
-.streakbar{display:flex;align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap}
-.streakbar .flame{font-size:19px;animation:gpulse 1.4s ease-in-out infinite}
-.bigres{text-align:center;padding:26px 14px}
-.bigres .bico{font-size:46px;display:block;margin-bottom:10px}
-.bigres .bt{font-size:16px;font-weight:900}
-.bigres .bs{color:var(--muted);font-size:11px;margin-top:6px}
-/* ttt */
-.ttt{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:300px;margin:12px auto}
-.ttt button{aspect-ratio:1;border-radius:16px;border:1px solid var(--line2);background:#ffffff08;font-size:31px;
-  display:grid;place-items:center;transition:transform .13s,background .2s}
-.ttt button:active{transform:scale(.92)}
-.ttt button.x{background:#7c5cff1e;border-color:#7c5cff66}
-.ttt button.o{background:#15d8ff14;border-color:#15d8ff55}
-.ttt button.dead{opacity:.4;pointer-events:none}
-/* mine grid */
-.mineg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
-.mineg button{aspect-ratio:1;border-radius:15px;border:1px solid var(--line2);background:linear-gradient(150deg,#131828,#0b0f18);
-  font-size:22px;display:grid;place-items:center;transition:transform .13s}
-.mineg button:active{transform:scale(.9)}
-.mineg button.gem{background:#31e98116;border-color:#31e98155}
-.mineg button.boom{background:#ff526822;border-color:#ff526888}
-.mineg button.dead{opacity:.35;pointer-events:none}
-/* reaction */
-.rxpad{height:220px;border-radius:var(--r-lg);display:grid;place-items:center;font-size:19px;font-weight:900;
-  border:2px dashed var(--line2);background:#ffffff05;margin:12px 0;transition:background .18s,border-color .18s;user-select:none}
-.rxpad.wait{background:#ff526810;border-color:#ff526855;color:#ffb9c2}
-.rxpad.go{background:#31e98122;border-color:#31e98188;color:#b8ffd9;animation:gpulse .8s ease-in-out infinite;cursor:pointer}
-.rxpad.res{background:#7c5cff12;border-color:#7c5cff55;color:#fff}
-/* wheel */
-.wheel{width:230px;height:230px;border-radius:50%;margin:16px auto;position:relative;
-  border:7px solid #1a2033;box-shadow:0 18px 60px #0008, inset 0 0 30px #0006;transition:transform 3.4s cubic-bezier(.15,.85,.22,1)}
-.wheel .seg{position:absolute;inset:0;border-radius:50%;clip-path:polygon(50% 50%,50% 0,100% 0)}
-.wheel::after{content:"";position:absolute;left:50%;top:-13px;transform:translateX(-50%);width:0;height:0;
-  border-left:12px solid transparent;border-right:12px solid transparent;border-top:19px solid var(--gold);filter:drop-shadow(0 4px 6px #0008)}
-.wheel .hubx{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:58px;height:58px;border-radius:50%;
-  background:linear-gradient(135deg,#1a2033,#0d1119);border:2px solid var(--line2);display:grid;place-items:center;font-size:23px;z-index:2}
-/* countdown ring + timer */
+.opt .ol{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-size:13px;flex:0 0 auto;
+  background:var(--panel3);border:1px solid var(--line2)}
+.opt.right{background:#31e98118;border-color:#31e98166;animation:optRight .5s var(--ease)}
+.opt.right .ol{background:#31e981;color:#03130b;border-color:transparent}
+.opt.wrong{background:#ff526814;border-color:#ff526855;animation:shake .45s var(--ease)}
+@keyframes optRight{30%{transform:scale(1.03)}}
+@keyframes shake{20%,60%{transform:translateX(6px)}40%,80%{transform:translateX(-6px)}}
+/* نتیجه بزرگ */
+.bigres{text-align:center;padding:26px 18px;border-radius:var(--r-lg);background:var(--panel2);
+  border:1px solid var(--line);margin:12px 0}
+.bigres .bico{display:block;font-size:44px;margin-bottom:10px;animation:pop .5s var(--spring);
+  filter:drop-shadow(0 10px 26px #7c5cff55)}
+.bigres .bt{display:block;font-size:16.5px;font-weight:900;line-height:1.9}
+.bigres .bs{display:block;color:var(--muted);font-size:11px;margin-top:6px;line-height:2}
+/* نوار استریک */
+.streakbar{display:flex;align-items:center;gap:10px;padding:11px 15px;border-radius:var(--r-md);
+  background:linear-gradient(135deg,#ff9e4f18,#ff526812);border:1px solid #ff9e4f44;margin-bottom:12px}
+.streakbar .flame{font-size:21px;animation:flame 1.2s var(--ease) infinite}
+@keyframes flame{50%{transform:scale(1.18) rotate(-4deg)}}
+.streakbar b{font-size:12.5px}
+/* تخته دوز */
+.ttt{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;max-width:300px;margin:14px auto}
+.ttt button{aspect-ratio:1;border-radius:var(--r-md);background:var(--panel2);border:1px solid var(--line2);
+  font-size:31px;font-weight:900;display:grid;place-items:center;transition:all .2s var(--spring)}
+.ttt button:active{transform:scale(.9)}
+.ttt button.x{color:var(--c3);background:#15d8ff10;border-color:#15d8ff44;animation:pop .3s var(--spring)}
+.ttt button.o{color:var(--pink);background:#ff4fa310;border-color:#ff4fa344;animation:pop .3s var(--spring)}
+.ttt button.win{background:var(--grad);color:#fff;border-color:transparent;box-shadow:0 0 24px #536fff66}
+/* صفحه‌کلید عددی */
+.numpad{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;max-width:320px;margin:12px auto}
+.numpad button{padding:16px;border-radius:var(--r-md);background:var(--panel2);border:1px solid var(--line2);
+  font-size:16px;font-weight:900;transition:transform .15s var(--spring)}
+.numpad button:active{transform:scale(.9);background:var(--grad-soft)}
+/* مین‌یاب */
+.minegrid{display:grid;gap:7px;max-width:340px;margin:14px auto}
+.minegrid button{aspect-ratio:1;border-radius:13px;background:var(--panel2);border:1px solid var(--line2);
+  font-size:17px;font-weight:900;display:grid;place-items:center;transition:all .18s var(--spring)}
+.minegrid button:active{transform:scale(.88)}
+.minegrid button.revealed{background:var(--panel3);border-color:var(--line);animation:pop .25s var(--spring)}
+.minegrid button.boom{background:#ff526833;border-color:#ff5268;animation:shake .5s var(--ease)}
+.minegrid button.gem{background:#31e98118;border-color:#31e98155}
+/* دنباله حافظه */
+.seqdots{display:flex;justify-content:center;gap:9px;flex-wrap:wrap}
+.seqdots span{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;font-size:16px;font-weight:900;
+  background:var(--grad-soft);border:1px solid #7c5cff44;animation:seqIn .5s var(--spring) backwards}
+@keyframes seqIn{from{transform:scale(0) rotate(-90deg)}}
+/* واکنش */
+.rxn{width:100%;aspect-ratio:1.6;max-height:300px;border-radius:var(--r-xl);margin:12px 0;
+  display:grid;place-items:center;font-size:19px;font-weight:900;border:2px solid var(--line2);
+  background:var(--panel2);transition:all .12s;user-select:none}
+.rxn.armed{background:#ff526818;border-color:#ff526855;color:#ff8a99}
+.rxn.go{background:linear-gradient(135deg,#0ea860,#31e981);border-color:transparent;color:#03130b;animation:pop .2s var(--spring)}
+/* گردونه شانس */
+.wheelwrap{position:relative;width:232px;height:232px;margin:14px auto}
+.wheel{width:100%;height:100%;border-radius:50%;transition:transform 3.4s cubic-bezier(.12,.72,.05,1);
+  position:relative;box-shadow:0 18px 50px #00000066,inset 0 0 0 6px var(--panel2)}
+.wheel .seg{position:absolute;inset:0;border-radius:50%}
+.wheel .wn{position:absolute;font-size:12px;font-weight:900;color:#fff;text-shadow:0 2px 6px #000000aa}
+.wheelwrap .pin{position:absolute;top:-8px;left:50%;transform:translateX(-50%);font-size:23px;z-index:2;
+  filter:drop-shadow(0 4px 8px #00000088)}
+/* تایمر حلقه‌ای */
 .timer{display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums;font-weight:900;font-size:13px;color:var(--gold)}
 .timer .tring{width:34px;height:34px;position:relative;flex:0 0 auto}
 .timer .tring svg{position:absolute;inset:0;transform:rotate(-90deg)}
 .timer .tring circle{fill:none;stroke-width:4;stroke-linecap:round}
 .timer .tring .ttr{stroke:#ffffff10}
 .timer .tring .tvl{stroke:var(--gold);transition:stroke-dashoffset .95s linear}
-/* hearts */
+.timer.hot{color:var(--red)}
+.timer.hot .tring .tvl{stroke:var(--red)}
+/* قلب‌های بقا */
 .hearts{display:flex;gap:5px;font-size:16px}
-.hearts i{font-style:normal;animation:pop .35s cubic-bezier(.2,2,.4,1)}
+.hearts i{font-style:normal;animation:pop .35s var(--spring)}
 .hearts i.off{opacity:.22;filter:grayscale(1)}
-/* lobby */
+/* ابزار شانس */
+.funbox{display:grid;place-items:center;min-height:110px;border-radius:var(--r-lg);background:var(--panel2);
+  border:1px dashed var(--line2);font-size:36px}
+.funbox.spin .fres{animation:funSpin .5s linear infinite}
+@keyframes funSpin{to{transform:rotate(360deg)}}
+.fres{transition:transform .3s var(--spring)}
+
+/* ---------- ۲۸) لابی / دوئل / آرنا — نمای زنده ---------- */
 .pl-wrap{display:flex;flex-direction:column;gap:8px}
-.pl{display:flex;align-items:center;gap:11px;border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:11px 13px}
+.pl{display:flex;align-items:center;gap:11px;border:1px solid var(--line);background:var(--panel2);border-radius:var(--r-md);padding:11px 13px;
+  transition:border-color .3s,background .3s}
 .pl .grow{flex:1;min-width:0}
 .pl .grow b{display:block;font-size:12px}
 .pl .grow small{display:block;color:var(--muted);font-size:9px;margin-top:2px}
 .pl.ready{border-color:#31e98144;background:#31e9810a}
+.pl.turn{border-color:var(--c1);background:#7c5cff10;animation:turnGlow 1.8s var(--ease) infinite}
+@keyframes turnGlow{50%{box-shadow:0 0 0 4px #7c5cff1a}}
 .pl .sc{font-size:15px;font-weight:900;color:var(--gold);min-width:34px;text-align:center}
 .codechip{display:inline-flex;align-items:center;gap:8px;background:#7c5cff12;border:1px dashed #7c5cff66;color:#cfc4ff;
   border-radius:14px;padding:9px 16px;font-size:16px;font-weight:900;letter-spacing:3px;font-family:'Vazirmatn',monospace}
-.sharebtn{cursor:pointer}
-/* duel / arena score */
+/* تب‌های موضوع */
+.gtabs{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0}
+.gtab{padding:15px 10px;border-radius:var(--r-md);background:var(--panel2);border:1px solid var(--line2);
+  font-size:12px;font-weight:800;transition:all .2s var(--spring)}
+.gtab:active{transform:scale(.94)}
+.gtab:hover{border-color:var(--c1);background:var(--grad-soft)}
+/* نوار دووئل */
 .duelbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;margin:12px 0}
-.duelbar .side{text-align:center;padding:12px 8px;border:1px solid var(--line);background:#ffffff06;border-radius:var(--r-md)}
+.duelbar .side{text-align:center;padding:12px 8px;border:1px solid var(--line);background:#ffffff06;border-radius:var(--r-md);
+  display:flex;flex-direction:column;align-items:center;gap:6px}
 .duelbar .side.me{border-color:#7c5cff55;background:#7c5cff0e}
-.duelbar .side b{display:block;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.duelbar .side .sc{font-size:23px;font-weight:900;color:var(--gold)}
-.duelbar .vs{font-size:11px;font-weight:900;color:var(--muted)}
-/* dice/coin animation */
-.funbox{min-height:150px;display:grid;place-items:center;border-radius:var(--r-lg);border:1px solid var(--line2);
-  background:radial-gradient(300px 160px at 50% 30%,#7c5cff14,transparent 70%),#ffffff05;margin:12px 0;padding:20px}
-.funbox .fres{font-size:52px;animation:pop .5s cubic-bezier(.2,2,.4,1)}
-.funbox.spin .fres{animation:funspin .6s linear infinite}
-@keyframes funspin{from{transform:rotate(0) scale(.9)}to{transform:rotate(360deg) scale(1)}}
-/* stats page bars */
-.mbar{margin:8px 0}
-.mbar .lb{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);margin-bottom:4px}
-/* love2 */
-.lovebar{height:16px;border-radius:99px;background:#ffffff0c;overflow:hidden;position:relative;margin:14px 0}
-.lovebar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#ff4fa3,#ff85b3,#ffc857);
-  transition:width 1.4s cubic-bezier(.2,.9,.3,1);position:relative}
-.lovebar i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#ffffff66,transparent);
-  background-size:200% 100%;animation:shine 2s linear infinite}
-/* segment tabs for games */
-.gtabs{display:flex;gap:6px;overflow-x:auto;padding:2px;margin:12px 0 4px;scrollbar-width:none}
-.gtab{border:1px solid var(--line2);background:#ffffff08;border-radius:12px;padding:8px 13px;font-size:10.5px;
-  font-weight:800;color:var(--muted);white-space:nowrap;transition:.2s;flex:0 0 auto}
-.gtab.on{background:#7c5cff26;border-color:#7c5cff88;color:#fff}
-/* keyboard number input */
-.numpad{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;max-width:260px;margin:10px auto}
-.numpad button{padding:13px;border-radius:13px;border:1px solid var(--line2);background:#ffffff0a;font-size:15px;font-weight:900}
-.numpad button:active{transform:scale(.93)}
-.seqdots{display:flex;gap:9px;justify-content:center;font-size:23px;font-weight:900;letter-spacing:3px;margin:12px 0;
-  font-variant-numeric:tabular-nums}
-.seqdots span{animation:pop .4s cubic-bezier(.2,2,.4,1) backwards}
-/* ================= 🎨 OMEGA THEME SYSTEM (4.0) ================= */
-body[data-theme="sunset"]{--violet:#ff6b4a;--violet2:#ff9e4f;--cyan:#ffd166;--pink:#ff4f7b;--grad:linear-gradient(135deg,#ff6b4a,#ff9e4f 55%,#ffd166)}
-body[data-theme="ocean"]{--violet:#2f7cff;--violet2:#15b8ff;--cyan:#41f0d1;--pink:#4f9bff;--grad:linear-gradient(135deg,#2f7cff,#15b8ff 55%,#41f0d1)}
-body[data-theme="emerald"]{--violet:#0fb981;--violet2:#31e981;--cyan:#b4f461;--pink:#ffd166;--grad:linear-gradient(135deg,#0fb981,#31e981 55%,#b4f461)}
-body[data-theme="royal"]{--violet:#c44fff;--violet2:#ff4fa3;--cyan:#ffc857;--grad:linear-gradient(135deg,#c44fff,#ff4fa3 55%,#ffc857)}
-body[data-mode="light"]{--bg:#f2f4fb;--panel:rgba(255,255,255,.9);--panel2:#ffffff;--panel3:#f6f8fd;
-  --line:rgba(20,30,60,.1);--line2:rgba(20,30,60,.18);--txt:#1c2340;--muted:#5a6580;--dim:#8a93ab;--shadow:0 20px 50px rgba(40,60,120,.12)}
-body[data-mode="light"] #aurora i{opacity:.28}
-body[data-mode="light"] .gcard>.in{background:linear-gradient(160deg,#fffffff8,#eef1faf5)}
-body[data-mode="light"] .tile{background:linear-gradient(150deg,#ffffff,#eef2fb);border-color:rgba(20,30,60,.12)}
-body[data-mode="light"] nav.bottom{background:#fffffff5;border-color:rgba(20,30,60,.14)}
-body[data-mode="light"] #sheet{background:#ffffff;color:var(--txt)}
-body[data-mode="light"] #toast{background:#ffffff;color:#1c2340;box-shadow:0 18px 50px rgba(40,60,120,.25)}
-body[data-mode="light"] .chip.on{background:#7c5cff1a;border-color:#7c5cff55;color:#3d2f8f}
-body[data-mode="light"] .pill{background:#ffffff}
-body[data-mode="light"] .bell{background:#ffffff}
-body[data-mode="light"] .ava .on{border-color:#fff}
-body[data-mode="light"] .row{background:#ffffff}
-body[data-mode="light"] .item,body[data-mode="light"] .ach{background:#ffffff}
-body[data-mode="light"] .mrow{background:#ffffff}
-body[data-mode="light"] .stat{background:#f6f8fd}
-body[data-mode="light"] .btn{background:#f2f4fb}
-body[data-mode="light"] .medal{background:#f2f4fb}
-body[data-mode="light"] .empty{background:#ffffff}
-body[data-mode="light"] #splash{background:var(--bg)}
-body[data-fs="s"]{font-size:12px}
-body[data-fs="l"]{font-size:14.5px}
-body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="off"] *::after{
-  animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}
-/* ---------- switch ---------- */
-.sw{position:relative;width:46px;height:26px;border-radius:99px;background:#ffffff14;border:1px solid var(--line2);
-  flex:0 0 auto;transition:.25s;display:inline-block}
-.sw::after{content:"";position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;
-  background:#8b93ad;transition:.25s cubic-bezier(.2,.9,.3,1.2)}
-.sw.on{background:#31e98133;border-color:#31e98188}
-.sw.on::after{background:var(--green);transform:translateX(-19px)}
-.srow{display:flex;align-items:center;gap:12px;padding:13px 4px;border-bottom:1px solid var(--line)}
-.srow:last-child{border-bottom:0}
-.srow .ic{width:38px;height:38px;border-radius:13px;background:#7c5cff14;border:1px solid #7c5cff2e;
-  display:grid;place-items:center;font-size:16px;flex:0 0 auto}
-.srow .grow{flex:1;min-width:0}
-.srow .grow b{display:block;font-size:11.5px}
-.srow .grow small{display:block;color:var(--muted);font-size:9px;margin-top:2px;line-height:1.7}
-/* ---------- theme picker ---------- */
-.themegrid{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin:10px 0}
-.themecard{border:2px solid var(--line);border-radius:16px;padding:10px 4px;text-align:center;cursor:pointer;
-  transition:transform .15s,border-color .2s;background:#ffffff06}
-.themecard:active{transform:scale(.93)}
-.themecard.on{border-color:var(--cyan)}
-.themecard .swb{height:26px;border-radius:9px;margin-bottom:6px}
-.themecard small{font-size:8px;color:var(--muted);font-weight:700}
-/* ---------- command palette ---------- */
-#cmdk{position:fixed;inset:0;z-index:150;background:#04050cd0;backdrop-filter:blur(8px);
-  opacity:0;pointer-events:none;transition:.2s;display:flex;justify-content:center;align-items:flex-start;padding:12vh 14px 0}
-#cmdk.on{opacity:1;pointer-events:auto}
-#cmdkBox{width:min(520px,100%);background:#0e1119f5;border:1px solid var(--line2);border-radius:22px;
-  box-shadow:0 30px 90px #000c;overflow:hidden;transform:translateY(-14px) scale(.98);transition:.25s cubic-bezier(.2,.9,.3,1.2)}
-#cmdk.on #cmdkBox{transform:none}
-#cmdkIn{width:100%;border:0;background:transparent;padding:16px 18px;font-size:14px;color:var(--txt);outline:0;
-  border-bottom:1px solid var(--line)}
-#cmdkList{max-height:52vh;overflow-y:auto;padding:8px}
-.cmi{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:14px;cursor:pointer;transition:.12s}
-.cmi:hover,.cmi.sel{background:#7c5cff1c}
-.cmi .ic{width:36px;height:36px;border-radius:12px;background:#ffffff0a;border:1px solid var(--line2);
-  display:grid;place-items:center;font-size:16px;flex:0 0 auto}
-.cmi .grow{flex:1;min-width:0}
-.cmi .grow b{display:block;font-size:11.5px}
-.cmi .grow small{display:block;color:var(--muted);font-size:8.5px;margin-top:1px}
-.cmi kbd{font-size:8px;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
-body[data-mode="light"] #cmdk{background:#f2f4fbd0}
-body[data-mode="light"] #cmdkBox{background:#fffffff5;border-color:rgba(20,30,60,.16)}
-body[data-mode="light"] #cmdkIn{border-color:rgba(20,30,60,.1)}
-body[data-mode="light"] .cmi:hover,body[data-mode="light"] .cmi.sel{background:#7c5cff14}
-/* ---------- onboarding ---------- */
-#ob{position:fixed;inset:0;z-index:170;background:#04050ce6;backdrop-filter:blur(7px);
-  display:none;justify-content:center;align-items:center;padding:22px}
-#ob.on{display:flex;animation:pagein .3s}
-#obBox{width:min(430px,100%);text-align:center}
-#ob .obIc{width:86px;height:86px;margin:0 auto 18px;border-radius:28px;background:var(--grad);
-  background-size:200% 200%;animation:gradshift 5s ease infinite;display:grid;place-items:center;font-size:34px;
-  box-shadow:0 18px 60px #7c5cff66}
-#ob h2{margin:0 0 8px;font-size:17px}
-#ob p{color:var(--muted);font-size:11px;line-height:2.1;margin:0 0 22px}
-#ob .dots{display:flex;gap:7px;justify-content:center;margin-bottom:18px}
-#ob .dots i{width:7px;height:7px;border-radius:50%;background:#ffffff20;transition:.25s}
-#ob .dots i.on{background:var(--cyan);width:22px;border-radius:99px}
-/* ---------- search input ---------- */
-.input.search{position:relative}
-/* ---------- wyr / party ---------- */
-.wyr{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:stretch;margin:12px 0}
-.wyr .wcard{border:2px solid var(--line);border-radius:20px;padding:16px 12px;text-align:center;cursor:pointer;
-  background:var(--panel);transition:transform .15s,border-color .25s,background .25s;position:relative;overflow:hidden}
-.wyr .wcard:active{transform:scale(.96)}
-.wyr .wcard.a:hover,.wyr .wcard.a.pick{border-color:#15d8ff88;background:#15d8ff0d}
-.wyr .wcard.b:hover,.wyr .wcard.b.pick{border-color:#ff4fa388;background:#ff4fa30d}
-.wyr .wcard b{display:block;font-size:12px;line-height:1.9}
-.wyr .wcard .pct{display:block;font-size:22px;font-weight:900;margin-top:9px;color:var(--cyan)}
-.wyr .wcard.b .pct{color:var(--pink)}
-.wyr .vs{display:grid;place-items:center;font-weight:900;color:var(--dim);font-size:12px}
-.riddle{font-size:38px;text-align:center;padding:22px 8px;letter-spacing:6px;direction:ltr}
-.ropt{display:block;width:100%;margin:7px 0}
-.partybox{border:1px dashed var(--line2);border-radius:18px;padding:16px;text-align:center;margin-top:12px}
-.persona{border:1px solid #ffc85744;background:linear-gradient(155deg,#191308,#0d0a16);border-radius:20px;padding:16px;margin-top:12px}
-.persona .ph{display:flex;gap:11px;align-items:center;margin-bottom:12px}
-.persona .pv{display:flex;justify-content:space-between;margin:8px 0;font-size:10.5px;color:var(--muted)}
-.persona .pv b{color:var(--txt)}
-/* ---------- milestone ring ---------- */
+.duelbar .side b{font-size:11.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.duelbar .vs{font-size:13px;font-weight:900;color:var(--dim);letter-spacing:1px}
+.duelbar .side .sc{font-size:21px;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums}
+/* نوار عشق‌سنج */
+.lovebar{height:14px;border-radius:99px;background:linear-gradient(90deg,#15d8ff22,#ff4fa322);overflow:hidden;margin:10px 0;border:1px solid var(--line2)}
+.lovebar i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--pink));transition:width 1.2s var(--ease);
+  border-radius:99px;box-shadow:0 0 18px #ff4fa366}
+/* نمای پاسخ ثبت‌شده */
+.anscard{border:1px solid #31e98144;background:#31e9810a;border-radius:var(--r-lg);padding:15px;margin:10px 0;animation:riseIn .4s var(--ease)}
+
+/* ---------- ۲۹) فروشگاه ---------- */
+.items{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.item{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:13px;display:flex;flex-direction:column;gap:6px;overflow:hidden;transition:transform .18s var(--spring)}
+.item:active{transform:scale(.96)}
+.item .rt{position:absolute;top:0;right:0;left:0;height:3px;background:var(--rc,#7c5cff)}
+.item .rar{font-size:8.5px;font-weight:900;color:var(--rc,#7c5cff)}
+.item h3{margin:0;font-size:12px;font-weight:900}
+.item p{margin:0;font-size:9px;color:var(--muted);line-height:1.9;flex:1}
+.item .foot{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.item .price{font-size:11px;font-weight:900;color:var(--gold);white-space:nowrap}
+.deals{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-bottom:6px}
+.deal{position:relative;background:linear-gradient(150deg,#ffc85714,#ff52680d);border:1px solid #ffc85744;
+  border-radius:var(--r-md);padding:11px;cursor:pointer;transition:transform .18s var(--spring)}
+.deal:active{transform:scale(.95)}
+.deal .off{position:absolute;top:-8px;left:9px;background:var(--red);color:#fff;font-size:8.5px;font-weight:900;
+  padding:2px 8px;border-radius:99px;box-shadow:0 4px 12px #ff526866}
+.deal h4{margin:8px 0 0;font-size:10px;font-weight:900}
+.deal p{margin:3px 0 7px;font-size:8px;color:var(--muted);line-height:1.7;height:28px;overflow:hidden}
+.deal s{color:var(--dim);font-size:9px}
+.deal .price{font-size:11px;font-weight:900;color:var(--gold)}
+
+/* ---------- ۳۰) دستاوردها ---------- */
+.achg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px}
+.ach{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-md);padding:13px 10px;text-align:center;
+  transition:transform .18s var(--spring)}
+.ach .ico{font-size:26px;display:block;margin-bottom:7px}
+.ach h4{margin:0 0 5px;font-size:10px;font-weight:900}
+.ach p{margin:0;font-size:8.5px;color:var(--muted);line-height:1.8}
+.ach.got{border-color:#ffc85744;background:linear-gradient(160deg,#ffc85710,#ff9e4f08);box-shadow:0 8px 26px #ffc8571c}
+.ach.got .ico{filter:drop-shadow(0 6px 14px #ffc85766)}
+.ach.lock{opacity:.55;filter:saturate(.4)}
+.ach.pop{animation:achPop .5s var(--spring)}
+@keyframes achPop{40%{transform:scale(1.07)}}
+
+/* ---------- ۳۱) تایملاین ---------- */
+.tl{position:relative;padding-right:24px}
+.tl::before{content:"";position:absolute;right:8px;top:6px;bottom:6px;width:2px;
+  background:linear-gradient(var(--c1),var(--c3),transparent)}
+.tl .ev{position:relative;display:flex;gap:11px;padding:8px 0}
+.tl .ev .b{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;font-size:15px;flex:0 0 auto;
+  background:var(--panel3);border:1px solid var(--line2);z-index:1}
+.tl .ev .grow{flex:1;min-width:0}
+.tl .ev .grow b{display:block;font-size:11.5px}
+.tl .ev .grow small{display:block;color:var(--muted);font-size:9.5px;margin-top:2px}
+.tl .ev time{color:var(--dim);font-size:8.5px;white-space:nowrap}
+
+/* ---------- ۳۲) پودیوم رتبه‌بندی ---------- */
+.podium{display:flex;align-items:flex-end;justify-content:center;gap:10px;padding:16px 6px 6px}
+.pod{flex:1;max-width:110px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px}
+.pod b{font-size:10.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pod small{font-size:8.5px;color:var(--muted)}
+.pod .base{margin-top:4px;width:100%;border-radius:12px 12px 0 0;display:grid;place-items:center;font-size:19px;
+  background:linear-gradient(180deg,#ffffff0e,#ffffff03);border:1px solid var(--line);border-bottom:0}
+.pod.p1 .base{height:64px;background:linear-gradient(180deg,#ffc8572e,#ffc85708);border-color:#ffc85755}
+.pod.p2 .base{height:48px;background:linear-gradient(180deg,#d7dce82e,#d7dce80a);border-color:#d7dce855}
+.pod.p3 .base{height:36px;background:linear-gradient(180deg,#d68a4e2e,#d68a4e0a);border-color:#d68a4e55}
+.pod.p1{order:2}.pod.p2{order:1}.pod.p3{order:3}
+.pod.p1{animation:podium1 .7s var(--spring) .15s backwards}
+@keyframes podium1{from{transform:translateY(20px);opacity:0}}
+
+/* ---------- ۳۳) مایلستون و تایرها ---------- */
 .mring{position:relative;width:54px;height:54px;flex:0 0 auto}
-.mring svg{transform:rotate(-90deg)}
-.mring circle{fill:none;stroke-width:5}
-.mring .bgc{stroke:#ffffff10}
-.mring .fgc{stroke:var(--cyan);stroke-linecap:round;transition:stroke-dashoffset .8s}
-.mring.done .fgc{stroke:var(--green)}
+.mring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.mring circle{fill:none;stroke-width:4.5;stroke-linecap:round}
+.mring .bgc{stroke:#ffffff0e}
+.mring .fgc{stroke:url(#ringGrad)}
 .mring b{position:absolute;inset:0;display:grid;place-items:center;font-size:9.5px;font-weight:800}
-/* ---------- trade cards ---------- */
-.trrow{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:13px;margin-bottom:9px}
+.mring.done .fgc{stroke:var(--green)}
+.tier{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:var(--r-md);margin-bottom:8px;
+  background:var(--panel2);border:1px solid var(--line);transition:all .25s}
+.tier.open{border-color:#31e98144}
+.tier.lockt{opacity:.6}
+.tier .tno{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;font-size:13px;font-weight:900;
+  background:var(--panel3);border:1px solid var(--line2);flex:0 0 auto;font-variant-numeric:tabular-nums}
+.tier.open .tno{background:var(--grad);color:#fff;border-color:transparent}
+.tier .grow{flex:1;min-width:0}
+.tier .grow b{display:block;font-size:11.5px}
+.tier .grow small{display:block;color:var(--muted);font-size:9.5px;margin-top:2px}
+
+/* ---------- ۳۴) تجارت ---------- */
+.trrow{border:1px solid var(--line);background:var(--panel2);border-radius:var(--r-md);padding:13px;margin-bottom:9px}
 .trrow .ex{display:grid;grid-template-columns:1fr 26px 1fr;gap:8px;align-items:center;margin-top:10px}
 .trrow .side{border:1px solid var(--line2);border-radius:14px;padding:9px 10px;font-size:10px;text-align:center;min-height:48px;
   display:flex;flex-direction:column;justify-content:center;gap:3px}
@@ -32108,10 +34366,11 @@ body[data-mode="light"] .cmi:hover,body[data-mode="light"] .cmi.sel{background:#
 .trrow .side.r{background:#ff4fa30a;border-color:#ff4fa333}
 .trrow .side b{font-size:10.5px}
 .trrow .arr{text-align:center;color:var(--dim);font-size:14px}
-/* ---------- wall feed ---------- */
+
+/* ---------- ۳۵) فید وال اجتماعی ---------- */
 .wfeed{display:flex;flex-direction:column;gap:8px}
-.wf{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:11px 13px;
-  display:flex;gap:11px;animation:pagein .3s}
+.wf{border:1px solid var(--line);background:var(--panel2);border-radius:var(--r-md);padding:11px 13px;
+  display:flex;gap:11px;animation:riseIn .3s var(--ease)}
 .wf .lvl{width:8px;border-radius:99px;flex:0 0 auto;background:var(--dim)}
 .wf .lvl.info{background:var(--cyan)}
 .wf .lvl.warn{background:var(--orange)}
@@ -32120,18 +34379,767 @@ body[data-mode="light"] .cmi:hover,body[data-mode="light"] .cmi.sel{background:#
 .wf .grow b{font-size:11px;display:block}
 .wf .grow small{color:var(--muted);font-size:9.5px;display:block;margin-top:2px;line-height:1.8}
 .wf time{color:var(--dim);font-size:8.5px;white-space:nowrap}
-/* ---------- season banner ---------- */
-.seasonhero{position:relative;overflow:hidden}
-.seasonhero .cal{position:absolute;left:-20px;top:-30px;font-size:120px;opacity:.07;transform:rotate(-12deg)}
-/* ---------- misc new ---------- */
-.chipv{display:inline-flex;align-items:center;gap:5px}
-.hbar{height:5px;border-radius:99px;background:#ffffff0e;overflow:hidden;flex:1}
-.hbar i{display:block;height:100%;background:linear-gradient(90deg,var(--pink),var(--red));border-radius:99px}
-kbd.cmk{position:absolute;left:12px;bottom:9px;font-family:inherit}
+
+/* ---------- ۳۶) پارتی ---------- */
+.partybox{padding:22px 14px;border-radius:var(--r-lg);background:var(--grad-soft);border:1px dashed #7c5cff44;margin:12px 0;
+  font-size:13.5px;line-height:2.3}
+.wyr{display:grid;grid-template-columns:1fr auto 1fr;gap:9px;align-items:stretch;margin:12px 0}
+.wcard{padding:14px 10px;border-radius:var(--r-md);text-align:center;cursor:pointer;transition:transform .18s var(--spring);
+  display:flex;flex-direction:column;justify-content:center;gap:6px}
+.wcard:active{transform:scale(.94)}
+.wcard.a{background:#15d8ff12;border:1px solid #15d8ff44}
+.wcard.b{background:#ff4fa312;border:1px solid #ff4fa344}
+.wcard .pct{font-size:19px;font-weight:900}
+.wyr .vs{display:grid;place-items:center;font-size:10px;color:var(--dim);font-weight:900}
+.riddle{font-size:38px;text-align:center;padding:18px;letter-spacing:4px}
+.ropt{display:block;width:100%;margin-bottom:8px}
+.emoji-seq{font-size:30px;text-align:center;letter-spacing:6px;padding:14px}
+
+/* ---------- ۳۷) کارت شخصیت ---------- */
+.persona{border:1px solid var(--c1);border-radius:var(--r-xl);overflow:hidden;background:var(--panel2)}
+.persona .ph{display:flex;align-items:center;gap:13px;padding:15px 16px;
+  background:linear-gradient(135deg,var(--c1)26,var(--pink)18);border-bottom:1px solid var(--line2)}
+.persona .ph b{font-size:14px}
+.persona .pv{display:flex;justify-content:space-between;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:11px}
+.persona .pv:last-child{border-bottom:0}
+.persona .pv span{color:var(--muted)}
+.persona .pv b{text-align:left}
+
+/* ---------- ۳۸) نمودارها (کانواس) ---------- */
+.chartbox{position:relative;width:100%}
+.chartbox canvas{width:100%;display:block}
+.spark{display:inline-flex;align-items:center;gap:4px;font-variant-numeric:tabular-nums}
+.hmap{display:grid;grid-template-columns:repeat(12,1fr);gap:3px}
+.hmap i{aspect-ratio:1;border-radius:4px;background:#ffffff0c;transition:transform .2s var(--spring)}
+.hmap i:hover{transform:scale(1.2)}
+.mbar{margin:9px 0}
+.mbar .lb{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:5px}
+.weekchart{display:flex;align-items:flex-end;gap:7px;height:120px;padding:12px 6px 4px}
+.weekchart .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
+.weekchart .bar2{width:100%;max-width:26px;border-radius:8px 8px 3px 3px;background:var(--grad);
+  transition:height 1s var(--ease);box-shadow:0 4px 14px #536fff33}
+.weekchart small{font-size:8px;color:var(--dim)}
+.donuts{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.legend{display:flex;flex-direction:column;gap:6px;flex:1;min-width:120px}
+.legend .lg{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--muted)}
+.legend .lg i{width:10px;height:10px;border-radius:4px;flex:0 0 auto}
+.legend .lg b{color:var(--txt);margin-right:auto}
+
+/* ---------- ۳۹) ادمین — مرکز فرماندهی کامل ---------- */
+.adm-cat{display:flex;gap:7px;overflow-x:auto;padding:3px 1px 7px;scrollbar-width:none}
+.adm-cat::-webkit-scrollbar{display:none}
+.adm-cat .acat{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:99px;
+  font-size:10.5px;font-weight:800;background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+  transition:all .2s var(--spring);white-space:nowrap}
+.adm-cat .acat:active{transform:scale(.93)}
+.adm-cat .acat.on{background:var(--grad);color:#fff;border-color:transparent;box-shadow:0 8px 22px #536fff44}
+.adm-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.adm-tile{display:flex;flex-direction:column;gap:5px;padding:13px;border-radius:var(--r-md);
+  background:var(--panel2);border:1px solid var(--line);text-align:right;transition:all .18s var(--spring);cursor:pointer}
+.adm-tile:active{transform:scale(.95)}
+.adm-tile .ti{font-size:21px}
+.adm-tile b{font-size:10.5px}
+.adm-tile small{font-size:8.5px;color:var(--muted);line-height:1.7}
+.adm-tile.danger{border-color:#ff526844}
+.adm-tile.warn{border-color:#ff9e4f44}
+.adm-tile.good{border-color:#31e98144}
+.kpi{display:flex;align-items:center;gap:11px;padding:12px 13px;border-radius:var(--r-md);background:var(--panel2);
+  border:1px solid var(--line)}
+.kpi .ki{width:40px;height:40px;border-radius:13px;display:grid;place-items:center;font-size:18px;flex:0 0 auto;
+  background:var(--grad-soft);border:1px solid var(--line2)}
+.kpi .grow{flex:1;min-width:0}
+.kpi .grow small{display:block;font-size:8.5px;color:var(--muted);font-weight:700;letter-spacing:.3px}
+.kpi .grow b{display:block;font-size:15px;font-weight:900;font-variant-numeric:tabular-nums}
+.kpi .delta{font-size:9px;font-weight:900;padding:3px 8px;border-radius:99px}
+.kpi .delta.up{background:#31e98118;color:#31e981}
+.kpi .delta.down{background:#ff526818;color:#ff6d80}
+.loglv{font-size:8px;font-weight:900;padding:3px 9px;border-radius:99px;letter-spacing:1px}
+.loglv.info{background:#15d8ff14;color:#15d8ff}
+.loglv.warn{background:#ff9e4f14;color:#ff9e4f}
+.loglv.error{background:#ff526814;color:#ff6d80}
+.json{background:#04050c;border:1px solid var(--line);border-radius:var(--r-sm);padding:12px;
+  font-family:'Vazirmatn',monospace;font-size:9.5px;line-height:2;direction:ltr;text-align:left;
+  max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#a9c1ff}
+body[data-mode="light"] .json{background:#f6f8fd;color:#33507a}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;font-size:9.5px;color:var(--muted)}
+.adm-note{border:1px dashed var(--line2);border-radius:var(--r-sm);padding:10px 12px;font-size:10px;color:var(--muted);line-height:2}
+.adm-tools{display:flex;gap:7px;flex-wrap:wrap}
+.adm-tools .btn{margin:0}
+.vital{display:flex;align-items:center;gap:10px;padding:11px;border-radius:var(--r-sm);background:var(--panel2);border:1px solid var(--line)}
+.vital .vl{width:9px;height:34px;border-radius:99px;flex:0 0 auto}
+.vital .vl.ok{background:var(--green);box-shadow:0 0 12px #31e98188}
+.vital .vl.warn{background:var(--orange);box-shadow:0 0 12px #ff9e4f88}
+.vital .vl.bad{background:var(--red);box-shadow:0 0 12px #ff526888}
+.vital .grow{flex:1;min-width:0}
+.vital .grow b{display:block;font-size:11px}
+.vital .grow small{display:block;font-size:9px;color:var(--muted)}
+.vital .vv{font-size:13px;font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ---------- ۴۰) تم انتخابگر ---------- */
+.themegrid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:10px 0}
+.themecard{text-align:center;cursor:pointer;padding:8px 4px;border-radius:var(--r-sm);border:2px solid transparent;
+  transition:all .2s var(--spring)}
+.themecard:active{transform:scale(.92)}
+.themecard.on{border-color:var(--c3);background:var(--grad-soft)}
+.themecard .swb{height:44px;border-radius:12px;margin-bottom:6px;box-shadow:inset 0 1px 0 #ffffff2c,0 8px 20px #00000040}
+.themecard small{font-size:8.5px;font-weight:800}
+
+/* ---------- ۴۱) تایل‌های ناوبری ---------- */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.tile{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:right;padding:14px 14px 12px;
+  border-radius:var(--r-md);background:var(--panel2);border:1px solid var(--line);
+  transition:all .18s var(--spring);position:relative;overflow:hidden}
+.tile:active{transform:scale(.95)}
+.tile .ico{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;font-size:18px;
+  background:var(--grad-soft);border:1px solid var(--line2);margin-bottom:3px}
+.tile b{font-size:11.5px;font-weight:900}
+.tile small{font-size:8.5px;color:var(--muted)}
+.tile::after{content:"";position:absolute;inset:auto -30% -60% auto;width:60%;height:120%;
+  background:radial-gradient(ellipse,var(--c1)14,transparent 70%);pointer-events:none;opacity:0;transition:opacity .3s}
+.tile:hover::after{opacity:1}
+
+/* ---------- ۴۲) مأموریت‌ها ---------- */
+.mrow{border:1px solid var(--line);background:var(--panel2);border-radius:var(--r-md);padding:13px;margin-bottom:9px;
+  transition:all .25s}
+.mrow.done{border-color:#31e98144;background:#31e98108}
+.mrow .top{display:flex;align-items:center;gap:11px}
+.mrow .ic{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;font-size:17px;flex:0 0 auto;
+  background:var(--panel3);border:1px solid var(--line2)}
+.mrow .grow{flex:1;min-width:0}
+.mrow .grow b{display:block;font-size:11.5px}
+.mrow .rw{display:block;color:var(--muted);font-size:9px;margin-top:2px}
+
+/* ---------- ۴۳) فصل ---------- */
+.seasonhero{position:relative}
+.seasonhero .cal{position:absolute;left:-14px;top:-26px;font-size:110px;opacity:.08;transform:rotate(-12deg);pointer-events:none}
+
+/* ---------- ۴۴) ریسپانسیو ---------- */
+@media (max-width:390px){
+  .items,.achg{grid-template-columns:1fr 1fr}
+  .g4{grid-template-columns:repeat(2,1fr)}
+  .g5{grid-template-columns:repeat(3,1fr)}
+  .tiles{grid-template-columns:1fr 1fr}
+  .deals{grid-template-columns:1fr 1fr}
+  .h1{font-size:17px}
+  .qtext{font-size:13.5px}
+}
+@media (min-width:560px){
+  .tiles{grid-template-columns:repeat(3,1fr)}
+  .adm-grid{grid-template-columns:repeat(3,1fr)}
+}
+/* حالت دسکتاپ داخل تلگرام */
+@media (min-width:760px){
+  .app{max-width:600px}
+  .tiles{grid-template-columns:repeat(4,1fr)}
+}
+
+/* ---------- ۴۵) دسترس‌پذیری — حرکت کم‌تر ---------- */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001s!important;transition-duration:.001s!important}
+  #aurora i{animation:none!important}
+}
+/* حالت لمس فعال‌تر: بازخورد فشردن */
+@media (hover:none){
+  .btn:active{transform:scale(.93)}
+  .card.tap:active{transform:scale(.98)}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN CSS — بخش ۳: اجزای نسخه‌ی PLUS
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- آکاردئون ---------- */
+.acc-wrap{display:flex;flex-direction:column;gap:8px}
+.acc{border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2);overflow:hidden}
+.acc-h{display:flex;align-items:center;gap:10px;width:100%;padding:13px 14px;text-align:right}
+.acc-h .ai{font-size:15px}
+.acc-h b{flex:1;font-size:11.5px}
+.acc-h .chev{color:var(--dim);transition:transform .3s var(--spring);font-size:13px}
+.acc-h .chev.on{transform:rotate(180deg)}
+.acc-b{max-height:0;overflow:hidden;transition:max-height .4s var(--ease)}
+.acc-b.on{max-height:900px}
+.acc-b .card{margin:0 10px 12px}
+
+/* ---------- تولتیپ ---------- */
+.tipdot{position:relative;display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;
+ background:#ffffff10;border:1px solid var(--line2);font-size:9px;color:var(--muted);cursor:help;margin-right:5px;vertical-align:middle}
+.tipdot .tipbox{position:absolute;bottom:130%;right:50%;transform:translateX(50%) scale(.85);
+ width:200px;padding:10px 12px;border-radius:12px;background:var(--panel2);border:1px solid var(--line2);
+ box-shadow:var(--shadow-sm);font-size:9.5px;color:var(--muted);line-height:1.9;text-align:right;
+ opacity:0;pointer-events:none;transition:all .25s var(--spring);z-index:40}
+.tipdot:hover .tipbox,.tipdot:active .tipbox{opacity:1;transform:translateX(50%) scale(1)}
+
+/* ---------- بنر آفلاین ---------- */
+#offbar{position:fixed;top:0;left:0;right:0;z-index:190;display:none;justify-content:center;
+ padding:8px 14px calc(0px + env(safe-area-inset-top));background:#ff5268f0;color:#fff;
+ font-size:10.5px;font-weight:800;text-align:center}
+#offbar.on{display:flex;animation:slideIn .3s var(--ease)}
+
+/* ---------- تقویم ---------- */
+.calgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:5px}
+.calgrid i{aspect-ratio:1;border-radius:8px;background:#ffffff06;transition:transform .18s var(--spring)}
+.calgrid i:hover{transform:scale(1.16)}
+
+/* ---------- جستجوی مرجع دستورات ---------- */
+.cmddesc{direction:ltr;text-align:left;font-size:11px;font-weight:900;color:var(--c3);
+ font-family:'Vazirmatn',monospace;letter-spacing:.2px}
+
+/* ---------- کارت شمارش معکوس ---------- */
+.grid.g3 .card{margin-bottom:0}
+
+/* ---------- گالری رکوردها ---------- */
+.recval{font-size:16px;font-weight:900;color:var(--gold)}
+
+/* ---------- صفحه‌ی راهنما ---------- */
+.gdbody p{margin:6px 0 0;font-size:11.5px;line-height:2.2}
+
+/* ---------- بنرهای اطلاع‌رسانی بالای صفحه ---------- */
+.infobanner{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:var(--r-md);
+ margin-bottom:12px;font-size:10.5px;font-weight:700;border:1px solid}
+.infobanner.info{background:#15d8ff10;border-color:#15d8ff33;color:#9fe6ff}
+.infobanner.warn{background:#ff9e4f10;border-color:#ff9e4f33;color:#ffc79a}
+.infobanner.ok{background:#31e98110;border-color:#31e98133;color:#a5f5c8}
+.infobanner .ic{font-size:17px}
+
+/* ---------- حالت روشن برای اجزای جدید ---------- */
+body[data-mode="light"] .tipdot .tipbox{background:#fff;box-shadow:0 10px 30px rgba(30,40,90,.2)}
+body[data-mode="light"] .json{background:#f6f8fd}
+body[data-mode="light"] .calgrid i{background:#1a223808}
+
+/* ---------- بهبود شیت برای محتوای بلند ---------- */
+#sheetBody .adm-grid{margin-top:6px}
+#sheetBody h3{position:sticky;top:0;background:linear-gradient(var(--panel2) 82%,transparent);padding:6px 0;z-index:2}
+
+/* ---------- دکمه‌ی شناور بازگشت بالا ---------- */
+.totop{position:fixed;bottom:calc(var(--nav-h) + 74px);right:16px;z-index:64;width:40px;height:40px;
+ border-radius:14px;display:grid;place-items:center;font-size:16px;background:var(--panel);
+ border:1px solid var(--line2);backdrop-filter:var(--glass);box-shadow:var(--shadow-sm);
+ opacity:0;transform:translateY(14px);pointer-events:none;transition:all .3s var(--spring)}
+.totop.on{opacity:1;transform:none;pointer-events:auto}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN CSS — بخش ۴: اجزای DEEP
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- مسیر Season Pass (دو ریل) ---------- */
+.passtrack{position:relative;display:flex;flex-direction:column;gap:7px;padding-right:12px}
+.passtrack::before{content:"";position:absolute;right:2px;top:8px;bottom:8px;width:3px;border-radius:99px;
+ background:linear-gradient(var(--c1),var(--c3),transparent);opacity:.5}
+.pt-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;position:relative}
+.pt-row.current::after{content:"YOU";position:absolute;top:-5px;right:50%;transform:translateX(50%);
+ font-size:7px;font-weight:900;letter-spacing:1px;color:#fff;background:var(--grad);
+ padding:2px 9px;border-radius:99px;box-shadow:0 4px 12px #536fff66}
+.pt-cell{position:relative;display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:var(--r-sm);
+ background:var(--panel2);border:1px solid var(--line);min-height:52px;transition:all .25s var(--ease)}
+.pt-cell.open{border-color:#31e98144}
+.pt-cell.prem.open{border-color:#ffc85744;background:linear-gradient(150deg,#ffc8570c,#ffffff03)}
+.pt-cell.lockt{opacity:.55}
+.pt-cell.claimed{opacity:.75}
+.pt-cell.current{box-shadow:0 0 0 2px #7c5cff44}
+.pt-tier{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-size:11px;font-weight:900;
+ background:var(--panel3);border:1px solid var(--line2);flex:0 0 auto;font-variant-numeric:tabular-nums}
+.pt-cell.open .pt-tier{background:var(--grad);color:#fff;border-color:transparent}
+.pt-body{flex:1;min-width:0}
+.pt-body b{display:block;font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pt-body small{display:block;color:var(--muted);font-size:8px;margin-top:1px}
+.pt-mark{font-size:12px;flex:0 0 auto}
+.pt-mark.lock{opacity:.6}
+.pt-mark.vip{font-size:10px}
+.pt-empty{color:var(--dim);text-align:center;width:100%;font-size:11px}
+
+/* ---------- جدول بقا ---------- */
+table.svtable{width:100%;border-collapse:collapse;font-size:10.5px}
+.svtable th{text-align:right;padding:10px 10px;color:var(--muted);font-size:8.5px;letter-spacing:.5px;
+ border-bottom:1px solid var(--line2);white-space:nowrap}
+.svtable td{padding:10px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.svtable tr:last-child td{border-bottom:0}
+.svtable tr:active{background:#ffffff05}
+
+/* ---------- آزمایشگاه ظاهر ---------- */
+.labprev{margin:12px 0;padding:13px;border-radius:var(--r-md);
+ background:repeating-conic-gradient(#ffffff05 0% 25%,transparent 0% 50%) 50%/16px 16px;
+ border:1px dashed var(--line2)}
+.lab-in{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px}
+
+/* ---------- توست پیشرفته ---------- */
+#toast{position:relative;overflow:hidden}
+#toast .tprog{position:absolute;bottom:0;right:0;height:3px;width:100%;background:#ffffff2c;border-radius:99px}
+@keyframes tprog{from{width:100%}to{width:0}}
+
+/* ---------- ریپل ---------- */
+.btn,.opt,.tile{position:relative;overflow:hidden}
+.ripple{position:absolute;border-radius:50%;background:#ffffff26;transform:scale(0);
+ animation:rippleGo .6s var(--ease) forwards;pointer-events:none}
+@keyframes rippleGo{to{transform:scale(2.6);opacity:0}}
+
+/* ---------- کاشی مانیتور ادمین ---------- */
+.adm-tile{background:var(--panel2)}
+.adm-tile .ti{transition:transform .25s var(--spring)}
+.adm-tile:active .ti{transform:scale(1.15)}
+
+/* ---------- واژه‌نامه و پرسش‌ها ---------- */
+#glList .row small,#faqList .row small{white-space:normal}
+.glossary-term{font-weight:900;color:var(--c3)}
+
+/* ---------- کارت‌های اشتراک ---------- */
+.sharecard{background:linear-gradient(160deg,#0c0a16,#111527);border:1px solid #ffc85733;border-radius:var(--r-lg)}
+
+/* ---------- اهداف روزانه ---------- */
+.goals .mbar:first-child{margin-top:0}
+
+/* ---------- ریسپانسیو DEEP ---------- */
+@media (max-width:390px){
+ .pt-row{grid-template-columns:1fr;gap:5px}
+ .pt-cell{min-height:44px}
+ table.svtable{font-size:9.5px}
+ .svtable th,.svtable td{padding:8px 6px}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN CSS — بخش ۵: اجزای VIEWS v2 و TOOLS
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- سنجه‌ی گرما ---------- */
+.hmeter{flex:1;height:9px;border-radius:99px;background:#ffffff0c;overflow:hidden}
+.hmeter i{display:block;height:100%;border-radius:99px;transition:width .8s var(--ease);
+ box-shadow:0 0 14px currentColor}
+
+/* ---------- نقطه‌های راند دوئل ---------- */
+.rdot{width:10px;height:10px;border-radius:99px;background:#ffffff14;transition:all .3s var(--spring)}
+.rdot.on{background:var(--grad);box-shadow:0 0 8px #536fff66}
+.rdot.cur{width:16px}
+
+/* ---------- اسکرول‌ریویل ---------- */
+.card,.row,.tile{will-change:transform,opacity}
+.card.rv,.row.rv,.tile.rv{animation:revealUp .5s var(--ease) backwards}
+@keyframes revealUp{from{opacity:0;transform:translateY(16px)}}
+
+/* ---------- نوار رودررو ---------- */
+.h2hbar{display:flex;gap:3px;height:8px;margin-top:5px}
+.h2hbar i{border-radius:99px;transition:flex .6s var(--ease)}
+
+/* ---------- جستجو در فهرست‌ها ---------- */
+.adm-cat .acat{user-select:none}
+
+/* ---------- شیت انتخاب تجارت ---------- */
+#sheetBody .seg{flex-wrap:wrap}
+
+/* ---------- پروفایل صدا: دکمه‌های تست ---------- */
+.sndtest{display:flex;gap:8px}
+
+/* ---------- برنامه‌ریز ---------- */
+.planner-best{border-color:#31e98144}
+
+/* ---------- کیبورد‌شورکات راهنما ---------- */
+.kbdhint{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:8px;
+ font-size:8.5px;color:var(--dim)}
+.kbdhint b{border:1px solid var(--line2);border-radius:6px;padding:2px 7px;font-weight:800}
+
+/* ---------- ریسپانسیو نهایی ---------- */
+@media (max-width:360px){
+ .rdot{width:8px;height:8px}
+ .rdot.cur{width:12px}
+ .hmeter{height:7px}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN FINAL CSS — اجزای بخش پایانی
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- شیت ریست ---------- */
+#sheetBody .input[placeholder="RESET"]{border-color:#ff526855}
+#sheetBody .input[placeholder="RESET"]:focus{border-color:var(--red);box-shadow:0 0 0 3px #ff526826}
+
+/* ---------- کارت‌های خلاصه‌ی بازی ---------- */
+.sharecard .stat{background:#ffffff08}
+
+/* ---------- نوار ارتقای سطح ---------- */
+.infobanner .btn{margin:0}
+
+/* ---------- تبلیغات ---------- */
+.adrow-toggle{transition:all .2s}
+
+/* ---------- شیت ابزارهای VIP/موجودی ---------- */
+#sheetBody .adm-tools input{min-height:36px;padding:7px 10px;font-size:11px}
+
+/* ---------- دکمه‌ی راهنمای بازی در سربرگ ---------- */
+.gm-hero .btn[onclick^="gameHelpSheet"]{flex:0 0 auto;padding:7px 10px}
+
+/* ---------- ریز-بهبودهای پایانی ---------- */
+/* پیوسته‌تر شدن اسکرول در صفحات بلند */
+.page{min-height:60dvh}
+/* دکمه‌های داخل کارت‌ها همیشه قابل لمس */
+.card .btn{touch-action:manipulation}
+/* متن‌های عددی همیشه یکنواخت */
+b,.stat b,.sc,.medal{font-variant-numeric:tabular-nums}
+/* جلوگیری از انتخاب تصادفی متن هنگام لمس سریع */
+.row,.tile,.opt,.btn{user-select:none;-webkit-user-select:none}
+/* حذف فلش‌های input عددی در RTL */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield;appearance:textfield}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN POLISH CSS — کوچ-مارک و رنگ سفارشی
+   ════════════════════════════════════════════════════════════════ */
+#coach{position:fixed;inset:0;z-index:175;background:#04050ccc;backdrop-filter:blur(8px);
+ display:grid;place-items:center;padding:26px;opacity:0;transition:opacity .4s var(--ease)}
+#coach.on{opacity:1}
+#coach.off{opacity:0;pointer-events:none}
+.coach-box{max-width:320px;background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r-xl);
+ padding:24px 20px;text-align:center;box-shadow:var(--shadow);transform:scale(.86);transition:transform .4s var(--spring)}
+#coach.on .coach-box{transform:none}
+.coach-ic{font-size:44px;margin-bottom:10px;animation:float 2.6s var(--ease) infinite}
+.coach-box b{font-size:15px;display:block;margin-bottom:8px}
+.coach-box p{margin:0 0 16px;font-size:11.5px;line-height:2.2;color:var(--muted)}
+body[data-mode="light"] #coach{background:#1a223866}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN GRAND CSS — تور و کارت‌های اشتراک
+   ════════════════════════════════════════════════════════════════ */
+#tour{position:fixed;inset:0;z-index:173;pointer-events:none}
+#tour.on{pointer-events:auto}
+.tour-card{position:fixed;bottom:calc(var(--nav-h) + 30px);left:50%;transform:translateX(-50%) translateY(20px);
+ max-width:340px;width:calc(100vw - 40px);background:var(--panel2);border:1px solid var(--line2);
+ border-radius:var(--r-xl);padding:20px 18px;text-align:center;box-shadow:var(--shadow);
+ opacity:0;transition:all .45s var(--spring)}
+#tour.on .tour-card{opacity:1;transform:translateX(-50%) translateY(0)}
+.tour-ic{font-size:38px;margin-bottom:8px;animation:float 2.4s var(--ease) infinite}
+.tour-card b{font-size:14px;display:block;margin-bottom:7px}
+.tour-card p{margin:0 0 12px;font-size:11px;line-height:2.1;color:var(--muted)}
+.tour-card .dots{display:flex;justify-content:center;gap:6px;margin-bottom:14px}
+.tour-card .dots i{width:7px;height:7px;border-radius:99px;background:#ffffff20}
+.tour-card .dots i.on{width:20px;background:var(--grad)}
+#tourSpot{pointer-events:none}
+/* کارت اشتراک */
+.sharecard .stat b{font-size:14px}
+/* بلندی صدا */
+#sv-tap,#sv-ok,#sv-err,#sv-coin,#sv-win,#sv-lose,#sv-level,#sv-whoosh{max-width:140px}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN FINAL FEATURES CSS
+   ════════════════════════════════════════════════════════════════ */
+body[data-theme="matrix"]{--c1:#00e676;--c2:#00c853;--c3:#69f0ae}
+body[data-theme="rosegold"]{--c1:#f4a5c0;--c2:#e8a020;--c3:#ffd9e8}
+/* کارت موضوع لابی با توضیح */
+.gtab small{line-height:1.6}
+/* بنر بازی ناتمام */
+.infobanner b{white-space:nowrap}
+.infobanner{cursor:pointer}
+/* ویزارد */
+#sheetBody .adm-grid .adm-tile{margin:0}
+/* میان‌برها */
+#qzBanner,#qpBanner{animation:riseIn .4s var(--ease)}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN A11Y — حالت کنتراست بالا + شفافیت کم + تکمیل حالت روشن
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- کنتراست بالا ---------- */
+body[data-contrast="high"]{
+ --txt:#ffffff;--muted:#c8cfe6;--dim:#9aa3c0;
+ --line:rgba(255,255,255,.22);--line2:rgba(255,255,255,.38);
+ --panel:rgba(10,12,20,.97);--panel2:#0a0c14;--panel3:#10131e;
+}
+body[data-contrast="high"] .card,body[data-contrast="high"] .row,body[data-contrast="high"] .stat{border-width:1.5px}
+body[data-contrast="high"] .btn{border:1.5px solid var(--line2)}
+body[data-contrast="high"] .btn.primary{outline:1px solid #ffffff44}
+body[data-contrast="high"] .sub,body[data-contrast="high"] .muted{color:var(--muted)!important}
+body[data-contrast="high"] .tag{background:#ffffff14;border-color:var(--line2);color:var(--txt)}
+body[data-contrast="high"] .empty{border-width:2px}
+body[data-contrast="high"] .qcard{border-width:2px}
+body[data-contrast="high"] .gcard{border-width:2px}
+body[data-contrast="high"] .input{border-width:1.5px}
+body[data-contrast="high"] .medal{border-width:1.5px}
+body[data-contrast="high"] .codechip{border-width:2px}
+body[data-contrast="high"] .opt{border-width:1.5px}
+body[data-contrast="high"] .pl{border-width:1.5px}
+body[data-contrast="high"] .trrow{border-width:1.5px}
+body[data-contrast="high"] .wf{border-width:1.5px}
+body[data-contrast="high"] .tier{border-width:1.5px}
+body[data-contrast="high"] .ach{border-width:1.5px}
+body[data-contrast="high"] .mrow{border-width:1.5px}
+body[data-contrast="high"] .svtable th,body[data-contrast="high"] .svtable td{border-bottom-width:2px}
+body[data-contrast="high"] .vital{border-width:1.5px}
+body[data-contrast="high"] .kpi{border-width:1.5px}
+
+/* ---------- شفافیت کم (برای صفحه‌های شلوغ و گوشی‌های ضعیف) ---------- */
+body[data-glass="off"] .card,
+body[data-glass="off"] .gcard,
+body[data-glass="off"] #sheet,
+body[data-glass="off"] nav.bottom::before,
+body[data-glass="off"] .top{backdrop-filter:none!important}
+body[data-glass="off"] #aurora i{filter:blur(70px);opacity:.35}
+body[data-glass="off"] .card{background:#0d1019}
+body[data-glass="off"] .gcard{background:#0d1019;border:1.4px solid #7c5cff55}
+body[data-glass="off"][data-mode="light"] .card{background:#fff}
+body[data-glass="off"][data-mode="light"] .gcard{background:#fff}
+
+/* ---------- تکمیل حالت روشن برای اجزای خاص ---------- */
+body[data-mode="light"] .qcard{background:linear-gradient(#ffffff,#ffffff) padding-box,var(--grad) border-box}
+body[data-mode="light"] .codechip{background:#7c5cff14;color:#5a3ecb;border-color:#7c5cff66}
+body[data-mode="light"] .anscard{background:#31e98114;border-color:#31e98144}
+body[data-mode="light"] .wf{background:#fff}
+body[data-mode="light"] .medal{background:#eef1f9;border-color:rgba(20,30,70,.2)}
+body[data-mode="light"] .medal.m1{background:linear-gradient(135deg,#d9a521,#ffd166);color:#221502}
+body[data-mode="light"] .medal.m2{background:linear-gradient(135deg,#a9b0c4,#dde1ea);color:#10141f}
+body[data-mode="light"] .medal.m3{background:linear-gradient(135-gradient,#a06a3d,#d68a4e);color:#1a0d05}
+body[data-mode="light"] .btn{background:#eef1f9;color:#1a2238}
+body[data-mode="light"] .tag{background:#eef1f9;border-color:rgba(20,30,70,.16);color:#3d4a6b}
+body[data-mode="light"] .tag.ok{background:#31e98122;color:#0a7a44}
+body[data-mode="light"] .tag.bad{background:#ff526818;color:#c42b42}
+body[data-mode="light"] .tag.cy{background:#15d8ff18;color:#0a7d99}
+body[data-mode="light"] .tag.vip{background:#ffc85726;color:#8a6510}
+body[data-mode="light"] .loglv.info{background:#15d8ff1a;color:#0a7d99}
+body[data-mode="light"] .loglv.warn{background:#ff9e4f1a;color:#a35c14}
+body[data-mode="light"] .loglv.error{background:#ff52681a;color:#c42b42}
+body[data-mode="light"] .opt{background:#fff}
+body[data-mode="light"] .opt.right{background:#31e98118;border-color:#31e98155}
+body[data-mode="light"] .opt.wrong{background:#ff526814;border-color:#ff526855}
+body[data-mode="light"] .pl{background:#fff}
+body[data-mode="light"] .pl.ready{border-color:#31e98155;background:#31e98110}
+body[data-mode="light"] .pl.turn{border-color:#7c5cff;background:#7c5cff12}
+body[data-mode="light"] .seg{background:#eef1f9;border-color:rgba(20,30,70,.14)}
+body[data-mode="light"] .seg button.on{color:#fff}
+body[data-mode="light"] .chips .chip{background:#fff}
+body[data-mode="light"] .sk{background:#eef1f9;border-color:rgba(20,30,70,.1)}
+body[data-mode="light"] .empty{background:#fff;border-color:rgba(20,30,70,.2)}
+body[data-mode="light"] .json{background:#f6f8fd;color:#33507a}
+body[data-mode="light"] .wheel{box-shadow:0 18px 50px rgba(30,40,90,.3),inset 0 0 0 6px #fff}
+body[data-mode="light"] .rxn{background:#fff}
+body[data-mode="light"] .numpad button{background:#fff}
+body[data-mode="light"] .minegrid button{background:#fff}
+body[data-mode="light"] .ttt button{background:#fff}
+body[data-mode="light"] .funbox{background:#fff}
+body[data-mode="light"] .partybox{background:#f2ecff;border-color:#7c5cff44}
+body[data-mode="light"] .infobanner.info{background:#15d8ff14;color:#0a7d99}
+body[data-mode="light"] .infobanner.warn{background:#ff9e4f14;color:#a35c14}
+body[data-mode="light"] .infobanner.ok{background:#31e98114;color:#0a7a44}
+body[data-mode="light"] .sharecard{background:linear-gradient(160deg,#fff,#fdf6ec);border-color:#ffc85755}
+body[data-mode="light"] .labprev{background:repeating-conic-gradient(#1a223808 0% 25%,transparent 0% 50%) 50%/16px 16px}
+body[data-mode="light"] .hmeter{background:#1a223814}
+body[data-mode="light"] .hbar{background:#1a223812}
+body[data-mode="light"] .rdot{background:#1a223818}
+body[data-mode="light"] .passtrack::before{opacity:.35}
+body[data-mode="light"] .coach-box,body[data-mode="light"] .tour-card{background:#fff}
+body[data-mode="light"] .vital{background:#fff;border-color:rgba(20,30,70,.14)}
+body[data-mode="light"] .kpi{background:#fff;border-color:rgba(20,30,70,.14)}
+body[data-mode="light"] .adm-tile{background:#fff;border-color:rgba(20,30,70,.14)}
+body[data-mode="light"] .mrow{background:#fff}
+body[data-mode="light"] .tier{background:#fff}
+body[data-mode="light"] .trrow{background:#fff}
+body[data-mode="light"] .acc{background:#fff}
+body[data-mode="light"] .svtable tr:active{background:#f6f8fd}
+
+/* ---------- فوکوس‌ریگ‌های بهبودیافته ---------- */
+button:focus-visible,.chip:focus-visible,.acat:focus-visible,.gtab:focus-visible{
+ outline:2.5px solid var(--c3);outline-offset:2px;border-radius:8px}
+.input:focus-visible{outline:none}
+.sw:focus-visible{outline:2.5px solid var(--c3);outline-offset:3px}
+
+/* ---------- سایز لمس ایمن ---------- */
+button,.chip,.opt,.tile,.gtab{min-height:34px}
+.btn.xs{min-height:24px}
+
+/* ---------- ریسپانسیو نهایی برای RTL ---------- */
+@media (max-width:340px){
+ .adm-cat .acat{padding:6px 10px;font-size:9.5px}
+ .seg button{font-size:9.5px;padding:7px 4px}
+ .tiles{gap:7px}
+ .g4{grid-template-columns:repeat(2,1fr)}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN LAST MILE CSS
+   ════════════════════════════════════════════════════════════════ */
+#favRow{overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+#favRow::-webkit-scrollbar{display:none}
+#favRow .chip{flex:0 0 auto}
+.favstar{opacity:.75;transition:all .2s var(--spring)}
+.favstar:active{transform:scale(1.25)}
+#sessPill{animation:pop .4s var(--spring);font-weight:800}
+#sessPill:hover{transform:scale(1.04)}
+.gtab small{line-height:1.7}
+/* خوش‌آمد روزانه */
+.infobanner b{color:var(--txt)}
+/* حالت‌های خالی مصور */
+.empty svg{color:var(--c1)}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN END CSS — پولیش پایانی
+   ════════════════════════════════════════════════════════════════ */
+#tpBtn{letter-spacing:.2px}
+.infobanner small{display:block;margin-top:2px}
+/* کارت امروز */
+#sheetBody .row[onclick]{cursor:pointer}
+/* پالس زنده */
+@keyframes livePulse{0%,100%{opacity:1}50%{opacity:.35}}
+.tag.cy[style*="LIVE"],#livePulse{animation:livePulse 1.8s var(--ease) infinite}
+/* ترفند چرخش FAB */
+.fab:active{transform:rotate(180deg) scale(.9)}
+/* تاچ بهتر برای آیتم‌های فروشگاه */
+.item{touch-action:manipulation}
+/* تنظیم عرض بهینه شیت در تبلت */
+@media (min-width:560px){
+ #sheet{border-radius:30px 30px 0 0}
+ #sheetBody{padding:6px 22px calc(22px + env(safe-area-inset-bottom))}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN STATES CSS — حالت‌های کامل اجزا (hover/active/focus)
+   + اجزای لیگ + تکمیل تم‌ها
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- مسیر لیگ‌ها ---------- */
+.lg-track{position:relative;display:flex;justify-content:space-between;padding:0 6px;margin-top:12px}
+.lg-node{position:relative;z-index:2;width:34px;height:34px;border-radius:12px;display:grid;place-items:center;
+ font-size:15px;background:var(--panel3);border:1.5px solid var(--line2);filter:grayscale(.6);opacity:.6;
+ transition:all .3s var(--spring)}
+.lg-node.me{filter:none;opacity:1;border-color:var(--lc);box-shadow:0 0 0 4px color-mix(in srgb,var(--lc) 22%,transparent),0 8px 22px color-mix(in srgb,var(--lc) 30%,transparent);
+ transform:translateY(-4px) scale(1.12);background:color-mix(in srgb,var(--lc) 12%,var(--panel3))}
+.lg-fill{position:absolute;top:16px;right:17px;height:3px;border-radius:99px;
+ background:linear-gradient(90deg,var(--green),var(--c3));z-index:1;transition:width .8s var(--ease)}
+.lg-me{position:relative}
+.lg-me::after{content:"YOU";position:absolute;top:-9px;left:50%;transform:translateX(-50%);
+ font-size:7px;font-weight:900;letter-spacing:1.5px;color:#fff;background:var(--grad);
+ padding:2px 8px;border-radius:99px;box-shadow:0 4px 12px #536fff66}
+
+/* ---------- حالت‌های hover دسکتاپ ---------- */
+@media (hover:hover){
+ .row[onclick]:hover{border-color:#7c5cff55}
+ .card.tap:hover{border-color:#7c5cff44}
+ .tile:hover{border-color:var(--c1);transform:translateY(-2px)}
+ .tile:hover .ico{transform:scale(1.08)}
+ .adm-tile:hover{border-color:var(--c1);transform:translateY(-1px)}
+ .chip:hover{border-color:var(--c1)}
+ .btn:not(:disabled):hover{filter:brightness(1.12)}
+ .gtab:hover{border-color:var(--c1);background:var(--grad-soft);transform:translateY(-1px)}
+ .opt:hover{border-color:var(--c1);background:#7c5cff0a}
+ .deal:hover{transform:translateY(-2px);box-shadow:0 12px 30px #ffc85726}
+ .item:hover{border-color:var(--rc,#7c5cff);transform:translateY(-2px)}
+ .themecard:hover{transform:scale(1.04)}
+ .acat:hover{border-color:var(--c1)}
+ .numpad button:hover{background:var(--grad-soft);border-color:var(--c1)}
+ .minegrid button:not(:disabled):hover{border-color:var(--c1)}
+ .ttt button:empty:hover{background:#7c5cff14;border-color:var(--c1)}
+ .medal:hover{transform:scale(1.08)}
+ .stat:hover{border-color:var(--line2)}
+}
+
+/* ---------- حالت‌های active لمسی ---------- */
+.gtcl:active,.row.tap:active{transform:scale(.985)}
+.gtab:active{transform:scale(.95)}
+.deal:active{transform:scale(.96)}
+.item:active{transform:scale(.97)}
+.themecard:active{transform:scale(.93)}
+.lg-node:active{transform:scale(.9)}
+
+/* ---------- تکمیل تم‌های خاص ---------- */
+/* ماتریکس — سبز خالص */
+body[data-theme="matrix"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.6),0 0 0 1px #00e67622,0 14px 44px #00e67618}
+body[data-theme="matrix"] .qtext,body[data-theme="matrix"] .h1.grad{color:#b9ffdb}
+/* رزگلد — گرم و نرم */
+body[data-theme="rosegold"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px #f4a5c022,0 14px 44px #e8a02018}
+body[data-theme="rosegold"] .qtext{color:#fff2f7}
+
+/* ---------- انیمیشن‌های کاربردی نهایی ---------- */
+@keyframes tickIn{from{transform:scale(.7);opacity:0}60%{transform:scale(1.06)}to{transform:scale(1);opacity:1}}
+.tick-anim{animation:tickIn .4s var(--spring)}
+@keyframes glowPulse{0%,100%{box-shadow:0 0 0 0 #31e98100}50%{box-shadow:0 0 0 8px #31e98126}}
+.glow-pulse{animation:glowPulse 1.6s var(--ease) infinite}
+@keyframes slideRight{from{transform:translateX(24px);opacity:0}}
+.slide-in{animation:slideRight .35s var(--ease)}
+@keyframes countPop{0%{transform:scale(1)}45%{transform:scale(1.22);color:var(--gold)}100%{transform:scale(1)}}
+.count-pop{animation:countPop .55s var(--spring)}
+
+/* ---------- بهبودهای چاپ (اگر کاربر صفحه ذخیره کند) ---------- */
+@media print{
+ #aurora,nav.bottom,.fab,#toast,#sheet,#sheetBk,#cmdk,#ob,#coach,#tour,#sessPill,#offbar{display:none!important}
+ body{background:#fff;color:#000;padding:0}
+ .card,.gcard{break-inside:avoid;border:1px solid #ccc;box-shadow:none;background:#fff}
+ .page{display:none}
+ .page.on{display:block}
+}
+
+/* ---------- اسکرول ایمن برای شیت‌های بلند ---------- */
+#sheet{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+#sheetBody{scroll-padding-bottom:80px}
+
+/* ---------- ترتیب فوکوس مرئی در ناوبری ---------- */
+nav.bottom button:focus-visible{outline:2px solid var(--c3);outline-offset:-3px;border-radius:14px}
+
+/* ---------- ریزپولیش نهایی ---------- */
+.stat b,.kpi .grow b{letter-spacing:.2px}
+.qtext{letter-spacing:.1px}
+.h1{letter-spacing:-.4px}
+.brand b{letter-spacing:.1px}
+button{transition:transform .16s var(--spring)}
+.row{transition:border-color .2s,transform .18s var(--spring)}
+section.page.on>*{max-width:100%}
+.app{overflow-wrap:break-word}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN THEME OVERRIDES — تکمیل ظاهری هر ۱۰ تم
+   ════════════════════════════════════════════════════════════════ */
+/* شفق — پیش‌فرض: بنفش-آبی خنک */
+body[data-theme="aurora"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px #7c5cff1e,0 14px 44px #7c5cff14}
+/* غروب — نارنجی گرم */
+body[data-theme="sunset"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px #ff6b4a1e,0 14px 44px #ff6b4a14}
+body[data-theme="sunset"] .qtext{color:#ffe8dc}
+body[data-theme="sunset"] .h1.grad{background:linear-gradient(120deg,#ffd166,#ff6b4a 60%,#ff6b8a);-webkit-background-clip:text;background-clip:text}
+/* اقیانوس — آبی عمیق */
+body[data-theme="ocean"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px #2f7cff1e,0 14px 44px #2f7cff14}
+body[data-theme="ocean"] .qtext{color:#dcf3ff}
+/* زمرد — سبز طبیعی */
+body[data-theme="emerald"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px #0fb9811e,0 14px 44px #0fb98114}
+body[data-theme="emerald"] .qtext{color:#e0ffe9}
+/* سلطنتی — بنفش-صورتی-طلایی */
+body[data-theme="royal"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px #c44fff1e,0 14px 44px #c44fff14}
+body[data-theme="royal"] .qtext{color:#f6e6ff}
+/* ساکورا — صورتی نرم */
+body[data-theme="sakura"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.5),0 0 0 1px #ff7eb31e,0 14px 44px #ff7eb312}
+body[data-theme="sakura"] .qtext{color:#ffe9f1}
+body[data-theme="sakura"] .aurora-glow{filter:hue-rotate(285deg)}
+/* نیمه‌شب — آبی-خاکستری آرام */
+body[data-theme="midnight"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.6),0 0 0 1px #4a5a8f22,0 14px 44px #4a5a8f14}
+body[data-theme="midnight"] .qtext{color:#e3e9ff}
+/* کهربا — طلایی-نارنجی */
+body[data-theme="amber"] .gcard{box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px #e8a0201e,0 14px 44px #e8a02014}
+body[data-theme="amber"] .qtext{color:#fff1d9}
+/* ماتریکس — سبز دیجیتال */
+body[data-theme="matrix"] .h1.grad{background:linear-gradient(120deg,#69f0ae,#00e676 60%,#00c853);-webkit-background-clip:text;background-clip:text}
+body[data-theme="matrix"] .tag.cy{background:#00e67614;border-color:#00e67644;color:#00e676}
+/* رزگلد — گرم */
+body[data-theme="rosegold"] .h1.grad{background:linear-gradient(120deg,#ffd9e8,#f4a5c0 60%,#e8a020);-webkit-background-clip:text;background-clip:text}
+body[data-theme="rosegold"] .tag.cy{background:#f4a5c014;border-color:#f4a5c044;color:#f4a5c0}
+
+/* ---------- رنگ‌آمیزی نمودارها بر اساس تم ---------- */
+/* (نمودارها از JS خوانده‌اند؛ این فقط هماهنگی اجزای DOM است) */
+body[data-theme="sunset"] .weekchart .bar2{background:linear-gradient(180deg,#ffd166,#ff6b4a)}
+body[data-theme="ocean"] .weekchart .bar2{background:linear-gradient(180deg,#41f0d1,#15b8ff)}
+body[data-theme="emerald"] .weekchart .bar2{background:linear-gradient(180deg,#b4f461,#0fb981)}
+body[data-theme="royal"] .weekchart .bar2{background:linear-gradient(180deg,#ffc857,#c44fff)}
+body[data-theme="matrix"] .weekchart .bar2{background:linear-gradient(180deg,#69f0ae,#00c853)}
+body[data-theme="amber"] .weekchart .bar2{background:linear-gradient(180deg,#ffd88a,#e8a020)}
+
+/* ---------- حالت روشن + تم‌ها ---------- */
+body[data-mode="light"][data-theme="sunset"] .gcard{box-shadow:0 24px 60px rgba(255,107,74,.14),0 0 0 1px #ff6b4a1e}
+body[data-mode="light"][data-theme="ocean"] .gcard{box-shadow:0 24px 60px rgba(47,124,255,.14),0 0 0 1px #2f7cff1e}
+body[data-mode="light"][data-theme="emerald"] .gcard{box-shadow:0 24px 60px rgba(15,185,129,.14),0 0 0 1px #0fb9811e}
+body[data-mode="light"][data-theme="royal"] .gcard{box-shadow:0 24px 60px rgba(196,79,255,.14),0 0 0 1px #c44fff1e}
+body[data-mode="light"][data-theme="sakura"] .gcard{box-shadow:0 24px 60px rgba(255,126,179,.16),0 0 0 1px #ff7eb31e}
+body[data-mode="light"][data-theme="matrix"] .gcard{box-shadow:0 24px 60px rgba(0,200,83,.14),0 0 0 1px #00c85322}
+body[data-mode="light"][data-theme="midnight"] .gcard{box-shadow:0 24px 60px rgba(74,90,143,.16),0 0 0 1px #4a5a8f22}
+body[data-mode="light"][data-theme="amber"] .gcard{box-shadow:0 24px 60px rgba(232,160,32,.16),0 0 0 1px #e8a0201e}
+
+/* ---------- پولیش نهایی متن در تم‌های گرم ---------- */
+body[data-theme="sunset"] .brand small,body[data-theme="amber"] .brand small{color:#ffd9b0}
+body[data-theme="sakura"] .brand small{color:#ffd0e0}
 </style>
 </head>
 <body>
 <div id="aurora"><i></i><i></i><i></i></div>
+<div id="offbar">📡 اینترنت قطع است — دوباره وصل می‌شوی همه‌چیز ادامه می‌یابد</div>
 
 <svg width="0" height="0" style="position:absolute"><defs>
 <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
@@ -32140,86 +35148,186 @@ kbd.cmk{position:absolute;left:12px;bottom:9px;font-family:inherit}
 </defs></svg>
 
 <div id="splash"><div style="text-align:center"><div class="slogo">AR</div>
-<p>APEXRIVAL OMEGA</p><div class="spin"></div></div></div>
+<p>APEXRIVAL TITAN</p><div class="spin"></div></div></div>
 
 <div class="app">
   <div class="top">
     <div class="brand">
       <div class="logo">AR</div>
-      <div style="min-width:0"><b>ApexRival</b><small>OMEGA · v4.0</small></div>
+      <div style="min-width:0"><b>ApexRival</b><small>TITAN · v5.0</small></div>
     </div>
     <div class="pill coin" id="coinsPill">🪙 <span id="coins">—</span></div>
     <button class="bell" id="srchBtn" onclick="cmdkOpen()" title="جستجو (Ctrl+K)"><span>🔎</span></button>
     <button class="bell" id="bellBtn" onclick="show('notif')"><span>🔔</span><span class="dot" id="bellDot" style="display:none">۰</span></button>
   </div>
-  <div id="errbar"><span>⚠️</span><span id="errTxt" style="flex:1">خطا</span><button class="btn" onclick="refresh()">تلاش دوباره</button></div>
+  <div id="errbar"><span>⚠️</span><span id="errTxt" style="flex:1">خطا</span><button class="btn" onclick="manualRefresh()">تلاش دوباره</button></div>
 
   <main id="main"></main>
 </div>
 
-<button class="fab" id="fab" onclick="refresh()" title="رفرش">⟳</button>
+<button class="fab" id="fab" onclick="manualRefresh()" title="به‌روزرسانی">⟳</button>
 
 <nav class="bottom" id="nav"></nav>
 <div id="toast"></div>
 <div id="cmdk" onclick="if(event.target===this)cmdkClose()"><div id="cmdkBox">
 <input id="cmdkIn" placeholder="جستجوی همه‌چیز… (صفحه‌ها، بازی‌ها، اقدامات)">
-<div id="cmdkList"></div></div></div>
+<div id="cmdkList"></div><div class="ckbar"><span>↑↓ حرکت</span><span>↵ اجرا</span><span>Esc بستن</span></div></div></div>
 <div id="ob"><div id="obBox"><div class="obIc" id="obIc">🎮</div><h2 id="obT"></h2><p id="obP"></p>
 <div class="dots" id="obDots"></div>
 <div style="display:flex;gap:10px"><button class="btn" style="flex:1" onclick="obSkip()">رد کن</button>
 <button class="btn primary" style="flex:2" id="obNext" onclick="obNext()">شروع ⚡</button></div></div></div>
 <div id="sheetBk" onclick="closeSheet()"></div>
 <div id="sheet"><div class="grab"></div><div id="sheetBody"></div></div>
+<div id="modalBk"><div id="modalBox">
+<div class="mic" id="mic">⚠️</div><h3 id="mT">تأیید</h3><p id="mP">مطمئنی؟</p>
+<div class="mrow"><button class="btn" id="mNo">انصراف</button><button class="btn red" id="mYes">تأیید</button></div>
+</div></div>
 
 <script>
-/* ================= ApexRival Mini App ULTRA — Front Core ================= */
+/* ════════════════════════════════════════════════════════════════
+   ApexRival TITAN v5.0 — Front Core
+   ════════════════════════════════════════════════════════════════
+   معماری جدید (رفع باگ‌های نسخه قبل):
+   • STATE پایدار: صفحه/زیرنما/کدهای لابی-دوئل/تب فعال در sessionStorage
+     ذخیره می‌شوند — اگر تلگرام ویو را رفرش کند، دقیقاً همان‌جا برمی‌گردی.
+   • روتر ضد-رقابت: هر رندر یک توکن نسل می‌گیرد؛ رندر کهنه دیگر
+     نمی‌تواند نمای جدید را بازنویسی کند (باگ «بازی‌ها بالا نمی‌آیند»).
+   • پیمایش پشته‌ای: همه‌ی دکمه‌های برگشت از navBack() استفاده می‌کنند
+     و صفحه‌ی قبلی واقعی را نشان می‌دهند (باگ «سردرهای برگشت»).
+   • به‌روزرسانی غیرمخرب: refresh خودکار فقط داده و نشان‌ها را به‌روز
+     می‌کند و هرگز نمای فعال را بازنویسی نمی‌کند (باگ «رفرش وسط کار»).
+   • Polling امضامحور: لابی/دوئل/آرنا فقط وقتی وضعیت واقعاً عوض شود
+     دوباره رندر می‌شود و ورودی‌های در حال تایپ هرگز پاک نمی‌شوند
+     (باگ «پاک شدن جواب لابی هر ثانیه»).
+   ════════════════════════════════════════════════════════════════ */
+
 const tg=window.Telegram&&window.Telegram.WebApp;
-let D={},ME=false,READY=false,SCROLL={},PAGE='home',LBSCOPE='weekly',SHOPCAT='all',ACHF='all',QTAB=0,ADMINTAB='dashboard',USERSPG=0,LOGLV='all',CURPROF=0;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const fa=n=>String(n==null?0:n).replace(/\d/g,d=>'۰۱۲۳۴۵۶۷۸۹'[d]);
 const faK=n=>{n=Math.round(Number(n)||0);if(n>=1000000)return fa((n/1000000).toFixed(1))+'M';if(n>=10000)return fa((n/1000).toFixed(1))+'K';return fa(n)};
+const faP=n=>{n=Number(n)||0;return fa(Math.round(n))+'٪'};
+
+/* ---------- داده‌ی سراسری ---------- */
+let D={},READY=false;
+/* وضعیت ناوبری — پایدار در برابر رفرش */
+var S={page:'home',gamekey:'',lobbycode:'',duelcode:0,love2code:0,admtab:'home',lblog:'all',uspg:0,
+       lb:'weekly',shopcat:'all',achf:'all',qtab:0,ptab:0,eqtab:1,scroll:{},ts:0};
+var GEN=0;               /* توکن نسل رندر — ضد رقابت async */
+var NAVSTK=['home'];     /* پشته‌ی برگشت */
+var POLLS={};            /* ثبت‌کننده‌ی polling صفحه‌های زنده */
+var CURPROF=0;           /* پروفایل در حال نمایش */
+var LBSCOPE='weekly',SHOPCAT='all',ACHF='all',QTAB=0,ADMINTAB='home',USERSPG=0,LOGLV='all',PTAB=0,EQTAB=1;
+var LOBBYCODE='',DUELCODE=0,LOVE2CODE=0,PAGE='home',GAMEKEY='';
+var SCROLL={};
+
+/* ---------- ذخیره/بازیابی وضعیت ناوبری ---------- */
+function stateSave(){
+  try{
+    S.page=PAGE;S.gamekey=GAMEKEY;S.lobbycode=LOBBYCODE;S.duelcode=DUELCODE;S.love2code=LOVE2CODE;
+    S.admtab=ADMINTAB;S.lblog=LOGLV;S.uspg=USERSPG;S.lb=LBSCOPE;S.shopcat=SHOPCAT;S.achf=ACHF;
+    S.qtab=QTAB;S.ptab=PTAB;S.eqtab=EQTAB;S.ts=Date.now();
+    try{S.scroll[PAGE]=window.scrollY}catch(e){}
+    sessionStorage.setItem('apex_nav',JSON.stringify(S));
+  }catch(e){}
+}
+function stateLoad(){
+  try{
+    var raw=sessionStorage.getItem('apex_nav');
+    if(!raw)return false;
+    var o=JSON.parse(raw);
+    /* فقط اگر اخیراً باشد (کمتر از ۶ ساعت) */
+    if(!o||!o.ts||Date.now()-o.ts>6*3600*1000)return false;
+    S=o;
+    PAGE=S.page||'home';GAMEKEY=S.gamekey||'';LOBBYCODE=S.lobbycode||'';
+    DUELCODE=S.duelcode||0;LOVE2CODE=S.love2code||0;
+    ADMINTAB=S.admtab||'home';LOGLV=S.lblog||'all';USERSPG=S.uspg||0;
+    LBSCOPE=S.lb||'weekly';SHOPCAT=S.shopcat||'all';ACHF=S.achf||'all';
+    QTAB=S.qtab||0;PTAB=S.ptab||0;EQTAB=S.eqtab||1;SCROLL=S.scroll||{};
+    NAVSTK=[PAGE];
+    return true;
+  }catch(e){return false}
+}
+window.addEventListener('pagehide',stateSave);
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')stateSave()});
+
+/* ---------- ابزارهای عمومی ---------- */
 function haptic(k){try{if(!tg||!tg.HapticFeedback)return;
-if(k==='ok'||k==='error'||k==='warn')tg.HapticFeedback.notificationOccurred(k==='ok'?'success':(k==='warn'?'warning':'error'));
-else tg.HapticFeedback.impactOccurred(k||'light')}catch(e){}}
-function toast(s,kind){var t=$('toast');t.className=kind?'on '+kind:'on';t.textContent='';t.insertAdjacentHTML('beforeend',(kind==='err'?'⚠️ ':kind==='ok'?'✅ ':'')+esc(s));clearTimeout(window.tt);window.tt=setTimeout(function(){t.classList.remove('on')},2600);if(kind==='err')haptic('error')}
-function timeAgo(ts){var d=Date.now()/1000-Number(ts||0);if(d<60)return'همین حالا';if(d<3600)return fa(Math.floor(d/60))+' دقیقه پیش';if(d<86400)return fa(Math.floor(d/3600))+' ساعت پیش';if(d<2592000)return fa(Math.floor(d/86400))+' روز پیش';return fa(Math.floor(d/2592000))+' ماه پیش'}
+ if(k==='ok'||k==='error'||k==='warn')tg.HapticFeedback.notificationOccurred(k==='ok'?'success':(k==='warn'?'warning':'error'));
+ else tg.HapticFeedback.impactOccurred(k||'light')}catch(e){}}
+function toast(s,kind){var t=$('toast');t.className=kind?'on '+kind:'on';t.textContent='';
+ t.insertAdjacentHTML('beforeend',(kind==='err'?'⚠️ ':kind==='ok'?'✅ ':kind==='warn'?'⏳ ':'')+esc(s));
+ clearTimeout(window.tt);window.tt=setTimeout(function(){t.classList.remove('on')},2600);
+ if(kind==='err')haptic('error')}
+function timeAgo(ts){var d=Date.now()/1000-Number(ts||0);if(d<60)return'همین حالا';if(d<3600)return fa(Math.floor(d/60))+' دقیقه پیش';
+ if(d<86400)return fa(Math.floor(d/3600))+' ساعت پیش';if(d<2592000)return fa(Math.floor(d/86400))+' روز پیش';return fa(Math.floor(d/2592000))+' ماه پیش'}
 function fmtSize(b){b=Number(b)||0;if(b>=1048576)return fa((b/1048576).toFixed(1))+' MB';if(b>=1024)return fa((b/1024).toFixed(1))+' KB';return fa(b)+' بایت'}
 function hueOf(id){return Number(id||0)%360}
 function initials(n){n=String(n||'؟').trim().split(/\s+/);return esc((n[0]||'؟').slice(0,1))}
 function avaHtml(o,cls){o=o||{};
- return '<div class="ava '+(cls||'')+(o.frame?' f-'+esc(o.frame):'')+'" style="--h:'+hueOf(o.id)+'">'+(o.photo?'<img src="'+esc(o.photo)+'" alt="">':initials(o.name))+(o.online?'<i class="on"></i>':'')+'</div>'}
-function confetti(){var cs='🎉🎊✨⭐🪙';for(var i=0;i<14;i++){var s=document.createElement('i');s.className='cf';s.textContent=cs[i%cs.length];
- s.style.setProperty('--x',(Math.random()*240-120)+'px');s.style.setProperty('--r',(Math.random()*720-360)+'deg');
- s.style.setProperty('--d',(1.6+Math.random()*1.4)+'s');s.style.left=(4+Math.random()*92)+'vw';
- s.style.background='none';s.style.fontSize=(9+Math.random()*9)+'px';document.body.appendChild(s);setTimeout(function(el){return function(){el.remove()}}(s),3400)}}
-async function api(path,opt){opt=opt||{};opt.headers=Object.assign({'X-Telegram-Init-Data':(tg&&tg.initData)||''},opt.headers||{});
- /* تلاش هوشمند: خطای شبکه تا ۲ بار با فاصله‌ی صعودی تکرار می‌شود */
+ return '<div class="ava '+(cls||'')+(o.frame?' f-'+esc(o.frame):'')+'" style="--h:'+hueOf(o.id)+'">'
+ +(o.photo?'<img src="'+esc(o.photo)+'" alt="">':initials(o.name))+(o.online?'<i class="on"></i>':'')+'</div>'}
+function countUp(el,val,suf){if(!el)return;var t0=performance.now(),dur=750,from=0;
+ function fr(t){var p=Math.min(1,(t-t0)/dur);
+  el.textContent=faK(Math.round(from+(val-from)*(1-Math.pow(1-p,3))))+(suf||'');if(p<1)requestAnimationFrame(fr)}
+ requestAnimationFrame(fr)}
+function st(lbl,id,val){return '<div class="stat"><small>'+lbl+'</small><b id="'+id+'">—</b></div>'}
+function copyText(t){try{navigator.clipboard.writeText(t).then(function(){toast('کپی شد ✓','ok')},function(){toast('کپی نشد','err')})}catch(e){toast(t,'ok')}}
+
+/* ---------- کانفتی (دو حالت: باران + انفجار) ---------- */
+function confetti(burst){
+ var cs='🎉🎊✨⭐🪙💜';
+ for(var i=0;i<(burst?18:14);i++){
+  var s=document.createElement('i');s.className='cf'+(burst?' burst':'');s.textContent=cs[i%cs.length];
+  s.style.setProperty('--x',(Math.random()*240-120)+'px');
+  s.style.setProperty('--y',burst?(Math.random()*-260-40)+'px':'');
+  s.style.setProperty('--r',(Math.random()*720-360)+'deg');
+  s.style.setProperty('--d',(1.6+Math.random()*1.4)+'s');
+  if(burst){s.style.left='46vw';s.style.top='38%'}
+  else s.style.left=(4+Math.random()*92)+'vw';
+  document.body.appendChild(s);setTimeout(function(el){return function(){el.remove()}}(s),3400)}
+}
+
+/* ---------- کلاینت API — با تلاش مجدد هوشمند ---------- */
+async function api(path,opt){
+ opt=opt||{};
+ opt.headers=Object.assign({'X-Telegram-Init-Data':(tg&&tg.initData)||''},opt.headers||{});
  var tries=0;
  for(;;){
-  try{var r=await fetch(path,opt);var d=null;try{d=await r.json()}catch(e){throw new Error('پاسخ سرور نامعتبر است')}
-   if(!r.ok||d.ok===false)throw new Error(d.error||d.message||'خطای درخواست');return d}
-  catch(e){
+  try{
+   var r=await fetch(path,opt);
+   var d=null;
+   try{d=await r.json()}catch(e){throw new Error('پاسخ سرور نامعتبر است')}
+   if(!r.ok||d.ok===false)throw new Error(d.error||d.message||'خطای درخواست');
+   return d;
+  }catch(e){
    if(e.name==='TypeError'&&tries<2){tries++;await new Promise(function(res){setTimeout(res,450*tries)});continue}
    if(e.name==='TypeError')throw new Error('اتصال برقرار نشد — اینترنت را بررسی کن');
-   throw e}
- }}
+   throw e;
+  }
+ }
+}
 function setErr(on,msg){$('errbar').classList.toggle('on',!!on);if(msg)$('errTxt').textContent=msg}
-function setCoins(c){$('coins').textContent=faK(c);if(D.user&&c!==D.user.coins){var p=$('coinsPill');p.style.transform='scale(1.12)';setTimeout(function(){p.style.transform=''},240)}}
-function setBell(n){var d=$('bellDot');if(n>0){d.style.display='grid';d.textContent=fa(n>99?'99+':n)}else d.style.display='none'}
-function countUp(el,val,suf){var t0=performance.now(),dur=700,from=0;function fr(t){var p=Math.min(1,(t-t0)/dur);
- el.textContent=faK(Math.round(from+(val-from)*(1-Math.pow(1-p,3))))+(suf||'');if(p<1)requestAnimationFrame(fr)}requestAnimationFrame(fr)}
+function setCoins(c){var el=$('coins');if(!el)return;el.textContent=faK(c);
+ var p=$('coinsPill');
+ if(D.user&&c!==D.user.coins){p.classList.add('bump');setTimeout(function(){p.classList.remove('bump')},260)}}
+function setBell(n){var d=$('bellDot');if(!d)return;if(n>0){d.style.display='grid';d.textContent=fa(n>99?'99+':n)}else d.style.display='none'}
 
-/* ================= 🔊 OMEGA SOUND ENGINE (WebAudio — بدون فایل صوتی) ================= */
+/* ---------- 🔊 موتور صدا TITAN (WebAudio — بدون فایل) ---------- */
 var SND={ctx:null,on:(function(){try{return localStorage.getItem('apex_snd')!=='0'}catch(e){return true}})(),
  init:function(){if(!this.ctx){try{this.ctx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}
   if(this.ctx&&this.ctx.state==='suspended'){try{this.ctx.resume()}catch(e){}}return this.ctx},
  tone:function(f,dur,type,vol,delay){if(!this.on)return;var c=this.init();if(!c)return;
   try{var t=c.currentTime+(delay||0);var o=c.createOscillator(),g=c.createGain();
-  o.type=type||'sine';o.frequency.setValueAtTime(f,t);
-  g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(vol||.08,t+.012);
-  g.gain.exponentialRampToValueAtTime(.0001,t+dur);
-  o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+dur+.05)}catch(e){}},
+   o.type=type||'sine';o.frequency.setValueAtTime(f,t);
+   g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(vol||.08,t+.012);
+   g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+   o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+dur+.05)}catch(e){}},
+ slide:function(f1,f2,dur,type,vol){if(!this.on)return;var c=this.init();if(!c)return;
+  try{var t=c.currentTime;var o=c.createOscillator(),g=c.createGain();
+   o.type=type||'sine';o.frequency.setValueAtTime(f1,t);o.frequency.exponentialRampToValueAtTime(f2,t+dur);
+   g.gain.setValueAtTime(vol||.06,t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+   o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+dur+.05)}catch(e){}},
  tap:function(){this.tone(340,.06,'sine',.05)},
  ok:function(){this.tone(523,.09,'sine',.07);this.tone(784,.12,'sine',.06,.07)},
  err:function(){this.tone(196,.16,'sawtooth',.05);this.tone(147,.2,'sawtooth',.04,.09)},
@@ -32229,24 +35337,24 @@ var SND={ctx:null,on:(function(){try{return localStorage.getItem('apex_snd')!=='
  level:function(){this.tone(659,.09,'square',.05);this.tone(880,.09,'square',.05,.08);this.tone(1109,.2,'square',.06,.16)},
  tick:function(){this.tone(880,.03,'square',.03)},
  spin:function(){for(var i=0;i<8;i++)this.tone(500+i*70,.05,'sine',.04,i*.07)},
- whoosh:function(){if(!this.on)return;var c=this.init();if(!c)return;
-  try{var t=c.currentTime;var o=c.createOscillator(),g=c.createGain();
-  o.type='sine';o.frequency.setValueAtTime(180,t);o.frequency.exponentialRampToValueAtTime(900,t+.22);
-  g.gain.setValueAtTime(.06,t);g.gain.exponentialRampToValueAtTime(.0001,t+.25);
-  o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+.3)}catch(e){}},
+ whoosh:function(){this.slide(180,900,.22,'sine',.06)},
+ swoosh:function(){this.slide(700,220,.18,'sine',.05)},
+ pop:function(){this.tone(660,.05,'triangle',.06)},
  toggle:function(){this.on=!this.on;try{localStorage.setItem('apex_snd',this.on?'1':'0')}catch(e){}
   if(this.on){this.ok()}return this.on}};
-/* هوک صدا روی تعامل‌های پایه */
 (function(){var _h=haptic;haptic=function(k){_h(k);
  if(k==='ok')SND.ok();else if(k==='error')SND.err();else if(k==='medium'||k==='light')SND.tap()}})();
 
-/* ================= 🎨 OMEGA THEME ENGINE ================= */
+/* ---------- 🎨 موتور تم — ۸ پالت ---------- */
 var THEMES=[
- {id:'aurora',name:'شفق',dark:1,c:['#7c5cff','#15d8ff','#ff4fa3']},
+ {id:'aurora',name:'شفق',dark:1,c:['#7c5cff','#536fff','#15d8ff']},
  {id:'sunset',name:'غروب',dark:1,c:['#ff6b4a','#ff9e4f','#ffd166']},
  {id:'ocean',name:'اقیانوس',dark:1,c:['#2f7cff','#15b8ff','#41f0d1']},
  {id:'emerald',name:'زمرد',dark:1,c:['#0fb981','#31e981','#b4f461']},
- {id:'royal',name:'سلطنتی',dark:1,c:['#c44fff','#ff4fa3','#ffc857']}];
+ {id:'royal',name:'سلطنتی',dark:1,c:['#c44fff','#ff4fa3','#ffc857']},
+ {id:'sakura',name:'ساکورا',dark:1,c:['#ff7eb3','#ff9e9e','#c3a6ff']},
+ {id:'midnight',name:'نیمه‌شب',dark:1,c:['#4a5a8f','#7385bd','#a9c1ff']},
+ {id:'amber',name:'کهربا',dark:1,c:['#e8a020','#ff6b4a','#ffd88a']}];
 var UI={theme:'aurora',mode:'dark',fs:'m',motion:'on'};
 function uiLoad(){try{var s=localStorage.getItem('apex_ui');if(s){var o=JSON.parse(s);
  UI.theme=o.theme||'aurora';UI.mode=o.mode||'dark';UI.fs=o.fs||'m';UI.motion=(o.motion==null?'on':o.motion)}}catch(e){}}
@@ -32254,59 +35362,453 @@ function uiSave(){try{localStorage.setItem('apex_ui',JSON.stringify(UI))}catch(e
 function uiApply(){var b=document.body;
  b.setAttribute('data-theme',UI.theme);b.setAttribute('data-mode',UI.mode);
  b.setAttribute('data-fs',UI.fs);b.setAttribute('data-motion',UI.motion);
- try{var mc=document.querySelector('meta[name=theme-color]');if(mc)mc.setAttribute('content',UI.mode==='light'?'#f2f4fb':'#05060b')}catch(e){}}
+ try{var mc=document.querySelector('meta[name=theme-color]');
+  if(mc)mc.setAttribute('content',UI.mode==='light'?'#f2f4fb':'#05060b')}catch(e){}}
 function uiSet(k,v){UI[k]=v;uiSave();uiApply();if(k==='theme'||k==='mode')SND.whoosh()}
 
-/* ================= ⌘ پالت فرمان سراسری ================= */
+/* ════════════════════════════════════════════════════════════════
+   روتر TITAN — قلب معماری جدید
+   ════════════════════════════════════════════════════════════════ */
+const NAV=[['home','⌂','خانه'],['play','🎮','بازی'],['games','🕹','گیم‌ها'],['miss','🎯','مأموریت'],['board','🏆','رتبه'],['shop','🛍','فروشگاه'],['me','👤','پروفایل']];
+var PAGES={};
+function buildShell(){
+ var nav=$('nav');var h='';
+ for(var i=0;i<NAV.length;i++){
+  h+='<button data-pg="'+NAV[i][0]+'" onclick="show(\''+NAV[i][0]+'\')"><span class="bi">'+NAV[i][1]+'</span>'+NAV[i][2]
+  +(NAV[i][0]==='miss'?'<span class="bdg" id="missBdg" style="display:none">۰</span>':'')+'</button>';
+ }
+ h+='<button data-pg="admin" id="navAdmin" style="display:none" onclick="show(\'admin\')"><span class="bi">🛡️</span>مدیریت</button>';
+ nav.innerHTML=h;
+ var m=$('main');
+ var ids=['home','play','games','miss','board','shop','ach','me','notif','pass','admin','survival','lobby','duel','arena','stats',
+ 'history','milestones','rivals','trade','tournament','wall','settings','season','party','recap'];
+ var mh='';for(var j=0;j<ids.length;j++)mh+='<section class="page" id="pg-'+ids[j]+'"></section>';
+ m.innerHTML=mh;
+}
+/* رفتن به صفحه — با محافظ ضد رندر مجدد */
+function show(id,opts){
+ opts=opts||{};
+ if(PAGE===id&&!opts.force){
+  /* همان صفحه — فقط نوک صفحه یا بدون کار؛ رندر مجدد ممنوع (ضد باگ رفرش) */
+  stateSave();return;
+ }
+ if(PAGE!==id){
+  /* توقف polling صفحه‌های زنده هنگام ترک */
+  if(PAGE==='lobby'&&id!=='lobby')stopPoll('lobby');
+  if(PAGE==='duel'&&id!=='duel')stopPoll('duel');
+  if(PAGE==='arena'&&id!=='arena')stopPoll('arena');
+  if(PAGE==='wall'&&id!=='wall')stopPoll('wall');
+  if(PAGE==='admin'&&id!=='admin')stopPoll('admlive');
+  try{SCROLL[PAGE]=window.scrollY}catch(e){}
+  if(!opts.nopush&&NAVSTK[NAVSTK.length-1]!==id)NAVSTK.push(id);
+  if(NAVSTK.length>24)NAVSTK.splice(0,NAVSTK.length-24);
+ }
+ PAGE=id;GEN++;                    /* توکن نسل جدید — رندرهای کهنه بی‌اعتبار */
+ haptic('light');
+ for(var i=0;i<NAV.length+1;i++){var s=document.querySelectorAll('nav.bottom button')[i];if(s)s.classList.remove('on')}
+ var btn=document.querySelector('nav.bottom button[data-pg="'+id+'"]');if(btn)btn.classList.add('on');
+ document.querySelectorAll('.page').forEach(function(x){x.classList.remove('on')});
+ var pg=$('pg-'+id);if(pg)pg.classList.add('on');
+ if(id==='board')loadBoard(LBSCOPE,true);
+ else if(PAGES[id])PAGES[id]();
+ try{window.scrollTo({top:(SCROLL[id]||0),behavior:'auto'})}catch(e){}
+ try{if(tg&&tg.BackButton){if(id==='home'){tg.BackButton.hide()}else{tg.BackButton.show()}}}catch(e){}
+ stateSave();
+ try{if(typeof observeReveals==='function')observeReveals($('pg-'+id))}catch(e){}
+ try{if(typeof coachShow==='function')coachShow(id)}catch(e){}
+ try{emit('nav',id)}catch(e){}
+}
+/* برگشت — پشته‌ی واقعی (فیکس کامل «سردرهای برگشت کار نمی‌کنند») */
+function navBack(){
+ if(NAVSTK.length>1)NAVSTK.pop();
+ var dest=NAVSTK[NAVSTK.length-1]||'home';
+ show(dest,{force:true});
+}
+/* سربرگ صفحه‌های زیرگروه — دکمه برگشت واقعی */
+function gmHead(icon,title,sub,backTo){
+ var fn=backTo||'games';
+ var help='';
+ try{
+  var hk=window._GHELP;
+  if(hk&&typeof GAME_HELP!=='undefined'&&GAME_HELP[hk]){
+   help='<button class="btn sm" onclick="gameHelpSheet(\''+hk+'\')" aria-label="راهنما" title="راهنمای بازی">🎓</button>';
+  }
+ }catch(e){}
+ return '<div class="gcard"><div class="in gm-hero"><div class="gi">'+icon+'</div>'
+ +'<div style="flex:1;min-width:0"><h1 class="h1" style="margin:0;font-size:16px">'+title+'</h1>'
+ +'<p class="sub">'+sub+'</p></div>'
+ +help
+ +'<button class="btn" onclick="navBackTo(\''+fn+'\')" aria-label="برگشت">✕</button></div></div>';
+}
+function navBackTo(page){
+ /* برگشت به صفحه‌ی هدف با پاک‌کردن انتهای پشته تا آن صفحه */
+ var idx=-1;for(var i=NAVSTK.length-1;i>=0;i--){if(NAVSTK[i]===page){idx=i;break}}
+ if(idx>=0)NAVSTK.splice(idx+1);
+ show(page,{force:true});
+}
+/* رندر امن ضد رقابت — هر رندر async باید توکن خودش را چک کند */
+function renderGen(){return GEN}
+function isStale(g){return g!==GEN}
+/* رندر داخل صفحه با چک نسل */
+function setPageHTML(id,html,g){
+ if(g!=null&&g!==GEN)return false;      /* نسل کهنه — رها کن */
+ var el=$('pg-'+id);if(!el)return false;
+ el.innerHTML=html;return true;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   سیستم Polling غیرمخرب (فیکس «پاک شدن جواب هر ۱ ثانیه»)
+   ════════════════════════════════════════════════════════════════ */
+function stopPoll(k){if(POLLS[k]){clearInterval(POLLS[k]);delete POLLS[k]}}
+function stopAllPolls(){Object.keys(POLLS).forEach(stopPoll)}
+function startPoll(k,fn,ms){stopPoll(k);POLLS[k]=setInterval(fn,ms||2000)}
+/* حفظ ورودی‌های در حال تایپ هنگام رندر مجدد */
+function preserveInputs(root){
+ var snap=[];
+ (root||document).querySelectorAll('textarea.input,input.input').forEach(function(inp){
+  snap.push({id:inp.id,val:inp.value,foc:document.activeElement===inp,
+   s0:inp.selectionStart,s1:inp.selectionEnd});
+ });
+ return snap;
+}
+function restoreInputs(snap){
+ if(!snap)return;
+ snap.forEach(function(sp){
+  var inp=sp.id?$(sp.id):null;if(!inp)return;
+  if(sp.val)inp.value=sp.val;
+  try{if(sp.s0!=null)inp.setSelectionRange(sp.s0,sp.s1)}catch(e){}
+  if(sp.foc){try{inp.focus({preventScroll:true})}catch(e){}}
+ });
+}
+/* امضای وضعیت — فقط وقتی واقعاً چیزی عوض شد رندر مجدد انجام می‌شود */
+function stateSig(obj){
+ try{
+  var o=JSON.parse(JSON.stringify(obj));
+  delete o.now;delete o.ts;              /* فیلدهای زمانی حذف */
+  if(o.lobby&&o.lobby.prompt){o.lobby.prompt.timeout=0}  /* زمان‌سنج در امضا لحاظ نشود */
+  if(o.duel&&o.duel.question){o.duel.question.ts=0;o.duel.question.timeout=0}
+  return JSON.stringify(o);
+ }catch(e){return String(Math.random())}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   به‌روزرسانی داده — غیرمخرب برای نمای فعال (فیکس «رفرش»)
+   ════════════════════════════════════════════════════════════════ */
+async function refresh(silent){
+ try{
+  var d=await api('/api/miniapp/me');
+  D=d;READY=true;setErr(false);
+  try{sessionStorage.setItem('apexmini',JSON.stringify(D))}catch(e){}
+  renderChrome();                        /* فقط نشان‌ها — بدون رندر صفحه */
+  $('splash').classList.add('off');
+ }catch(e){
+  if(!READY&&!(Object.keys(D).length)){
+   var sp=$('splash');if(sp){sp.querySelector('p').textContent='اتصال برقرار نشد';var spn=sp.querySelector('.spin');if(spn)spn.style.display='none'}
+  }
+  setErr(true,e.message);
+  if(!silent)toast(e.message,'err');
+ }
+}
+/* به‌روزرسانی زنجیره‌ی ظاهر: سکه، زنگ، نشان مأموریت، ادمین — هیچ بازنویسی DOM صفحه */
+function renderChrome(){
+ if(D.admin){var na=$('navAdmin');if(na)na.style.display='flex'}
+ setCoins(D.user?D.user.coins:0);setBell(D.notifications?D.notifications.unread:0);
+ var claimable=0;
+ (D.missions||[]).forEach(function(m){if(m.completed&&!m.claimed)claimable++});
+ ['daily','weekly'].forEach(function(k){(D.quests&&D.quests[k]||[]).forEach(function(q){if(q.completed&&!q.claimed)claimable++})});
+ var mb=$('missBdg');if(mb){if(claimable>0){mb.style.display='grid';mb.textContent=fa(claimable)}else mb.style.display='none'}
+}
+/* رفرش دستی (FAB / کشیدن به پایین) — داده + صفحه‌ی ایستا؛ صفحات زنده/بازی هرگز بازنویسی نمی‌شوند */
+async function manualRefresh(){
+ haptic('medium');SND.whoosh();
+ await refresh(true);
+ toast('به‌روزرسانی شد ✨','ok');
+}
+
+/* ---------- اشتراک درون‌برنامه‌ای ---------- */
+function shareText(txt){
+ try{
+  var un=(D.bot||'').replace(/^@/,'');
+  var url='https://t.me/share/url?url='+encodeURIComponent('https://t.me/'+un)+'&text='+encodeURIComponent(txt);
+  if(tg&&tg.openTelegramLink){tg.openTelegramLink(url);return}
+ }catch(e){}
+ try{navigator.clipboard.writeText(txt).then(function(){toast('متن کپی شد — برای دوستت بفرست','ok')})}catch(e){toast(txt,'ok')}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN UI KIT — شیت، مودال، تایمر حلقه‌ای، موتور نمودار کانواس
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- باتن‌شیت ---------- */
+function openSheet(html){$('sheetBody').innerHTML=html;
+ $('sheetBk').classList.add('on');$('sheet').classList.add('on');SND.swoosh();haptic('light')}
+function closeSheet(){$('sheetBk').classList.remove('on');$('sheet').classList.remove('on')}
+var SHEETQ={};
+/* شیت با حفظ ورودی هنگام به‌روزرسانی محتوا (غیرمخرب) */
+function updateSheet(html){
+ var snap=preserveInputs($('sheetBody'));
+ $('sheetBody').innerHTML=html;
+ restoreInputs(snap);
+}
+
+/* ---------- مودال تأیید (جایگزین window.confirm) ---------- */
+var MODALCB=null;
+function askConfirm(title,msg,btnText,onYes,danger){
+ $('mic').textContent=(danger===false?'✅':'⚠️');
+ $('mT').textContent=title;
+ $('mP').innerHTML=msg;
+ var y=$('mYes');y.textContent=btnText||'تأیید';
+ y.className='btn '+(danger===false?'green':'red');
+ MODALCB=onYes;
+ $('modalBk').classList.add('on');SND.pop();
+}
+function modalYes(){var cb=MODALCB;MODALCB=null;$('modalBk').classList.remove('on');haptic('medium');if(cb)try{cb()}catch(e){}}
+function modalNo(){MODALCB=null;$('modalBk').classList.remove('on')}
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){modalNo();closeSheet();cmdkClose()}});
+
+/* ---------- تایمر حلقه‌ای SVG ---------- */
+function timerRing(sec,id,size){
+ size=size||34;
+ var r=(size-6)/2,c=2*Math.PI*r;
+ return '<span class="timer'+(sec<=5?' hot':'')+'"><span class="tring">'
+ +'<svg width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'">'
+ +'<circle class="ttr" cx="'+(size/2)+'" cy="'+(size/2)+'" r="'+r+'"></circle>'
+ +'<circle class="tvl" cx="'+(size/2)+'" cy="'+(size/2)+'" r="'+r+'" stroke-dasharray="'+c.toFixed(1)+'" data-c="'+c.toFixed(1)+'"></circle></svg></span>'
+ +'<b id="'+id+'">'+fa(sec)+'</b></span>';
+}
+/* راه‌اندازی تایمر شمارش معکوس — بدون رندر مجدد صفحه */
+var QTMR={};
+function startTimer(id,sec,onEnd){
+ stopTimer(id);
+ var t0=Date.now(),dur=sec*1000;
+ QTMR[id]=setInterval(function(){
+  var left=Math.max(0,Math.ceil((dur-(Date.now()-t0))/1000));
+  var b=$(id);
+  if(b){b.textContent=fa(left);var tm=b.closest('.timer');if(tm)tm.classList.toggle('hot',left<=5)}
+  /* حلقه */
+  var vl=b?b.parentNode.querySelector('.tvl'):null;
+  if(vl){
+   var c=parseFloat(vl.getAttribute('data-c')||'0');
+   var p=Math.max(0,Math.min(1,(dur-(Date.now()-t0))/dur));
+   vl.style.strokeDashoffset=(c*(1-p)).toFixed(1);
+  }
+  if(left<=0){stopTimer(id);if(onEnd)try{onEnd()}catch(e){}}
+ },250);
+}
+function stopTimer(id){if(QTMR[id]){clearInterval(QTMR[id]);delete QTMR[id]}}
+function stopAllTimers(){Object.keys(QTMR).forEach(stopTimer)}
+
+/* ════════════════════════════════════════════════════════════════
+   موتور نمودار TITAN — کانواس خالص، RTL فارسی، بدون کتابخانه
+   ════════════════════════════════════════════════════════════════ */
+var TCH={};
+TCH.init=function(canvas,opt){
+ opt=opt||{};
+ var dpr=Math.min(2,window.devicePixelRatio||1);
+ var w=canvas.clientWidth||canvas.parentNode.clientWidth||300;
+ var h=opt.height||canvas.clientHeight||140;
+ canvas.width=w*dpr;canvas.height=h*dpr;
+ canvas.style.height=h+'px';
+ var ctx=canvas.getContext('2d');
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+ return{ctx:ctx,w:w,h:h,css:getComputedStyle(document.body)};
+};
+TCH.col=function(i){return['#7c5cff','#15d8ff','#ff4fa3','#ffc857','#31e981','#ff9e4f','#536fff','#41f0d1'][i%8]};
+/* نمودار خطی با گرادیان و نقاط درخشان */
+TCH.line=function(canvas,series,opt){
+ opt=opt||{};
+ var v=TCH.init(canvas,{height:opt.height});
+ var ctx=v.ctx,W=v.w,H=v.h,pad=(opt.pad!=null?opt.pad:26);
+ var all=[];(series||[]).forEach(function(s){all=all.concat(s.data)});
+ var mx=Math.max.apply(null,all.concat([1])),mn=Math.min.apply(null,all.concat([0]));
+ var n=Math.max.apply(null,(series||[]).map(function(s){return s.data.length}).concat([2]));
+ ctx.clearRect(0,0,W,H);
+ /* خطوط شبکه افقی */
+ ctx.strokeStyle='rgba(255,255,255,.055)';ctx.lineWidth=1;
+ for(var g=0;g<=3;g++){var y=pad+(H-2*pad)*g/3;ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke()}
+ (series||[]).forEach(function(s,si){
+  var col=s.color||TCH.col(si);
+  var pts=s.data.map(function(val,i){
+   var x=W-pad-(W-2*pad)*(i/Math.max(1,n-1));   /* RTL: اولین نقطه راست */
+   var y=H-pad-(H-2*pad)*((val-mn)/Math.max(.001,mx-mn));
+   return[x,y];
+  });
+  /* ناحیه گرادیانی */
+  var gr=ctx.createLinearGradient(0,pad,0,H-pad);
+  gr.addColorStop(0,col+'3d');gr.addColorStop(1,col+'00');
+  ctx.beginPath();ctx.moveTo(pts[0][0],H-pad);
+  pts.forEach(function(p){ctx.lineTo(p[0],p[1])});
+  ctx.lineTo(pts[pts.length-1][0],H-pad);ctx.closePath();
+  ctx.fillStyle=gr;ctx.fill();
+  /* خط اصلی */
+  ctx.beginPath();pts.forEach(function(p,i){i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])});
+  ctx.strokeStyle=col;ctx.lineWidth=2.4;ctx.lineJoin='round';ctx.lineCap='round';ctx.stroke();
+  /* نقاط */
+  if(s.dots!==false)pts.forEach(function(p,i){
+   ctx.beginPath();ctx.arc(p[0],p[1],i===pts.length-1?4.4:2.8,0,7);
+   ctx.fillStyle=i===pts.length-1?col:'#0b0e18';ctx.fill();
+   if(i===pts.length-1){ctx.strokeStyle=col;ctx.lineWidth=2;ctx.stroke()}
+  });
+ });
+ return v;
+};
+/* نمودار ستونی — مناسب آمار روزانه */
+TCH.bars=function(canvas,data,labels,opt){
+ opt=opt||{};
+ var v=TCH.init(canvas,{height:opt.height});
+ var ctx=v.ctx,W=v.w,H=v.h,pad=28;
+ var mx=Math.max.apply(null,data.concat([1]));
+ ctx.clearRect(0,0,W,H);
+ ctx.strokeStyle='rgba(255,255,255,.055)';
+ for(var g=0;g<=3;g++){var y=pad+(H-2*pad-14)*g/3;ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke()}
+ var bw=(W-2*pad)/Math.max(1,data.length);
+ data.forEach(function(val,i){
+  var x=W-pad-(i+0.5)*bw;             /* RTL: اولین ستون راست */
+  var bh=(H-2*pad-14)*val/Math.max(1,mx);
+  var gr=ctx.createLinearGradient(0,H-pad-14-bh,0,H-pad-14);
+  gr.addColorStop(0,TCH.col(0));gr.addColorStop(1,TCH.col(1));
+  ctx.fillStyle=gr;
+  var r=Math.min(7,bw*0.32);
+  var bx=x-bw*0.32,by=H-pad-14-bh,bwd=bw*0.64;
+  ctx.beginPath();
+  ctx.moveTo(bx,by+bh);ctx.lineTo(bx,by+r);ctx.quadraticCurveTo(bx,by,bx+r,by);
+  ctx.lineTo(bx+bwd-r,by);ctx.quadraticCurveTo(bx+bwd,by,bx+bwd,by+r);ctx.lineTo(bx+bwd,by+bh);
+  ctx.closePath();ctx.fill();
+  if(labels&&labels[i]){
+   ctx.fillStyle='rgba(139,147,173,.9)';ctx.font='700 8px Vazirmatn';
+   ctx.textAlign='center';ctx.fillText(labels[i],x,H-6);
+  }
+ });
+ return v;
+};
+/* نمودار دونات با مرکز متنی */
+TCH.donut=function(canvas,parts,opt){
+ opt=opt||{};
+ var v=TCH.init(canvas,{height:opt.height||150});
+ var ctx=v.ctx,W=v.w,H=v.h;
+ var cx=W/2,cy=H/2,R=Math.min(W,H)/2-8,r=R*(opt.inner||.62);
+ var tot=parts.reduce(function(a,p){return a+p.val},0)||1;
+ ctx.clearRect(0,0,W,H);
+ var a0=-Math.PI/2;
+ parts.forEach(function(p,i){
+  var a1=a0+2*Math.PI*p.val/tot;
+  ctx.beginPath();ctx.arc(cx,cy,R,a0,a1);ctx.arc(cx,cy,r,a1,a0,true);ctx.closePath();
+  ctx.fillStyle=p.color||TCH.col(i);ctx.globalAlpha=.92;ctx.fill();ctx.globalAlpha=1;
+  a0=a1;
+ });
+ if(opt.center){
+  ctx.fillStyle='#eef0fa';ctx.font='900 16px Vazirmatn';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(opt.center,cx,cy-6);
+  if(opt.sub){ctx.fillStyle='#8b93ad';ctx.font='700 8px Vazirmatn';ctx.fillText(opt.sub,cx,cy+12)}
+ }
+ return v;
+};
+/* هیت‌مپ فعالیت (۷ روز × ۱۲ بازه) */
+TCH.heatmap=function(box,data){
+ var h='';
+ var mx=Math.max.apply(null,data.map(function(d){return d.v}).concat([1]));
+ data.forEach(function(d){
+  var op=d.v?(0.16+0.84*d.v/mx):0.05;
+  h+='<i title="'+esc(d.t)+'" style="background:rgba(124,92,255,'+op.toFixed(2)+')"></i>';
+ });
+ box.innerHTML=h;
+};
+/* اسپارک‌لاین متنی کوچک */
+TCH.sparkTxt=function(vals){
+ var mx=Math.max.apply(null,vals.concat([1]));
+ var blocks='▁▂▃▄▅▆▇█';
+ return vals.map(function(v){return blocks[Math.round(v*7/mx)]}).join('');
+};
+
+/* ---------- ستون هفته برای داشبورد (بدون کانواس) ---------- */
+function weekChart(days,vals){
+ var mx=Math.max.apply(null,vals.concat([1]));
+ var names=['ش','ی','د','س','چ','پ','ج'];
+ var h='<div class="weekchart">';
+ days.forEach(function(d,i){
+  var p=Math.max(5,Math.round(vals[i]*100/mx));
+  h+='<div class="col" title="'+esc(d)+': '+fa(vals[i])+'">'
+  +'<div class="bar2" style="height:'+p+'%"></div><small>'+fa(names[i]!=null?names[i]:'·')+'</small></div>';
+ });
+ return h+'</div>';
+}
+function donutBlock(parts,center,sub){
+ var id='dn'+Math.floor(Math.random()*1e6);
+ setTimeout(function(){var c=document.getElementById(id);if(c)TCH.donut(c,parts,{center:center,sub:sub})},30);
+ var h='<div class="donuts"><canvas id="'+id+'" style="width:150px;height:150px"></canvas><div class="legend">';
+ parts.forEach(function(p,i){
+  h+='<div class="lg"><i style="background:'+(p.color||TCH.col(i))+'"></i><span>'+esc(p.label)+'</span><b>'+faK(p.val)+'</b></div>';
+ });
+ return h+'</div></div>';
+}
+function lineBlock(series,labels,height){
+ var id='ln'+Math.floor(Math.random()*1e6);
+ setTimeout(function(){
+  var c=document.getElementById(id);if(!c)return;
+  TCH.line(c,series,{height:height});
+  if(labels)c.dataset.labels=labels;
+ },30);
+ return '<div class="chartbox"><canvas id="'+id+'"></canvas></div>';
+}
+function barsBlock(vals,labels,height){
+ var id='br'+Math.floor(Math.random()*1e6);
+ setTimeout(function(){var c=document.getElementById(id);if(c)TCH.bars(c,vals,labels,{height:height})},30);
+ return '<div class="chartbox"><canvas id="'+id+'"></canvas></div>';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   پالت فرمان سراسری (Ctrl+K)
+   ════════════════════════════════════════════════════════════════ */
 var CMD_ITEMS=[
  {ic:'🏠',t:'خانه',s:'داشبورد اصلی',fn:"show('home')"},
  {ic:'🎮',t:'Play Hub',s:'همه‌ی حالت‌های بازی',fn:"show('play')"},
- {ic:'🕹',t:'گیم‌زون',s:'۱۳ بازی کامل',fn:"show('games')"},
+ {ic:'🕹',t:'گیم‌زون',s:'۱۰ بازی کامل داخل اپ',fn:"show('games')"},
  {ic:'👥',t:'ساخت لابی',s:'بازی گروهی جرئت/حقیقت',fn:"lobbyCreate()"},
  {ic:'➕',t:'پیوستن به لابی',s:'با کد ۶ حرفی',fn:"lobbyJoinSheet()"},
  {ic:'🤺',t:'دوئل جدید',s:'نبرد تن‌به‌تن ۱۰ راند',fn:"duelCreate()"},
- {ic:'🏆',t:'آرنا رنک‌دار',s:'حریف هم‌سطح با ELO',fn:"show('arena')"},
- {ic:'🔥',t:'Survival',s:'حالت بقا',fn:"show('survival')"},
- {ic:'🎯',t:'مأموریت‌ها',s:'روزانه و هفتگی',fn:"show('miss')"},
+ {ic:'🏆',t:'آرنا رنک‌دار',s:'حریف هم‌سطح با ELO',fn:"show('arena',{force:true})"},
+ {ic:'🔥',t:'Survival',s:'حالت بقا',fn:"show('survival',{force:true})"},
+ {ic:'🎯',t:'مأموریت‌ها',s:'روزانه و هفتگی',fn:"show('miss',{force:true})"},
  {ic:'🔥',t:'پاداش استریک',s:'لاگین پیاپی صعودی',fn:"loginstreakSheet()"},
- {ic:'🎯',t:'مایلستون‌ها',s:'پاداش‌های مسیر قهرمانی',fn:"show('milestones')"},
- {ic:'🏆',t:'رتبه‌بندی',s:'۴ اسکوپ + تالار افسانه‌ها',fn:"show('board')"},
+ {ic:'🎯',t:'مایلستون‌ها',s:'پاداش‌های مسیر قهرمانی',fn:"show('milestones',{force:true})"},
+ {ic:'🏆',t:'رتبه‌بندی',s:'۵ اسکوپ + تالار افسانه‌ها',fn:"show('board',{force:true})"},
  {ic:'👑',t:'تالار افسانه‌ها',s:'HOF — بهترین‌های تاریخ',fn:"loadBoard('hof')"},
- {ic:'🛍',t:'فروشگاه',s:'لقب، قاب، پاورآپ',fn:"show('shop')"},
- {ic:'🎫',t:'Season Pass',s:'مسیر پاداش فصل',fn:"show('pass')"},
- {ic:'🌐',t:'فصل و رویداد',s:'شمارش معکوس فصل',fn:"show('season')"},
- {ic:'🏅',t:'دستاوردها',s:'تالار افتخارات + شوکیس',fn:"show('ach')"},
- {ic:'📜',t:'تاریخچه بازی',s:'۲۰ بازی آخر',fn:"show('history')"},
- {ic:'📊',t:'آمار کامل',s:'داشبورد شخصی',fn:"show('stats')"},
- {ic:'📋',t:'ریکاپ هفتگی',s:'خلاصه‌ی هفته‌ی تو',fn:"show('recap')"},
- {ic:'⚔️',t:'رقبا',s:'مدیریت رقبا و چالش',fn:"show('rivals')"},
- {ic:'🔄',t:'مرکز تجارت',s:'تبادل سکه و آیتم',fn:"show('trade')"},
- {ic:'🏆',t:'مسابقات',s:'تورنمنت‌های باز',fn:"show('tournament')"},
+ {ic:'🛍',t:'فروشگاه',s:'لقب، قاب، پاورآپ',fn:"show('shop',{force:true})"},
+ {ic:'🎫',t:'Season Pass',s:'مسیر پاداش فصل',fn:"show('pass',{force:true})"},
+ {ic:'🌐',t:'فصل و رویداد',s:'شمارش معکوس فصل',fn:"show('season',{force:true})"},
+ {ic:'🏅',t:'دستاوردها',s:'تالار افتخارات + شوکیس',fn:"show('ach',{force:true})"},
+ {ic:'📜',t:'تاریخچه بازی',s:'بازی‌های اخیر',fn:"show('history',{force:true})"},
+ {ic:'📊',t:'آمار کامل',s:'داشبورد شخصی',fn:"show('stats',{force:true})"},
+ {ic:'📋',t:'ریکاپ هفتگی',s:'خلاصه‌ی هفته‌ی تو',fn:"show('recap',{force:true})"},
+ {ic:'⚔️',t:'رقبا',s:'مدیریت رقبا و چالش',fn:"show('rivals',{force:true})"},
+ {ic:'🔄',t:'مرکز تجارت',s:'تبادل سکه و آیتم',fn:"show('trade',{force:true})"},
+ {ic:'🏆',t:'مسابقات',s:'تورنمنت‌های باز',fn:"show('tournament',{force:true})"},
  {ic:'🎁',t:'هدیه به دوست',s:'سکه هدیه بده',fn:"giftSheet()"},
  {ic:'❤️',t:'قلب محبت',s:'+۳ سکه برای طرف مقابل',fn:"heartSheet()"},
  {ic:'👥',t:'دوستان',s:'مدیریت لیست دوستی',fn:"friendsSheet()"},
- {ic:'🌐',t:'وال اجتماعی',s:'نبض جامعه‌ی ربات',fn:"show('wall')"},
- {ic:'🎉',t:'پارتی‌هاب',s:'می‌کردی؟ هرگز نشده و…',fn:"show('party')"},
+ {ic:'🌐',t:'وال اجتماعی',s:'نبض جامعه‌ی ربات',fn:"show('wall',{force:true})"},
+ {ic:'🎉',t:'پارتی‌هاب',s:'می‌کردی؟ هرگز نشده و…',fn:"show('party',{force:true})"},
  {ic:'🎭',t:'کارت شخصیت',s:'شخصیت مخفی‌ات را ببین',fn:"personaSheet()"},
- {ic:'🔔',t:'اعلان‌ها',s:'صندوق پیام‌ها',fn:"show('notif')"},
- {ic:'👤',t:'پروفایل من',s:'کارنامه کامل',fn:"show('me')"},
- {ic:'⚙️',t:'تنظیمات',s:'حریم خصوصی، اعلان، تم',fn:"show('settings')"},
- {ic:'🎨',t:'انتخاب تم',s:'۵ تم + روشن/تاریک',fn:"themeSheet()"},
- {ic:'🔊',t:'صدا روشن/خاموش',s:'افکت‌های صوتی اپ',fn:"SND.toggle();toast(SND.on?\'صدا روشن شد 🔊\':\'صدا خاموش شد 🔇\',\'ok\')"},
+ {ic:'🔔',t:'اعلان‌ها',s:'صندوق پیام‌ها',fn:"show('notif',{force:true})"},
+ {ic:'👤',t:'پروفایل من',s:'کارنامه کامل',fn:"show('me',{force:true})"},
+ {ic:'⚙️',t:'تنظیمات',s:'حریم خصوصی، اعلان، تم',fn:"show('settings',{force:true})"},
+ {ic:'🎨',t:'انتخاب تم',s:'۸ تم + روشن/تاریک',fn:"themeSheet()"},
+ {ic:'🔊',t:'صدا روشن/خاموش',s:'افکت‌های صوتی اپ',fn:"SND.toggle();toast(SND.on?'صدا روشن شد 🔊':'صدا خاموش شد 🔇','ok')"},
  {ic:'🎓',t:'راهنمای بازی',s:'آموزش کامل',fn:"guideSheet()"},
  {ic:'👑',t:'VIP',s:'مزایای عضویت ویژه',fn:"vipSheet()"},
  {ic:'🎁',t:'دعوت دوستان',s:'+۵۰ سکه به ازای هر دعوت',fn:"inviteSheet()"},
  {ic:'⏰',t:'یادآور شخصی',s:'ثبت یادآور',fn:"reminderSheet()"},
  {ic:'📝',t:'بازخورد',s:'نظرت را بگو',fn:"fbSheet()"},
- {ic:'🛡️',t:'پنل مدیریت',s:'فقط ادمین',fn:"show('admin')",adm:1}
+ {ic:'🛡️',t:'پنل مدیریت',s:'مرکز فرماندهی کامل — فقط ادمین',fn:"show('admin',{force:true})",adm:1}
 ];
-var CMDS=[]
+var CMDS=[];
 function cmdkOpen(){SND.whoosh();haptic('medium');var o=$('cmdk');o.classList.add('on');
  var i=$('cmdkIn');i.value='';cmdkRender('');setTimeout(function(){try{i.focus()}catch(e){}},80)}
-function cmdkClose(){ $('cmdk').classList.remove('on')}
+function cmdkClose(){$('cmdk').classList.remove('on')}
 function cmdkRun(fn){cmdkClose();haptic('medium');try{(new Function(fn))()}catch(e){}}
 function cmdkRender(q){
- q=String(q||'').trim().toLowerCase();var list=CMD_ITEMS.filter(function(c){
+ q=String(q||'').trim().toLowerCase();
+ var list=CMD_ITEMS.filter(function(c){
   if(c.adm&&!D.admin)return false;
   if(!q)return true;
   return (c.t+' '+c.s).toLowerCase().indexOf(q)>-1});
@@ -32319,55 +35821,67 @@ function cmdkRender(q){
   +'<kbd>↵</kbd></div>'});
  el.innerHTML=h}
 function cmdkNav(dir){var s=$('cmdkList').querySelector('.sel');if(!s)return;
- var n=dir>0?s.nextElementSibling:s.previousElementSibling;if(n){s.classList.remove('sel');n.classList.add('sel');SND.tick()}}
-
-/* ================= nav + router ================= */
-const NAV=[['home','⌂','خانه'],['play','🎮','بازی'],['games','🕹','گیم‌ها'],['miss','🎯','مأموریت'],['board','🏆','رتبه'],['shop','🛍','فروشگاه'],['me','👤','پروفایل']];
-const PAGES={home:renderHome,play:renderPlay,games:renderGames,miss:renderMiss,board:null,shop:renderShop,ach:renderAch,me:renderMe,notif:renderNotif,pass:renderPass,admin:renderAdmin,survival:renderSurvival,lobby:renderLobbyPage,duel:renderDuelPage,arena:renderArenaPage,stats:renderStatsPage,
-history:renderHistory,milestones:renderMilestones,rivals:renderRivals,trade:renderTrade,tournament:renderTournament,wall:renderWall,settings:renderSettings,season:renderSeason,party:renderParty,recap:renderRecap};
-function buildShell(){
- var nav=$('nav');var h='';
- for(var i=0;i<NAV.length;i++)h+='<button data-pg="'+NAV[i][0]+'" onclick="show(\''+NAV[i][0]+'\')"><span class="bi">'+NAV[i][1]+'</span>'+NAV[i][2]+(NAV[i][0]==='miss'?'<span class="bdg" id="missBdg" style="display:none">۰</span>':'')+'</button>';
- h+='<button data-pg="admin" id="navAdmin" style="display:none" onclick="show(\'admin\')"><span class="bi">🛡️</span>مدیریت</button>';
- nav.innerHTML=h;
- var m=$('main');var pages=[['home',''],['play',''],['games',''],['miss',''],['board',''],['shop',''],['ach',''],['me',''],['notif',''],['pass',''],['admin',''],['survival',''],['lobby',''],['duel',''],['arena',''],['stats',''],['history',''],['milestones',''],['rivals',''],['trade',''],['tournament',''],['wall',''],['settings',''],['season',''],['party',''],['recap','']];
- var mh='';for(var j=0;j<pages.length;j++)mh+='<section class="page" id="pg-'+pages[j][0]+'"></section>';
- m.innerHTML=mh;
-}
-function show(id){
- if(PAGE&&SCROLL[PAGE]!=null)try{SCROLL[PAGE]=window.scrollY}catch(e){}
- /* توقف polling صفحه‌های زنده هنگام ترک */
- if(PAGE!==id){if(PAGE==='lobby'&&id!=='lobby')stopPoll('lobby');if(PAGE==='duel'&&id!=='duel')stopPoll('duel');if(PAGE==='arena'&&id!=='arena')stopPoll('arena');if(PAGE==='wall'&&id!=='wall')stopPoll('wall')}
- PAGE=id;haptic();
- for(var i=0;i<NAV.length+1;i++){var s=document.querySelectorAll('nav.bottom button')[i];if(s)s.classList.remove('on')}
- var btn=document.querySelector('nav.bottom button[data-pg="'+id+'"]');if(btn)btn.classList.add('on');
- document.querySelectorAll('.page').forEach(function(x){x.classList.remove('on')});
- var pg=$('pg-'+id);if(pg){pg.classList.add('on')}
- if(id==='board')loadBoard(LBSCOPE,true);
- else if(PAGES[id])PAGES[id]();
- try{window.scrollTo({top:(SCROLL[id]||0),behavior:'smooth'})}catch(e){}
- try{if(tg&&tg.BackButton){if(id==='home'){tg.BackButton.hide()}else{tg.BackButton.show()}}}catch(e){}
-}
-function renderAll(){
- /* به‌روزرسانی وضعیت بدون بازسازی DOM — کلاس .on صفحات حفظ می‌شود */
- if(D.admin){var na=$('navAdmin');if(na)na.style.display='flex'}
- setCoins(D.user?D.user.coins:0);setBell(D.notifications?D.notifications.unread:0);
- var claimable=0;
- (D.missions||[]).forEach(function(m){if(m.completed&&!m.claimed)claimable++});
- ['daily','weekly'].forEach(function(k){(D.quests&&D.quests[k]||[]).forEach(function(q){if(q.completed&&!q.claimed)claimable++})});
- var mb=$('missBdg');if(mb){if(claimable>0){mb.style.display='grid';mb.textContent=fa(claimable)}else mb.style.display='none'}
- if(PAGE==='board'){loadBoard(LBSCOPE,true)}
- else if(PAGES[PAGE])PAGES[PAGE]();
+ var n=dir>0?s.nextElementSibling:s.previousElementSibling;
+ if(n){s.classList.remove('sel');n.classList.add('sel');SND.tick()}}
+function cmdkInit(){
+ try{
+  var inp=$('cmdkIn');
+  inp.addEventListener('input',function(){cmdkRender(inp.value)});
+  inp.addEventListener('keydown',function(e){
+   if(e.key==='Enter'){var s=$('cmdkList').querySelector('.sel');if(s)cmdkRun(CMDS[0].fn)}
+   else if(e.key==='ArrowDown'){e.preventDefault();cmdkNav(1)}
+   else if(e.key==='ArrowUp'){e.preventDefault();cmdkNav(-1)}
+   else if(e.key==='Escape'){cmdkClose()}
+  });
+  $('cmdk').addEventListener('click',function(e){if(e.target===this)cmdkClose()});
+  document.addEventListener('keydown',function(e){
+   if((e.ctrlKey||e.metaKey)&&(e.key==='k'||e.key==='K')){e.preventDefault();
+    if($('cmdk').classList.contains('on'))cmdkClose();else cmdkOpen()}
+   if(e.key==='/'&&!/input|textarea/i.test((document.activeElement||{}).tagName||'')){e.preventDefault();cmdkOpen()}
+  });
+ }catch(e){}
 }
 
-/* ================= HOME ================= */
-function renderHome(){
+/* ════════════════════════════════════════════════════════════════
+   آنبوردینگ ۶ مرحله‌ای
+   ════════════════════════════════════════════════════════════════ */
+var OB_STEPS=[
+ ['🎮','به ApexRival خوش آمدی!','همه‌ی بازی‌ها، دوئل‌ها، لابی‌ها و پنل مدیریت ربات — از این لحظه فقط داخل همین مینی‌اپ. دیگر هیچ‌وقت لازم نیست به چت ربات برگردی.'],
+ ['🕹','گیم‌زون کامل','۱۰ بازی کامل — از Trivia زنجیره‌ای تا کازینوی Lucky Number. پاداش‌ها مستقیم روی حساب واقعی ربات ثبت می‌شوند.'],
+ ['👥','لابی چندنفره','لابی بساز، کد ۶ حرفی را بفرست و با دوستانت جرئت/حقیقت بازی کن — با موضوع‌های داغ‌شونده و نوبت‌های چرخشی.'],
+ ['🏆','رقابت واقعی','آرنا رنک‌دار با ELO، دوئل تن‌به‌تن، مسابقات و رتبه‌بندی‌های زنده — همه داخل اپ.'],
+ ['🎨','ظاهر تو، انتخاب خودته','۸ تم رنگی، حالت روشن/تاریک، اندازه‌ی متن و افکت صوتی — همه از تنظیمات قابل تغییرند.'],
+ ['⚡','شروع کن!','مأموریت‌ها را ببین، استریک روزانه‌ات را جمع کن و قهرمان شو. موفق باشی قهرمان!']
+];
+var OBI=0;
+function obStart(){OBI=0;$('ob').classList.add('on');obShow()}
+function obShow(){
+ var s=OB_STEPS[OBI];
+ $('obIc').textContent=s[0];$('obT').textContent=s[1];$('obP').textContent=s[2];
+ $('obNext').textContent=OBI===OB_STEPS.length-1?'شروع بازی ⚡':'بعدی ›';
+ $('obDots').innerHTML=OB_STEPS.map(function(_,i){return '<i'+(i===OBI?' class="on"':'')+'></i>'}).join('');
+}
+function obNext(){haptic('medium');SND.tap();
+ if(OBI<OB_STEPS.length-1){OBI++;obShow()}else obSkip()}
+function obSkip(){$('ob').classList.remove('on');
+ try{localStorage.setItem('apex_ob','1')}catch(e){}}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN — صفحه‌ی خانه و Play Hub
+   ════════════════════════════════════════════════════════════════ */
+function tile(ic,nm,ds,cmd){
+ return '<button class="tile" onclick="'+cmd+'"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>';
+}
+function navTile(ic,nm,ds,fn){return '<button class="tile" onclick="'+fn+'"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>'}
+
+function renderHomeBase(){
  var u=D.user||{},r=D.rank||{},d=D.daily||{},p=D.pass||{};
  var lvPct=u.xp_per_level?Math.min(100,Math.round(u.xp_in_level*100/u.xp_per_level)):0;
  var ring=2*Math.PI*38;
  var photo=null;try{if(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.photo_url)photo=tg.initDataUnsafe.user.photo_url}catch(e){}
  var h='';
- h+='<div class="gcard hero"><div class="in"><div class="rowline">';
+ /* کارت قهرمانی پروفایل */
+ h+='<div class="gcard"><div class="in"><div class="rowline" style="display:flex;align-items:center;gap:13px">';
  h+=avaHtml({id:u.id,name:u.name,photo:photo,frame:u.frame},'lg');
  h+='<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
  +'<b style="font-size:16px">'+esc(u.name||'بازیکن')+'</b>'
@@ -32390,66 +35904,61 @@ function renderHome(){
  +'<span>پیشرفت رتبه‌ی بعدی</span><span>'+faK(u.xp)+' / '+faK(r.next_xp||u.xp)+' XP</span></div>';
  h+='<div class="bar" style="margin-top:7px"><i style="width:'+(r.progress||0)+'%;background:linear-gradient(90deg,var(--gold),var(--orange))"></i></div>';
  h+='</div></div>';
- /* daily reward */
- h+='<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:13px;'+(d.eligible?'border-color:#ffc85744;box-shadow:0 12px 40px #ffc85718':'')+'">';
+ /* پاداش روزانه */
+ h+='<div class="card tap" style="display:flex;align-items:center;gap:13px;'+(d.eligible?'border-color:#ffc85744;box-shadow:0 12px 40px #ffc85718':'')+'">';
  h+='<div style="width:52px;height:52px;border-radius:17px;display:grid;place-items:center;font-size:24px;flex:0 0 auto;background:'+(d.eligible?'linear-gradient(135deg,#ffc85733,#ff9e4f22)':'#ffffff08')+';border:1px solid '+(d.eligible?'#ffc85755':'var(--line)')+'">🎁</div>';
  h+='<div style="flex:1;min-width:0"><b style="font-size:12.5px">پاداش روزانه</b>'
  +'<div class="sub" style="margin-top:2px">🔥 استریک: '+fa(d.streak||0)+' روز — هر روز پاداش بزرگ‌تر!</div></div>';
  if(d.eligible)h+='<button class="btn primary glow" onclick="dclaim()">دریافت 🎉</button>';
  else h+='<button class="btn" disabled>امروز گرفتی ✓</button>';
  h+='</div>';
- /* quick stats */
- h+='<div class="grid g4" style="margin-bottom:14px">'
+ /* آمار سریع */
+ h+='<div class="grid g4" style="margin-bottom:12px">'
  +st('بازی','gms',u.games)+st('برد','wns',u.wins)+st('استریک','stk',u.streak)+st('ELO','elo',u.elo)+'</div>';
- /* quests + pass preview */
+ /* مأموریت + پاس */
  var qc=0,qn=0;(D.quests&&D.quests.daily||[]).forEach(function(q){qn++;if(q.completed&&!q.claimed)qc++});
  (D.quests&&D.quests.weekly||[]).forEach(function(q){qn++;if(q.completed&&!q.claimed)qc++});
- h+='<div class="grid g2" style="margin-bottom:14px">';
- h+='<div class="card" onclick="show(\'miss\')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎯</div><div style="flex:1"><b style="font-size:12px">مرکز مأموریت‌ها</b><div class="sub">'+fa((D.missions||[]).length+qn)+' مأموریت فعال'+(qc?' · <b style="color:var(--green)">'+fa(qc)+' آماده دریافت!</b>':'')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='<div class="grid g2" style="margin-bottom:12px">';
+ h+='<div class="card tap" onclick="show(\'miss\',{force:true})"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎯</div><div style="flex:1"><b style="font-size:12px">مرکز مأموریت‌ها</b><div class="sub">'+fa((D.missions||[]).length+qn)+' مأموریت فعال'+(qc?' · <b style="color:var(--green)">'+fa(qc)+' آماده دریافت!</b>':'')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
  var pp=p.tier!=null?Math.round(p.tier*100/(p.max_tier||50)):0;
- h+='<div class="card" onclick="show(\'pass\')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎫</div><div style="flex:1"><b style="font-size:12px">Season Pass</b><div class="sub">Tier '+fa(p.tier||0)+' / '+fa(p.max_tier||50)+(p.premium?' · 👑 Premium':'')+'</div><div class="bar" style="margin-top:7px;height:6px"><i style="width:'+pp+'%"></i></div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='<div class="card tap" onclick="show(\'pass\',{force:true})"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎫</div><div style="flex:1"><b style="font-size:12px">Season Pass</b><div class="sub">Tier '+fa(p.tier||0)+' / '+fa(p.max_tier||50)+(p.premium?' · 👑 Premium':'')+'</div><div class="bar thin" style="margin-top:7px"><i style="width:'+pp+'%"></i></div></div><span style="color:var(--muted)">‹</span></div></div>';
  h+='</div>';
- /* top board */
- h+='<div class="section"><div class="shead"><b>🏆 برترین‌های هفته</b><small onclick="show(\'board\')" style="cursor:pointer;color:var(--cyan)">همه ›</small></div><div class="list">';
+ /* برترین‌های هفته */
+ h+='<div class="section"><div class="shead"><b>🏆 برترین‌های هفته</b><small onclick="show(\'board\',{force:true})" style="cursor:pointer;color:var(--c3)">همه ›</small></div><div class="list">';
  (D.board||[]).slice(0,3).forEach(function(x){
-  h+='<div class="row" onclick="profileView('+x.uid+')" style="cursor:pointer"><div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
+  h+='<div class="row tap" onclick="profileView('+x.uid+')" style="cursor:pointer"><div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
   +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>'+faK(x.xp)+' XP این هفته</small></div></div>';
  });
  if(!(D.board||[]).length)h+='<div class="empty"><span class="ei">📊</span>هنوز امتیازی ثبت نشده — اولین بازی را شروع کن!</div>';
  h+='</div></div>';
- /* omega quick actions */
+ /* اقدامات اومگا */
  var om=D.omega||{};
- h+='<div class="grid g2" style="margin-bottom:14px">';
- h+='<div class="card" onclick="loginstreakSheet()" style="cursor:pointer;'+(om.loginstreak_ready?'border-color:#ff9e4f66;box-shadow:0 12px 40px #ff9e4f18':'')+'"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🔥</div><div style="flex:1"><b style="font-size:12px">پاداش استریک لاگین</b><div class="sub">'+(om.loginstreak_ready?'<b style="color:var(--orange)">آماده دریافت!</b> — استریک '+fa(D.user&&D.user.daily_streak||0)+' روز':'امروز گرفته‌ای ✓')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
- h+='<div class="card" onclick="show(\'milestones\')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎯</div><div style="flex:1"><b style="font-size:12px">Milestone Rewards</b><div class="sub">'+fa(om.milestones_claimed||0)+'/'+fa(om.milestones_total||13)+' دریافت‌شده'+(om.milestones_ready?' · <b style="color:var(--green)">'+fa(om.milestones_ready)+' آماده!</b>':'')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='<div class="grid g2" style="margin-bottom:12px">';
+ h+='<div class="card tap" onclick="loginstreakSheet()" style="'+(om.loginstreak_ready?'border-color:#ff9e4f66;box-shadow:0 12px 40px #ff9e4f18':'')+'"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🔥</div><div style="flex:1"><b style="font-size:12px">پاداش استریک لاگین</b><div class="sub">'+(om.loginstreak_ready?'<b style="color:var(--orange)">آماده دریافت!</b> — استریک '+fa(D.user&&D.user.daily_streak||0)+' روز':'امروز گرفته‌ای ✓')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='<div class="card tap" onclick="show(\'milestones\',{force:true})"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎯</div><div style="flex:1"><b style="font-size:12px">Milestone Rewards</b><div class="sub">'+fa(om.milestones_claimed||0)+'/'+fa(om.milestones_total||13)+' دریافت‌شده'+(om.milestones_ready?' · <b style="color:var(--green)">'+fa(om.milestones_ready)+' آماده!</b>':'')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
  h+='</div>';
- /* live pulse */
+ /* نبض امروز */
  var t=D.today||{};
  h+='<div class="section"><div class="shead"><b>📡 نبض امروز ربات</b><small>LIVE</small></div><div class="grid g4">'
  +st('بازی جدید','tg1',t.games_started)+st('بازیکن فعال','ta1',t.active_users)+st('دوئل','td1',t.duels)+st('عضو جدید','tn1',t.new_users)+'</div></div>';
- /* quick tiles */
+ /* دسترسی سریع */
  h+='<div class="section"><div class="shead"><b>⚡ دسترسی سریع</b><small>HUB</small></div><div class="tiles">'
- +tile('🕹','گیم‌زون','۱۳ بازی داخل اپ','games')+tile('🤺','دوئل','رقابت دونفره','duel_page')
- +tile('🔥','بقا','Survival','survival')+tile('🏆','آرنا','رنک‌دار ELO','arena_page')
- +tile('👥','لابی','بازی گروهی','lobby_page')+tile('📊','آمار من','داشبورد کامل','stats_page')
- +tile('🌐','وال اجتماعی','نبض زنده جامعه','wall_page')+tile('🔄','تجارت','تبادل سکه و آیتم','trade_page')
- +tile('🎉','پارتی‌هاب','می‌کردی؟ و بیشتر','party_page')+tile('📜','تاریخچه','بازی‌های اخیر','history_page')
+ +tile('🕹','گیم‌زون','۱۰ بازی داخل اپ',"show('games',{force:true})")+tile('🤺','دوئل','رقابت دونفره',"show('duel',{force:true})")
+ +tile('🔥','بقا','Survival راگلایک',"show('survival',{force:true})")+tile('🏆','آرنا','رنک‌دار ELO',"show('arena',{force:true})")
+ +tile('👥','لابی','بازی گروهی',"show('lobby',{force:true})")+tile('📊','آمار من','داشبورد کامل',"show('stats',{force:true})")
+ +tile('🌐','وال اجتماعی','نبض زنده جامعه',"show('wall',{force:true})")+tile('🔄','تجارت','تبادل سکه و آیتم',"show('trade',{force:true})")
+ +tile('🎉','پارتی‌هاب','می‌کردی؟ و بیشتر',"show('party',{force:true})")+tile('📜','تاریخچه','بازی‌های اخیر',"show('history',{force:true})")
+ +tile('⚔️','رقبا','آمار رودررو',"show('rivals',{force:true})")+tile('📋','ریکاپ','خلاصه‌ی هفته‌ات',"show('recap',{force:true})")
  +'</div></div>';
  $('pg-home').innerHTML=h;
  countUp($('gms'),u.games);countUp($('wns'),u.wins);countUp($('stk'),u.streak);countUp($('elo'),u.elo);
  countUp($('tg1'),t.games_started);countUp($('ta1'),t.active_users);countUp($('td1'),t.duels);countUp($('tn1'),t.new_users);
 }
-function st(lbl,id,val){return '<div class="stat"><small>'+lbl+'</small><b id="'+id+'">—</b></div>'}
-function tile(ic,nm,ds,cmd){
- /* همه‌ی دکمه‌ها داخل مینی‌اپ کار می‌کنند — هیچ خروجی به ربات وجود ندارد */
- var pg={games:'games',duel_page:'duel',survival:'survival',arena_page:'arena',lobby_page:'lobby',stats_page:'stats',wall_page:'wall',trade_page:'trade',party_page:'party',history_page:'history'}[cmd];
- if(pg)return '<button class="tile" onclick="show(\''+pg+'\')"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>';
- return '<button class="tile" onclick="show(\'play\')"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>';
-}
 
-/* ================= PLAY HUB ================= */
-function navTile(ic,nm,ds,fn){return '<button class="tile" onclick="'+fn+'"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>'}
-function renderPlay(){
+/* ════════════════════════════════════════════════════════════════
+   PLAY HUB — همه‌ی حالت‌های بازی
+   ════════════════════════════════════════════════════════════════ */
+function renderPlayBase(){
  var secs=[
   ['👥 بازی گروهی و دونفره',[
    navTile('🚀','ساخت لابی','بازی کامل جرئت/حقیقت چندنفره','lobbyCreate()'),
@@ -32460,52 +35969,50 @@ function renderPlay(){
   ['🌐 اجتماعی',[
    navTile('🎁','هدیه سکه','روزانه به دوستت بده','giftSheet()'),
    navTile('❤️','قلب محبت','+۳ سکه برای طرف مقابل','heartSheet()'),
-   navTile('🔄','مرکز تجارت','تبادل سکه، لقب و آیتم','show(\'trade\')'),
-   navTile('⚔️','رقبا','آمار رودررو با دشمنانت','show(\'rivals\')'),
+   navTile('🔄','مرکز تجارت','تبادل سکه، لقب و آیتم',"show('trade',{force:true})"),
+   navTile('⚔️','رقبا','آمار رودررو با دشمنانت',"show('rivals',{force:true})"),
    navTile('👥','دوستان','مدیریت لیست دوستی','friendsSheet()'),
-   navTile('🌐','وال اجتماعی','نبض زنده‌ی جامعه','show(\'wall\')')]],
+   navTile('🌐','وال اجتماعی','نبض زنده‌ی جامعه',"show('wall',{force:true})")]],
   ['🏆 رقابت‌های بزرگ',[
-   navTile('🏆','مسابقات','تورنمنت‌های باز','show(\'tournament\')'),
-   navTile('🌐','فصل و رویداد','شمارش معکوس فصل','show(\'season\')'),
-   navTile('👑','تالار افسانه‌ها','HOF — بهترین‌های تاریخ','loadBoard(\'hof\')'),
-   navTile('📋','ریکاپ هفتگی','خلاصه‌ی هفته‌ی تو','show(\'recap\')')]],
+   navTile('🏆','مسابقات','تورنمنت‌های باز',"show('tournament',{force:true})"),
+   navTile('🌐','فصل و رویداد','شمارش معکوس فصل',"show('season',{force:true})"),
+   navTile('👑','تالار افسانه‌ها','HOF — بهترین‌های تاریخ',"loadBoard('hof')"),
+   navTile('📋','ریکاپ هفتگی','خلاصه‌ی هفته‌ی تو',"show('recap',{force:true})")]],
   ['🎉 پارتی و سرگرمی',[
-   navTile('🎉','پارتی‌هاب','می‌کردی؟ هرگز نشده و…','show(\'party\')'),
+   navTile('🎉','پارتی‌هاب','می‌کردی؟ هرگز نشده و…',"show('party',{force:true})"),
    navTile('🎭','کارت شخصیت','شخصیت مخفی‌ات را ببین','personaSheet()'),
    navTile('🎲','ابزار شانس','تاس · سکه · هشت‌تو','funSheet()')]],
   ['🏆 رقابتی',[
-   navTile('🎯','آرنا رنک‌دار','رقیب هم‌سطح با ELO','show(\'arena\')'),
-   navTile('🔥','Survival','حالت بقا با سختی فزاینده','show(\'survival\')'),
-   navTile('🤖','پیشنهاد AI','تحلیل سبک و پیشنهاد حالت','aiSheet()'),
-   navTile('✨','پیشنهاد هوشمند','بهترین بازی برای الان','aiSheet()')]],
+   navTile('🎯','آرنا رنک‌دار','رقیب هم‌سطح با ELO',"show('arena',{force:true})"),
+   navTile('🔥','Survival','حالت بقا با سختی فزاینده',"show('survival',{force:true})"),
+   navTile('🤖','پیشنهاد AI','تحلیل سبک و پیشنهاد حالت','aiSheet()')]],
   ['🎮 گیم‌زون',[
-   navTile('🕹','مرکز بازی‌ها','۱۳ بازی کامل داخل اپ','show(\'games\')'),
-   navTile('🧠','Trivia','زنجیره‌ای — تا وقتی درستی','gameView(\'trivia\')'),
-   navTile('🧮','کوییز ریاضی','محاسبه سریع با تایمر','gameView(\'quiz\')'),
-   navTile('🎰','Lucky Number','کازینوی عدد شانس','gameView(\'ln\')'),
-   navTile('🍀','گردونه شانس','چرخش و جایزه','gameView(\'luck\')'),
-   navTile('✖️','دوز','بازی با هوش مصنوعی','gameView(\'ttt\')'),
-   navTile('⛏','مین‌یاب','شرطی با ضریب ریسک','gameView(\'mine\')'),
-   navTile('🎲','ابزار شانس','تاس · سکه · هشت‌تو','funSheet()')]],
+   navTile('🕹','مرکز بازی‌ها','۱۰ بازی کامل داخل اپ',"gameExit()"),
+   navTile('🧠','Trivia','زنجیره‌ای — تا وقتی درستی',"gameView('trivia')"),
+   navTile('🧮','کوییز ریاضی','محاسبه سریع با تایمر',"gameView('quiz')"),
+   navTile('🎰','Lucky Number','کازینوی عدد شانس',"gameView('ln')"),
+   navTile('🍀','گردونه شانس','چرخش و جایزه',"gameView('luck')"),
+   navTile('✖️','دوز','بازی با هوش مصنوعی',"gameView('ttt')"),
+   navTile('⛏','مین‌یاب','شرطی با ضریب ریسک',"gameView('mine')")]],
   ['🎖 پیشرفت',[
-   navTile('🎫','Season Pass','مسیر پاداش ۵۰ مرحله‌ای','show(\'pass\')'),
-   navTile('🎯','Quest Center','کوئست روزانه و هفتگی','show(\'miss\')'),
+   navTile('🎫','Season Pass','مسیر پاداش ۵۰ مرحله‌ای',"show('pass',{force:true})"),
+   navTile('🎯','Quest Center','کوئست روزانه و هفتگی',"show('miss',{force:true})"),
    navTile('🔥','پاداش استریک','لاگین پیاپی صعودی','loginstreakSheet()'),
-   navTile('🎯','Milestone ها','پاداش‌های مسیر قهرمانی','show(\'milestones\')'),
-   navTile('🏅','دستاوردها','تالار افتخاراتت','show(\'ach\')'),
-   navTile('📊','آمار کامل','داشبورد شخصی','show(\'stats\')'),
-   navTile('📜','تاریخچه بازی','۲۰ بازی آخرت','show(\'history\')'),
-   navTile('📜','تالار افسانه‌ها','رتبه‌بندی جهانی','show(\'board\')')]],
+   navTile('🎯','Milestone ها','پاداش‌های مسیر قهرمانی',"show('milestones',{force:true})"),
+   navTile('📊','آمار کامل','داشبورد شخصی',"show('stats',{force:true})"),
+   navTile('📜','تاریخچه بازی','بازی‌های اخیرت',"show('history',{force:true})"),
+   navTile('📜','رتبه‌بندی جهانی','برترین‌های همه‌ی زمان‌ها',"loadBoard('global')")]],
   ['🧰 ابزارها',[
    navTile('👥','دوستان','مدیریت لیست دوستی','friendsSheet()'),
    navTile('🎭','نام نمایشی','تغییر نام در ربات','nameSheet()'),
    navTile('⏰','یادآور','یادآور شخصی','reminderSheet()'),
    navTile('🎁','دعوت دوستان','سکه با هر دعوت','inviteSheet()'),
    navTile('👑','VIP','مزایای عضویت ویژه','vipSheet()'),
-   navTile('⚙️','تنظیمات','حریم خصوصی · اعلان · تم','show(\'settings\')'),
+   navTile('⚙️','تنظیمات','حریم خصوصی · اعلان · تم',"show('settings',{force:true})"),
    navTile('🎓','راهنما','آموزش گام‌به‌گام','guideSheet()')]]
  ];
- var h='<div class="gcard hero"><div class="in"><h1 class="h1">🎮 Play Hub</h1><p class="sub">همه‌ی حالت‌های بازی ApexRival — کامل داخل همین مینی‌اپ، بدون خروج به تلگرام.</p></div></div>';
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🎮</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1 grad" style="margin:0">Play Hub</h1><p class="sub">همه‌ی حالت‌های بازی ApexRival — کامل داخل همین مینی‌اپ، بدون خروج به تلگرام.</p></div></div></div>';
  secs.forEach(function(s){
   h+='<div class="section"><div class="shead"><b>'+s[0]+'</b><small>'+fa(s[1].length)+' حالت</small></div><div class="tiles">';
   s[1].forEach(function(m){h+=m});
@@ -32514,17 +36021,20 @@ function renderPlay(){
  $('pg-play').innerHTML=h;
 }
 
-/* ================= MISSIONS + QUESTS ================= */
+/* ════════════════════════════════════════════════════════════════
+   مأموریت‌ها + کوئست‌ها
+   ════════════════════════════════════════════════════════════════ */
 function renderMiss(){
  var ms=D.missions||[],qd=(D.quests&&D.quests.daily)||[],qw=(D.quests&&D.quests.weekly)||[];
- var h='<div class="gcard hero"><div class="in"><h1 class="h1">🎯 مرکز مأموریت‌ها</h1><p class="sub">مأموریت‌هایت را کامل کن، پاداش بگیر و استریکت را حفظ کن.</p></div></div>';
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🎯</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">مرکز مأموریت‌ها</h1><p class="sub">مأموریت‌هایت را کامل کن، پاداش بگیر و استریکت را حفظ کن.</p></div></div></div>';
  var om=D.omega||{};
- h+='<div class="grid g2" style="margin-bottom:14px">';
- h+='<div class="card" onclick="loginstreakSheet()" style="cursor:pointer;'+(om.loginstreak_ready?'border-color:#ff9e4f66;box-shadow:0 12px 40px #ff9e4f18':'')+'"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🔥</div><div style="flex:1"><b style="font-size:12px">پاداش استریک</b><div class="sub">'+(om.loginstreak_ready?'<b style="color:var(--orange)">آماده دریافت!</b>':'امروز گرفته‌ای ✓')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
- h+='<div class="card" onclick="show(\'milestones\')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎯</div><div style="flex:1"><b style="font-size:12px">Milestone ها</b><div class="sub">'+fa(om.milestones_claimed||0)+'/'+fa(om.milestones_total||13)+(om.milestones_ready?' · <b style="color:var(--green)">'+fa(om.milestones_ready)+' آماده!</b>':'')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='<div class="grid g2" style="margin-bottom:12px">';
+ h+='<div class="card tap" onclick="loginstreakSheet()" style="'+(om.loginstreak_ready?'border-color:#ff9e4f66;box-shadow:0 12px 40px #ff9e4f18':'')+'"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🔥</div><div style="flex:1"><b style="font-size:12px">پاداش استریک</b><div class="sub">'+(om.loginstreak_ready?'<b style="color:var(--orange)">آماده دریافت!</b>':'امروز گرفته‌ای ✓')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='<div class="card tap" onclick="show(\'milestones\',{force:true})"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎯</div><div style="flex:1"><b style="font-size:12px">Milestone ها</b><div class="sub">'+fa(om.milestones_claimed||0)+'/'+fa(om.milestones_total||13)+(om.milestones_ready?' · <b style="color:var(--green)">'+fa(om.milestones_ready)+' آماده!</b>':'')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
  h+='</div>';
- h+='<div class="chips" style="justify-content:center">'
- +['مأموریت روزانه','Quest روزانه','Quest هفتگی'].map(function(c,i){return '<button class="chip'+(QTAB===i?' on':'')+'" onclick="QTAB='+i+';renderMiss()">'+c+'</button>'}).join('')+'</div>';
+ h+='<div class="seg" style="margin:12px 0">'
+ +['مأموریت روزانه','Quest روزانه','Quest هفتگی'].map(function(c,i){return '<button class="'+(QTAB===i?'on':'')+'" onclick="QTAB='+i+';renderMiss()">'+c+'</button>'}).join('')+'</div>';
  var list=QTAB===0?ms:QTAB===1?qd:qw;
  if(!list.length){h+='<div class="empty"><span class="ei">🌙</span>فعلاً چیزی اینجا نیست — کمی بعد دوباره سر بزن.</div>'}
  else{
@@ -32535,27 +36045,27 @@ function renderMiss(){
    h+='<div class="mrow'+(m.completed?' done':'')+'"><div class="top">';
    h+='<div class="ic">'+(m.claimed?'✅':m.completed?'🎉':QTAB===0?'🎯':QTAB===1?'⭐':'🗓')+'</div>';
    h+='<div class="grow"><b>'+esc(m.name||'مأموریت')+'</b><div class="rw">+'+fa(m.reward_xp||0)+' XP · +'+fa(m.reward_coins||0)+' 🪙 · '+fa(m.progress||0)+'/'+fa(m.target||1)+'</div></div>';
-   if(QTAB===0)h+='<button class="btn primary'+(can?' glow':'')+'" '+(can?'':'disabled')+' onclick="claim(\''+esc(m.key)+'\')">'+(m.claimed?'دریافت شد':m.completed?'دریافت 🎁':'در حال انجام')+'</button>';
-   else h+='<button class="btn primary'+(can?' glow':'')+'" '+(can?'':'disabled')+' onclick="qclaim(\''+(QTAB===1?'daily':'weekly')+'\',\''+esc(m.key)+'\')">'+(m.claimed?'دریافت شد':m.completed?'دریافت 🎁':'در حال انجام')+'</button>';
-   h+='</div><div class="bar" style="margin-top:10px"><i style="width:'+pct+'%;'+(m.completed?'background:linear-gradient(90deg,var(--green),var(--cyan))':'')+'"></i></div></div>';
+   if(QTAB===0)h+='<button class="btn primary sm'+(can?' glow':'')+'" '+(can?'':'disabled')+' onclick="claim(\''+esc(m.key)+'\')">'+(m.claimed?'دریافت شد':m.completed?'دریافت 🎁':'در حال انجام')+'</button>';
+   else h+='<button class="btn primary sm'+(can?' glow':'')+'" '+(can?'':'disabled')+' onclick="qclaim(\''+(QTAB===1?'daily':'weekly')+'\',\''+esc(m.key)+'\')">'+(m.claimed?'دریافت شد':m.completed?'دریافت 🎁':'در حال انجام')+'</button>';
+   h+='</div><div class="bar thin" style="margin-top:10px"><i style="width:'+pct+'%;'+(m.completed?'background:linear-gradient(90deg,var(--green),var(--cyan))':'')+'"></i></div></div>';
   });
   h+='</div>';
  }
- h+='<div class="card" style="margin-top:16px;text-align:center;color:var(--muted);font-size:10px">💡 مأموریت‌ها هر روز ساعت ۰۰:۰۰ به‌روز می‌شوند — Quest هفتگی هر دوشنبه.</div>';
+ h+='<div class="card" style="margin-top:14px;text-align:center;color:var(--muted);font-size:10px">💡 مأموریت‌ها هر روز ساعت ۰۰:۰۰ به‌روز می‌شوند — Quest هفتگی هر دوشنبه.</div>';
  $('pg-miss').innerHTML=h;
 }
-async function claim(k){try{haptic('medium');var d=await api('/api/miniapp/mission/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})});toast(d.message,'ok');confetti();await refresh(true);renderMiss()}catch(e){toast(e.message,'err')}}
-async function qclaim(kind,k){try{haptic('medium');var d=await api('/api/miniapp/quest/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kind,key:k})});toast(d.message,'ok');confetti();await refresh(true);renderMiss()}catch(e){toast(e.message,'err')}}
-async function dclaim(){try{haptic('medium');var d=await api('/api/miniapp/daily/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});toast(d.message,'ok');confetti();await refresh(true)}catch(e){toast(e.message,'err')}}
+async function claim(k){try{haptic('medium');var d=await api('/api/miniapp/mission/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})});toast(d.message,'ok');confetti();SND.win();await refresh(true);renderMiss()}catch(e){toast(e.message,'err')}}
+async function qclaim(kind,k){try{haptic('medium');var d=await api('/api/miniapp/quest/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kind,key:k})});toast(d.message,'ok');confetti();SND.win();await refresh(true);renderMiss()}catch(e){toast(e.message,'err')}}
+async function dclaim(){try{haptic('medium');var d=await api('/api/miniapp/daily/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});toast(d.message,'ok');confetti();SND.win();await refresh(true);renderHome()}catch(e){toast(e.message,'err')}}
 
-/* ================= LEADERBOARD ================= */
+/* ════════════════════════════════════════════════════════════════
+   رتبه‌بندی — ۵ اسکوپ + پودیوم
+   ════════════════════════════════════════════════════════════════ */
 async function loadBoard(scope,keep){
- LBSCOPE=scope||LBSCOPE;
+ LBSCOPE=scope||LBSCOPE;stateSave();
+ var g=renderGen();
  var el=$('pg-board');
- document.querySelectorAll('#pg-board .chip').forEach(function(c){c.classList.remove('on')});
- var btn=document.querySelector('#pg-board .chip[data-sc="'+LBSCOPE+'"]');if(btn)btn.classList.add('on');
- var box=$('boardList');
- if(box)box.innerHTML='<div class="sk row-sk"></div><div class="sk row-sk"></div><div class="sk row-sk"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ if(!keep)el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
  try{
   var d;
   if(LBSCOPE==='hof'){
@@ -32564,14 +36074,16 @@ async function loadBoard(scope,keep){
   }else{
    d=await api('/api/miniapp/leaderboard?scope='+LBSCOPE);
   }
+  if(isStale(g))return;
   var items=d.items||[];
-  var h='<div class="gcard hero"><div class="in"><h1 class="h1">'+(LBSCOPE==='hof'?'👑 تالار افسانه‌ها':'🏆 رتبه‌بندی')+'</h1><p class="sub">'+({'weekly':'امتیازهای این هفته','monthly':'XP فصل جاری (ماهانه)','global':'همه‌ی زمان‌ها','season':'فصل فعال','hof':'بهترین‌های تاریخ — جاودانه'}[LBSCOPE]||'')+'</p>'
+  var h='<div class="gcard"><div class="in">'
+  +'<h1 class="h1">'+(LBSCOPE==='hof'?'👑 تالار افسانه‌ها':'🏆 رتبه‌بندی')+'</h1>'
+  +'<p class="sub">'+({'weekly':'امتیازهای این هفته','monthly':'XP فصل جاری (ماهانه)','global':'همه‌ی زمان‌ها','season':'فصل فعال','hof':'بهترین‌های تاریخ — جاودانه'}[LBSCOPE]||'')+'</p>'
   +'<div class="chips" style="margin:12px 0 0">'
-  +[['weekly','هفتگی'],['monthly','ماهانه'],['global','کلی'],['season','فصلی'],['hof','تالار افسانه‌ها']].map(function(s){return '<button class="chip'+(LBSCOPE===s[0]?' on':'')+'" data-sc="'+s[0]+'" onclick="loadBoard(\''+s[0]+'\')">'+s[1]+'</button>'}).join('')
+  +[['weekly','هفتگی'],['monthly','ماهانه'],['global','کلی'],['season','فصلی'],['hof','تالار افسانه‌ها']].map(function(s){return '<button class="chip'+(LBSCOPE===s[0]?' on':'')+'" onclick="loadBoard(\''+s[0]+'\')">'+s[1]+'</button>'}).join('')
   +'</div></div></div>';
-  /* podium */
   if(items.length>=3){
-   h+='<div class="card" style="margin-bottom:14px"><div class="podium">';
+   h+='<div class="card"><div class="podium">';
    var order=[1,0,2];
    for(var oi=0;oi<3;oi++){var x=items[order[oi]];
     h+='<div class="pod p'+(order[oi]+1)+'">'+avaHtml({id:x.uid,name:x.name},'')
@@ -32582,531 +36094,27 @@ async function loadBoard(scope,keep){
   h+='<div class="list" id="boardList">';
   items.forEach(function(x){
    var isMe=D.user&&Number(x.uid)===Number(D.user.id);
-   h+='<div class="row'+(isMe?' me':'')+'" onclick="profileView('+x.uid+')" style="cursor:pointer">'
+   h+='<div class="row'+(isMe?' me':'')+' tap" onclick="profileView('+x.uid+')" style="cursor:pointer">'
    +'<div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
    +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+(isMe?' <span class="tag cy">تو</span>':'')+'</b><small>'+faK(x.xp)+' XP'+(x.wins?' · '+faK(x.wins)+' برد':'')+'</small></div></div>';
   });
   if(!items.length)h+='<div class="empty"><span class="ei">🏜</span>هنوز کسی در این رده نیست — فرصت طلایی برای صدر!</div>';
   h+='</div>';
-  if(d.me==null&&D.user){h+='<div class="card" style="margin-top:14px;display:flex;align-items:center;gap:10px;justify-content:center;color:var(--muted);font-size:11px">📍 رتبه‌ی تو هنوز در ۳۰ نفر اول نیست — بازی کن و بالا بیا!</div>'}
-  el.innerHTML=h;
+  if(d.me==null&&D.user){h+='<div class="card" style="display:flex;align-items:center;gap:10px;justify-content:center;color:var(--muted);font-size:11px">📍 رتبه‌ی تو هنوز در ۳۰ نفر اول نیست — بازی کن و بالا بیا!</div>'}
+  setPageHTML('board',h,g);
  }catch(e){
+  if(isStale(g))return;
   el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="loadBoard(\''+LBSCOPE+'\')">تلاش دوباره</button></div>';
  }
 }
+PAGES.board=null;
 
-/* ================= SHOP ================= */
-var RARC={'معمولی':'#9aa3b5','کمیاب':'#3aa0ff','حماسی':'#a55cff','افسانه‌ای':'#ff9e4f'};
-function rarCol(i){return RARC[i.rarity]||'#9aa3b5'}
-var CATS=[['all','همه'],['title','لقب'],['theme','قاب'],['power','پاورآپ'],['boost','بوستر'],['box','جعبه'],['util','ابزار']];
-function renderShop(){
- var s=D.shop||{},items=s.items||[],u=D.user||{};
- var h='<div class="gcard hero"><div class="in"><div style="display:flex;align-items:center;gap:12px">'
- +'<div style="font-size:30px">🛍</div><div style="flex:1"><h1 class="h1" style="margin:0">Apex Store</h1>'
- +'<p class="sub">خریدها مستقیماً روی حساب واقعی ربات اعمال می‌شوند.</p></div>'
- +'<div style="text-align:center"><div style="font-size:17px;font-weight:900;color:var(--gold)">🪙 '+faK(u.coins||0)+'</div><small style="font-size:8px;color:var(--muted);letter-spacing:1px">موجودی</small></div></div></div></div>';
- var deals=s.deals||[];
- if(deals.length){
-  h+='<div class="shead" style="margin-top:14px"><b>🔥 حراج روزانه</b><small>فقط امروز</small></div><div class="deals">';
-  deals.forEach(function(dl){
-   var it=items.filter(function(x){return x.key===dl.key})[0]||{};
-   h+='<div class="deal" onclick="buySheet(\''+dl.key+'\')"><span class="off">'+fa(dl.off)+'٪−</span>'
-   +'<h4>'+esc(it.name||dl.name)+'</h4><p class="sub" style="margin:4px 0 8px">'+esc(it.desc||'')+'</p>'
-   +'<div><s>'+fa(it.price||0)+'🪙</s> <span class="price">'+fa(dl.price)+'🪙</span></div></div>';
-  });
-  h+='</div>';
- }
- h+='<div class="chips">'+CATS.map(function(c){return '<button class="chip'+(SHOPCAT===c[0]?' on':'')+'" onclick="SHOPCAT=\''+c[0]+'\';renderShop()">'+c[1]+'</button>'}).join('')+'</div>';
- var show=items.filter(function(i){return SHOPCAT==='all'||i.cat===SHOPCAT});
- h+='<div class="items">';
- show.forEach(function(i){
-  var afford=(u.coins||0)>=(i.price||0);
-  h+='<div class="item" onclick="buySheet(\''+i.key+'\')"><div class="rt" style="--rc:'+rarCol(i)+'"></div>'
-  +'<div class="rar">'+i.rar+' '+esc(i.rarity)+'</div><h3>'+esc(i.name)+'</h3><p>'+esc(i.desc)+'</p>'
-  +'<div class="foot"><span class="price">🪙 '+faK(i.price)+'</span>'
-  +'<button class="btn '+(afford?'primary':'')+'" '+(afford?'':'disabled')+' onclick="event.stopPropagation();buySheet(\''+i.key+'\')">'+(afford?'خرید':'کم دارم')+'</button></div></div>';
- });
- if(!show.length)h+='<div class="empty" style="grid-column:1/-1"><span class="ei">🔍</span>آیتمی در این دسته نیست.</div>';
- h+='</div>';
- $('pg-shop').innerHTML=h;
-}
-function buySheet(key){
- var i=(D.shop&&D.shop.items||[]).filter(function(x){return x.key===key})[0];
- if(!i)return;
- var deal=(D.shop.deals||[]).filter(function(x){return x.key===key})[0];
- var price=deal?deal.price:i.price;
- var u=D.user||{};var afford=(u.coins||0)>=price;
- openSheet('<h3>'+i.rar+' '+esc(i.name)+'</h3>'
- +'<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px"><span class="tag" style="border-color:'+rarCol(i)+'55;color:'+rarCol(i)+'">'+i.rar+' '+esc(i.rarity)+'</span><span class="tag">'+esc(i.cat)+'</span></div>'
- +'<p style="color:var(--muted);font-size:11px;line-height:2">'+esc(i.desc)+'</p>'
- +'<div style="display:flex;justify-content:space-between;margin:14px 0;padding:12px;border-radius:14px;background:#ffffff06;border:1px solid var(--line)">'
- +'<span style="color:var(--muted);font-size:10.5px">قیمت'+(deal?' 🔥 حراج':'')+'</span>'
- +'<b style="color:var(--gold)">'+(deal?'<s style="color:var(--dim);font-weight:400">'+fa(i.price)+'</s> ':'')+'🪙 '+fa(price)+'</b></div>'
- +'<div style="display:flex;justify-content:space-between;padding:0 2px;font-size:10.5px;color:var(--muted)"><span>موجودی تو</span><span style="color:'+(afford?'var(--green)':'var(--red)')+'">🪙 '+fa(u.coins||0)+'</span></div>'
- +'<button class="btn primary wide'+(afford&&price>=100?' glow':'')+'" style="margin-top:16px" '+(afford?'':'disabled')+' onclick="buy(\''+key+'\')">'+(afford?'🛒 خرید قطعی':'سکه کافی نداری')+'</button>');
-}
-async function buy(k){try{haptic('medium');closeSheet();
- var d=await api('/api/miniapp/shop/buy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})});
- toast(d.message,'ok');confetti();await refresh(true);renderShop()}catch(e){toast(e.message,'err');await refresh(true)}}
-
-/* ================= ACHIEVEMENTS ================= */
-function renderAch(){
- var a=D.achievements||[];var got=a.filter(function(x){return x.owned}).length;
- var pct=a.length?Math.round(got*100/a.length):0;
- var h='<div class="gcard hero"><div class="in"><h1 class="h1">🏅 دستاوردها</h1>'
- +'<div style="display:flex;align-items:center;gap:14px;margin-top:8px">'
- +'<div class="ring" style="width:72px;height:72px"><svg viewBox="0 0 72 72"><circle class="tr" cx="36" cy="36" r="31"></circle><circle class="vl" cx="36" cy="36" r="31" stroke-dasharray="'+(2*Math.PI*31).toFixed(1)+'" stroke-dashoffset="'+(2*Math.PI*31*(1-pct/100)).toFixed(1)+'"></circle></svg>'
- +'<div style="text-align:center"><b style="font-size:15px">'+fa(pct)+'٪</b></div></div>'
- +'<div><b style="font-size:14px">'+fa(got)+' از '+fa(a.length)+' باز شده</b><div class="sub">هر دستاورد سکه و XP جایزه دارد</div></div></div>'
- +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary" style="flex:1" onclick="showcaseSheet()">🏅 شوکیس پروفایل (۳ ستاره)</button></div></div></div>';
- h+='<div class="chips">'+[['all','همه'],['got','باز شده'],['lock','قفل']].map(function(c){return '<button class="chip'+(ACHF===c[0]?' on':'')+'" onclick="ACHF=\''+c[0]+'\';renderAch()">'+c[1]+'</button>'}).join('')+'</div>';
- var list=a.filter(function(x){return ACHF==='all'||(ACHF==='got'?x.owned:!x.owned)});
- h+='<div class="achg">';
- list.forEach(function(x){
-  h+='<div class="ach '+(x.owned?'got':'lock')+'"><span class="ico">'+(x.owned?'🏆':'🔒')+'</span>'
-  +'<h4>'+esc(x.title)+'</h4><p>'+esc(x.desc)+'</p>'
-  +'<div style="margin-top:8px;font-size:9.5px;color:var(--gold)">🎁 +'+fa(x.reward)+' سکه'+(x.xp?' · +'+fa(x.xp)+' XP':'')+'</div></div>';
- });
- if(!list.length)h+='<div class="empty" style="grid-column:1/-1"><span class="ei">🏅</span>این‌جا خالی است.</div>';
- h+='</div>';
- $('pg-ach').innerHTML=h;
-}
-
-/* ================= PROFILE (ME) ================= */
-function renderMe(){
- var u=D.user||{},s=D.stats||{},r=D.rank||{};
- var photo=null;try{if(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.photo_url)photo=tg.initDataUnsafe.user.photo_url}catch(e){}
- var h='<div class="gcard hero"><div class="in" style="text-align:center">';
- h+='<div style="display:flex;justify-content:center;margin-bottom:10px">'+avaHtml({id:u.id,name:u.name,photo:photo,frame:u.frame},'lg')+'</div>';
- h+='<h1 class="h1">'+esc(u.name||'بازیکن')+(u.verified?' <span class="tag cy">✔</span>':'')+'</h1>';
- h+='<p class="sub">'+(u.username?'@'+esc(u.username)+' · ':'')+(r.icon||'')+' '+esc(r.name||'')+' · رتبه‌ی جهانی '+(u.rank?'#'+fa(u.rank):'—')+'</p>';
- h+='<div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-top:10px">'
- +(u.title?'<span class="tag">🏷 '+esc(u.title)+'</span>':'')
- +(u.badge?'<span class="tag">🎖 '+esc(u.badge)+'</span>':'')
- +(u.vip?'<span class="tag vip">👑 VIP'+(u.vip_days?' · '+fa(u.vip_days)+' روز مانده':'')+'</span>':'<span class="tag">عضویت عادی</span>')
- +((D.omega||{}).brb?'<span class="tag">🌙 موقتاً نیستم</span>':'')
- +((D.omega||{}).mute?'<span class="tag">🔇 تگ خاموش</span>':'')
- +((D.omega||{}).birthday?'<span class="tag">🎂 '+esc((D.omega||{}).birthday)+'</span>':'')
- +'</div>';
- var sc=(D.omega||{}).showcase||[];
- if(sc.length){
-  var aMap={};(D.achievements||[]).forEach(function(x){aMap[x.key]=x});
-  h+='<div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-top:10px">'
-  +sc.map(function(k){var a=aMap[k];return a?'<span class="tag cy">🏅 '+esc(a.title)+'</span>':''}).join('')+'</div>';
- }
- h+='<div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" style="flex:1" onclick="equipSheet()">✨ تجهیز لقب و قاب</button>'
- +'<button class="btn" style="flex:1" onclick="showcaseSheet()">🏅 شوکیس</button></div>'
- +'<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" style="flex:1" onclick="show(\'settings\')">⚙️ تنظیمات</button>'
- +'<button class="btn" style="flex:1" onclick="fbSheet()">📝 بازخورد</button></div>';
- h+='</div></div>';
- /* big stats */
- h+='<div class="grid g4" style="margin-top:14px">'
- +st('سطح','p_lv',u.level)+st('XP','p_xp',u.xp)+st('سکه','p_co',u.coins)+st('برد','p_w',u.wins)
- +st('باخت','p_l',u.losses)+st('نرخ برد','p_wr',u.winrate)+st('استریک','p_st',u.streak)+st('رکورد','p_bs',u.best_streak)
- +st('دوئل','p_d',u.duels)+st('ELO','p_e',u.elo)+st('شهرت','p_r',u.reputation)+st('استریک روز','p_ds',u.daily_streak)
- +'</div>';
- /* mode bars */
- var modes=[['🧠 حقیقت',s.truth],['🔥 جرئت',s.dare],['💗 شوخ‌باش',s.flirty],['⚡ سرعتی',s.speed],['🗳 رأی‌گیری',s.vote]];
- var mx=Math.max(1);modes.forEach(function(m){mx=Math.max(mx,m[1]||0)});
- h+='<div class="card section"><div class="shead" style="padding:0"><b>🎮 سبک بازی من</b><small>MODES</small></div>';
- modes.forEach(function(m){var p=Math.round((m[1]||0)*100/mx);
-  h+='<div style="margin:9px 0"><div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted)"><span>'+m[0]+'</span><span>'+fa(m[1]||0)+'</span></div><div class="bar" style="margin-top:5px;height:7px"><i style="width:'+Math.max(3,p)+'%"></i></div></div>'});
- h+='</div>';
- /* extra stats */
- h+='<div class="grid g2 section">'
- +'<div class="card"><b style="font-size:11px">🎮 بازی خصوصی</b><p class="sub">'+fa(s.private_games||0)+' مسابقه</p></div>'
- +'<div class="card"><b style="font-size:11px">🏟 مسابقات برده</b><p class="sub">'+fa(s.tournaments_won||0)+' قهرمانی</p></div>'
- +'<div class="card"><b style="font-size:11px">🔥 رکورد Survival</b><p class="sub">'+fa(s.survival_best||0)+' استریک</p></div>'
- +'<div class="card"><b style="font-size:11px">🤝 بازی تیمی</b><p class="sub">'+fa(s.team_battles||0)+' نبرد</p></div>'
- +'<div class="card"><b style="font-size:11px">🧠 مینی‌گیم</b><p class="sub">'+fa(u.mini_games||0)+' بازی · '+fa(u.mini_games_won||0)+' برد</p></div>'
- +'<div class="card"><b style="font-size:11px">📅 عضویت از</b><p class="sub">'+(u.created_at?timeAgo(u.created_at):'—')+'</p></div>'
- +'</div>';
- /* friends & rivals */
- h+='<div class="section"><div class="shead"><b>👥 دوستان</b><small>'+fa((D.friends||[]).length)+' نفر</small></div>';
- if((D.friends||[]).length){
-  h+='<div class="chips" style="margin:0 0 4px">';
-  D.friends.forEach(function(f){h+='<button class="chip" onclick="profileView('+f.id+')" style="display:flex;align-items:center;gap:7px">'+avaHtml({id:f.id,name:f.name},'xs')+'<span>'+esc(f.name)+' · LV'+fa(f.level)+'</span></button>'});
-  h+='</div>';
- }else h+='<div class="empty" style="padding:18px"><span class="ei">👋</span>هنوز دوستی نداری — با /apexfriends اضافه کن!</div>';
- h+='</div>';
- h+='<div class="section"><div class="shead"><b>⚔️ رقبا</b><small>'+fa((D.rivals||[]).length)+' نفر</small></div>';
- if((D.rivals||[]).length){
-  h+='<div class="list">';
-  D.rivals.forEach(function(x){h+='<div class="row" onclick="profileView('+x.id+')" style="cursor:pointer">'+avaHtml({id:x.id,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>ELO '+fa(x.elo)+'</small></div><button class="btn" onclick="event.stopPropagation();duelCreate()">🤺 دوئل</button></div>'});
-  h+='</div>';
- }else h+='<div class="empty" style="padding:18px"><span class="ei">🥷</span>رقیبی ثبت نشده — در دوئل‌ها حریفت را رقیب کن!</div>';
- h+='</div>';
- /* inventory */
- if((D.inventory||[]).length){
-  h+='<div class="section"><div class="shead"><b>🎒 موجودی من</b><small>'+fa(D.inventory.length)+' قلم</small></div><div class="chips" style="margin:0">';
-  D.inventory.forEach(function(i){h+='<span class="tag" style="font-size:10px;padding:7px 12px">'+esc(i.name)+' ×'+fa(i.count)+'</span>'});
-  h+='</div></div>';
- }
- /* activity timeline */
- if((D.activity||[]).length){
-  h+='<div class="section"><div class="shead"><b>📜 آخرین فعالیت‌ها</b><small>ACTIVITY</small></div><div class="card"><div class="tl">';
-  D.activity.forEach(function(a){
-   h+='<div class="ev"><div class="b">⚡</div><div class="grow"><b>'+esc(a.action)+'</b>'+(a.details?'<small>'+esc(a.details)+'</small>':'')+'</div><time>'+timeAgo(a.ts)+'</time></div>';
-  });
-  h+='</div></div></div>';
- }
- $('pg-me').innerHTML=h;
- countUp($('p_lv'),u.level);countUp($('p_xp'),u.xp);countUp($('p_co'),u.coins);countUp($('p_w'),u.wins);
- countUp($('p_l'),u.losses);countUp($('p_wr'),u.winrate);countUp($('p_st'),u.streak);countUp($('p_bs'),u.best_streak);
- countUp($('p_d'),u.duels);countUp($('p_e'),u.elo);countUp($('p_r'),u.reputation);countUp($('p_ds'),u.daily_streak);
-}
-
-/* equip sheet */
-function equipSheet(){
- var c=D.cosmetics||{};
- function tab(kind,label,arr,cur){
-  var h='<div style="margin:12px 0 16px"><div class="shead" style="padding:0"><b>'+label+'</b><small>مالکیت‌دار</small></div><div class="list">';
-  if(!arr.length)h+='<div class="empty" style="padding:14px">چیزی نداری — از فروشگاه بخر!</div>';
-  arr.forEach(function(x){
-   h+='<div class="row"><div class="medal">'+(x.owned?'✅':'🔒')+'</div><div class="grow"><b>'+esc(x.name)+'</b><small>'+(x.owned?'در اختیار':'قفل — سطح '+fa(x.req_level))+'</small></div>'
-   +(x.owned?'<button class="btn'+(cur===x.key?' green':' primary')+'" onclick="equip(\''+kind+'\',\''+x.key+'\')">'+(cur===x.key?'فعال ✓':'تجهیز')+'</button>':'')+'</div>';
-  });
-  return h+'</div></div>';
- }
- var u=D.user||{};
- openSheet('<h3>✨ ظاهر پروفایل</h3>'
- +'<div class="chips" style="margin:0 0 6px">'
- +[['القاب','titles'],['قاب‌ها','frames'],['بج‌ها','badges']].map(function(x,i){return '<button class="chip'+(EQTAB===i?' on':'')+'" onclick="EQTAB='+i+';equipSheet()">'+x[0]+'</button>'}).join('')+'</div>'
- +(EQTAB===0?tab('title','🏷 لقب‌های من',c.titles||[],u.title_key||'')
-  :EQTAB===1?tab('frame','🖼 قاب‌های من',c.frames||[],u.frame||'default')
-  :tab('badge','🎖 بج‌های من',c.badges||[],u.badge_key||'')));
-}
-var EQTAB=1;
-async function equip(kind,key){try{haptic('medium');
- var d=await api('/api/miniapp/profile/equip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kind,key:key})});
- toast(d.message,'ok');await refresh(true);equipSheet();renderMe()}catch(e){toast(e.message,'err')}}
-
-/* feedback sheet */
-function fbSheet(){
- openSheet('<h3>📝 ارسال بازخورد</h3>'
- +'<p class="sub" style="margin-bottom:12px">نظر، پیشنهاد یا مشکل‌ات را بنویس — مستقیم به تیم ربات می‌رسد و از «بازخوردهای من» قابل پیگیری است.</p>'
- +'<textarea id="fbTxt" class="input" maxlength="500" placeholder="متن بازخورد…"></textarea>'
- +'<button class="btn primary wide" style="margin-top:12px" onclick="fbSend()">✈️ ارسال بازخورد</button>');
-}
-async function fbSend(){try{
- var t=($('fbTxt').value||'').trim();
- if(t.length<3){toast('متن خیلی کوتاه است','err');return}
- haptic('medium');closeSheet();
- var d=await api('/api/miniapp/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
- toast(d.message,'ok')}catch(e){toast(e.message,'err')}}
-
-/* ================= NOTIFICATIONS ================= */
-function renderNotif(){
- var n=D.notifications||{},items=n.items||[];
- var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
- +'<div style="font-size:28px">🔔</div><div style="flex:1"><h1 class="h1" style="margin:0">اعلان‌ها</h1>'
- +'<p class="sub">'+fa(n.unread||0)+' خوانده‌نشده از '+fa(items.length)+'</p></div>'
- +(n.unread?'<button class="btn primary" onclick="notifRead()">✓ همه خوانده شد</button>':'')+'</div></div>';
- if(!items.length)h+='<div class="empty"><span class="ei">📭</span>صندوق‌ات خالی است — هنوز خبری نیامده!</div>';
- else{
-  h+='<div class="list section">';
-  items.forEach(function(x){
-   var ic={'level_up':'⬆️','achievement':'🏆','private_invite':'🎮','friend_req':'👥','season_end':'🌐','tournament':'🏟'}[x.type]||'🔔';
-   h+='<div class="row" style="'+(x.read?'':'border-color:#7c5cff44;background:#7c5cff0a')+'">'
-   +'<div class="medal">'+ic+'</div><div class="grow"><b>'+esc(x.title||'اعلان')+'</b>'+(x.body?'<small>'+esc(x.body)+'</small>':'')+'</div><time style="color:var(--dim);font-size:8.5px;white-space:nowrap">'+timeAgo(x.ts)+'</time></div>';
-  });
-  h+='</div>';
- }
- $('pg-notif').innerHTML=h;
-}
-async function notifRead(){try{var d=await api('/api/miniapp/notifications/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});toast(d.message,'ok');setBell(0);await refresh(true);renderNotif()}catch(e){toast(e.message,'err')}}
-
-/* ================= SEASON PASS ================= */
-function renderPass(){
- var p=D.pass||{},u=D.user||{};
- var pct=p.per_tier?Math.round((p.xp%p.per_tier)*100/p.per_tier):0;
- var h='<div class="gcard hero"><div class="in"><div style="display:flex;align-items:center;gap:14px">'
- +'<div style="font-size:34px">🎫</div><div style="flex:1"><h1 class="h1" style="margin:0">Season Pass</h1>'
- +'<p class="sub">Tier '+fa(p.tier||0)+' از '+fa(p.max_tier||50)+' · '+fa(p.to_next||0)+' XP تا Tier بعد</p>'
- +'<div class="bar" style="margin-top:8px"><i style="width:'+pct+'%"></i></div></div>'
- +'<div style="text-align:center"><b style="font-size:24px;display:block">'+fa(p.tier||0)+'</b><small style="font-size:8px;color:var(--muted);letter-spacing:2px">TIER</small></div></div></div></div>';
- if(!p.premium){
-  h+='<div class="card" style="margin:14px 0;border-color:#ffc85744;background:linear-gradient(150deg,#1a1508,#0c0a16)">'
-  +'<div style="display:flex;align-items:center;gap:12px"><div style="font-size:26px">👑</div>'
-  +'<div style="flex:1"><b>Premium Pass</b><div class="sub">۲ برابر پاداش + قاب‌های ویژه + ۳۰ روز VIP</div></div>'
-  +'<button class="btn gold" onclick="passPremium()">🪙 '+fa(p.premium_price||1500)+'</button></div></div>';
- }else{
-  h+='<div class="card" style="margin:14px 0;border-color:#ffc85744;display:flex;align-items:center;gap:10px"><span style="font-size:22px">👑</span><b>Premium فعال است</b><span class="tag vip">کامل</span></div>';
- }
- /* free track */
- h+='<div class="section"><div class="shead"><b>🆓 مسیر رایگان</b><small>'+fa((p.free||[]).length)+' پاداش</small></div>';
- (p.free||[]).forEach(function(t){
-  var can=t.open&&!t.claimed;
-  h+='<div class="tier'+(t.open?' open':' lockt')+'"><div class="tno">'+fa(t.tier)+'</div>'
-  +'<div class="grow"><b>Tier '+fa(t.tier)+(t.title?' · لقب '+esc(t.title):'')+'</b><small>🪙 '+fa(t.coins||0)+' سکه'+(t.item?' · آیتم '+esc(t.item):'')+'</small></div>'
-  +(t.claimed?'<span class="tag ok">گرفته شد ✓</span>':can?'<button class="btn primary glow" onclick="passClaim('+t.tier+',false)">دریافت</button>':'<span class="tag">🔒 قفل</span>')+'</div>';
- });
- h+='</div>';
- /* premium track */
- h+='<div class="section"><div class="shead"><b>👑 مسیر Premium</b><small>'+(p.premium?'فعال':'نیاز به خرید')+'</small></div>';
- (p.premium_track||[]).forEach(function(t){
-  var can=t.open&&!t.claimed&&p.premium;
-  h+='<div class="tier'+(t.open?' open':' lockt')+'" style="'+(p.premium?'':'opacity:.55')+'"><div class="tno">'+fa(t.tier)+'</div>'
-  +'<div class="grow"><b>Tier '+fa(t.tier)+(t.title?' · '+esc(t.title):'')+(t.frame?' · قاب '+esc(t.frame):'')+'</b><small>🪙 '+fa(t.coins||0)+' سکه'+(t.item?' · آیتم '+esc(t.item):'')+'</small></div>'
-  +(t.claimed?'<span class="tag ok">گرفته شد ✓</span>':can?'<button class="btn gold" onclick="passClaim('+t.tier+',true)">دریافت</button>':p.premium?'<span class="tag">🔒 قفل</span>':'<span class="tag vip">👑 Premium</span>')+'</div>';
- });
- h+='</div>';
- $('pg-pass').innerHTML=h;
-}
-async function passClaim(tier,prem){try{haptic('medium');
- var d=await api('/api/miniapp/pass/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tier:tier,premium:prem})});
- toast(d.message,'ok');confetti();await refresh(true);renderPass()}catch(e){toast(e.message,'err')}}
-async function passPremium(){try{haptic('medium');
- var d=await api('/api/miniapp/pass/premium',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
- toast(d.message,'ok');confetti();await refresh(true);renderPass()}catch(e){toast(e.message,'err')}}
-
-/* ================= PUBLIC PROFILE VIEW ================= */
-async function profileView(id){
- if(D.user&&Number(id)===Number(D.user.id)){show('me');return}
- CURPROF=id;
- openSheet('<div style="text-align:center;padding:18px 0"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--violet);animation:rot .9s linear infinite"></div></div>');
- try{
-  var p=await api('/api/miniapp/profile?id='+Number(id));
-  if(CURPROF!==Number(id))return;
-  var h='<div style="text-align:center">';
-  h+='<div style="display:flex;justify-content:center;margin-bottom:10px">'+avaHtml({id:p.id,name:p.name,online:p.online},'lg')+'</div>';
-  h+='<h3 style="margin:2px 0 4px">'+esc(p.name)+(p.verified?' <span class="tag cy">✔</span>':'')+'</h3>'
-  +'<p class="sub">'+(p.rank?p.rank.icon+' '+esc(p.rank.name)+' · ':'')+'LV '+fa(p.level)+(p.username?' · @'+esc(p.username):'')+'</p>'
-  +'<div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin:10px 0">'
-  +(p.title?'<span class="tag">🏷 '+esc(p.title)+'</span>':'')
-  +(p.badge?'<span class="tag">🎖 '+esc(p.badge)+'</span>':'')
-  +(p.online?'<span class="tag ok">آنلاین</span>':'<span class="tag">آفلاین</span>')
-  +(p.is_friend?'<span class="tag cy">👥 دوست تو</span>':'')
-  +'</div></div>';
-  if(p.show_stats&&p.stats){
-   h+='<div class="grid g4" style="margin:14px 0">'
-   +'<div class="stat"><small>بازی</small><b>'+fa(p.stats.games)+'</b></div>'
-   +'<div class="stat"><small>برد</small><b>'+fa(p.stats.wins)+'</b></div>'
-   +'<div class="stat"><small>نرخ برد</small><b>'+fa(p.stats.winrate)+'٪</b></div>'
-   +'<div class="stat"><small>ELO</small><b>'+fa(p.stats.elo)+'</b></div></div>';
-  }else h+='<div class="empty" style="padding:14px"><span class="ei">🔒</span>این بازیکن آمارش را خصوصی کرده است.</div>';
-  if(p.show_achievements&&p.achievements_top){
-   h+='<div class="shead" style="padding:0"><b>🏅 دستاوردها</b><small>'+fa(p.achievements_count)+' عدد</small></div><div class="achg" style="grid-template-columns:1fr 1fr">';
-   p.achievements_top.forEach(function(a){h+='<div class="ach got"><h4 style="margin:0">'+esc(a.title)+'</h4></div>'});
-   h+='</div>';
-  }
-  h+='<div style="display:flex;gap:8px;margin-top:16px"><button class="btn" style="flex:1" onclick="compareSheet('+Number(id)+')">⚖️ مقایسه با من</button>'
-  +'<button class="btn primary" style="flex:1" onclick="closeSheet();duelCreate()">🤺 چالش دوئل</button>'
-  +(p.is_friend?'':'<button class="btn green" style="flex:1" onclick="friendAdd('+Number(id)+')">➕ دوست</button>')+'</div>';
-  $('sheetBody').innerHTML=h;
- }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">🔍</span>'+esc(e.message)+'</div>'}
-}
-
-/* ================= SHEET ================= */
-function openSheet(html){$('sheetBody').innerHTML=html;$('sheetBk').classList.add('on');$('sheet').classList.add('on')}
-function closeSheet(){$('sheetBk').classList.remove('on');$('sheet').classList.remove('on')}
-
-/* ================= ADMIN CONTROL CENTER ================= */
-function renderAdmin(){
- if(!D.admin){$('pg-admin').innerHTML='<div class="empty"><span class="ei">🛡️</span>دسترسی مدیر لازم است.</div>';return}
- var h='<div class="gcard hero"><div class="in"><h1 class="h1">🛡️ مرکز کنترل ادمین</h1>'
- +'<p class="sub">پنل مدیریتی وب — متصل به همان داده‌ی زنده‌ی ربات.</p>'
- +'<div class="grid g4" style="margin-top:12px">'
- +'<div class="stat"><small>USERS</small><b id="a_users">—</b></div>'
- +'<div class="stat"><small>GROUPS</small><b id="a_groups">—</b></div>'
- +'<div class="stat"><small>GAMES</small><b id="a_games">—</b></div>'
- +'<div class="stat"><small>ACTIVE</small><b id="a_active">—</b></div></div></div></div>';
- var tabs=[['dashboard','📊 داشبورد'],['users','👥 کاربران'],['games','🎮 بازی‌ها'],['groups','🏘 گروه‌ها'],['live','📡 زنده'],['punish','⚖️ مجازات‌ها'],['backups','💾 بکاپ‌ها'],['logs','🧾 لاگ‌ها'],['broadcast','📢 همگانی'],['settings','⚙️ تنظیمات'],['economy','💰 اقتصاد']];
- h+='<div class="chips">'+tabs.map(function(t){return '<button class="chip'+(ADMINTAB===t[0]?' on':'')+'" onclick="ADMINTAB=\''+t[0]+'\';renderAdmin();adminPage(\''+t[0]+'\')">'+t[1]+'</button>'}).join('')+'</div>';
- h+='<div id="adminBody"></div>';
- $('pg-admin').innerHTML=h;
- adminPage(ADMINTAB);
-}
-async function adminPage(kind){
- if(!D.admin)return;
- ADMINTAB=kind;
- document.querySelectorAll('#pg-admin .chip').forEach(function(c){c.classList.remove('on')});
- var b=$('adminBody');if(!b)return;
- b.innerHTML='<div class="sk tall"></div><div class="sk row-sk" style="margin-top:10px"></div><div class="sk row-sk" style="margin-top:10px"></div>';
- try{
-  var d=await api('/api/miniapp/admin?section='+encodeURIComponent(kind));
-  var h='';
-  if(kind==='dashboard'){
-   var mx=1;(d.week||[]).forEach(function(w){mx=Math.max(mx,w.games)});
-   h+='<div class="grid g4" style="margin-bottom:12px">'
-   +adm('بازی جدید امروز',d.today.games_started)+adm('کاربر فعال امروز',d.today.active_users)
-   +adm('دوئل امروز',d.today.duels)+adm('عضو جدید',d.today.new_users)+'</div>';
-   h+='<div class="card"><div class="shead" style="padding:0"><b>📈 بازی‌های ۷ روز اخیر</b><small>تعداد</small></div><div class="weekchart">';
-   (d.week||[]).forEach(function(w){var p=Math.max(4,Math.round(w.games*100/mx));
-    h+='<div class="col" title="'+w.day+': '+w.games+' بازی"><div class="bar2" style="height:'+p+'%"></div><small>'+fa(w.day)+'</small></div>'});
-   h+='</div></div>';
-   h+='<div class="grid g4" style="margin-top:12px">'
-   +adm('بازخوردها',d.feedback)+adm('لاگ Audit',d.audit)+adm('آیتم فروشگاه',d.shop_items)+adm('بانک سوال',d.bank_prompts)+'</div>';
-   h+='<div class="card" style="margin-top:12px"><b>⚙️ وضعیت سیستم</b>'
-   +'<p class="sub" style="margin:8px 0">نسخه: '+esc(d.version)+' · MiniApp: '+esc(d.miniapp_version||'')+'<br>حالت تعمیرات: '+(d.maintenance?'<b style="color:var(--red)">روشن</b>':'<b style="color:var(--green)">خاموش</b>')+'<br>ذخیره‌سازی: '+esc(d.storage)+'</p>'
-   +'<div class="toolbar" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'
-   +'<button class="btn primary" onclick="adminAction(\'backup_now\',0,0)">💾 بکاپ فوری</button>'
-   +'<button class="btn '+(d.maintenance?'green':'red')+'" onclick="adminAction(\'maintenance_toggle\',0,0)">'+(d.maintenance?'خاموش کردن تعمیرات':'روشن کردن تعمیرات')+'</button></div></div>';
-  }
-  else if(kind==='users'){
-   h+='<div class="card" style="margin-bottom:12px"><input class="input" id="uq" placeholder="🔍 جستجوی نام، یوزرنیم یا ID…" onkeydown="if(event.key===\'Enter\')loadUsers(0)">'
-   +'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary" style="flex:1" onclick="loadUsers(0)">🔎 جستجو</button>'
-   +'<button class="btn gold" style="flex:1" onclick="adminCsv()">📄 خروجی CSV</button></div></div><div class="list" id="usersList"></div>';
-  }
-  else if(kind==='games'){
-   h+='<div class="list">'+(d.items||[]).map(function(x){
-    return '<div class="row"><div class="medal">🎮</div><div class="grow"><b>'+esc(x.mode||x.key||'بازی')+'</b><small>'+esc(x.key)+' · '+esc(x.status)+' · '+fa(x.players)+' بازیکن</small></div><span class="tag '+(x.status==='active'?'ok':'')+'">'+esc(x.status)+'</span></div>'}).join('')||'<div class="empty"><span class="ei">🎮</span>بازی فعالی در جریان نیست.</div>'+'</div>';
-  }
-  else if(kind==='groups'){
-   h+='<div class="list">'+(d.items||[]).map(function(x){
-    return '<div class="row"><div class="medal">🏘</div><div class="grow"><b>'+esc(x.title)+'</b><small>ID '+fa(x.id)+' · '+fa(x.created_games)+' بازی · سقف '+fa(x.max_players)+' نفر</small></div><span class="tag '+(x.adult_mode?'bad':'ok')+'">'+(x.adult_mode?'18+':'SAFE')+'</span></div>'}).join('')||'<div class="empty"><span class="ei">🏘</span>گروهی ثبت نشده است.</div>'+'</div>';
-  }
-  else if(kind==='backups'){
-   h+='<div class="card" style="margin-bottom:12px"><button class="btn primary wide" onclick="adminAction(\'backup_now\',0,0)">💾 ساخت بکاپ جدید</button></div>';
-   h+='<div class="list">'+(d.items||[]).map(function(x){
-    return '<div class="row"><div class="medal">💾</div><div class="grow"><b>'+esc(x.name)+'</b><small>'+fmtSize(x.size)+' · '+timeAgo(x.mtime)+'</small></div></div>'}).join('')||'<div class="empty"><span class="ei">💾</span>بکاپی پیدا نشد.</div>'+'</div>';
-  }
-  else if(kind==='logs'){
-   h+='<div class="chips" style="margin:0 0 12px">'+[['all','همه'],['info','Info'],['warn','Warn'],['error','Error']].map(function(l){
-    return '<button class="chip'+(LOGLV===l[0]?' on':'')+'" onclick="LOGLV=\''+l[0]+'\';adminPage(\'logs\')">'+l[1]+'</button>'}).join('')+'</div>';
-   h+='<div class="list">'+(d.items||[]).map(function(x){
-    var lv=String(x.level||x.type||'info').toLowerCase();
-    return '<div class="row"><div class="grow"><b>'+esc(x.message||x.action||'event')+'</b><small>'+esc(x.category||'')+(x.details?' · '+esc(x.details):'')+'</small></div><span class="loglv '+lv+'">'+lv+'</span><time style="color:var(--dim);font-size:8px;white-space:nowrap">'+timeAgo(x.ts)+'</time></div>'}).join('')||'<div class="empty"><span class="ei">🧾</span>لاگی در این سطح نیست.</div>'+'</div>';
-  }
-  else if(kind==='broadcast'){
-   h+='<div class="card"><b>📢 ارسال پیام همگانی</b>'
-   +'<p class="sub" style="margin:8px 0">پیام برای همه‌ی کاربران ربات در صف ارسال قرار می‌گیرد (همان Broadcast ربات).</p>'
-   +'<textarea id="bcTxt" class="input" maxlength="900" placeholder="متن پیام همگانی..." style="min-height:110px"></textarea>'
-   +'<button class="btn primary wide" style="margin-top:10px" onclick="adminBroadcast()">✈️ قرار دادن در صف ارسال</button></div>';
-  }
-  else if(kind==='settings'){
-   h+='<div class="card"><b>⚙️ تنظیمات کلیدی سیستم</b><pre class="json" style="margin-top:10px">'+esc(JSON.stringify(d,null,2))+'</pre></div>';
-  }
-  else if(kind==='economy'){
-   h+='<div class="grid g4">'
-   +adm('آیتم فروشگاه',d.shop_items)+adm('کاربران',d.users)+adm('سکه در گردش',d.coins)+adm('کاربران VIP',d.vip)+'</div>';
-  }
-  else if(kind==='live'){
-   try{
-    var lv=await api('/api/miniapp/live');
-    h+='<div class="grid g4" style="margin-bottom:12px">'
-    +adm('کاربران',lv.users)+adm('گروه‌ها',lv.groups)+adm('بازی فعال',lv.active_games)+adm('بانک سوال',lv.banks_total)+'</div>'
-    +'<div class="card"><div class="shead" style="padding:0"><b>📡 تله‌متری زنده‌ی ربات</b><small>LIVE</small></div>'
-    +'<div style="margin-top:10px;font-size:11px;line-height:2.3;color:var(--muted)">'
-    +'⏱ آپ‌تایم: <b style="color:var(--txt)">'+esc(lv.uptime||'—')+'</b><br>'
-    +'🧠 حافظه: <b style="color:var(--txt)">'+fa(lv.memory_mb||0)+' MB</b><br>'
-    +'📦 نسخه: <b style="color:var(--txt)">'+esc(lv.version||'—')+'</b><br>'
-    +'💾 حجم داده: <b style="color:var(--txt)">'+fmtSize(lv.data_size||0)+'</b><br>'
-    +'🎯 در صف مچ‌میکینگ: <b style="color:var(--txt)">'+fa(lv.queue_matchmaking||0)+'</b></div>'
-    +'<button class="btn primary wide" style="margin-top:12px" onclick="adminPage(\'live\')">🔄 به‌روزرسانی</button></div>';
-   }catch(e){h+='<div class="empty">'+esc(e.message)+'</div>'}
-  }
-  else if(kind==='punish'){
-   try{
-    var pu=await api('/api/miniapp/admin/punishments');
-    h+='<div class="list">'+(pu.items||[]).map(function(p){
-     return '<div class="row"><div class="medal">⚖️</div><div class="grow"><b>'+esc(p.name)+' — محکوم</b>'
-     +'<small>قاضی: '+esc(p.by_name)+' · «'+esc(p.text)+'»</small></div>'
-     +'<button class="btn green" onclick="adminAction(\'punish_forgive\',0,0,\''+esc(p.pid)+'\')">🤝 بخشش</button></div>'}).join('')
-     ||'<div class="empty"><span class="ei">🕊</span>هیچ مجازاتی در جریان نیست — صلح و صفایی!</div>'+'</div>';
-   }catch(e){h+='<div class="empty">'+esc(e.message)+'</div>'}
-  }
-  b.innerHTML=h||b.innerHTML;
-  if(kind==='dashboard'){countUp($('a_users'),d.users);countUp($('a_groups'),d.groups);countUp($('a_games'),d.games);countUp($('a_active'),d.active_games)}
-  else{
-   /* آمار بالای پنل همیشه زنده پر می‌شود (فیکس ۴.۰) */
-   try{
-    api('/api/miniapp/live').then(function(lv){
-     if($('a_users'))countUp($('a_users'),lv.users||0);
-     if($('a_groups'))countUp($('a_groups'),lv.groups||0);
-     if($('a_games'))countUp($('a_games'),lv.games_total||0);
-     if($('a_active'))countUp($('a_active'),lv.active_games||0);
-    }).catch(function(){});
-   }catch(e){}
-  }
-  if(kind==='users')loadUsers(0);
- }catch(e){b.innerHTML='<div class="empty"><span class="ei">⚠️</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="adminPage(\''+kind+'\')">تلاش دوباره</button></div>'}
-}
-function adm(lbl,val){return '<div class="stat"><small>'+lbl+'</small><b>'+faK(val||0)+'</b></div>'}
-async function loadUsers(pg){
- pg=pg==null?USERSPG:Math.max(0,pg);USERSPG=pg;
- var box=$('usersList');if(!box)return;
- box.innerHTML='<div class="sk row-sk"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
- try{
-  var q=encodeURIComponent(($('uq')&&$('uq').value)||'');
-  var d=await api('/api/miniapp/admin/users?q='+q+'&page='+pg);
-  var h='';
-  (d.items||[]).forEach(function(x){
-   h+='<div class="row" onclick="userSheet('+x.id+')" style="cursor:pointer">'+avaHtml({id:x.id,name:x.name},'sm')
-   +'<div class="grow"><b>'+(x.vip?'👑 ':'')+esc(x.name)+(x.banned?' <span class="tag bad">بن</span>':'')+'</b><small>ID '+fa(x.id)+' · LV '+fa(x.level)+' · '+faK(x.xp)+' XP · 🪙 '+faK(x.coins)+'</small></div><span style="color:var(--muted)">‹</span></div>';
-  });
-  if(!h)h='<div class="empty"><span class="ei">🔍</span>کاربری پیدا نشد.</div>';
-  if((d.pages||1)>1){
-   h+='<div class="pager">'
-   +(pg>0?'<button class="btn" onclick="loadUsers('+(pg-1)+')">› قبلی</button>':'')
-   +'<span>صفحه '+fa(pg+1)+' از '+fa(d.pages)+' — '+fa(d.total)+' کاربر</span>'
-   +(pg+1<(d.pages||1)?'<button class="btn" onclick="loadUsers('+(pg+1)+')">بعدی ‹</button>':'')+'</div>';
-  }
-  box.innerHTML=h;
- }catch(e){box.innerHTML='<div class="empty"><span class="ei">⚠️</span>'+esc(e.message)+'</div>'}
-}
-async function userSheet(id){
- openSheet('<div style="text-align:center;padding:18px 0"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--violet);animation:rot .9s linear infinite"></div></div>');
- try{
-  var u=await api('/api/miniapp/admin/user?id='+Number(id));
-  var h='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">'
-  +avaHtml({id:u.id,name:u.name},'')+'<div style="flex:1;min-width:0"><h3 style="margin:0">'+(u.vip?'👑 ':'')+esc(u.name||'کاربر')+(u.banned?' <span class="tag bad">مسدود</span>':'')+'</h3>'
-  +'<p class="sub" style="margin:2px 0 0">ID '+fa(u.id)+(u.username?' · @'+esc(u.username):'')+'</p></div></div>';
-  h+='<div class="grid g4" style="margin:12px 0">'
-  +adm('سطح',u.level)+adm('XP',u.xp)+adm('سکه',u.coins)+adm('بازی',u.games)+'</div>';
-  h+='<div class="grid g4" style="margin-bottom:12px">'
-  +adm('برد',u.wins)+adm('دوئل',u.duels)+adm('ELO',u.elo_rating)+adm('دستاورد',(u.achievements||[]).length)+'</div>';
-  h+='<div class="shead" style="padding:0"><b>⚡ عملیات سریع</b></div>'
-  +'<div style="display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 4px">'
-  +'<button class="btn green" onclick="adminAction(\'add_coins\','+u.id+',100)">+۱۰۰ 🪙</button>'
-  +'<button class="btn gold" onclick="adminAction(\'add_coins\','+u.id+',1000)">+۱۰۰۰ 🪙</button>'
-  +'<button class="btn primary" onclick="adminAction(\'add_xp\','+u.id+',500)">+۵۰۰ XP</button>'
-  +'<button class="btn red" onclick="adminAction(\'sub_coins\','+u.id+',100)">−۱۰۰ 🪙</button>'
-  +'<button class="btn '+(u.banned?'green':'red')+'" onclick="adminAction(\'ban_toggle\','+u.id+',0)">'+(u.banned?'رفع بن':'بن کردن')+'</button></div>'
-  +'<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px">'
-  +'<button class="btn '+(u.verified?'':'green')+'" onclick="adminAction(\'verify_toggle\','+u.id+',0)">'+(u.verified?'لغو تأیید ✖':'تأیید هویت ✅')+'</button>'
-  +'<button class="btn" onclick="adminAction(\'mute_toggle\','+u.id+',0)">🔇 تگ روشن/خاموش</button></div>';
-  h+='<div class="shead" style="padding:0;margin-top:14px"><b>✏️ مقدار دلخواه</b></div>'
-  +'<div style="display:flex;gap:8px;margin:8px 0"><input class="input" id="uval" type="number" placeholder="مقدار…" style="flex:1">'
-  +'<button class="btn green" onclick="adminAction(\'add_coins\','+u.id+',Number(document.getElementById(\'uval\').value)||0)">+ سکه</button>'
-  +'<button class="btn primary" onclick="adminAction(\'add_xp\','+u.id+',Number(document.getElementById(\'uval\').value)||0)">+ XP</button></div>';
-  h+='<textarea id="note" class="input" style="margin-top:10px;min-height:80px" placeholder="یادداشت ادمین…">'+esc(u.admin_note||'')+'</textarea>'
-  +'<button class="btn primary wide" style="margin-top:10px" onclick="adminAction(\'save_note\','+u.id+',0)">💾 ذخیره یادداشت</button>';
-  $('sheetBody').innerHTML=h;
- }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">⚠️</span>'+esc(e.message)+'</div>'}
-}
-async function adminBroadcast(){
- var t=($('bcTxt')||{}).value||'';
- if(t.trim().length<3){toast('متن خیلی کوتاه است','err');return}
- try{
-  haptic('medium');
-  var d=await api('/api/miniapp/admin/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
-  toast(d.message||'قرار گرفت','ok');$('bcTxt').value='';
- }catch(e){toast(e.message,'err')}
-}
-async function adminCsv(){
- try{
-  var d=await api('/api/miniapp/admin/csv');
-  var blob=new Blob(["\ufeff"+d.csv],{type:'text/csv;charset=utf-8'});
-  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download='apexrival_users.csv';document.body.appendChild(a);a.click();
-  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},400);
-  toast('خروجی CSV با '+fa(d.count)+' کاربر ساخته شد 📄','ok');
- }catch(e){toast(e.message,'err')}}
-async function adminAction(action,target,value,pid){
- try{
-  haptic('medium');
-  var body={action:action,target:Number(target)||0,value:Number(value)||0,note:($('note')&&$('note').value)||'',pid:pid||''};
-  var d=await api('/api/miniapp/admin/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  toast(d.message,'ok');
-  if(action==='backup_now'||action==='maintenance_toggle')adminPage('dashboard');
-  else if(target){userSheet(target);loadUsers(USERSPG)}
- }catch(e){toast(e.message,'err')}
-}
-
-/* ================= GAME ENGINE UI (۳.۰) — همه داخل مینی‌اپ ================= */
-var GAMEV={trivia:1,word:1,number:1,memory:1,reaction:1,ttt:1,mine:1,quiz:1,luck:1,ln:1};
-var GAMEMETA={trivia:['🧠','Trivia زنجیره‌ای','هر جواب درست = ادامه؛ اولین غلط = پایان!'],
+/* ════════════════════════════════════════════════════════════════
+   TITAN GAME ENGINE — بخش ۱: هاب + Trivia / کلمات / عدد / حافظه / واکنش
+   همه‌ی بازی‌ها ضد-رقابت (توکن نسل) و ضد-پاک‌شدن ورودی هستند.
+   ════════════════════════════════════════════════════════════════ */
+var GAMEMETA={
+ trivia:['🧠','Trivia زنجیره‌ای','هر جواب درست = ادامه؛ اولین غلط = پایان!'],
  word:['📝','بازی کلمات','حروف به‌هم‌ریخته را مرتب کن'],
  number:['🔢','حدس عدد','۷ فرصت — بعد هر حدس بازه باریک‌تر'],
  memory:['🃏','حافظه','دنباله را به خاطر بسپار'],
@@ -33116,40 +36124,24 @@ var GAMEMETA={trivia:['🧠','Trivia زنجیره‌ای','هر جواب درس�
  quiz:['🧮','کوییز ریاضی','۶۰ ثانیه — +۸ XP'],
  luck:['🍀','گردونه شانس','هر ۲۰ ساعت — تا ۵۰ سکه'],
  ln:['🎰','Lucky Number','کازینو — جکپات ×۲۵']};
-var POLLS={}; /* page polling registry */
-function stopPoll(k){if(POLLS[k]){clearInterval(POLLS[k]);delete POLLS[k]}}
-function stopAllPolls(){Object.keys(POLLS).forEach(stopPoll)}
-function startPoll(k,fn,ms){stopPoll(k);POLLS[k]=setInterval(fn,ms||2000)}
 
-/* ---------- GAMES HUB ---------- */
-async function renderGames(){
- var el=$('pg-games');
- el.innerHTML='<div class="sk tall" style="margin-bottom:12px"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
- try{
-  var g=await api('/api/miniapp/games');
-  var h='<div class="gcard hero"><div class="in gm-hero"><div class="gi pulse">🕹</div><div style="flex:1;min-width:0">'
-  +'<h1 class="h1" style="margin:0">گیم‌زون</h1><p class="sub">'+fa(g.played)+' بازی · '+fa(g.won)+' برد — همه‌ی بازی‌ها داخل اپ اجرا می‌شوند</p></div></div></div>';
-  h+='<div class="grid g4" style="margin-bottom:14px">'
-  +st('بازی کل','gg_p',g.played)+st('برد','gg_w',g.won)+st('رکورد Trivia','gg_t',g.best.trivia||0)+st('بهترین واکنش','gg_r',(g.best.reaction_ms||0)?fa(g.best.reaction_ms)+'ms':'—')+'</div>';
-  h+='<div class="section"><div class="shead"><b>🎮 بازی‌ها</b><small>'+fa(g.games.length)+' عنوان</small></div><div class="tiles">';
-  g.games.forEach(function(x){
-   var lock='';
-   if(x.key==='luck'&&g.cooldowns.luck>0)lock='<small style="color:var(--gold)">⏳ '+fa(Math.ceil(g.cooldowns.luck/3600))+' ساعت دیگر</small>';
-   if(x.key==='quiz'&&g.cooldowns.quiz_done)lock='<small style="color:var(--muted)">✅ امروز انجام شد</small>';
-   if(x.key==='ln'&&g.cooldowns.ln_free)lock='<small style="color:var(--green)">🎁 چرخ رایگان آماده</small>';
-   h+=navTile(x.icon,x.name,x.desc,'gameView(\''+x.key+'\')')+(lock?'<div style="grid-column:span 1;text-align:center;margin-top:-6px">'+lock+'</div>':'');
-  });
-  h+='</div></div>';
-  h+='<div class="card" style="margin-top:14px;text-align:center;color:var(--muted);font-size:10px">💡 پاداش‌ها مستقیماً روی حساب واقعی ربات اعمال می‌شوند — XP و سکه‌ها همان‌جا ثبت می‌شوند.</div>';
-  el.innerHTML=h;
-  countUp($('gg_p'),g.played);countUp($('gg_w'),g.won);countUp($('gg_t'),g.best.trivia||0);
-  var rr=$('gg_r');if(rr)rr.textContent=(g.best.reaction_ms||0)?fa(g.best.reaction_ms)+'ms':'—';
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderGames()">تلاش دوباره</button></div>'}
-}
+/* ورود به بازی — بدون تداخل با رندر هاب (فیکس باگ «بازی‌ها بالا نمی‌آیند») */
 function gameView(key){
  if(!GAMEMETA[key]){toast('این بازی پیدا نشد','err');return}
- show('games');
- var m=GAMEMETA[key];
+ GAMEKEY=key;stateSave();
+ try{window._GHELP=key}catch(e){}
+ GEN++;                                 /* نسل تازه — رندر هاب در جریان را باطل کن */
+ if(PAGE!=='games'){
+  /* از Play Hub یا هر صفحه‌ی دیگر: اول به صفحه‌ی گیم‌زون برو؛
+     renderGames خودش startGame را فراخوانی می‌کند (بدون حلقه) */
+  show('games',{force:true});
+  return;
+ }
+ startGame(key);
+}
+/* اجراکننده‌ی مستقیم بازی — از renderGames هم قابل فراخوانی */
+function startGame(key){
+ try{window._GHELP=key}catch(e){}
  if(key==='trivia')return triviaStart();
  if(key==='word')return wordStart();
  if(key==='number')return numberStart();
@@ -33160,31 +36152,66 @@ function gameView(key){
  if(key==='quiz')return quizStart();
  if(key==='luck')return luckStart();
  if(key==='ln')return lnStart();
+ if(key==='love2')return love2Flow();
 }
-function gmHead(icon,title,sub,backFn){
- return '<div class="gcard hero"><div class="in gm-hero"><div class="gi">'+icon+'</div><div style="flex:1;min-width:0">'
- +'<h1 class="h1" style="margin:0;font-size:16px">'+title+'</h1><p class="sub">'+sub+'</p></div>'
- +(backFn?'<button class="btn" onclick="'+backFn+'">✕</button>':'')+'</div></div>';
+/* خروج از بازی به هاب */
+function gameExit(){
+ GAMEKEY='';stateSave();GEN++;
+ renderGames();
+}
+/* هاب بازی‌ها — فقط وقتی بازی فعالی نیست */
+async function renderGames(){
+ if(GAMEKEY){                          /* بازی فعال — هاب بازنویسی نکند */
+  startGame(GAMEKEY);return;
+ }
+ var g=renderGen();
+ var el=$('pg-games');
+ el.innerHTML='<div class="sk tall" style="margin-bottom:12px"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/games');
+  if(isStale(g))return;
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🕹</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1 grad" style="margin:0">گیم‌زون</h1><p class="sub">'+fa(d.played)+' بازی · '+fa(d.won)+' برد — همه‌ی بازی‌ها داخل اپ اجرا می‌شوند</p></div></div></div>';
+  h+='<div class="grid g4" style="margin-bottom:12px">'
+  +st('بازی کل','gg_p',d.played)+st('برد','gg_w',d.won)+st('رکورد Trivia','gg_t',d.best.trivia||0)+st('بهترین واکنش','gg_r',(d.best.reaction_ms||0)?fa(d.best.reaction_ms)+'ms':'—')+'</div>';
+  h+='<div class="section"><div class="shead"><b>🎮 بازی‌ها</b><small>'+fa(d.games.length)+' عنوان</small></div><div class="tiles">';
+  d.games.forEach(function(x){
+   var lock='';
+   if(x.key==='luck'&&d.cooldowns.luck>0)lock='<small style="color:var(--gold)">⏳ '+fa(Math.ceil(d.cooldowns.luck/3600))+' ساعت دیگر</small>';
+   if(x.key==='quiz'&&d.cooldowns.quiz_done)lock='<small style="color:var(--muted)">✅ امروز انجام شد</small>';
+   if(x.key==='ln'&&d.cooldowns.ln_free)lock='<small style="color:var(--green)">🎁 چرخ رایگان آماده</small>';
+   h+=navTile(x.icon,x.name,x.desc,'gameView(\''+x.key+'\')')+(lock?'<div style="grid-column:span 1;text-align:center;margin-top:-6px">'+lock+'</div>':'');
+  });
+  h+='</div></div>';
+  h+='<div class="card" style="margin-top:12px;text-align:center;color:var(--muted);font-size:10px">💡 پاداش‌ها مستقیماً روی حساب واقعی ربات اعمال می‌شوند — XP و سکه‌ها همان‌جا ثبت می‌شوند.</div>';
+  if(!setPageHTML('games',h,g))return;
+  countUp($('gg_p'),d.played);countUp($('gg_w'),d.won);countUp($('gg_t'),d.best.trivia||0);
+  var rr=$('gg_r');if(rr)rr.textContent=(d.best.reaction_ms||0)?fa(d.best.reaction_ms)+'ms':'—';
+ }catch(e){
+  if(isStale(g))return;
+  el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderGames()">تلاش دوباره</button></div>';
+ }
 }
 
-/* ---------- TRIVIA ---------- */
+/* ---------- 🧠 Trivia زنجیره‌ای ---------- */
 async function triviaStart(){
- var el=$('pg-games');
+ var g=renderGen();
  try{
   var d=await api('/api/miniapp/game/trivia');
+  if(isStale(g))return;
   triviaRender(d.question,d.options,d.streak||0);
- }catch(e){toast(e.message,'err')}
+ }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
 function triviaRender(q,opts,streak){
  var el=$('pg-games');
- var h=gmHead('🧠','Trivia زنجیره‌ای','هر جواب درست = ادامه؛ اولین غلط = پایان!','renderGames()');
+ var h=gmHead('🧠','Trivia زنجیره‌ای','هر جواب درست = ادامه؛ اولین غلط = پایان!','games');
  h+='<div class="streakbar"><span class="flame">🔥</span><b>زنجیره: '+fa(streak)+'</b><span class="tag cy">هر ۵ تایی +۲۵ سکه</span></div>';
  h+='<div class="qcard"><span class="qtag">❓ سوال</span><div class="qtext">'+esc(q)+'</div></div>';
  var letters=['🅰','🅱','🅲','🅳'];
  opts.forEach(function(o,i){
   h+='<button class="opt" id="opt'+i+'" onclick="triviaAns('+i+')"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
  });
- h+='<button class="btn wide" style="margin-top:12px" onclick="renderGames()">🔚 پایان و ثبت رکورد</button>';
+ h+='<button class="btn wide" style="margin-top:12px" onclick="gameExit()">🔚 پایان و ثبت رکورد</button>';
  el.innerHTML=h;
 }
 async function triviaAns(i){
@@ -33194,39 +36221,45 @@ async function triviaAns(i){
  try{
   var d=await api('/api/miniapp/game/trivia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:b.innerText.replace(/^[🅰🅱🅲🅳]\s*/,'')})});
   haptic(d.correct?'ok':'error');
-  if(d.correct){b.classList.add('right');toast(d.message+(d.bonus?' +۲۵ سکه 🎉':''),'ok');setTimeout(function(){triviaRender(d.question,d.options,d.streak)},650)}
-  else{
+  if(d.correct){
+   b.classList.add('right');toast(d.message+(d.bonus?' +۲۵ سکه 🎉':''),'ok');
+   setTimeout(function(){triviaRender(d.question,d.options,d.streak)},650);
+  }else{
    opts.forEach(function(x,i2){if(x.innerText.replace(/^[🅰🅱🅲🅳]\s*/,'')===String(d.answer))x.classList.add('right')});
    b.classList.add('wrong');
    setTimeout(function(){
     var el=$('pg-games');
-    el.innerHTML=gmHead('🧠','پایان زنجیره','زنجیره‌ات '+fa(d.streak)+' بود','renderGames()')
+    el.innerHTML=gmHead('🧠','پایان زنجیره','زنجیره‌ات '+fa(d.streak)+' بود','games')
     +'<div class="bigres"><span class="bico">🔥</span><span class="bt">زنجیره‌ی '+fa(d.streak)+' تایی</span>'
     +'<div class="bs">جواب درست: '+esc(d.answer)+(d.record?' · 🏆 رکورد جدید!':'')+'</div></div>'
+    +triviaEndCard(d.streak,d.record)
     +'<button class="btn primary wide" onclick="triviaStart()">🔄 دوباره</button>'
-    +'<button class="btn wide" style="margin-top:8px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+    +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
    },900);
   }
  }catch(e){toast(e.message,'err');opts.forEach(function(x){x.disabled=false})}
 }
 
-/* ---------- WORD ---------- */
+/* ---------- 📝 بازی کلمات ---------- */
 async function wordStart(){
+ var g=renderGen();
  try{
   var d=await api('/api/miniapp/game/word');
+  if(isStale(g))return;
   wordRender(d);
- }catch(e){toast(e.message,'err')}
+ }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
 function wordRender(d){
  var el=$('pg-games');
  var letters=['🅰','🅱','🅲','🅳'];
- var h=gmHead('📝','بازی کلمات','این حروف به‌هم‌ریخته را مرتب کن','renderGames()');
+ var h=gmHead('📝','بازی کلمات','این حروف به‌هم‌ریخته را مرتب کن','games');
  if(d.message)h+='<div class="card" style="margin-bottom:12px;text-align:center;font-size:11px;color:'+(d.correct?'var(--green)':'var(--red)')+'">'+esc(d.message)+'</div>';
  h+='<div class="qcard"><span class="qtag">🔀 به‌هم‌ریخته</span><div class="qtext" style="text-align:center;letter-spacing:4px;font-size:17px">'+esc(d.scrambled)+'</div>'
  +'<div style="text-align:center;margin-top:10px" class="sub">💡 راهنما: <b>'+esc(d.hint)+'</b></div></div>';
  d.options.forEach(function(o,i){
   h+='<button class="opt" onclick="wordAns(\''+esc(o)+'\',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
  });
+ h+='<button class="btn wide" style="margin-top:10px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  el.innerHTML=h;
 }
 async function wordAns(o,btn){
@@ -33240,30 +36273,33 @@ async function wordAns(o,btn){
  }catch(e){toast(e.message,'err')}
 }
 
-/* ---------- NUMBER GUESS ---------- */
+/* ---------- 🔢 حدس عدد ---------- */
 async function numberStart(){
+ var g=renderGen();
  try{
   var d=await api('/api/miniapp/game/number');
+  if(isStale(g))return;
   numberRender(d);
- }catch(e){toast(e.message,'err')}
+ }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
 function numberRender(d){
  var el=$('pg-games');
- var h=gmHead('🔢','حدس عدد','عددی بین ۱ تا ۱۰۰ — ۷ فرصت داری','renderGames()');
+ var h=gmHead('🔢','حدس عدد','عددی بین ۱ تا ۱۰۰ — ۷ فرصت داری','games');
  if(d.won||d.lost){
   h+='<div class="bigres"><span class="bico">'+(d.won?'🎉':'😞')+'</span><span class="bt">'+esc(d.message||'')+'</span></div>'
   +'<button class="btn primary wide" onclick="numberStart()">🔄 بازی جدید</button>'
-  +'<button class="btn wide" style="margin-top:8px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+  +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
   el.innerHTML=h;return;
  }
  if(d.message&&!d.hint)h+='<div class="card" style="margin-bottom:10px;text-align:center;font-size:11px">'+esc(d.message)+'</div>';
  if(d.hint)h+='<div class="card" style="margin-bottom:10px;text-align:center">🎯 حدس: <b>'+fa(d.last_guess||0)+'</b> — <b style="color:var(--gold)">'+esc(d.hint)+'!</b></div>';
- h+='<div class="card" style="text-align:center;margin-bottom:12px">⏳ فرصت‌های باقی‌مانده: <b style="font-size:16px">'+fa(d.attempts_left)+'</b></div>';
+ h+='<div class="card" style="text-align:center">🤔 فرصت‌های باقی‌مانده: <b style="color:var(--gold)">'+fa(d.attempts_left)+'</b></div>';
  h+='<div class="numpad">';
  d.options.forEach(function(v){
   h+='<button onclick="numberGuess('+v+',this)">'+fa(v)+'</button>';
  });
  h+='</div>';
+ h+='<button class="btn wide" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  el.innerHTML=h;
 }
 async function numberGuess(v,btn){
@@ -33276,261 +36312,300 @@ async function numberGuess(v,btn){
  }catch(e){toast(e.message,'err');btn.disabled=false}
 }
 
-/* ---------- MEMORY ---------- */
+/* ---------- 🃏 حافظه ---------- */
 async function memoryStart(){
+ var g=renderGen();
  try{
   var d=await api('/api/miniapp/game/memory');
-  var el=$('pg-games');
-  var seq=d.sequence.split(' ');
-  var h=gmHead('🃏','حافظه','دنباله را به خاطر بسپار','renderGames()');
-  h+='<div class="card" style="text-align:center;padding:22px">'
-  +'<div class="sub" style="margin-bottom:10px">این دنباله را حفظ کن ('+fa(d.display_time)+' ثانیه):</div>'
-  +'<div class="seqdots" id="seqShow">'+seq.map(function(x,i){return '<span style="animation-delay:'+(i*0.22)+'s">'+fa(x)+'</span>'}).join('')+'</div>'
-  +'<div class="bar" style="margin-top:8px"><i id="memBar" style="width:100%"></i></div></div>'
-  +'<div id="memOpts" style="display:none">'
-  +'<div class="card" style="text-align:center;margin-bottom:10px">حالا همان دنباله را انتخاب کن:</div>';
-  var letters=['🅰','🅱','🅲','🅳'];
-  d.options.forEach(function(o,i){
-   h+='<button class="opt" onclick="memAns('+i+',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1" dir="rtl">'+fa(o)+'</span></button>';
-  });
-  h+='</div>';
-  el.innerHTML=h;
-  /* انیمیشن مخفی‌سازی */
-  var bar=$('memBar');
-  setTimeout(function(){if(bar)bar.style.width='0%'},60);
-  setTimeout(function(){
-   var ss=$('seqShow');if(ss)ss.innerHTML='<span style="opacity:.25">🤫</span>';
-   var mo=$('memOpts');if(mo)mo.style.display='block';
-  },d.display_time*1000);
- }catch(e){toast(e.message,'err')}
+  if(isStale(g))return;
+  memoryRender(d);
+ }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
-async function memAns(i,btn){
- if(btn.disabled)return;
+function memoryRender(d){
+ var el=$('pg-games');
+ var seq=d.sequence.split(' ');
+ var h=gmHead('🃏','حافظه','دنباله را به خاطر بسپار','games');
+ h+='<div class="card" style="text-align:center;padding:22px">'
+ +'<div class="sub" style="margin-bottom:10px">این دنباله را حفظ کن ('+fa(d.display_time)+' ثانیه):</div>'
+ +'<div class="seqdots" id="seqShow">'+seq.map(function(x,i){return '<span style="animation-delay:'+(i*0.22)+'s">'+fa(x)+'</span>'}).join('')+'</div>'
+ +'<div class="bar" style="margin-top:8px"><i id="memBar" style="width:100%"></i></div></div>';
+ h+='<div id="memOpts" style="display:none">'
+ +'<div class="card" style="text-align:center;margin-bottom:10px">حالا همان دنباله را انتخاب کن:</div>';
+ var letters=['🅰','🅱','🅲','🅳'];
+ d.options.forEach(function(o,i){
+  h+='<button class="opt" onclick="memoryAns('+i+',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1;letter-spacing:2px">'+esc(o)+'</span></button>';
+ });
+ h+='<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button></div>';
+ el.innerHTML=h;
+ /* شمارش معکوس نمایش */
+ var bar=$('memBar');
+ if(bar){bar.style.transition='width '+fa(d.display_time)+'s linear';
+  setTimeout(function(){try{bar.style.width='0%'}catch(e){}},60)}
+ setTimeout(function(){
+  var ss=$('seqShow'),mo=$('memOpts');
+  if(ss)ss.innerHTML='<span style="font-size:15px">🙈 مخفی شد!</span>';
+  if(mo)mo.style.display='block';
+  SND.whoosh();
+ },(d.display_time||3)*1000);
+}
+async function memoryAns(idx,btn){
+ if(btn.disabled)return;btn.disabled=true;
  try{
-  var d=await api('/api/miniapp/game/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idx:i})});
+  var d=await api('/api/miniapp/game/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idx:idx})});
   haptic(d.correct?'ok':'error');
   btn.classList.add(d.correct?'right':'wrong');
-  setTimeout(function(){
-   var el=$('pg-games');
-   el.innerHTML=gmHead('🃏','نتیجه',d.correct?'+۱۵ XP +۸ سکه!':'نادرست — +۵ XP','renderGames()')
-   +'<div class="bigres"><span class="bico">'+(d.correct?'🎉':'🙃')+'</span><span class="bt">'+esc(d.message)+'</span>'
-   +(d.correct?'':'<div class="bs">دنباله درست: '+esc(d.correct_seq)+'</div>')+'</div>'
-   +'<button class="btn primary wide" onclick="memoryStart()">🔄 دوباره</button>';
-  },900);
- }catch(e){toast(e.message,'err')}
+  if(d.correct)confetti();
+  setTimeout(function(){memoryRender(d)},900);
+ }catch(e){toast(e.message,'err');btn.disabled=false}
 }
 
-/* ---------- REACTION ---------- */
+/* ---------- ⚡ سرعت واکنش ---------- */
 async function reactionStart(){
  var el=$('pg-games');
- el.innerHTML=gmHead('⚡','سرعت واکنش','بعد از «شروع» صبر کن — سبز که شد، فوراً بزن!','renderGames()')
- +'<div class="rxpad" id="rx" onclick="rxTap()">آماده‌ای؟</div>'
- +'<button class="btn primary wide" id="rxGo" onclick="rxArm()">🟢 شروع</button>'
- +'<div style="text-align:center;margin-top:10px" class="sub">ردیف سبز: زیر ۴۰۰ms = +۲۰XP +۱۲🪙</div>';
-}
-async function rxArm(){
- var go=$('rxGo');if(go)go.disabled=true;
- var pad=$('rx');
- if(pad){pad.className='rxpad wait';pad.textContent='🔴 صبر کن...'}
+ var h=gmHead('⚡','سرعت واکنش','وقتی سبز شد، فوراً بزن!','games')
+ +'<div class="rxn" id="rxnBox" onclick="reactionTap()">آماده‌ای؟</div>'
+ +'<div class="card" style="text-align:center;font-size:10px;color:var(--muted)">🏆 رکوردت: <b style="color:var(--gold)">'+fa((D.user&&D.user.best_reaction)||0)+'ms</b> — هرچه سریع‌تر، پاداش بیشتر</div>'
+ +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+ el.innerHTML=h;
+ var g=renderGen();
  try{
-  var d=await api('/api/miniapp/game/reaction/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  var d=await api('/api/miniapp/game/reaction/start');
+  if(isStale(g))return;
+  var box=$('rxnBox');if(!box)return;
+  box.classList.add('armed');box.textContent='صبر کن...';
+  RXGOAT=d.go_at_ms;
   var wait=d.go_at_ms-Date.now();
-  RXGO=d.go_at_ms;RXARMED=true;
   setTimeout(function(){
-   var p=$('rx');if(!p)return;
-   p.className='rxpad go';p.textContent='🟢 حالا بزن!';
-   haptic('medium');
-  },Math.max(100,wait));
- }catch(e){toast(e.message,'err');if(go)go.disabled=false}
+   var b2=$('rxnBox');if(!b2||PAGE!=='games')return;
+   b2.classList.remove('armed');b2.classList.add('go');
+   b2.textContent='الان بزن! ⚡';SND.pop();haptic('medium');
+  },Math.max(120,wait));
+ }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
-var RXGO=0,RXARMED=false;
-function rxTap(){
- var pad=$('rx');
- if(!RXARMED){toast('اول «شروع» را بزن','err');return}
- if(!pad||pad.className.indexOf('go')<0){
-  /* زود زد */
-  RXARMED=false;
-  api('/api/miniapp/game/reaction/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tap:Date.now()})})
-  .then(function(d){toast(d.message,'err');reactionStart()})
-  .catch(function(e){toast(e.message,'err')});
-  return;
- }
- RXARMED=false;
- var tap=Date.now();
- pad.className='rxpad res';pad.textContent='⏱ ...';
- api('/api/miniapp/game/reaction/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tap:tap})})
- .then(function(d){
-  haptic('ok');
-  pad.innerHTML='⚡ '+fa(d.ms)+'ms';
-  setTimeout(function(){
+var RXGOAT=0;
+async function reactionTap(){
+ var box=$('rxnBox');if(!box||box.dataset.done)return;
+ box.dataset.done='1';
+ var tapped=Date.now();
+ var wasGo=box.classList.contains('go');
+ box.className='rxn';
+ try{
+  var d=await api('/api/miniapp/game/reaction/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tap:tapped})});
+  haptic(d.early?'warn':'ok');
+  if(d.early){
+   box.style.background='#ff9e4f22';box.textContent='زود زدی! ⏱';
+   toast(d.message,'warn');
+   setTimeout(function(){reactionStart()},1200);
+  }else{
+   box.style.background='#31e98118';box.textContent=fa(d.ms)+'ms';
+   if(d.record)confetti(true);
    var el=$('pg-games');
-   var ico=(d.ms<400?'🚀':(d.ms<800?'👍':'🐢'));
-   el.innerHTML=gmHead('⚡','نتیجه واکنش',d.record?'🏆 رکورد جدید!':'زیر ۴۰۰ms = جایزه ویژه','renderGames()')
-   +'<div class="bigres"><span class="bico">'+ico+'</span><span class="bt">'+fa(d.ms)+' میلی‌ثانیه</span>'
-   +'<div class="bs">+'+fa(d.xp)+' XP · +'+fa(d.coins)+' سکه'+(d.record?' · 🏆 رکورد!':'')+'</div></div>'
-   +'<button class="btn primary wide" onclick="reactionStart()">🔄 دوباره</button>'
-   +'<button class="btn wide" style="margin-top:8px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
-  },700);
- })
- .catch(function(e){toast(e.message,'err');reactionStart()});
+   el.insertAdjacentHTML('beforeend',
+    '<div class="bigres" style="margin-top:12px"><span class="bico">'+(d.record?'🏆':'⚡')+'</span>'
+    +'<span class="bt">'+fa(d.ms)+' میلی‌ثانیه</span>'
+    +'<div class="bs">+'+fa(d.xp)+' XP · +'+fa(d.coins)+' سکه'+(d.record?' · 🏆 رکورد جدید!':'')+'</div></div>'
+    +'<button class="btn primary wide" onclick="reactionStart()">🔄 دوباره</button>');
+   SND.win();
+  }
+ }catch(e){toast(e.message,'err')}
 }
 
-/* ---------- TTT ---------- */
+/* ════════════════════════════════════════════════════════════════
+   TITAN GAME ENGINE — بخش ۲: دوز / مین‌یاب / کوییز / گردونه / کازینو / ابزار
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- ✖️ دوز با AI ---------- */
 async function tttStart(){
+ var g=renderGen();
  try{
   var d=await api('/api/miniapp/game/ttt');
+  if(isStale(g))return;
   tttRender(d);
- }catch(e){toast(e.message,'err')}
+ }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
 function tttRender(d){
  var el=$('pg-games');
- var syms={0:'▫️',1:'❌',2:'⭕'};
- var h=gmHead('✖️','دوز با AI','تو ❌ ، من ⭕ — برد +۲۰ سکه','renderGames()');
- if(d.message&&(d.won||d.lost||d.draw))h+='<div class="bigres" style="padding:14px"><span class="bico">'+(d.won?'🎉':d.lost?'😐':'🤝')+'</span><span class="bt">'+esc(d.message)+'</span></div>';
- h+='<div class="ttt">';
+ var h=gmHead('✖️','دوز با AI','تو ❌ — من ⭕ · برد +۲۰ سکه','games')
+ +'<div class="card" style="display:flex;align-items:center;justify-content:space-between">'
+ +'<span style="font-size:11px">🏆 بردهای این نشست: <b style="color:var(--gold)">'+fa(d.wins||0)+'</b></span>'
+ +'<span class="tag cy" id="tttStat">'+(d.over?'پایان':'نوبت تو')+'</span></div>'
+ +'<div class="ttt" id="tttBoard">';
  for(var i=0;i<9;i++){
   var v=d.board[i];
-  h+='<button class="'+(v===1?'x':v===2?'o':'')+(d.over?' dead':'')+'" onclick="tttMove('+i+')">'+syms[v]+'</button>';
+  h+='<button data-cell="'+i+'" class="'+(v===1?'x':v===2?'o':'')+'" onclick="tttMove('+i+',this)">'+(v===1?'✕':v===2?'◯':'')+'</button>';
  }
  h+='</div>';
- h+='<div style="display:flex;gap:8px"><button class="btn primary" style="flex:1" onclick="tttStart()">🔄 بازی جدید</button>'
- +'<button class="btn" style="flex:1" onclick="renderGames()">🕹 مرکز بازی‌ها</button></div>';
+ if(d.over){
+  h+='<div class="bigres"><span class="bico">'+(d.won==='me'?'🏆':d.won==='ai'?'🤖':'🤝')+'</span>'
+  +'<span class="bt">'+(d.won==='me'?'بردی! +۲۰ سکه +۲۰ XP':d.won==='ai'?'این دست با AI بود!':'مساوی!')+'</span></div>'
+  +(d.won==='me'?tttWinCard():'');
+ }
+ h+='<button class="btn primary wide" onclick="tttStart()">🔄 صفحه‌ی جدید</button>'
+ +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  el.innerHTML=h;
 }
-async function tttMove(i){
+async function tttMove(cell,btn){
+ if(btn.textContent)return;
+ btn.classList.add('x');btn.textContent='✕';SND.tap();
  try{
-  var d=await api('/api/miniapp/game/ttt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cell:i})});
-  if(d.won){haptic('ok');confetti()}else if(d.lost)haptic('error');
-  setTimeout(function(){tttRender(d)},d.won||d.lost||d.draw?600:180);
- }catch(e){toast(e.message,'err')}
+  var d=await api('/api/miniapp/game/ttt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cell:cell})});
+  if(d.won==='me')haptic('ok');else if(d.won==='ai')haptic('error');
+  if(d.won==='me'){confetti();SND.win()}
+  setTimeout(function(){tttRender(d)},(d.won?750:420));
+ }catch(e){toast(e.message,'err');btn.textContent='';btn.classList.remove('x')}
 }
 
-/* ---------- MINE ---------- */
+/* ---------- ⛏ مین‌یاب ---------- */
 async function mineStart(){
+ var g=renderGen();
+ try{
+  var d=await api('/api/miniapp/game/mine/start');
+  if(isStale(g))return;
+  if(!d.ok){toast(d.error,'err');return}
+  mineRender(d);
+ }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
+}
+async function mineGet(){
+ var g=renderGen();
  try{
   var d=await api('/api/miniapp/game/mine');
+  if(isStale(g))return;
+  if(d.new){mineIntro(d);return}
   mineRender(d);
- }catch(e){toast(e.message,'err')}
+ }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
+}
+function mineIntro(d){
+ var el=$('pg-games');
+ el.innerHTML=gmHead('⛏','مین‌یاب','ورودی '+fa(d.fee)+' سکه — همه‌ی خانه‌های امن = بیشترین ضریب','games')
+ +'<div class="bigres"><span class="bico">⛏</span><span class="bt">'+fa(d.bombs_count)+' مین در '+fa(25)+' خانه</span>'
+ +'<div class="bs">هر خانه‌ی امن ضریب را بالا می‌برد — هر لحظه می‌توانی برداشت کنی!</div>'
+ +'<div class="bs">🪙 موجودی: '+faK(d.coins)+'</div></div>'
+ +'<button class="btn primary wide glow" onclick="mineStart()">⛏ شروع ('+fa(d.fee)+' سکه)</button>'
+ +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
 }
 function mineRender(d){
  var el=$('pg-games');
- var h=gmHead('⛏','مین‌یاب','💣 '+fa(d.bombs_count||3)+' مین — هر خانه امن = گنج بزرگ‌تر','renderGames()');
- if(d.new){
-  h+='<div class="card" style="text-align:center">'
-  +'<div style="font-size:34px;margin-bottom:8px">⛏</div>'
-  +'<div class="sub" style="margin-bottom:10px">ورودی: <b style="color:var(--gold)">'+fa(d.fee)+' سکه</b> · موجودی: '+fa(d.coins)+'</div>'
-  +'<button class="btn primary wide'+((d.coins||0)>=d.fee?' glow':'')+'" '+((d.coins||0)>=(d.fee||0)?'':'disabled')+' onclick="mineNew()">⛏ شروع بازی</button></div>';
-  el.innerHTML=h;return;
- }
- if(d.message&&!d.boom)h+='<div class="card" style="margin-bottom:10px;text-align:center;font-size:11px;color:var(--green)">'+esc(d.message)+'</div>';
- if(d.boom)h+='<div class="card" style="margin-bottom:10px;text-align:center;font-size:11px;color:var(--red)">💥 '+esc(d.message)+'</div>';
- h+='<div class="card" style="text-align:center;margin-bottom:12px">'
- +'💰 گنج فعلی: <b style="color:var(--gold);font-size:16px">'+fa(d.pot)+' سکه</b> <span class="tag cy">×'+fa(d.mult)+'</span></div>';
- h+='<div class="mineg">';
- for(var i=0;i<12;i++){
-  var open=(d.cells||[]).indexOf(i)>=0;
-  var boom=(d.bombs||[]).indexOf(i)>=0;
-  var cls=open?'gem':(boom?'boom':'');
-  h+='<button class="'+cls+(d.over?' dead':'')+'" onclick="mineOpen('+i+')">'+(open?'💎':(boom?'💥':'🔲'))+'</button>';
+ var opened={};(d.cells||[]).forEach(function(c){opened[c]=1});
+ var h=gmHead('⛏','مین‌یاب',d.over?'بازی تمام شد':'ضریب ×'+fa(d.mult)+' — گنج: '+fa(d.pot)+' سکه','games')
+ +'<div class="card" style="display:flex;justify-content:space-between;align-items:center">'
+ +'<span style="font-size:11px">💰 گنج فعلی: <b style="color:var(--gold)">'+fa(d.pot)+' 🪙</b></span>'
+ +'<span class="tag cy">×'+fa(d.mult)+'</span></div>'
+ +'<div class="minegrid" style="grid-template-columns:repeat(5,1fr)">';
+ for(var i=0;i<25;i++){
+  var open=opened[i],bomb=(d.bombs||[]).indexOf(i)>=0;
+  h+='<button data-cell="'+i+'" class="'+(open?'revealed gem':(bomb&&d.over?'boom':''))+'" onclick="mineOpen('+i+',this)">'
+  +(open?'💎':(bomb&&d.over?'💣':''))+'</button>';
  }
  h+='</div>';
- if(!d.over){
-  h+='<button class="btn green wide" onclick="mineCash()">💰 برداشت '+fa(d.pot)+' سکه</button>';
+ if(d.over){
+  h+='<div class="bigres"><span class="bico">'+(d.won?'🏆':d.boom?'💥':'📦')+'</span>'
+  +'<span class="bt">'+esc(d.message||'')+'</span></div>'
+  +(d.won||d.cashed?mineWinCard(d.pot,d.mult):'')
+  +'<button class="btn primary wide" onclick="mineStart()">⛏ بازی جدید</button>';
  }else{
-  h+='<button class="btn primary wide" style="margin-top:8px" onclick="mineStart()">⛏ دوباره</button>';
+  h+='<button class="btn gold wide glow" onclick="mineCash()">💰 برداشت '+fa(d.pot)+' سکه</button>';
  }
+ h+='<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  el.innerHTML=h;
 }
-async function mineNew(){
+async function mineOpen(cell,btn){
+ if(btn.textContent)return;
  try{
-  var d=await api('/api/miniapp/game/mine/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
-  if(d.boom===undefined&&!d.ok){toast(d.error,'err');return}
-  if(d.message)toast(d.message,'ok');
-  mineRender(d);
- }catch(e){toast(e.message,'err')}
-}
-async function mineOpen(i){
- try{
-  var d=await api('/api/miniapp/game/mine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cell:i})});
-  if(d.boom)haptic('error');else if(d.won){haptic('ok');confetti()}else haptic('light');
-  setTimeout(function(){mineRender(d)},d.boom||d.won?700:150);
+  var d=await api('/api/miniapp/game/mine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cell:cell})});
+  if(!d.ok){toast(d.error,'err');return}
+  if(d.boom){btn.classList.add('boom');btn.textContent='💣';haptic('error');SND.lose();
+   setTimeout(function(){mineRender(d)},700)}
+  else{btn.classList.add('revealed','gem');btn.textContent='💎';haptic('light');SND.coin();
+   if(d.won){confetti();setTimeout(function(){mineRender(d)},700)}
+   else{ /* به‌روزرسانی زنده بدون رندر کامل */
+    setTimeout(function(){mineRender(d)},250)}}
  }catch(e){toast(e.message,'err')}
 }
 async function mineCash(){
  try{
   var d=await api('/api/miniapp/game/mine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cash:1})});
-  haptic('ok');confetti();
-  setTimeout(function(){mineRender(d)},400);
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');confetti();SND.coin();
+  toast(d.message,'ok');
+  mineRender(d);
  }catch(e){toast(e.message,'err')}
 }
 
-/* ---------- MATH QUIZ ---------- */
+/* ---------- 🧮 کوییز ریاضی ---------- */
 async function quizStart(){
+ var g=renderGen();
  try{
   var d=await api('/api/miniapp/game/quiz');
-  if(!d.ok){toast(d.error,'warn');return}
-  var el=$('pg-games');
-  el.innerHTML=gmHead('🧮','کوییز ریاضی','اولین جواب درست: +۸ XP — فقط ۶۰ ثانیه!','renderGames()')
-  +'<div class="qcard"><span class="qtag">⚡ سرعتی</span>'
-  +'<div class="qtext" style="text-align:center;font-size:26px;letter-spacing:2px" dir="ltr">'+esc(d.q)+'</div>'
-  +'<div style="display:flex;justify-content:center;margin-top:14px">'+timerRing(60,'quizT')+'</div></div>'
-  +'<input class="input" id="quizIn" type="number" inputmode="numeric" placeholder="جوابت را بنویس..." style="text-align:center;font-size:17px;font-weight:900">'
-  +'<button class="btn primary wide glow" style="margin-top:10px" onclick="quizAns()">✅ ثبت جواب</button>';
-  $('quizIn').focus();
-  quizTimer(60);
- }catch(e){toast(e.message,'err')}
+  if(isStale(g))return;
+  quizRender(d);
+ }catch(e){if(!isStale(g)){toast(e.message,'warn');gameExit()}}
 }
-function timerRing(sec,id){
- var r=15,c=2*Math.PI*r;
- return '<div class="timer" id="'+id+'"><div class="tring"><svg viewBox="0 0 34 34"><circle class="ttr" cx="17" cy="17" r="'+r+'"></circle>'
- +'<circle class="tvl" cx="17" cy="17" r="'+r+'" stroke-dasharray="'+c.toFixed(1)+'" stroke-dashoffset="0"></circle></svg></div>'
- +'<span class="tx">'+fa(sec)+'</span></div>';
-}
-var QTMRS={};
-function quizTimer(sec){
- clearInterval(QTMRS.quiz);
- var left=sec;
- var t=$('quizT');
- QTMRS.quiz=setInterval(function(){
-  left--;
-  var el=$('quizT');
-  if(!el){clearInterval(QTMRS.quiz);return}
-  var c=2*Math.PI*15;
-  var ring=el.querySelector('.tvl');var tx=el.querySelector('.tx');
-  if(ring)ring.style.strokeDashoffset=(c*(1-left/sec)).toFixed(1);
-  if(tx)tx.textContent=fa(Math.max(0,left));
-  if(left<=0){clearInterval(QTMRS.quiz)}
- },1000);
+function quizRender(d){
+ var el=$('pg-games');
+ var h=gmHead('🧮','کوییز ریاضی','۶۰ ثانیه فرصت — جواب درست +۸ XP','games')
+ +'<div class="qcard"><span class="qtag">✏️ حساب کن</span>'
+ +'<div class="qtext" style="text-align:center;font-size:30px;font-weight:900;letter-spacing:3px" dir="ltr">'+esc(d.q)+'</div>'
+ +'<div style="display:flex;justify-content:center;margin-top:12px">'+timerRing(d.timeout,'qzT')+'</div></div>'
+ +'<input class="input num" id="qzIn" type="number" inputmode="numeric" placeholder="؟" maxlength="4">'
+ +'<button class="btn primary wide glow" style="margin-top:12px" onclick="quizAns()">✅ ثبت جواب</button>'
+ +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+ el.innerHTML=h;
+ startTimer('qzT',d.timeout,function(){
+  toast('وقت تمام شد! ⏱','warn');
+  try{$('qzIn').disabled=true}catch(e){}
+ });
+ try{$('qzIn').focus()}catch(e){}
+ $('qzIn').addEventListener('keydown',function(e){if(e.key==='Enter')quizAns()});
 }
 async function quizAns(){
- clearInterval(QTMRS.quiz);
- var inp=$('quizIn');if(!inp)return;
- var v=inp.value;
- if(v===''){toast('جوابت را بنویس','err');return}
+ stopTimer('qzT');
+ var v=($('qzIn')||{}).value||'';
+ if(v.trim()==='')  {toast('جوابت را بنویس','err');return}
  try{
   var d=await api('/api/miniapp/game/quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:v})});
   haptic(d.correct?'ok':'error');
-  if(d.correct)confetti();
   var el=$('pg-games');
-  el.innerHTML=gmHead('🧮','نتیجه کوییز',d.correct?'+۸ XP گرفتی!':'جواب درست: '+fa(d.answer),'renderGames()')
-  +'<div class="bigres"><span class="bico">'+(d.correct?'✅':'❌')+'</span><span class="bt">'+esc(d.message)+'</span></div>'
-  +'<button class="btn primary wide" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+  if(d.correct){confetti();SND.win()}else SND.lose();
+  el.innerHTML=gmHead('🧮','نتیجه کوییز',d.correct?'درست بود!':'نادرست بود','games')
+  +'<div class="bigres"><span class="bico">'+(d.correct?'🎉':'🤔')+'</span>'
+  +'<span class="bt" dir="ltr" style="font-size:26px">'+esc(d.answer)+'</span>'
+  +'<div class="bs">'+esc(d.message)+'</div></div>'
+  +quizEndCard(d.correct,d.answer)
+  +'<button class="btn wide" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  }catch(e){toast(e.message,'err')}
 }
 
-/* ---------- LUCKY WHEEL ---------- */
+/* ---------- 🍀 گردونه شانس ---------- */
 async function luckStart(){
+ var g=renderGen();
+ try{
+  var d=await api('/api/miniapp/game/luck');
+  if(isStale(g))return;
+  if(!d.ok){toast(d.error,'warn');return}
+  luckRender(d);
+ }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
+}
+function luckRender(d){
  var el=$('pg-games');
- var segs=['#31e981','#15d8ff','#7c5cff','#ffc857','#ff4fa3','#ff9e4f'];
- var h=gmHead('🍀','گردونه شانس','هر ۲۰ ساعت یک چرخ — تا ۵۰ سکه','renderGames()');
- h+='<div style="display:flex;justify-content:center"><div class="wheel" id="wheel"><div class="hubx">🍀</div>';
+ var segs=['#8b93ad','#31e981','#15d8ff','#ffc857'];
+ var h=gmHead('🍀','گردونه شانس','هر ۲۰ ساعت یک چرخش رایگان','games');
+ if(d.cooldown>0){
+  var hrs=Math.ceil(d.cooldown/3600);
+  h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">گردونه خسته است!</span>'
+  +'<div class="bs">حدود '+fa(hrs)+' ساعت دیگر برمی‌گردد</div>'
+  +'<div class="bs">🏆 بهترین جایزه‌ات: '+fa(d.best||0)+' سکه</div></div>'
+  +'<button class="btn wide" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+  el.innerHTML=h;return;
+ }
+ h+='<div class="wheelwrap"><span class="pin">🔻</span><div class="wheel" id="wheel">';
  for(var i=0;i<6;i++){
-  h+='<div class="seg" style="background:conic-gradient(from '+(-i*60)+'deg,'+segs[i]+' 0deg 60deg,transparent 60deg)"></div>';
+  h+='<div class="seg" style="background:conic-gradient(from '+(-i*60)+'deg,'+segs[i%4]+' 0deg 60deg,transparent 60deg)"></div>';
  }
  h+='</div></div>';
  h+='<div style="text-align:center" id="luckRes"><div class="sub">برای چرخیدن دکمه‌ی زیر را بزن</div></div>';
  h+='<button class="btn primary wide glow" style="margin-top:14px" id="luckBtn" onclick="luckSpin()">🎡 چرخش!</button>';
- h+='<div class="card section" style="text-align:center;font-size:10px;color:var(--muted)">🏆 جایزه‌ها: ۵٪ → ۵۰ سکه · ۲۰٪ → ۲۰ · ۳۵٪ → ۱۰ · ۴۰٪ → ۵</div>';
+ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted)">🏆 جایزه‌ها: ۵٪ → ۵۰ سکه · ۲۰٪ → ۲۰ · ۳۵٪ → ۱۰ · ۴۰٪ → ۵</div>';
+ h+='<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  el.innerHTML=h;
 }
 async function luckSpin(){
@@ -33539,8 +36614,8 @@ async function luckSpin(){
  try{
   var d=await api('/api/miniapp/game/luck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
   if(!d.ok){toast(d.error,'warn');if(btn)btn.disabled=false;return}
-  haptic('medium');
-  var targetDeg=1440+ (d.tier*60)+30;
+  haptic('medium');SND.spin();
+  var targetDeg=1440+(d.tier*60)+30;
   if(w)w.style.transform='rotate('+targetDeg+'deg)';
   setTimeout(function(){
    haptic('ok');confetti();
@@ -33551,15 +36626,17 @@ async function luckSpin(){
  }catch(e){toast(e.message,'err');if(btn)btn.disabled=false}
 }
 
-/* ---------- LN CASINO ---------- */
+/* ---------- 🎰 کازینوی Lucky Number ---------- */
 async function lnStart(){
+ var g=renderGen();
  var el=$('pg-games');
  el.innerHTML='<div class="sk tall"></div>';
  try{
   var d=await api('/api/miniapp/game/ln');
-  var h=gmHead('🎰','Lucky Number','کازینو — عدد ۱ تا ۱۰۰، جکپات ×۲۵','renderGames()');
+  if(isStale(g))return;
+  var h=gmHead('🎰','Lucky Number','کازینو — عدد ۱ تا ۱۰۰، جکپات ×۲۵','games');
   h+='<div class="card" style="text-align:center;margin-bottom:12px"><b style="color:var(--gold);font-size:16px">🪙 '+faK(d.coins)+'</b> سکه'
-  +(d.free_ready?' · <button class="btn green" style="margin-right:8px" onclick="lnFree()">🎁 چرخ رایگان!</button>':'')+'</div>';
+  +(d.free_ready?' · <button class="btn green sm" style="margin-right:8px" onclick="lnFree()">🎁 چرخ رایگان!</button>':'')+'</div>';
   h+='<div class="grid g3" style="margin-bottom:12px">'
   +'<div class="stat"><small>🔥 داغ</small><b>'+esc(d.hot)+'</b></div>'
   +'<div class="stat"><small>❄️ سرد</small><b>'+esc(d.cold)+'</b></div>'
@@ -33571,17 +36648,18 @@ async function lnStart(){
   }
   h+='<div class="qcard"><span class="qtag">🎲 شرط‌بندی</span>'
   +'<div class="sub" style="margin-bottom:10px">عدد شانست را انتخاب کن (۱-۱۰۰):</div>'
-  +'<input class="input" id="lnNum" type="number" min="1" max="100" value="50" style="text-align:center;font-size:17px;font-weight:900">'
+  +'<input class="input num" id="lnNum" type="number" min="1" max="100" value="50">'
   +'<div class="sub" style="margin:12px 0 6px">مبلغ شرط:</div><div class="chips" id="lnBets" style="margin:0">';
   d.bets.forEach(function(b,i){
    h+='<button class="chip'+(i===1?' on':'')+'" onclick="lnBet('+b+',this)">'+fa(b)+' 🪙</button>';
   });
   h+='</div></div>';
   h+='<button class="btn primary wide glow" onclick="lnBetGo()">🎰 بچرخان!</button>';
-  h+='<div class="card section" style="text-align:center;font-size:9.5px;color:var(--muted)">پرداخت: '+esc(d.paytable)+'</div>';
-  el.innerHTML=h;
+  h+='<div class="card" style="text-align:center;font-size:9.5px;color:var(--muted)">پرداخت: '+esc(d.paytable)+'</div>';
+  h+='<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+  if(!setPageHTML('games',h,g))return;
   LNBET=100;
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">🎰</span>'+esc(e.message)+'</div>'}
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">🎰</span>'+esc(e.message)+'</div>'}
 }
 var LNBET=100;
 function lnBet(b,btn){
@@ -33603,31 +36681,31 @@ async function lnBetGo(){
   var d=await api('/api/miniapp/game/ln',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:n,bet:LNBET})});
   haptic(d.ret>0?'ok':'warn');
   var el=$('pg-games');
-  el.innerHTML=gmHead('🎰','نتیجه قرعه',d.diff===0?'💥 جکپات ×۲۵!':'فاصله: '+fa(d.diff),'lnStart()')
+  el.innerHTML=gmHead('🎰','نتیجه قرعه',d.diff===0?'💥 جکپات ×۲۵!':'فاصله: '+fa(d.diff),'games')
   +'<div class="bigres"><span class="bico">'+(d.diff===0?'💎':d.ret>0?'🎉':'🍂')+'</span>'
-  +'<span class="bt" style="font-size:34px">'+fa(d.winning)+'</span>'
+  +'<span class="bt" style="font-size:34px" dir="ltr">'+fa(d.winning)+'</span>'
   +'<div class="bs">'+esc(d.message)+'</div>'
   +'<div class="bs">موجودی: '+faK(d.coins)+' سکه</div></div>'
   +'<button class="btn primary wide" onclick="lnStart()">🔄 دوباره</button>'
-  +'<button class="btn wide" style="margin-top:8px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
+  +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  }catch(e){toast(e.message,'err')}
 }
 
-/* ---------- FUN TOOLS ---------- */
+/* ---------- 🎲 ابزار شانس ---------- */
 function funSheet(){
  openSheet('<h3>🎲 ابزار شانس</h3>'
  +'<p class="sub" style="margin-bottom:10px">تاس، شیر یا خط و هشت‌تو — سریع و بدون پاداش (مثل خود ربات).</p>'
  +'<div class="list">'
- +'<div class="row" onclick="funGo(\'dice\')" style="cursor:pointer"><div class="medal">🎲</div><div class="grow"><b>پرتاب تاس</b><small>عدد ۱ تا ۶</small></div><span style="color:var(--muted)">‹</span></div>'
- +'<div class="row" onclick="funGo(\'coin\')" style="cursor:pointer"><div class="medal">🪙</div><div class="grow"><b>شیر یا خط</b><small>اپ‌تاس</small></div><span style="color:var(--muted)">‹</span></div>'
- +'<div class="row" onclick="fun8b()" style="cursor:pointer"><div class="medal">🔮</div><div class="grow"><b>هشت‌تو</b><small>پاسخ شگفت‌انگیز</small></div><span style="color:var(--muted)">‹</span></div>'
+ +'<div class="row tap" onclick="funGo(\'dice\')" style="cursor:pointer"><div class="medal">🎲</div><div class="grow"><b>پرتاب تاس</b><small>عدد ۱ تا ۶</small></div><span style="color:var(--muted)">‹</span></div>'
+ +'<div class="row tap" onclick="funGo(\'coin\')" style="cursor:pointer"><div class="medal">🪙</div><div class="grow"><b>شیر یا خط</b><small>اپ‌تاس</small></div><span style="color:var(--muted)">‹</span></div>'
+ +'<div class="row tap" onclick="fun8b()" style="cursor:pointer"><div class="medal">🔮</div><div class="grow"><b>هشت‌تو</b><small>پاسخ شگفت‌انگیز</small></div><span style="color:var(--muted)">‹</span></div>'
  +'</div>'
  +'<div class="funbox" id="funBox" style="margin-top:14px"><span class="fres" id="funRes">✨</span></div>');
 }
 async function funGo(kind){
  var box=$('funBox');
  if(box){box.classList.add('spin');$('funRes').textContent=kind==='dice'?'🎲':'🪙'}
- haptic('medium');
+ haptic('medium');SND.spin();
  try{
   var d=await api('/api/miniapp/game/fun',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kind})});
   setTimeout(function(){
@@ -33647,7 +36725,7 @@ function fun8b(){
 }
 async function fun8bGo(){
  var q=($('fbq')||{}).value||'';
- haptic('medium');
+ haptic('medium');SND.spin();
  try{
   var d=await api('/api/miniapp/game/fun',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'8ball',q:q})});
   var box=$('funBox');if(box)box.classList.add('spin');
@@ -33660,28 +36738,619 @@ async function fun8bGo(){
  }catch(e){toast(e.message,'err')}
 }
 
-/* ================= SURVIVAL ================= */
+/* ════════════════════════════════════════════════════════════════
+   TITAN LIVE — لابی / دوئل / آرنا / عشق‌سنج / بقای تایتان
+   ════════════════════════════════════════════════════════════════
+   ♥ فیکس اصلی: polling امضامحور + حفظ ورودی
+   دیگر هیچ تایپی وسط بازی پاک نمی‌شود — رندر فقط وقتی وضعیت
+   واقعاً تغییر کرده انجام می‌شود و textarea/input کاربر زنده می‌ماند.
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 👥 LOBBY (چندنفره) ================= */
+async function lobbyCreate(){
+ try{
+  var d=await api('/api/miniapp/lobby/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(!d.ok){toast(d.error,'err');return}
+  LOBBYCODE=d.code;
+  toast(d.message,'ok');SND.whoosh();
+  show('lobby',{force:true});
+  lobbyWatch();
+ }catch(e){toast(e.message,'err')}
+}
+function lobbyJoinSheet(){
+ openSheet('<h3>➕ پیوستن به لابی</h3>'
+ +'<p class="sub" style="margin-bottom:12px">کد ۶ حرفی لابی را که سرگروه برایت فرستاده وارد کن:</p>'
+ +'<input class="input" id="ljCode" maxlength="6" placeholder="مثلاً: K7PX2M" style="text-align:center;font-size:17px;letter-spacing:4px;font-weight:900;text-transform:uppercase">'
+ +'<button class="btn primary wide glow" style="margin-top:12px" onclick="lobbyJoinGo()">🚀 پیوستن</button>');
+ try{$('ljCode').focus()}catch(e){}
+}
+async function lobbyJoinGo(){
+ var code=($('ljCode')||{}).value||'';
+ code=code.trim().toUpperCase();
+ if(code.length<4){toast('کد را کامل وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/lobby/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})});
+  if(!d.ok){toast(d.error,'err');return}
+  closeSheet();
+  LOBBYCODE=code;
+  toast(d.message||'پیوستی!','ok');SND.win();
+  show('lobby',{force:true});
+  lobbyWatch();
+ }catch(e){toast(e.message,'err')}
+}
+async function renderLobbyPage(){
+ if(!LOBBYCODE){
+  var el=$('pg-lobby');
+  el.innerHTML=gmHead('👥','لابی چندنفره','بازی کامل جرئت/حقیقت با دوستان','play')
+  +'<div class="card" style="text-align:center;padding:24px">'
+  +'<div style="font-size:34px;margin-bottom:10px">👥</div>'
+  +'<b>لابی فعالی نداری</b><div class="sub" style="margin:8px 0 14px">یک لابی بساز و کدش را برای دوستانت بفرست، یا با کد به لابی دیگر بپیوند.</div>'
+  +'<div style="display:flex;gap:8px"><button class="btn primary glow" style="flex:1" onclick="lobbyCreate()">🚀 ساخت لابی</button>'
+  +'<button class="btn" style="flex:1" onclick="lobbyJoinSheet()">➕ پیوستن</button></div></div>';
+  return;
+ }
+ lobbyWatch();
+}
+var LBSIG='';
+function lobbyWatch(){
+ stopPoll('lobby');
+ LBSIG='';
+ lobbyTick();
+ startPoll('lobby',lobbyTick,2000);
+}
+async function lobbyTick(){
+ if(PAGE!=='lobby'){stopPoll('lobby');return}
+ if(!LOBBYCODE)return;
+ try{
+  var d=await api('/api/miniapp/lobby/state?code='+encodeURIComponent(LOBBYCODE));
+  var lb=d.lobby||{};
+  /* --- قلب فیکس: امضای وضعیت --- */
+  var sig=stateSig(lb);
+  var el=$('pg-lobby');
+  var ansEl=$('lbAns');
+  var typing=ansEl&&(ansEl.value.trim().length>0||document.activeElement===ansEl);
+  if(sig===LBSIG&&el&&!el.querySelector('.sk')){
+   /* هیچ تغییر واقعی نیست — فقط بخش‌های زنده را به‌روز کن */
+   lobbyLiveUpdate(lb);
+   return;
+  }
+  /* اگر کاربر در حال تایپ جواب است و فاز همان «در انتظار پاسخ» است، ورودی را نجات بده */
+  if(typing&&lb.phase==='question'&&lb.prompt&&!lb.prompt.answered){
+   lobbyLiveUpdate(lb);
+   /* ورودی و دکمه موجودند — فقط متن‌های کناری تازه شوند */
+   var qEl=$('lbQCard');
+   if(qEl&&lb.prompt){lobbyQCardUpdate(qEl,lb)}
+   LBSIG=sig;
+   return;
+  }
+  LBSIG=sig;
+  var snap=preserveInputs(el);
+  lobbyRender(lb);
+  restoreInputs(snap);
+ }catch(e){
+  if(String(e.message).indexOf('پیدا نشد')>=0){LOBBYCODE='';LBSIG='';stopPoll('lobby');renderLobbyPage();toast('لابی بسته شد','warn')}
+ }
+}
+/* به‌روزرسانی زنده‌ی بخش‌های داینامیک بدون رندر */
+function lobbyLiveUpdate(lb){
+ /* امتیاز بازیکنان */
+ var rows=$('pg-lobby').querySelectorAll('.pl');
+ (lb.players||[]).forEach(function(p,i){
+  if(rows[i]){
+   var sm=rows[i].querySelector('small');
+   if(sm)sm.innerHTML='LV '+fa(p.level)+(lb.phase!=='lobby'?' · 🏆 '+fa(p.score)+' امتیاز':' · '+(p.ready?'✅ آماده':'⏳ در انتظار'));
+   if(lb.phase==='lobby')rows[i].classList.toggle('ready',!!p.ready);
+  }
+ });
+ /* تایمر سوال */
+ var qEl=$('lbQCard');
+ if(qEl&&lb.prompt)lobbyQCardUpdate(qEl,lb);
+}
+function lobbyQCardUpdate(qEl,lb){
+ var pr=lb.prompt||{};
+ var tEl=$('lbT');
+ if(tEl&&pr.sent_ts){
+  var left=Math.max(0,Math.ceil(pr.timeout-((lb.now||Date.now()/1000)-pr.sent_ts)));
+  tEl.textContent=fa(left);
+  var tm=tEl.closest('.timer');if(tm)tm.classList.toggle('hot',left<=5);
+ }
+ var tgt=qEl.querySelector('.lbtarget');
+ if(tgt&&pr.target_name)tgt.innerHTML='🎯 هدف: <b>'+esc(pr.target_name)+'</b>';
+}
+function lobbyRender(lb){
+ var el=$('pg-lobby');
+ var me=(D.user||{}).id||0;
+ var h=gmHead('👥','لابی '+esc(lb.code),'راند '+fa(lb.round)+' · '+fa(lb.players.length)+' بازیکن','play');
+ if(lb.phase!=='lobby'&&lb.round>0&&typeof heatMeter==='function')h+=heatMeter(lb.round);
+ /* کد و دعوت */
+ h+='<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
+ +'<span class="codechip">'+esc(lb.code)+'</span>'
+ +'<div style="display:flex;gap:7px">'
+ +'<button class="btn sm" onclick="copyText(\''+lb.code+'\')">📋 کپی</button>'
+ +'<button class="btn primary sm" onclick="shareLobby(\''+lb.code+'\')">✈️ دعوت</button></div></div>';
+ /* بازیکنان */
+ h+='<div class="section"><div class="shead"><b>👥 بازیکنان</b><small>'+fa(lb.players.length)+'/۲۰</small></div><div class="pl-wrap">';
+ lb.players.forEach(function(p){
+  var isTurn=lb.phase==='topic'&&lb.questioner===p.id;
+  h+='<div class="pl'+(p.ready?' ready':'')+(isTurn?' turn':'')+'">'
+  +avaHtml({id:p.id,name:p.name,online:p.online},'sm')
+  +'<div class="grow"><b>'+esc(p.name)+(p.id===lb.leader_id?' 👑':'')+(p.id===me?' <span class="tag cy">تو</span>':'')+(isTurn?' <span class="tag cy">🎤 نوبت</span>':'')+'</b>'
+  +'<small>LV '+fa(p.level)+(lb.phase!=='lobby'?' · 🏆 '+fa(p.score)+' امتیاز':' · '+(p.ready?'✅ آماده':'⏳ در انتظار'))+'</small></div>'
+  +(p.vip?'<span class="tag vip">VIP</span>':'')
+  +'</div>';
+ });
+ h+='</div></div>';
+ /* مراحل */
+ if(lb.phase==='lobby'){
+  var amReady=(lb.players.filter(function(p){return p.id===me&&p.ready}).length>0);
+  h+='<div style="display:flex;gap:8px;margin-top:14px">'
+  +'<button class="btn'+(amReady?' green':' primary')+'" style="flex:1" onclick="lobbyAction(\'ready\')">'+(amReady?'✅ آماده‌ام':'⏡ اعلام آمادگی')+'</button>';
+  if(lb.is_leader)h+='<button class="btn green glow" style="flex:1" onclick="lobbyAction(\'start\')">🚀 شروع بازی</button>';
+  h+='<button class="btn red sm" onclick="lobbyAction(\'leave\')">خروج</button></div>';
+  if(lb.is_leader&&lb.players.length<2)h+='<div class="card" style="margin-top:10px;text-align:center;font-size:10px;color:var(--muted)">برای شروع حداقل ۲ بازیکن لازم است — کد را بفرست!</div>';
+ }else if(lb.phase==='topic'){
+  var q=lb.questioner;
+  if(q===me){
+   h+='<div class="qcard"><span class="qtag">🎤 نوبت تو — موضوع را انتخاب کن</span></div>';
+   h+='<div class="gtabs">';
+   lb.modes.forEach(function(m){
+    h+=(typeof gtabCard==='function'?gtabCard(m):'<button class="gtab" onclick="lobbyAction(\'topic\',\''+m.key+'\')">'+m.label+'</button>');
+   });
+   h+='</div>';
+  }else{
+   var qn=(lb.players.filter(function(p){return p.id===q})[0]||{}).name||'؟';
+   h+='<div class="bigres"><span class="bico">🎤</span><span class="bt">'+esc(qn)+' دارد موضوع انتخاب می‌کند...</span>'
+   +'<div class="bs">راند '+fa(lb.round)+' · نوبت‌ها می‌چرخند</div></div>';
+  }
+  if(lb.is_leader)h+='<button class="btn red wide sm" style="margin-top:8px" onclick="lobbyAction(\'end\')">🏁 پایان بازی</button>';
+  h+='<button class="btn wide sm" style="margin-top:8px" onclick="lobbyAction(\'leave\')">🚪 خروج</button>';
+ }else if(lb.phase==='target'){
+  var q2=lb.questioner;
+  if(q2===me){
+   h+='<div class="qcard"><span class="qtag">🎯 هدف را انتخاب کن</span><div class="sub">سوال از بازیکن انتخابی پرسیده می‌شود</div></div>';
+   lb.players.forEach(function(p){
+    if(p.id===me)return;
+    h+='<div class="pl tap" onclick="lobbyAction(\'target\','+p.id+')" style="cursor:pointer">'+avaHtml({id:p.id,name:p.name},'sm')
+    +'<div class="grow"><b>'+esc(p.name)+'</b><small>LV '+fa(p.level)+' · '+fa(p.score)+' امتیاز</small></div><span class="sc">›</span></div>';
+   });
+  }else{
+   h+='<div class="bigres"><span class="bico">🎯</span><span class="bt">انتخاب هدف در جریان است...</span></div>';
+  }
+ }else if(lb.phase==='question'&&lb.prompt){
+  var pr=lb.prompt;
+  var left=Math.max(0,Math.ceil(pr.timeout-((lb.now||Date.now()/1000)-pr.sent_ts)));
+  h+='<div class="qcard" id="lbQCard"><span class="qtag">'+esc(pr.mode_label)+' — راند '+fa(lb.round)+'</span>'
+  +'<div class="qtext">'+esc(pr.question)+'</div>'
+  +'<div style="display:flex;justify-content:space-between;margin-top:12px;align-items:center">'
+  +'<span class="sub lbtarget">🎯 هدف: <b>'+esc(pr.target_name)+'</b></span>'
+  +timerRing(left,'lbT')+'</div></div>';
+  if(pr.answered){
+   h+='<div class="anscard"><b style="color:var(--green);font-size:11px">✅ پاسخ ثبت شد</b>'
+   +'<p style="margin:8px 0 0;font-size:11.5px;line-height:2">'+esc(pr.answer_text)+'</p>'
+   +(pr.reward?'<div class="sub" style="margin-top:6px">پاداش: +'+fa(pr.reward.xp)+' XP · +'+fa(pr.reward.coins)+' سکه</div>':'')
+   +'<div class="sub" style="margin-top:8px">نوبت بعدی به‌زودی...</div></div>';
+  }else if(pr.target_uid===me){
+   /* ♥ کارت پاسخ — با شناسه پایدار تا تایپ کاربر هرگز پاک نشود */
+   h+='<textarea class="input" id="lbAns" maxlength="400" placeholder="جوابت را بنویس (هرچه مفصل‌تر، پاداش بیشتر!)..." style="min-height:90px"></textarea>'
+   +'<div style="display:flex;gap:8px;margin-top:10px">'
+   +'<button class="btn primary glow" style="flex:2" onclick="lobbyAnswer()">✍️ ثبت پاسخ</button>'
+   +'<button class="btn" style="flex:1" onclick="lobbyDraftClear()">🧹 پاک</button></div>'
+   +'<div class="sub" style="margin-top:8px;text-align:center">✍️ نوشته‌ات ذخیره می‌شود — نگران پاک‌شدن نباش!</div>';
+  }else{
+   h+='<div class="bigres" style="padding:18px"><span class="bico">⏳</span><span class="bt">در انتظار پاسخ '+esc(pr.target_name)+'...</span></div>';
+   if(me===pr.questioner_uid||lb.is_leader)h+='<button class="btn wide sm" onclick="lobbyAction(\'skip\')">⏭ رد کردن</button>';
+  }
+ }else if(lb.phase==='done'){
+  h+='<div class="bigres"><span class="bico">🏆</span><span class="bt">بازی تمام شد!</span></div>';
+  if(lb.podium&&lb.podium.length){
+   h+='<div class="list">';
+   lb.podium.forEach(function(p,i){
+    h+='<div class="row'+(p.id===me?' me':'')+'"><div class="medal'+(i<3?' m'+(i+1):'')+'">'+(i===0?'🥇':i===1?'🥈':i===2?'🥉':fa(i+1))+'</div>'
+    +avaHtml({id:p.id,name:p.name},'sm')+'<div class="grow"><b>'+esc(p.name)+'</b><small>🏆 '+fa(p.score)+' امتیاز</small></div></div>';
+   });
+   h+='</div>';
+  }
+  h+='<div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary" style="flex:2" onclick="LOBBYCODE=\'\';LBSIG=\'\';renderLobbyPage()">🏠 لابی جدید</button>'
+  +'<button class="btn" style="flex:1" onclick="lobbyShareCard(LB_LAST||{})">📤 کارت</button></div>';
+ }
+ el.innerHTML=h;
+ if(lb.phase==='question'&&lb.prompt&&!lb.prompt.answered&&lb.prompt.target_uid===me){
+  startTimer('lbT',left,function(){toast('زمان پاسخ تمام شد! ⏱','warn')});
+ }else stopTimer('lbT');
+}
+function lobbyDraftClear(){var a=$('lbAns');if(a){a.value='';try{a.focus()}catch(e){}}}
+function shareLobby(code){
+ var un=(D.bot||'').replace(/^@/,'');
+ shareText('🎮 من داخل لابی ApexRival هستم! کد پیوستن: '+code+'\nمینی‌اپ ربات را باز کن و با این کد بیا جلو ⚔️');
+}
+async function lobbyAction(kind,extra){
+ var body={code:LOBBYCODE};
+ if(kind==='topic')body.mode=extra;
+ if(kind==='target')body.target=extra;
+ try{
+  var d=await api('/api/miniapp/lobby/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!d.ok){toast(d.error,'err');return}
+  if(d.message)toast(d.message,'ok');
+  if(kind==='leave'){stopPoll('lobby');stopTimer('lbT');LOBBYCODE='';LBSIG='';show('play',{force:true});return}
+  if(kind==='end'){confetti();SND.win()}
+  LBSIG='';                                  /* تغییر واقعی — رندر تازه */
+  if(d.lobby)lobbyRender(d.lobby);else lobbyTick();
+ }catch(e){toast(e.message,'err')}
+}
+var LB_LAST={};
+async function lobbyAnswer(){
+ var a=$('lbAns');if(!a)return;
+ var t=a.value||'';
+ if(t.trim().length<2){toast('جوابت را بنویس','err');return}
+ try{
+  var d=await api('/api/miniapp/lobby/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:LOBBYCODE,text:t})});
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');confetti();SND.win();
+  toast(d.message,'ok');
+  LBSIG='';
+  lobbyRender(d.lobby);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= 🤺 DUEL (دوئل) ================= */
+async function duelCreate(){
+ try{
+  var d=await api('/api/miniapp/duel/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(!d.ok){toast(d.error,'err');return}
+  DUELCODE=d.code;
+  toast(d.message,'ok');SND.whoosh();
+  show('duel',{force:true});
+  duelWatch();
+ }catch(e){toast(e.message,'err')}
+}
+function duelJoinSheet(){
+ openSheet('<h3>🤺 پیوستن به دوئل</h3>'
+ +'<p class="sub" style="margin-bottom:12px">کد دوئل را که حریفت فرستاده وارد کن:</p>'
+ +'<input class="input" id="djCode" type="number" placeholder="مثلاً: ۱۰۴۲" style="text-align:center;font-size:17px;font-weight:900">'
+ +'<button class="btn primary wide glow" style="margin-top:12px" onclick="duelJoinGo()">⚔️ ورود به دوئل</button>');
+}
+async function duelJoinGo(){
+ var code=parseInt(($('djCode')||{}).value||'0',10);
+ if(!code){toast('کد را وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/duel/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})});
+  if(!d.ok){toast(d.error,'err');return}
+  closeSheet();
+  DUELCODE=code;
+  toast(d.message||'به دوئل پیوستی!','ok');SND.win();
+  show('duel',{force:true});
+  duelWatch();
+ }catch(e){toast(e.message,'err')}
+}
+async function renderDuelPage(){
+ if(!DUELCODE){
+  var el=$('pg-duel');
+  el.innerHTML=gmHead('🤺','دوئل دو نفره','۱۰ راند — هر جواب +۳ XP، برنده +۱۰XP +۵🪙','play')
+  +'<div class="card" style="text-align:center;padding:24px">'
+  +'<div style="font-size:34px;margin-bottom:10px">⚔️</div>'
+  +'<b>دوئل فعالی نداری</b><div class="sub" style="margin:8px 0 14px">دوئل بساز و کد را برای حریفت بفرست.</div>'
+  +'<div style="display:flex;gap:8px"><button class="btn primary glow" style="flex:1" onclick="duelCreate()">⚔️ ساخت دوئل</button>'
+  +'<button class="btn" style="flex:1" onclick="duelJoinSheet()">➕ پیوستن</button></div></div>';
+  /* لیست دوئل‌های فعال من */
+  try{
+   var dl=await api('/api/miniapp/duel/list');
+   if((dl.items||[]).length){
+    var h2='<div class="section"><div class="shead"><b>🤺 دوئل‌های فعال من</b><small>'+fa(dl.items.length)+'</small></div><div class="list">';
+    dl.items.forEach(function(x){
+     h2+='<div class="row tap" onclick="DUELCODE='+x.code+';show(\'duel\',{force:true});duelWatch()" style="cursor:pointer">'
+     +'<div class="medal">⚔️</div><div class="grow"><b>دوئل #'+fa(x.code)+'</b><small>'+esc(x.a.name)+' '+fa(x.a.score)+' - '+fa(x.b?x.b.score:0)+' '+(x.b?esc(x.b.name):'⏳')+'</small></div><span class="sc">›</span></div>';
+    });
+    el.insertAdjacentHTML('beforeend',h2+'</div></div>');
+   }
+  }catch(e){}
+  return;
+ }
+ duelWatch();
+}
+var DUSIG='';
+function duelWatch(){
+ stopPoll('duel');
+ DUSIG='';
+ duelTick();
+ startPoll('duel',duelTick,2200);
+}
+async function duelTick(){
+ if(PAGE!=='duel'){stopPoll('duel');return}
+ if(!DUELCODE)return;
+ try{
+  var d=await api('/api/miniapp/duel/state?code='+DUELCODE);
+  var du=d.duel||{};
+  var sig=stateSig(du);
+  var el=$('pg-duel');
+  var ansEl=$('duAns');
+  var typing=ansEl&&(ansEl.value.trim().length>0||document.activeElement===ansEl);
+  if(sig===DUSIG&&el&&!el.querySelector('.sk')){
+   duelLiveUpdate(du);return;
+  }
+  if(typing&&du.state==='answer'&&du.question&&du.answering){
+   duelLiveUpdate(du);DUSIG=sig;return;
+  }
+  DUSIG=sig;
+  var snap=preserveInputs(el);
+  duelRender(du);
+  restoreInputs(snap);
+ }catch(e){
+  if(String(e.message).indexOf('پیدا نشد')>=0){DUELCODE=0;DUSIG='';stopPoll('duel');renderDuelPage()}
+ }
+}
+function duelLiveUpdate(du){
+ var rows=$('pg-duel').querySelectorAll('.duelbar .side .sc');
+ if(rows[0])rows[0].textContent=fa(du.a.score);
+ if(rows[1]&&du.b)rows[1].textContent=fa(du.b.score);
+ var tEl=$('duT');
+ if(tEl&&du.question){
+  var left=Math.max(0,Math.ceil(du.question.timeout-(Date.now()/1000-du.question.ts)));
+  tEl.textContent=fa(left);
+  var tm=tEl.closest('.timer');if(tm)tm.classList.toggle('hot',left<=5);
+ }
+}
+function duelRender(du){
+ var el=$('pg-duel');
+ var me=(D.user||{}).id||0;
+ var h=gmHead('🤺','دوئل #'+fa(du.code),'راند '+fa(Math.min(du.round+1,du.total_rounds))+' از '+fa(du.total_rounds),'play');
+ if(typeof roundDots==='function')h+=roundDots(Math.min(du.round+1,du.total_rounds),du.total_rounds);
+ h+='<div class="duelbar">'
+ +'<div class="side'+(du.a.id===me?' me':'')+'">'+avaHtml({id:du.a.id,name:du.a.name},'sm')+'<b>'+esc(du.a.name)+'</b><div class="sc">'+fa(du.a.score)+'</div></div>'
+ +'<div class="vs">VS</div>'
+ +'<div class="side'+(du.b&&du.b.id===me?' me':'')+'">'+(du.b?avaHtml({id:du.b.id,name:du.b.name},'sm')+'<b>'+esc(du.b.name)+'</b><div class="sc">'+fa(du.b.score)+'</div>':'<b>⏳ منتظر حریف...</b><div class="sc">—</div>')+'</div></div>';
+ if(du.state==='waiting'){
+  h+='<div class="card" style="text-align:center">'
+  +'<span class="codechip" style="font-size:14px;letter-spacing:1px">کد: '+fa(du.code)+'</span>'
+  +'<div class="sub" style="margin:10px 0">این کد را برای حریفت بفرست تا وارد شود</div>'
+  +'<div style="display:flex;gap:8px"><button class="btn primary sm" style="flex:1" onclick="copyText(\''+du.code+'\')">📋 کپی کد</button>'
+  +'<button class="btn sm" style="flex:1" onclick="shareDuel('+du.code+')">✈️ دعوت</button></div></div>';
+ }else if(du.state==='topic'){
+  if(du.my_turn){
+   h+='<div class="qcard"><span class="qtag">🎤 نوبت تو — موضوع را انتخاب کن</span></div><div class="gtabs">';
+   du.modes.forEach(function(m){h+=(typeof dtabCard==='function'?dtabCard(m):'<button class="gtab" onclick="duelAction(\'topic\',\''+m.key+'\')">'+m.label+'</button>')});
+   h+='</div>';
+  }else{
+   h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">نوبت انتخاب موضوع با حریف است...</span></div>';
+  }
+ }else if(du.state==='answer'&&du.question){
+  var left=Math.max(0,Math.ceil(du.question.timeout-(Date.now()/1000-du.question.ts)));
+  h+='<div class="qcard"><span class="qtag">'+esc(du.question.mode_label)+' — راند '+fa(du.round+1)+'</span>'
+  +'<div class="qtext">'+esc(du.question.text)+'</div>'
+  +'<div style="display:flex;justify-content:flex-end;margin-top:10px">'+timerRing(left,'duT')+'</div></div>';
+  if(du.answering){
+   h+='<textarea class="input" id="duAns" maxlength="400" placeholder="جوابت را بنویس..." style="min-height:80px"></textarea>'
+   +'<button class="btn primary wide glow" style="margin-top:10px" onclick="duelAnswer()">✍️ ثبت جواب (+۳ XP)</button>'
+   +'<button class="btn wide sm" style="margin-top:8px" onclick="duelAction(\'skip\')">⏭ رد کردن</button>';
+  }else{
+   h+='<div class="bigres" style="padding:16px"><span class="bico">⏳</span><span class="bt">حریف دارد جواب می‌دهد...</span></div>';
+  }
+ }else if(du.state==='done'){
+  var winner=du.winner;
+  h+='<div class="bigres"><span class="bico">'+(winner===me?'🏆':'🏁')+'</span><span class="bt">'+(winner===me?'قهرمان دوئل شدی! +۱۰ XP +۵ سکه':(winner===0?'مساوی!':'حریف برنده شد'))+'</span></div>'
+  +'<button class="btn primary wide glow" style="margin-top:10px" onclick="DUELCODE=0;DUSIG=\'\';renderDuelPage()">⚔️ دوئل جدید</button>';
+ }
+ el.innerHTML=h;
+}
+function shareDuel(code){
+ shareText('⚔️ من در دوئل ApexRival منتظرتم! کد دوئل: '+code+'\nمینی‌اپ ربات را باز کن و با این کد وارد شو 🤺');
+}
+async function duelAction(kind,extra){
+ var body={code:DUELCODE};
+ if(kind==='topic')body.mode=extra;
+ try{
+  var d=await api('/api/miniapp/duel/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!d.ok){toast(d.error,'err');return}
+  if(d.message)toast(d.message,'ok');
+  if(d.finished&&d.finish){confetti();SND.win()}
+  DUSIG='';
+  if(d.duel)DU_LAST=d.duel;
+  if(d.duel)duelRender(d.duel);else duelTick();
+ }catch(e){toast(e.message,'err')}
+}
+var DU_LAST={};
+async function duelAnswer(){
+ var t=($('duAns')||{}).value||'';
+ if(t.trim().length<2){toast('جوابت را بنویس','err');return}
+ try{
+  var d=await api('/api/miniapp/duel/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:DUELCODE,text:t})});
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');
+  if(d.finished&&d.finish){confetti();SND.win()}
+  toast(d.message,'ok');
+  DUSIG='';
+  DU_LAST=d.duel||DU_LAST;
+  duelRender(d.duel);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= 🏆 ARENA (رنک‌دار) ================= */
+async function renderArenaPage(){
+ var g=renderGen();
+ var el=$('pg-arena');
+ el.innerHTML='<div class="sk tall"></div>';
+ try{
+  var d=await api('/api/miniapp/arena');
+  if(isStale(g))return;
+  var me=(D.user||{}).id||0;
+  var h=gmHead('🎯','آرنا رنک‌دار','اولین '+fa(d.target)+' امتیاز — برنده ELO می‌گیرد','play');
+  h+='<div class="grid g4" style="margin-bottom:12px">'
+  +'<div class="stat"><small>لیگ</small><b style="font-size:13px">'+d.tier_icon+' '+esc(d.tier)+'</b></div>'
+  +'<div class="stat"><small>ELO</small><b>'+fa(d.elo)+'</b></div>'
+  +'<div class="stat"><small>برد</small><b>'+fa(d.wins)+'</b></div>'
+  +'<div class="stat"><small>باخت</small><b>'+fa(d.losses)+'</b></div></div>';
+  if(d.active&&d.match){
+   var m=d.match;
+   h+='<div class="duelbar">'
+   +'<div class="side me">'+avaHtml({id:me,name:'تو'},'sm')+'<b>تو</b><div class="sc">'+fa(m.me.score)+'</div></div>'
+   +'<div class="vs">'+fa(d.target)+' امتیازی</div>'
+   +'<div class="side">'+avaHtml({id:m.opp.id,name:m.opp.name},'sm')+'<b>'+esc(m.opp.name)+'</b><div class="sc">'+fa(m.opp.score)+'</div></div></div>';
+   if(m.my_turn&&m.question){
+    h+='<div class="qcard"><span class="qtag">❓ نوبت تو — جواب درست = ادامه نوبت</span>'
+    +'<div class="qtext">'+esc(m.question.text)+'</div></div>';
+    var letters=['🅰','🅱','🅲','🅳'];
+    m.question.options.forEach(function(o,i){
+     h+='<button class="opt" onclick="arenaAns('+i+',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
+    });
+   }else{
+    h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">حریف دارد جواب می‌دهد...</span><div class="bs">'+esc(m.opp.name)+' · ELO '+fa(m.opp.elo)+'</div></div>';
+   }
+  }else if(d.in_queue){
+   h+='<div class="bigres"><span class="bico">🎯</span><span class="bt">در صف جستجوی حریف...</span>'
+   +'<div class="bs">نزدیک‌ترین ELO به تو پیدا می‌شود · '+fa(d.queue_len)+' نفر در صف</div></div>'
+   +'<button class="btn red wide" onclick="arenaLeave()">🚪 خروج از صف</button>';
+  }else{
+   h+='<div class="bigres"><span class="bico">🏆</span><span class="bt">آرنا منتظر توست!</span>'
+   +'<div class="bs">با حریفی هم‌سطح خودت روبه‌رو شو — برنده ELO و جایزه می‌گیرد</div></div>'
+   +'<button class="btn primary wide glow" onclick="arenaJoin()">🎯 پیدا کردن حریف</button>';
+  }
+  if(!setPageHTML('arena',h,g))return;
+  if(d.active||d.in_queue){
+   startPoll('arena',function(){
+    if(PAGE!=='arena'){stopPoll('arena');return}
+    renderArenaPage();
+   },2500);
+  }
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">🎯</span>'+esc(e.message)+'</div>'}
+}
+async function arenaJoin(){
+ try{
+  var d=await api('/api/miniapp/arena/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(!d.ok){toast(d.error,'err');return}
+  if(d.matched){haptic('ok');confetti();toast(d.message,'ok')}
+  else toast(d.message,'ok');
+  renderArenaPage();
+ }catch(e){toast(e.message,'err')}
+}
+async function arenaLeave(){
+ try{
+  var d=await api('/api/miniapp/arena/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  toast(d.message,'ok');
+  renderArenaPage();
+ }catch(e){toast(e.message,'err')}
+}
+async function arenaAns(i,btn){
+ if(btn.disabled)return;
+ try{
+  var d=await api('/api/miniapp/arena/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idx:i})});
+  haptic(d.correct?'ok':'error');
+  if(d.correct)btn.classList.add('right');else btn.classList.add('wrong');
+  if(d.finished&&d.finish){
+   stopPoll('arena');
+   setTimeout(function(){
+    var f=d.finish;
+    var el=$('pg-arena');
+    el.innerHTML=gmHead('🏆','پایان نبرد آرنا','نبرد #'+fa(f.id||0),'play')
+    +'<div class="bigres"><span class="bico">'+(f.winner===((D.user||{}).id||0)?'🏆':'🏁')+'</span>'
+    +'<span class="bt">'+esc(f.winner_name)+' برنده شد!</span>'
+    +'<div class="bs">'+fa(f.score[0])+' - '+fa(f.score[1])+'</div>'
+    +'<div class="bs">ELO جدید: '+fa(f.new_elo)+(f.promo?' · 🎉 ارتقای لیگ!':'')+'</div></div>'
+    +'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary" style="flex:2" onclick="renderArenaPage()">🎯 نبرد جدید</button>'
+    +'<button class="btn" style="flex:1" onclick="arenaShareCard(f)">📤 کارت</button></div>';
+    confetti();SND.win();
+   },900);
+   return;
+  }
+  setTimeout(function(){renderArenaPage()},d.correct?700:900);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= 💌 LOVE2 (عشق‌سنج) ================= */
+function love2Sheet(){
+ openSheet('<h3>💌 عشق‌سنج دو نفره</h3>'
+ +'<p class="sub" style="margin-bottom:10px">آیدی عددی طرف مقابل را وارد کن — هر دو نفر به ۴ سوال مخفیانه جواب می‌دهید و درصد هم‌صدایی محاسبه می‌شود!</p>'
+ +'<input class="input" id="lvId" type="number" placeholder="آیدی عددی بازیکن دیگر...">'
+ +'<button class="btn primary wide glow" style="margin-top:10px" onclick="love2Create()">💌 شروع عشک‌سنج</button>'
+ +'<input class="input" id="lvCode" type="number" placeholder="یا کد عشک‌سنجی که دریافت کردی..." style="margin-top:10px">'
+ +'<button class="btn wide" style="margin-top:8px" onclick="love2Open()">📬 باز کردن با کد</button>');
+}
+async function love2Create(){
+ var t=parseInt(($('lvId')||{}).value||'0',10);
+ if(!t){toast('آیدی را وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/love2/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:t})});
+  if(!d.ok){toast(d.error,'err');return}
+  LOVE2CODE=d.code;
+  closeSheet();
+  toast(d.message,'ok');
+  love2Flow();
+ }catch(e){toast(e.message,'err')}
+}
+async function love2Open(){
+ var c=parseInt(($('lvCode')||{}).value||'0',10);
+ if(!c){toast('کد را وارد کن','err');return}
+ LOVE2CODE=c;
+ closeSheet();
+ love2Flow();
+}
+async function love2Flow(){
+ GAMEKEY='love2';stateSave();
+ if(PAGE!=='games'){show('games',{force:true});return}   /* renderGames مسیر را ادامه می‌دهد */
+ var el=$('pg-games');
+ el.innerHTML='<div class="sk tall"></div>';
+ try{
+  var d=await api('/api/miniapp/love2/state?code='+LOVE2CODE);
+  var h=gmHead('💌','عشک‌سنج با '+esc(d.other.name),'۴ سوال مخفیانه — جواب‌ها فقط در نهایت مقایسه می‌شوند','games');
+  if(d.result){
+   h+='<div style="text-align:center"><div class="lovebar"><i style="width:'+d.result.score+'%"></i></div>'
+   +'<div style="font-size:23px;font-weight:900;color:var(--pink)">💘 '+fa(d.result.score)+'٪</div>'
+   +'<div class="sub">هم‌سویی: '+fa(d.result.matches)+' از '+fa(d.result.total)+' سوال</div></div>';
+   d.result.rows.forEach(function(r){
+    h+='<div class="card" style="margin-top:10px"><b style="font-size:10.5px">'+esc(r.q)+'</b>'
+    +'<div style="display:flex;gap:8px;margin-top:8px;font-size:10px">'
+    +'<div style="flex:1;padding:8px;border-radius:10px;background:#ff4fa312;border:1px solid #ff4fa33a">💜 '+esc(r.a)+'</div>'
+    +'<div style="flex:1;padding:8px;border-radius:10px;background:#15d8ff12;border:1px solid #15d8ff3a">💙 '+esc(r.b)+'</div></div>'
+    +(r.match?'<div style="text-align:center;color:var(--green);font-size:10px;margin-top:5px">✅ هم‌سو</div>':'')+'</div>';
+   });
+   h+='<button class="btn primary wide" style="margin-top:12px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+  }else if(d.my_done){
+   h+='<div class="bigres"><span class="bico">🤝</span><span class="bt">جواب‌هایت ثبت شد!</span>'
+   +'<div class="bs">منتظر '+esc(d.other.name)+' هستیم... '+(d.other_done?'✅ تمام کرد':'⏳ هنوز در جواب دادن است')+'</div></div>'
+   +'<button class="btn wide" onclick="love2Flow()">🔄 وضعیت را تازه کن</button>';
+  }else{
+   var qi=d.current_idx;
+   h+='<div class="qcard"><span class="qtag">سوال '+fa(qi+1)+' از '+fa(d.total)+' (مخفیانه)</span>'
+   +'<div class="qtext">'+esc(d.questions[qi])+'</div></div>'
+   +'<textarea class="input" id="lvAns" maxlength="400" placeholder="صادقانه و مخفیانه جواب بده..."></textarea>'
+   +'<button class="btn primary wide glow" style="margin-top:10px" onclick="love2Ans()">✍️ ثبت جواب مخفی</button>';
+  }
+  el.innerHTML=h;
+ }catch(e){el.innerHTML=gmHead('💌','عشک‌سنج','خطا','games')+'<div class="empty"><span class="ei">💌</span>'+esc(e.message)+'</div>'}
+}
+async function love2Ans(){
+ var t=($('lvAns')||{}).value||'';
+ if(t.trim().length<2){toast('جوابت را بنویس','err');return}
+ try{
+  var d=await api('/api/miniapp/love2/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:LOVE2CODE,text:t})});
+  if(!d.ok){toast(d.error,'err');return}
+  haptic('ok');toast(d.message,'ok');
+  love2Flow();
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= 🔥 SURVIVAL (بقای تایتان) ================= */
 async function renderSurvival(){
+ var g=renderGen();
  var el=$('pg-survival');
  el.innerHTML='<div class="sk tall"></div>';
  try{
   var d=await api('/api/miniapp/survival');
-  var h=gmHead('🔥','بقای تایتان','راگلایک واقعی — روزها، جان‌ها، رویدادها','renderGames()');
+  if(isStale(g))return;
+  var h=gmHead('🔥','بقای تایتان','راگلایک واقعی — روزها، جان‌ها، رویدادها','play');
   if(d.active&&d.session){
    h+=svCard(d.session);
   }else{
    h+='<div class="section"><div class="shead"><b>🎯 سختی را انتخاب کن</b><small>۳ سطح</small></div>';
    d.diffs.forEach(function(x){
-    h+='<div class="card" style="margin-bottom:10px;display:flex;align-items:center;gap:12px">'
+    h+='<div class="card tap" style="margin-bottom:10px;display:flex;align-items:center;gap:12px">'
     +'<div style="font-size:28px">'+x.icon+'</div>'
     +'<div style="flex:1"><b>'+esc(x.name)+'</b><div class="sub">'+fa(x.hearts)+' جان · پاداش ×'+fa(x.mult)+(x.best_points?' · رکورد: '+fa(x.best_points)+' امتیاز':'')+'</div></div>'
-    +'<button class="btn primary" onclick="svStart(\''+x.key+'\')">شروع 🔥</button></div>';
+    +'<button class="btn primary sm" onclick="svStart(\''+x.key+'\')">شروع 🔥</button></div>';
    });
    h+='</div>';
    h+='<div class="card" style="text-align:center;color:var(--muted);font-size:10px">🏆 بهترین استریک کلی: '+fa(d.survival_best)+' روز</div>';
   }
-  el.innerHTML=h;
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">🔥</span>'+esc(e.message)+'</div>'}
+  setPageHTML('survival',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">🔥</span>'+esc(e.message)+'</div>'}
 }
 function svHearts(s){
  var h='';
@@ -33714,19 +37383,22 @@ function svCard(s){
   +'<button class="btn red" style="flex:1" onclick="svAns(false)">❌ رد کردم</button></div>';
  }
  var it='';
- if(s.items.heal>0)it+='<button class="btn" onclick="svItem(\'heal\')">🧪 ×'+fa(s.items.heal)+'</button>';
- if(s.items.shield>0)it+='<button class="btn" onclick="svItem(\'shield\')">🛡 ×'+fa(s.items.shield)+'</button>';
+ if(s.items.heal>0)it+='<button class="btn sm" onclick="svItem(\'heal\')">🧪 ×'+fa(s.items.heal)+'</button>';
+ if(s.items.shield>0)it+='<button class="btn sm" onclick="svItem(\'shield\')">🛡 ×'+fa(s.items.shield)+'</button>';
  if(it)h+='<div style="display:flex;gap:8px;margin-top:10px">'+it+'</div>';
- h+='<button class="btn wide" style="margin-top:10px" onclick="svEnd()">🏁 پایان و برداشت</button>';
+ h+='<button class="btn wide sm" style="margin-top:10px" onclick="svEndAsk()">🏁 پایان و برداشت</button>';
  h+='</div>';
  return h;
+}
+function svEndAsk(){
+ askConfirm('پایان بقا؟','ماجراجویی را تمام و پاداش‌ها را برداشت می‌کنی؟','برداشت پاداش',svEnd);
 }
 async function svStart(diff){
  try{
   var d=await api('/api/miniapp/survival/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({diff:diff})});
-  toast(d.message,'ok');
+  toast(d.message,'ok');SND.whoosh();
   var el=$('pg-survival');
-  el.innerHTML=gmHead('🔥','بقای تایتان','راگلایک واقعی — روزها، جان‌ها، رویدادها','renderGames()')+svCard(d.session);
+  el.innerHTML=gmHead('🔥','بقای تایتان','راگلایک واقعی — روزها، جان‌ها، رویدادها','play')+svCard(d.session);
  }catch(e){toast(e.message,'err')}
 }
 async function svAns(ok){
@@ -33735,9 +37407,9 @@ async function svAns(ok){
   haptic(ok?'ok':'warn');
   if(d.ended&&d.finish)return svFinishView(d);
   if(d.gained&&(d.gained.xp||d.gained.coins))toast('+'+fa(d.gained.xp)+' XP · +'+fa(d.gained.coins)+' سکه','ok');
-  if(d.milestone){confetti();toast('🎉 مایل‌استون! +'+fa(d.milestone)+' سکه','ok')}
+  if(d.milestone){confetti();toast('🎉 مایلستون! +'+fa(d.milestone)+' سکه','ok')}
   var el=$('pg-survival');
-  el.innerHTML=gmHead('🔥','بقای تایتان','روز '+fa(d.session.day)+' — ادامه بده!','renderGames()')+svCard(d.session);
+  el.innerHTML=gmHead('🔥','بقای تایتان','روز '+fa(d.session.day)+' — ادامه بده!','play')+svCard(d.session);
  }catch(e){toast(e.message,'err')}
 }
 async function svItem(item){
@@ -33745,7 +37417,7 @@ async function svItem(item){
   var d=await api('/api/miniapp/survival/item',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:item})});
   toast(d.message,'ok');
   var el=$('pg-survival');
-  el.innerHTML=gmHead('🔥','بقای تایتان','راگلایک واقعی','renderGames()')+svCard(d.session);
+  el.innerHTML=gmHead('🔥','بقای تایتان','راگلایک واقعی','play')+svCard(d.session);
  }catch(e){toast(e.message,'err')}
 }
 async function svEvent(choice){
@@ -33754,11 +37426,10 @@ async function svEvent(choice){
   toast(d.message,'ok');
   if(d.ended&&d.finish)return svFinishView(d);
   var el=$('pg-survival');
-  el.innerHTML=gmHead('🔥','بقای تایتان','راگلایک واقعی','renderGames()')+svCard(d.session);
+  el.innerHTML=gmHead('🔥','بقای تایتان','راگلایک واقعی','play')+svCard(d.session);
  }catch(e){toast(e.message,'err')}
 }
 async function svEnd(){
- if(!confirm2('ماجراجویی را تمام و پاداش‌ها را برداشت کنی؟'))return;
  try{
   var d=await api('/api/miniapp/survival/end',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
   svFinishView(d);
@@ -33767,444 +37438,362 @@ async function svEnd(){
 function svFinishView(d){
  var f=d.finish||{};
  var el=$('pg-survival');
- el.innerHTML=gmHead('🏁','پایان بقای تایتان',f.diff_icon+' '+esc(f.diff_name||''),'renderSurvival()')
+ el.innerHTML=gmHead('🏁','پایان بقای تایتان',f.diff_icon+' '+esc(f.diff_name||''),'play')
  +'<div class="bigres"><span class="bico">'+(f.record?'🏆':'🏁')+'</span><span class="bt">'+fa(f.day||0)+' روز بقا · '+fa(f.points||0)+' امتیاز</span>'
  +'<div class="bs">🔥 زنجیره '+fa(f.streak||0)+' · 🎲 '+fa(f.events||0)+' رویداد</div>'
  +'<div class="bs">⭐ +'+fa(f.total_xp||0)+' XP · 🪙 +'+fa(f.total_coins||0)+' سکه</div>'
  +(f.record?'<div class="bs" style="color:var(--gold);font-weight:900">🎉 رکورد جدید برای این سختی!</div>':'')+'</div>'
- +'<button class="btn primary wide" onclick="renderSurvival()">🔄 ماجراجویی جدید</button>';
- confetti();
+ +'<button class="btn primary wide glow" onclick="renderSurvival()">🔄 ماجراجویی جدید</button>';
+ confetti();SND.win();
 }
-function confirm2(msg){toast(msg,'warn');return window.confirm(msg)}
 
-/* ================= LOBBY (چندنفره داخل اپ) ================= */
-var LOBBYCODE='';
-async function lobbyCreate(){
- try{
-  var d=await api('/api/miniapp/lobby/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
-  if(!d.ok){toast(d.error,'err');return}
-  LOBBYCODE=d.code;
-  toast(d.message,'ok');
-  show('lobby');
-  lobbyWatch();
- }catch(e){toast(e.message,'err')}
-}
-function lobbyJoinSheet(){
- openSheet('<h3>➕ پیوستن به لابی</h3>'
- +'<p class="sub" style="margin-bottom:12px">کد ۶ حرفی لابی را که سرگروه برایت فرستاده وارد کن:</p>'
- +'<input class="input" id="ljCode" maxlength="6" placeholder="مثلاً: K7PX2M" style="text-align:center;font-size:17px;letter-spacing:4px;font-weight:900;text-transform:uppercase">'
- +'<button class="btn primary wide" style="margin-top:12px" onclick="lobbyJoinGo()">🚀 پیوستن</button>');
-}
-async function lobbyJoinGo(){
- var code=($('ljCode')||{}).value||'';
- code=code.trim().toUpperCase();
- if(code.length<4){toast('کد را کامل وارد کن','err');return}
- try{
-  var d=await api('/api/miniapp/lobby/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})});
-  if(!d.ok){toast(d.error,'err');return}
-  closeSheet();
-  LOBBYCODE=code;
-  toast(d.message||'پیوستی!','ok');
-  show('lobby');
-  lobbyWatch();
- }catch(e){toast(e.message,'err')}
-}
-async function renderLobbyPage(){
- if(!LOBBYCODE){
-  var el=$('pg-lobby');
-  el.innerHTML=gmHead('👥','لابی چندنفره','بازی کامل جرئت/حقیقت با دوستان','renderGames()')
-  +'<div class="card" style="text-align:center;padding:24px">'
-  +'<div style="font-size:34px;margin-bottom:10px">👥</div>'
-  +'<b>لابی فعالی نداری</b><div class="sub" style="margin:8px 0 14px">یک لابی بساز و کدش را برای دوستانت بفرست، یا با کد به لابی دیگر بپیوند.</div>'
-  +'<div style="display:flex;gap:8px"><button class="btn primary" style="flex:1" onclick="lobbyCreate()">🚀 ساخت لابی</button>'
-  +'<button class="btn" style="flex:1" onclick="lobbyJoinSheet()">➕ پیوستن</button></div></div>';
-  return;
+/* ════════════════════════════════════════════════════════════════
+   TITAN — فروشگاه / دستاوردها / پروفایل / اعلان‌ها / پاس
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 🛍 فروشگاه ================= */
+var RARC={'معمولی':'#9aa3b5','کمیاب':'#3aa0ff','حماسی':'#a55cff','افسانه‌ای':'#ff9e4f'};
+function rarCol(i){return RARC[i.rarity]||'#9aa3b5'}
+var CATS=[['all','همه'],['title','لقب'],['theme','قاب'],['power','پاورآپ'],['boost','بوستر'],['box','جعبه'],['util','ابزار']];
+function renderShop(){
+ var s=D.shop||{},items=s.items||[],u=D.user||{};
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🛍</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1 grad" style="margin:0">Apex Store</h1>'
+ +'<p class="sub">خریدها مستقیماً روی حساب واقعی ربات اعمال می‌شوند.</p></div>'
+ +'<div style="text-align:center"><div style="font-size:17px;font-weight:900;color:var(--gold)">🪙 '+faK(u.coins||0)+'</div><small style="font-size:8px;color:var(--muted);letter-spacing:1px">موجودی</small></div></div></div>';
+ var deals=s.deals||[];
+ if(deals.length){
+  h+='<div class="section"><div class="shead"><b>🔥 حراج روزانه</b><small>فقط امروز</small></div><div class="deals">';
+  deals.forEach(function(dl){
+   var it=items.filter(function(x){return x.key===dl.key})[0]||{};
+   h+='<div class="deal tap" onclick="buySheet(\''+dl.key+'\')"><span class="off">'+fa(dl.off)+'٪−</span>'
+   +'<h4>'+esc(it.name||dl.name)+'</h4><p class="sub" style="margin:4px 0 8px">'+esc(it.desc||'')+'</p>'
+   +'<div><s>'+fa(it.price||0)+'🪙</s> <span class="price">'+fa(dl.price)+'🪙</span></div></div>';
+  });
+  h+='</div></div>';
  }
- lobbyWatch();
-}
-function lobbyWatch(){
- stopPoll('lobby');
- lobbyTick();
- startPoll('lobby',lobbyTick,2000);
-}
-async function lobbyTick(){
- if(PAGE!=='lobby'){stopPoll('lobby');return}
- if(!LOBBYCODE)return;
- try{
-  var d=await api('/api/miniapp/lobby/state?code='+encodeURIComponent(LOBBYCODE));
-  lobbyRender(d.lobby);
- }catch(e){
-  if(String(e.message).indexOf('پیدا نشد')>=0){LOBBYCODE='';stopPoll('lobby');renderLobbyPage();toast('لابی بسته شد','warn')}
- }
-}
-function lobbyRender(lb){
- var el=$('pg-lobby');
- var me=(D.user||{}).id||0;
- var h=gmHead('👥','لابی '+lb.code,'راند '+fa(lb.round)+' · '+fa(lb.players.length)+' بازیکن','renderGames()');
- /* code chip */
- h+='<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">'
- +'<span class="codechip">'+esc(lb.code)+'</span>'
- +'<div style="display:flex;gap:7px">'
- +'<button class="btn" onclick="copyText(\''+lb.code+'\')">📋 کپی</button>'
- +'<button class="btn primary" onclick="shareLobby(\''+lb.code+'\')">✈️ دعوت</button></div></div>';
- /* players */
- h+='<div class="section"><div class="shead"><b>👥 بازیکنان</b><small>'+fa(lb.players.length)+'/۲۰</small></div><div class="pl-wrap">';
- lb.players.forEach(function(p){
-  h+='<div class="pl'+(p.ready?' ready':'')+'">'
-  +avaHtml({id:p.id,name:p.name,online:p.online},'sm')
-  +'<div class="grow"><b>'+esc(p.name)+(p.id===lb.leader_id?' 👑':'')+(p.id===me?' <span class="tag cy">تو</span>':'')+'</b>'
-  +'<small>LV '+fa(p.level)+(lb.phase!=='lobby'?' · 🏆 '+fa(p.score)+' امتیاز':' · '+(p.ready?'✅ آماده':'⏳ در انتظار'))+'</small></div>'
-  +(p.vip?'<span class="tag vip">VIP</span>':'')
-  +'</div>';
+ h+='<div class="seg" style="margin:12px 0">'+CATS.map(function(c){return '<button class="'+(SHOPCAT===c[0]?'on':'')+'" onclick="SHOPCAT=\''+c[0]+'\';renderShop();stateSave()">'+c[1]+'</button>'}).join('')+'</div>';
+ var show=items.filter(function(i){return SHOPCAT==='all'||i.cat===SHOPCAT});
+ h+='<div class="items">';
+ show.forEach(function(i){
+  var afford=(u.coins||0)>=(i.price||0);
+  h+='<div class="item tap" onclick="buySheet(\''+i.key+'\')"><div class="rt" style="--rc:'+rarCol(i)+'"></div>'
+  +'<div class="rar">'+i.rar+' '+esc(i.rarity)+'</div><h3>'+esc(i.name)+'</h3><p>'+esc(i.desc)+'</p>'
+  +'<div class="foot"><span class="price">🪙 '+faK(i.price)+'</span>'
+  +'<button class="btn sm '+(afford?'primary':'')+'" '+(afford?'':'disabled')+' onclick="event.stopPropagation();buySheet(\''+i.key+'\')">'+(afford?'خرید':'کم دارم')+'</button></div></div>';
  });
+ if(!show.length)h+='<div class="empty" style="grid-column:1/-1"><span class="ei">🔍</span>آیتمی در این دسته نیست.</div>';
+ h+='</div>';
+ $('pg-shop').innerHTML=h;
+}
+function buySheet(key){
+ var i=(D.shop&&D.shop.items||[]).filter(function(x){return x.key===key})[0];
+ if(!i)return;
+ var deal=(D.shop.deals||[]).filter(function(x){return x.key===key})[0];
+ var price=deal?deal.price:i.price;
+ var u=D.user||{};var afford=(u.coins||0)>=price;
+ openSheet('<h3>'+i.rar+' '+esc(i.name)+'</h3>'
+ +buySheetPreview(i,price,deal,afford)
+ +'<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px"><span class="tag" style="border-color:'+rarCol(i)+'55;color:'+rarCol(i)+'">'+i.rar+' '+esc(i.rarity)+'</span><span class="tag">'+esc(i.cat)+'</span></div>'
+ +'<p style="color:var(--muted);font-size:11px;line-height:2">'+esc(i.desc)+'</p>'
+ +'<div style="display:flex;justify-content:space-between;margin:14px 0;padding:12px;border-radius:14px;background:#ffffff06;border:1px solid var(--line)">'
+ +'<span style="color:var(--muted);font-size:10.5px">قیمت'+(deal?' 🔥 حراج':'')+'</span>'
+ +'<b style="color:var(--gold)">'+(deal?'<s style="color:var(--dim);font-weight:400">'+fa(i.price)+'</s> ':'')+'🪙 '+fa(price)+'</b></div>'
+ +'<div style="display:flex;justify-content:space-between;padding:0 2px;font-size:10.5px;color:var(--muted)"><span>موجودی تو</span><span style="color:'+(afford?'var(--green)':'var(--red)')+'">🪙 '+fa(u.coins||0)+'</span></div>'
+ +'<button class="btn primary wide'+(afford&&price>=100?' glow':'')+'" style="margin-top:16px" '+(afford?'':'disabled')+' onclick="buy(\''+key+'\')">'+(afford?'🛒 خرید قطعی':'سکه کافی نداری')+'</button>');
+}
+async function buy(k){try{haptic('medium');closeSheet();
+ var d=await api('/api/miniapp/shop/buy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})});
+ toast(d.message,'ok');confetti();SND.coin();await refresh(true);renderShop()}catch(e){toast(e.message,'err');await refresh(true)}}
+
+/* ================= 🏅 دستاوردها ================= */
+function renderAch(){
+ var a=D.achievements||[];var got=a.filter(function(x){return x.owned}).length;
+ var pct=a.length?Math.round(got*100/a.length):0;
+ var h='<div class="gcard"><div class="in"><div style="display:flex;align-items:center;gap:14px">'
+ +'<div class="ring" style="width:72px;height:72px"><svg viewBox="0 0 72 72"><circle class="tr" cx="36" cy="36" r="31"></circle><circle class="vl" cx="36" cy="36" r="31" stroke-dasharray="'+(2*Math.PI*31).toFixed(1)+'" stroke-dashoffset="'+(2*Math.PI*31*(1-pct/100)).toFixed(1)+'"></circle></svg>'
+ +'<div style="text-align:center"><b style="font-size:15px">'+fa(pct)+'٪</b></div></div>'
+ +'<div><b style="font-size:14px">تالار افتخارات</b><div class="sub">'+fa(got)+' از '+fa(a.length)+' باز شده — هر دستاورد سکه و XP جایزه دارد</div></div></div>'
+ +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary sm" style="flex:1" onclick="showcaseSheet()">🏅 شوکیس پروفایل (۳ ستاره)</button></div></div></div>';
+ h+='<div class="seg" style="margin:12px 0">'+[['all','همه'],['got','باز شده'],['lock','قفل']].map(function(c){return '<button class="'+(ACHF===c[0]?'on':'')+'" onclick="ACHF=\''+c[0]+'\';renderAch();stateSave()">'+c[1]+'</button>'}).join('')+'</div>';
+ var list=a.filter(function(x){return ACHF==='all'||(ACHF==='got'?x.owned:!x.owned)});
+ h+='<div class="achg">';
+ list.forEach(function(x){
+  h+='<div class="ach '+(x.owned?'got':'lock')+'"><span class="ico">'+(x.owned?'🏆':'🔒')+'</span>'
+  +'<h4>'+esc(x.title)+'</h4><p>'+esc(x.desc)+'</p>'
+  +'<div style="margin-top:8px;font-size:9.5px;color:var(--gold)">🎁 +'+fa(x.reward)+' سکه'+(x.xp?' · +'+fa(x.xp)+' XP':'')+'</div></div>';
+ });
+ if(!list.length)h+='<div class="empty" style="grid-column:1/-1"><span class="ei">🏅</span>این‌جا خالی است.</div>';
+ h+='</div>';
+ $('pg-ach').innerHTML=h;
+}
+/* شوکیس — انتخاب ۳ دستاورد ویژه پروفایل */
+function showcaseSheet(){
+ var a=D.achievements||[];
+ var sc=((D.omega||{}).showcase)||[];
+ openSheet('<h3>🏅 شوکیس پروفایل</h3>'
+ +'<p class="sub" style="margin-bottom:12px">۳ دستاورد برجسته‌ات را انتخاب کن تا روی پروفایلت بدرخشند.</p>'
+ +'<div class="list">'
+ +a.filter(function(x){return x.owned}).map(function(x){
+  var on=sc.indexOf(x.key)>=0;
+  return '<div class="row tap" onclick="showcaseToggle(\''+esc(x.key)+'\')">'
+  +'<div class="medal">'+(on?'⭐':'🏅')+'</div>'
+  +'<div class="grow"><b>'+esc(x.title)+'</b><small>'+esc(x.desc)+'</small></div>'
+  +(on?'<span class="tag gold">در شوکیس</span>':'<span class="tag">افزودن</span>')+'</div>';
+ }).join('')
+ +(a.filter(function(x){return x.owned}).length?'':'<div class="empty" style="padding:14px"><span class="ei">🔒</span>هنوز دستاوردی نداری!</div>')
+ +'</div>');
+}
+async function showcaseToggle(key){
+ try{
+  var d=await api('/api/miniapp/showcase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'toggle',key:key})});
+  toast(d.message,'ok');await refresh(true);showcaseSheet();
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= 👤 پروفایل من ================= */
+function renderMe(){
+ var u=D.user||{},s=D.stats||{},r=D.rank||{};
+ var photo=null;try{if(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.photo_url)photo=tg.initDataUnsafe.user.photo_url}catch(e){}
+ var h='<div class="gcard"><div class="in" style="text-align:center">';
+ h+='<div style="display:flex;justify-content:center;margin-bottom:10px">'+avaHtml({id:u.id,name:u.name,photo:photo,frame:u.frame},'lg')+'</div>';
+ h+='<h1 class="h1">'+esc(u.name||'بازیکن')+(u.verified?' <span class="tag cy">✔</span>':'')+'</h1>';
+ h+='<p class="sub">'+(u.username?'@'+esc(u.username)+' · ':'')+(r.icon||'')+' '+esc(r.name||'')+' · رتبه‌ی جهانی '+(u.rank?'#'+fa(u.rank):'—')+'</p>';
+ h+='<div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-top:10px">'
+ +(u.title?'<span class="tag">🏷 '+esc(u.title)+'</span>':'')
+ +(u.badge?'<span class="tag">🎖 '+esc(u.badge)+'</span>':'')
+ +(u.vip?'<span class="tag vip">👑 VIP'+(u.vip_days?' · '+fa(u.vip_days)+' روز مانده':'')+'</span>':'<span class="tag">عضویت عادی</span>')
+ +((D.omega||{}).brb?'<span class="tag">🌙 موقتاً نیستم</span>':'')
+ +((D.omega||{}).mute?'<span class="tag">🔇 تگ خاموش</span>':'')
+ +((D.omega||{}).birthday?'<span class="tag">🎂 '+esc((D.omega||{}).birthday)+'</span>':'')
+ +'</div>';
+ var sc=(D.omega||{}).showcase||[];
+ if(sc.length){
+  var aMap={};(D.achievements||[]).forEach(function(x){aMap[x.key]=x});
+  h+='<div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-top:10px">'
+  +sc.map(function(k){var a=aMap[k];return a?'<span class="tag cy">🏅 '+esc(a.title)+'</span>':''}).join('')+'</div>';
+ }
+ h+='<div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" style="flex:1" onclick="equipSheet()">✨ تجهیز لقب و قاب</button>'
+ +'<button class="btn" style="flex:1" onclick="showcaseSheet()">🏅 شوکیس</button></div>'
+ +'<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" style="flex:1" onclick="show(\'settings\',{force:true})">⚙️ تنظیمات</button>'
+ +'<button class="btn" style="flex:1" onclick="fbSheet()">📝 بازخورد</button></div>';
  h+='</div></div>';
- /* phase logic */
- if(lb.phase==='lobby'){
-  var amReady=(lb.players.filter(function(p){return p.id===me&&p.ready}).length>0);
-  h+='<div style="display:flex;gap:8px;margin-top:14px">'
-  +'<button class="btn'+(amReady?' green':' primary')+'" style="flex:1" onclick="lobbyAction(\'ready\')">'+(amReady?'✅ آماده‌ام':'⏡ اعلام آمادگی')+'</button>';
-  if(lb.is_leader)h+='<button class="btn green glow" style="flex:1" onclick="lobbyAction(\'start\')">🚀 شروع بازی</button>';
-  h+='<button class="btn red" onclick="lobbyAction(\'leave\')">خروج</button></div>';
-  if(lb.is_leader&&lb.players.length<2)h+='<div class="card" style="margin-top:10px;text-align:center;font-size:10px;color:var(--muted)">برای شروع حداقل ۲ بازیکن لازم است — کد را بفرست!</div>';
- }else if(lb.phase==='topic'){
-  var q=lb.questioner;
-  if(q===me){
-   h+='<div class="qcard"><span class="qtag">🎤 نوبت تو — موضوع را انتخاب کن</span></div>';
-   h+='<div class="gtabs">';
-   lb.modes.forEach(function(m){
-    h+='<button class="gtab" onclick="lobbyAction(\'topic\',\''+m.key+'\')">'+m.label+'</button>';
-   });
-   h+='</div>';
-  }else{
-   var qn=(lb.players.filter(function(p){return p.id===q})[0]||{}).name||'؟';
-   h+='<div class="bigres"><span class="bico">🎤</span><span class="bt">'+esc(qn)+' دارد موضوع انتخاب می‌کند...</span>'
-   +'<div class="bs">راند '+fa(lb.round)+' · نوبت‌ها می‌چرخند</div></div>';
-  }
-  if(lb.is_leader)h+='<button class="btn red wide" style="margin-top:8px" onclick="lobbyAction(\'end\')">🏁 پایان بازی</button>';
-  h+='<button class="btn wide" style="margin-top:8px" onclick="lobbyAction(\'leave\')">🚪 خروج</button>';
- }else if(lb.phase==='target'){
-  var q2=lb.questioner;
-  if(q2===me){
-   h+='<div class="qcard"><span class="qtag">🎯 هدف را انتخاب کن</span><div class="sub">سوال از بازیکن انتخابی پرسیده می‌شود</div></div>';
-   lb.players.forEach(function(p){
-    if(p.id===me)return;
-    h+='<div class="pl" onclick="lobbyAction(\'target\','+p.id+')" style="cursor:pointer">'+avaHtml({id:p.id,name:p.name},'sm')
-    +'<div class="grow"><b>'+esc(p.name)+'</b><small>LV '+fa(p.level)+' · '+fa(p.score)+' امتیاز</small></div><span class="sc">›</span></div>';
-   });
-  }else{
-   h+='<div class="bigres"><span class="bico">🎯</span><span class="bt">انتخاب هدف در جریان است...</span></div>';
-  }
- }else if(lb.phase==='question'&&lb.prompt){
-  var pr=lb.prompt;
-  h+='<div class="qcard"><span class="qtag">'+esc(pr.mode_label)+' — راند '+fa(lb.round)+'</span>'
-  +'<div class="qtext">'+esc(pr.question)+'</div>'
-  +'<div style="display:flex;justify-content:space-between;margin-top:12px;align-items:center">'
-  +'<span class="sub">🎯 هدف: <b>'+esc(pr.target_name)+'</b></span>'
-  +timerRing(Math.max(0,Math.ceil(pr.timeout-(lb.now-pr.sent_ts))),'lbT')+'</div></div>';
-  if(pr.answered){
-   h+='<div class="card" style="border-color:#31e98144"><b style="color:var(--green);font-size:11px">✅ پاسخ ثبت شد</b>'
-   +'<p style="margin:8px 0 0;font-size:11.5px;line-height:2">'+esc(pr.answer_text)+'</p>'
-   +(pr.reward?'<div class="sub" style="margin-top:6px">پاداش: +'+fa(pr.reward.xp)+' XP · +'+fa(pr.reward.coins)+' سکه</div>':'')
-   +'<div class="sub" style="margin-top:8px">نوبت بعدی به‌زودی...</div></div>';
-  }else if(pr.target_uid===me){
-   h+='<textarea class="input" id="lbAns" maxlength="400" placeholder="جوابت را بنویس (هرچه مفصل‌تر، پاداش بیشتر!)..." style="min-height:90px"></textarea>'
-   +'<button class="btn primary wide glow" style="margin-top:10px" onclick="lobbyAnswer()">✍️ ثبت پاسخ</button>';
-  }else{
-   h+='<div class="bigres" style="padding:18px"><span class="bico">⏳</span><span class="bt">در انتظار پاسخ '+esc(pr.target_name)+'...</span></div>';
-   if(me===pr.questioner_uid||lb.is_leader)h+='<button class="btn wide" onclick="lobbyAction(\'skip\')">⏭ رد کردن</button>';
-  }
- }else if(lb.phase==='done'){
-  h+='<div class="bigres"><span class="bico">🏆</span><span class="bt">بازی تمام شد!</span></div>';
-  if(lb.podium&&lb.podium.length){
-   h+='<div class="list">';
-   lb.podium.forEach(function(p,i){
-    h+='<div class="row'+(p.id===me?' me':'')+'"><div class="medal'+(i<3?' m'+(i+1):'')+'">'+(i===0?'🥇':i===1?'🥈':i===2?'🥉':fa(i+1))+'</div>'
-    +avaHtml({id:p.id,name:p.name},'sm')+'<div class="grow"><b>'+esc(p.name)+'</b><small>🏆 '+fa(p.score)+' امتیاز</small></div></div>';
-   });
-   h+='</div>';
-  }
-  h+='<button class="btn primary wide" style="margin-top:12px" onclick="LOBBYCODE=\'\';renderLobbyPage()">🏠 لابی جدید</button>';
+ h+='<div class="grid g4" style="margin-top:12px">'
+ +st('سطح','p_lv',u.level)+st('XP','p_xp',u.xp)+st('سکه','p_co',u.coins)+st('برد','p_w',u.wins)
+ +st('باخت','p_l',u.losses)+st('نرخ برد','p_wr',u.winrate)+st('استریک','p_st',u.streak)+st('رکورد','p_bs',u.best_streak)
+ +st('دوئل','p_d',u.duels)+st('ELO','p_e',u.elo)+st('شهرت','p_r',u.reputation)+st('استریک روز','p_ds',u.daily_streak)
+ +'</div>';
+ /* سبک بازی */
+ var modes=[['🧠 حقیقت',s.truth],['🔥 جرئت',s.dare],['💗 شوخ‌باش',s.flirty],['⚡ سرعتی',s.speed],['🗳 رأی‌گیری',s.vote]];
+ var mx=1;modes.forEach(function(m){mx=Math.max(mx,m[1]||0)});
+ h+='<div class="card"><div class="shead" style="padding:0"><b>🎮 سبک بازی من</b><small>MODES</small></div>';
+ modes.forEach(function(m){var p=Math.round((m[1]||0)*100/mx);
+  h+='<div style="margin:9px 0"><div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted)"><span>'+m[0]+'</span><span>'+fa(m[1]||0)+'</span></div><div class="bar thin" style="margin-top:5px"><i style="width:'+Math.max(3,p)+'%"></i></div></div>'});
+ h+='</div>';
+ h+='<div class="grid g2">'
+ +'<div class="card"><b style="font-size:11px">🎮 بازی خصوصی</b><p class="sub">'+fa(s.private_games||0)+' مسابقه</p></div>'
+ +'<div class="card"><b style="font-size:11px">🏟 مسابقات برده</b><p class="sub">'+fa(s.tournaments_won||0)+' قهرمانی</p></div>'
+ +'<div class="card"><b style="font-size:11px">🔥 رکورد Survival</b><p class="sub">'+fa(s.survival_best||0)+' استریک</p></div>'
+ +'<div class="card"><b style="font-size:11px">🤝 بازی تیمی</b><p class="sub">'+fa(s.team_battles||0)+' نبرد</p></div>'
+ +'<div class="card"><b style="font-size:11px">🧠 مینی‌گیم</b><p class="sub">'+fa(u.mini_games||0)+' بازی · '+fa(u.mini_games_won||0)+' برد</p></div>'
+ +'<div class="card"><b style="font-size:11px">📅 عضویت از</b><p class="sub">'+(u.created_at?timeAgo(u.created_at):'—')+'</p></div>'
+ +'</div>';
+ /* دوستان و رقبا */
+ h+='<div class="section"><div class="shead"><b>👥 دوستان</b><small>'+fa((D.friends||[]).length)+' نفر</small></div>';
+ if((D.friends||[]).length){
+  h+='<div class="chips" style="margin:0 0 4px">';
+  D.friends.forEach(function(f){h+='<button class="chip" onclick="profileView('+f.id+')" style="display:flex;align-items:center;gap:7px">'+avaHtml({id:f.id,name:f.name},'xs')+'<span>'+esc(f.name)+' · LV'+fa(f.level)+'</span></button>'});
+  h+='</div>';
+ }else h+='<div class="empty" style="padding:18px"><span class="ei">👋</span>هنوز دوستی نداری — از Play Hub اضافه کن!</div>';
+ h+='</div>';
+ h+='<div class="section"><div class="shead"><b>⚔️ رقبا</b><small>'+fa((D.rivals||[]).length)+' نفر</small></div>';
+ if((D.rivals||[]).length){
+  h+='<div class="list">';
+  D.rivals.forEach(function(x){h+='<div class="row tap" onclick="profileView('+x.id+')" style="cursor:pointer">'+avaHtml({id:x.id,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>ELO '+fa(x.elo)+'</small></div><button class="btn sm" onclick="event.stopPropagation();duelCreate()">🤺 دوئل</button></div>'});
+  h+='</div>';
+ }else h+='<div class="empty" style="padding:18px"><span class="ei">🥷</span>رقیبی ثبت نشده — در دوئل‌ها حریفت را رقیب کن!</div>';
+ h+='</div>';
+ /* موجودی */
+ if((D.inventory||[]).length){
+  h+='<div class="section"><div class="shead"><b>🎒 موجودی من</b><small>'+fa(D.inventory.length)+' قلم</small></div><div class="chips" style="margin:0">';
+  D.inventory.forEach(function(i){h+='<span class="tag" style="font-size:10px;padding:7px 12px">'+esc(i.name)+' ×'+fa(i.count)+'</span>'});
+  h+='</div></div>';
  }
- el.innerHTML=h;
-}
-function shareLobby(code){
- var un=(D.bot||'').replace(/^@/,'');
- shareText('🎮 من داخل لابی ApexRival هستم! کد پیوستن: '+code+'\nمینی‌اپ ربات را باز کن و با این کد بیا جلو ⚔️');
-}
-async function lobbyAction(kind,extra){
- var body={code:LOBBYCODE};
- if(kind==='topic')body.mode=extra;
- if(kind==='target')body.target=extra;
- try{
-  var d=await api('/api/miniapp/lobby/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!d.ok){toast(d.error,'err');return}
-  if(d.message)toast(d.message,'ok');
-  if(kind==='leave'){stopPoll('lobby');LOBBYCODE='';show('play');return}
-  if(kind==='end'){confetti()}
-  if(d.lobby)lobbyRender(d.lobby);else lobbyTick();
- }catch(e){toast(e.message,'err')}
-}
-async function lobbyAnswer(){
- var t=($('lbAns')||{}).value||'';
- if(t.trim().length<2){toast('جوابت را بنویس','err');return}
- try{
-  var d=await api('/api/miniapp/lobby/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:LOBBYCODE,text:t})});
-  if(!d.ok){toast(d.error,'err');return}
-  haptic('ok');confetti();
-  toast(d.message,'ok');
-  lobbyRender(d.lobby);
- }catch(e){toast(e.message,'err')}
+ /* فعالیت */
+ if((D.activity||[]).length){
+  h+='<div class="section"><div class="shead"><b>📜 آخرین فعالیت‌ها</b><small>ACTIVITY</small></div><div class="card"><div class="tl">';
+  D.activity.forEach(function(a){
+   h+='<div class="ev"><div class="b">⚡</div><div class="grow"><b>'+esc(a.action)+'</b>'+(a.details?'<small>'+esc(a.details)+'</small>':'')+'</div><time>'+timeAgo(a.ts)+'</time></div>';
+  });
+  h+='</div></div></div>';
+ }
+ $('pg-me').innerHTML=h;
+ countUp($('p_lv'),u.level);countUp($('p_xp'),u.xp);countUp($('p_co'),u.coins);countUp($('p_w'),u.wins);
+ countUp($('p_l'),u.losses);countUp($('p_wr'),u.winrate);countUp($('p_st'),u.streak);countUp($('p_bs'),u.best_streak);
+ countUp($('p_d'),u.duels);countUp($('p_e'),u.elo);countUp($('p_r'),u.reputation);countUp($('p_ds'),u.daily_streak);
 }
 
-/* ================= DUEL ================= */
-var DUELCODE=0;
-async function duelCreate(){
- try{
-  var d=await api('/api/miniapp/duel/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
-  if(!d.ok){toast(d.error,'err');return}
-  DUELCODE=d.code;
-  toast(d.message,'ok');
-  show('duel');
-  duelWatch();
- }catch(e){toast(e.message,'err')}
-}
-function duelJoinSheet(){
- openSheet('<h3>🤺 پیوستن به دوئل</h3>'
- +'<p class="sub" style="margin-bottom:12px">کد دوئل را که حریفت فرستاده وارد کن:</p>'
- +'<input class="input" id="djCode" type="number" placeholder="مثلاً: ۱۰۴۲" style="text-align:center;font-size:17px;font-weight:900">'
- +'<button class="btn primary wide" style="margin-top:12px" onclick="duelJoinGo()">⚔️ ورود به دوئل</button>');
-}
-async function duelJoinGo(){
- var code=parseInt(($('djCode')||{}).value||'0',10);
- if(!code){toast('کد را وارد کن','err');return}
- try{
-  var d=await api('/api/miniapp/duel/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})});
-  if(!d.ok){toast(d.error,'err');return}
-  closeSheet();
-  DUELCODE=code;
-  toast(d.message||'به دوئل پیوستی!','ok');
-  show('duel');
-  duelWatch();
- }catch(e){toast(e.message,'err')}
-}
-async function renderDuelPage(){
- if(!DUELCODE){
-  var el=$('pg-duel');
-  el.innerHTML=gmHead('🤺','دوئل دو نفره','۱۰ راند — هر جواب +۳ XP، برنده +۱۰XP +۵🪙','renderGames()')
-  +'<div class="card" style="text-align:center;padding:24px">'
-  +'<div style="font-size:34px;margin-bottom:10px">⚔️</div>'
-  +'<b>دوئل فعالی نداری</b><div class="sub" style="margin:8px 0 14px">دوئل بساز و کد را برای حریفت بفرست.</div>'
-  +'<div style="display:flex;gap:8px"><button class="btn primary" style="flex:1" onclick="duelCreate()">⚔️ ساخت دوئل</button>'
-  +'<button class="btn" style="flex:1" onclick="duelJoinSheet()">➕ پیوستن</button></div></div>';
-  /* لیست دوئل‌های فعال */
-  try{
-   var dl=await api('/api/miniapp/duel/list');
-   if((dl.items||[]).length){
-    var h2='<div class="section"><div class="shead"><b>🤺 دوئل‌های فعال من</b><small>'+fa(dl.items.length)+'</small></div><div class="list">';
-    dl.items.forEach(function(x){
-     h2+='<div class="row" onclick="DUELCODE='+x.code+';show(\'duel\');duelWatch()" style="cursor:pointer">'
-     +'<div class="medal">⚔️</div><div class="grow"><b>دوئل #'+fa(x.code)+'</b><small>'+esc(x.a.name)+' '+fa(x.a.score)+' - '+fa(x.b?x.b.score:0)+' '+(x.b?esc(x.b.name):'⏳')+'</small></div><span class="sc">›</span></div>';
-    });
-    el.innerHTML+=h2+'</div></div>';
-   }
-  }catch(e){}
-  return;
+/* تجهیزات پروفایل */
+function equipSheet(){
+ var c=D.cosmetics||{};
+ function tab(kind,label,arr,cur){
+  var h='<div style="margin:12px 0 16px"><div class="shead" style="padding:0"><b>'+label+'</b><small>مالکیت‌دار</small></div><div class="list">';
+  if(!arr.length)h+='<div class="empty" style="padding:14px">چیزی نداری — از فروشگاه بخر!</div>';
+  arr.forEach(function(x){
+   h+='<div class="row"><div class="medal">'+(x.owned?'✅':'🔒')+'</div><div class="grow"><b>'+esc(x.name)+'</b><small>'+(x.owned?'در اختیار':'قفل — سطح '+fa(x.req_level))+'</small></div>'
+   +(x.owned?'<button class="btn sm'+(cur===x.key?' green':' primary')+'" onclick="equip(\''+kind+'\',\''+x.key+'\')">'+(cur===x.key?'فعال ✓':'تجهیز')+'</button>':'')+'</div>';
+  });
+  return h+'</div></div>';
  }
- duelWatch();
+ var u=D.user||{};
+ openSheet('<h3>✨ ظاهر پروفایل</h3>'
+ +'<div class="seg" style="margin:0 0 6px">'
+ +[['القاب','titles'],['قاب‌ها','frames'],['بج‌ها','badges']].map(function(x,i){return '<button class="'+(EQTAB===i?'on':'')+'" onclick="EQTAB='+i+';stateSave();equipSheet()">'+x[0]+'</button>'}).join('')+'</div>'
+ +(EQTAB===0?tab('title','🏷 لقب‌های من',c.titles||[],u.title_key||'')
+  :EQTAB===1?tab('frame','🖼 قاب‌های من',c.frames||[],u.frame||'default')
+  :tab('badge','🎖 بج‌های من',c.badges||[],u.badge_key||'')));
 }
-function duelWatch(){
- stopPoll('duel');
- duelTick();
- startPoll('duel',duelTick,2200);
-}
-async function duelTick(){
- if(PAGE!=='duel'){stopPoll('duel');return}
- if(!DUELCODE)return;
- try{
-  var d=await api('/api/miniapp/duel/state?code='+DUELCODE);
-  duelRender(d.duel);
- }catch(e){
-  if(String(e.message).indexOf('پیدا نشد')>=0){DUELCODE=0;stopPoll('duel');renderDuelPage()}
+async function equip(kind,key){try{haptic('medium');
+ var d=await api('/api/miniapp/profile/equip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kind,key:key})});
+ toast(d.message,'ok');await refresh(true);equipSheet();renderMe()}catch(e){toast(e.message,'err')}}
+
+/* ================= 🔔 اعلان‌ها ================= */
+function renderNotif(){
+ var n=D.notifications||{},items=n.items||[];
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🔔</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">اعلان‌ها</h1><p class="sub">'+fa(n.unread||0)+' خوانده‌نشده از '+fa(items.length)+'</p></div>'
+ +(n.unread?'<button class="btn primary sm" onclick="notifRead()">✓ خوانده شد</button>':'')+'</div></div>';
+ if(!items.length)h+='<div class="empty"><span class="ei">📭</span>صندوق‌ات خالی است — هنوز خبری نیامده!</div>';
+ else{
+  h+='<div class="list">';
+  items.forEach(function(x){
+   var ic={'level_up':'⬆️','achievement':'🏆','private_invite':'🎮','friend_req':'👥','season_end':'🌐','tournament':'🏟'}[x.type]||'🔔';
+   h+='<div class="row" style="'+(x.read?'':'border-color:#7c5cff44;background:#7c5cff0a')+'">'
+   +'<div class="medal">'+ic+'</div><div class="grow"><b>'+esc(x.title||'اعلان')+'</b>'+(x.body?'<small>'+esc(x.body)+'</small>':'')+'</div><time style="color:var(--dim);font-size:8.5px;white-space:nowrap">'+timeAgo(x.ts)+'</time></div>';
+  });
+  h+='</div>';
  }
+ $('pg-notif').innerHTML=h;
 }
-function duelRender(du){
- var el=$('pg-duel');
- var me=(D.user||{}).id||0;
- var h=gmHead('🤺','دوئل #'+fa(du.code),'راند '+fa(Math.min(du.round+1,du.total_rounds))+' از '+fa(du.total_rounds),'renderGames()');
- h+='<div class="duelbar">'
- +'<div class="side'+(du.a.id===me?' me':'')+'">'+avaHtml({id:du.a.id,name:du.a.name},'sm')+'<b>'+esc(du.a.name)+'</b><div class="sc">'+fa(du.a.score)+'</div></div>'
- +'<div class="vs">VS</div>'
- +'<div class="side'+(du.b&&du.b.id===me?' me':'')+'">'+(du.b?avaHtml({id:du.b.id,name:du.b.name},'sm')+'<b>'+esc(du.b.name)+'</b><div class="sc">'+fa(du.b.score)+'</div>':'<b>⏳ منتظر حریف...</b><div class="sc">—</div>')+'</div></div>';
- if(du.state==='waiting'){
-  h+='<div class="card" style="text-align:center">'
-  +'<span class="codechip" style="font-size:14px;letter-spacing:1px">کد: '+fa(du.code)+'</span>'
-  +'<div class="sub" style="margin:10px 0">این کد را برای حریفت بفرست تا وارد شود</div>'
-  +'<div style="display:flex;gap:8px"><button class="btn primary" style="flex:1" onclick="copyText(\''+du.code+'\')">📋 کپی کد</button>'
-  +'<button class="btn" style="flex:1" onclick="shareDuel('+du.code+')">✈️ دعوت</button></div></div>';
- }else if(du.state==='topic'){
-  if(du.my_turn){
-   h+='<div class="qcard"><span class="qtag">🎤 نوبت تو — موضوع را انتخاب کن</span></div><div class="gtabs">';
-   du.modes.forEach(function(m){h+='<button class="gtab" onclick="duelAction(\'topic\',\''+m.key+'\')">'+m.label+'</button>'});
+async function notifRead(){try{var d=await api('/api/miniapp/notifications/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});toast(d.message,'ok');setBell(0);await refresh(true);renderNotif()}catch(e){toast(e.message,'err')}}
+
+/* ================= 🎫 Season Pass ================= */
+function renderPass(){
+ var p=D.pass||{},u=D.user||{};
+ var pct=p.per_tier?Math.round((p.xp%p.per_tier)*100/p.per_tier):0;
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🎫</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">Season Pass</h1>'
+ +'<p class="sub">Tier '+fa(p.tier||0)+' از '+fa(p.max_tier||50)+' · '+fa(p.to_next||0)+' XP تا Tier بعد</p>'
+ +'<div class="bar" style="margin-top:8px"><i style="width:'+pct+'%"></i></div></div>'
+ +'<div style="text-align:center"><b style="font-size:24px;display:block">'+fa(p.tier||0)+'</b><small style="font-size:8px;color:var(--muted);letter-spacing:2px">TIER</small></div></div></div>';
+ if(!p.premium){
+  h+='<div class="card" style="margin:14px 0;border-color:#ffc85744;background:linear-gradient(150deg,#1a1508,#0c0a16)">'
+  +'<div style="display:flex;align-items:center;gap:12px"><div style="font-size:26px">👑</div>'
+  +'<div style="flex:1"><b>Premium Pass</b><div class="sub">۲ برابر پاداش + قاب‌های ویژه + ۳۰ روز VIP</div></div>'
+  +'<button class="btn gold" onclick="passPremiumAsk()">🪙 '+fa(p.premium_price||1500)+'</button></div></div>';
+ }else{
+  h+='<div class="card" style="margin:14px 0;border-color:#ffc85744;display:flex;align-items:center;gap:10px"><span style="font-size:22px">👑</span><b>Premium فعال است</b><span class="tag vip">کامل</span></div>';
+ }
+ h+='<div class="section"><div class="shead"><b>🆓 مسیر رایگان</b><small>'+fa((p.free||[]).length)+' پاداش</small></div>';
+ (p.free||[]).forEach(function(t){
+  var can=t.open&&!t.claimed;
+  h+='<div class="tier'+(t.open?' open':' lockt')+'"><div class="tno">'+fa(t.tier)+'</div>'
+  +'<div class="grow"><b>Tier '+fa(t.tier)+(t.title?' · لقب '+esc(t.title):'')+'</b><small>🪙 '+fa(t.coins||0)+' سکه'+(t.item?' · آیتم '+esc(t.item):'')+'</small></div>'
+  +(t.claimed?'<span class="tag ok">گرفته شد ✓</span>':can?'<button class="btn primary sm glow" onclick="passClaim('+t.tier+',false)">دریافت</button>':'<span class="tag">🔒 قفل</span>')+'</div>';
+ });
+ h+='</div>';
+ h+='<div class="section"><div class="shead"><b>👑 مسیر Premium</b><small>'+(p.premium?'فعال':'نیاز به خرید')+'</small></div>';
+ (p.premium_track||[]).forEach(function(t){
+  var can=t.open&&!t.claimed&&p.premium;
+  h+='<div class="tier'+(t.open?' open':' lockt')+'" style="'+(p.premium?'':'opacity:.55')+'"><div class="tno">'+fa(t.tier)+'</div>'
+  +'<div class="grow"><b>Tier '+fa(t.tier)+(t.title?' · '+esc(t.title):'')+(t.frame?' · قاب '+esc(t.frame):'')+'</b><small>🪙 '+fa(t.coins||0)+' سکه'+(t.item?' · آیتم '+esc(t.item):'')+'</small></div>'
+  +(t.claimed?'<span class="tag ok">گرفته شد ✓</span>':can?'<button class="btn gold sm" onclick="passClaim('+t.tier+',true)">دریافت</button>':p.premium?'<span class="tag">🔒 قفل</span>':'<span class="tag vip">👑 Premium</span>')+'</div>';
+ });
+ h+='</div>';
+ $('pg-pass').innerHTML=h;
+}
+function passPremiumAsk(){
+ askConfirm('خرید Premium Pass','با '+fa((D.pass||{}).premium_price||1500)+' سکه، Premium فعال می‌شود: ۲ برابر پاداش + ۳۰ روز VIP. می‌خری؟','خرید',passPremium);
+}
+async function passClaim(tier,prem){try{haptic('medium');
+ var d=await api('/api/miniapp/pass/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tier:tier,premium:prem})});
+ toast(d.message,'ok');confetti();SND.win();await refresh(true);renderPass()}catch(e){toast(e.message,'err')}}
+async function passPremium(){try{haptic('medium');
+ var d=await api('/api/miniapp/pass/premium',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+ toast(d.message,'ok');confetti();SND.win();await refresh(true);renderPass()}catch(e){toast(e.message,'err')}}
+
+/* ================= 👁 پروفایل عمومی ================= */
+async function profileView(id){
+ if(D.user&&Number(id)===Number(D.user.id)){show('me',{force:true});return}
+ CURPROF=id;
+ openSheet('<div style="text-align:center;padding:18px 0"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var p=await api('/api/miniapp/profile?id='+Number(id));
+  if(CURPROF!==Number(id))return;
+  var h='<div style="text-align:center">';
+  h+='<div style="display:flex;justify-content:center;margin-bottom:10px">'+avaHtml({id:p.id,name:p.name,online:p.online},'lg')+'</div>';
+  h+='<h3 style="margin:2px 0 4px">'+esc(p.name)+(p.verified?' <span class="tag cy">✔</span>':'')+'</h3>'
+  +'<p class="sub">'+(p.rank?p.rank.icon+' '+esc(p.rank.name)+' · ':'')+'LV '+fa(p.level)+(p.username?' · @'+esc(p.username):'')+'</p>'
+  +'<div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin:10px 0">'
+  +(p.title?'<span class="tag">🏷 '+esc(p.title)+'</span>':'')
+  +(p.badge?'<span class="tag">🎖 '+esc(p.badge)+'</span>':'')
+  +(p.online?'<span class="tag ok">آنلاین</span>':'<span class="tag">آفلاین</span>')
+  +(p.is_friend?'<span class="tag cy">👥 دوست تو</span>':'')
+  +'</div></div>';
+  if(p.show_stats&&p.stats){
+   h+='<div class="grid g4" style="margin:14px 0">'
+   +'<div class="stat"><small>بازی</small><b>'+fa(p.stats.games)+'</b></div>'
+   +'<div class="stat"><small>برد</small><b>'+fa(p.stats.wins)+'</b></div>'
+   +'<div class="stat"><small>نرخ برد</small><b>'+fa(p.stats.winrate)+'٪</b></div>'
+   +'<div class="stat"><small>ELO</small><b>'+fa(p.stats.elo)+'</b></div></div>';
+  }else h+='<div class="empty" style="padding:14px"><span class="ei">🔒</span>این بازیکن آمارش را خصوصی کرده است.</div>';
+  if(p.show_achievements&&p.achievements_top){
+   h+='<div class="shead" style="padding:0"><b>🏅 دستاوردها</b><small>'+fa(p.achievements_count)+' عدد</small></div><div class="achg" style="grid-template-columns:1fr 1fr">';
+   p.achievements_top.forEach(function(a){h+='<div class="ach got"><h4 style="margin:0">'+esc(a.title)+'</h4></div>'});
    h+='</div>';
-  }else{
-   h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">نوبت انتخاب موضوع با حریف است...</span></div>';
   }
- }else if(du.state==='answer'&&du.question){
-  h+='<div class="qcard"><span class="qtag">'+esc(du.question.mode_label)+' — راند '+fa(du.round+1)+'</span>'
-  +'<div class="qtext">'+esc(du.question.text)+'</div>'
-  +'<div style="display:flex;justify-content:flex-end;margin-top:10px">'+timerRing(Math.max(0,Math.ceil(du.question.timeout-(Date.now()/1000-du.question.ts))),'duT')+'</div></div>';
-  if(du.answering){
-   h+='<textarea class="input" id="duAns" maxlength="400" placeholder="جوابت را بنویس..." style="min-height:80px"></textarea>'
-   +'<button class="btn primary wide glow" style="margin-top:10px" onclick="duelAnswer()">✍️ ثبت جواب (+۳ XP)</button>'
-   +'<button class="btn wide" style="margin-top:8px" onclick="duelAction(\'skip\')">⏭ رد کردن</button>';
-  }else{
-   h+='<div class="bigres" style="padding:16px"><span class="bico">⏳</span><span class="bt">حریف دارد جواب می‌دهد...</span></div>';
-  }
- }else if(du.state==='done'){
-  var winner=du.winner;
-  h+='<div class="bigres"><span class="bico">'+(winner===me?'🏆':'🏁')+'</span><span class="bt">'+(winner===me?'قهرمان دوئل شدی! +۱۰ XP +۵ سکه':(winner===0?'مساوی!':'حریف برنده شد'))+'</span></div>'
-  +'<button class="btn primary wide" style="margin-top:10px" onclick="DUELCODE=0;renderDuelPage()">⚔️ دوئل جدید</button>';
- }
- el.innerHTML=h;
-}
-function shareDuel(code){
- shareText('⚔️ من در دوئل ApexRival منتظرتم! کد دوئل: '+code+'\nمینی‌اپ ربات را باز کن و با این کد وارد شو 🤺');
-}
-async function duelAction(kind,extra){
- var body={code:DUELCODE};
- if(kind==='topic')body.mode=extra;
- try{
-  var d=await api('/api/miniapp/duel/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!d.ok){toast(d.error,'err');return}
-  if(d.message)toast(d.message,'ok');
-  if(d.finished&&d.finish){confetti()}
-  if(d.duel)duelRender(d.duel);else duelTick();
- }catch(e){toast(e.message,'err')}
-}
-async function duelAnswer(){
- var t=($('duAns')||{}).value||'';
- if(t.trim().length<2){toast('جوابت را بنویس','err');return}
- try{
-  var d=await api('/api/miniapp/duel/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:DUELCODE,text:t})});
-  if(!d.ok){toast(d.error,'err');return}
-  haptic('ok');
-  if(d.finished&&d.finish)confetti();
-  toast(d.message,'ok');
-  duelRender(d.duel);
- }catch(e){toast(e.message,'err')}
+  h+='<div style="display:flex;gap:8px;margin-top:16px"><button class="btn" style="flex:1" onclick="compareSheet('+Number(id)+')">⚖️ مقایسه با من</button>'
+  +'<button class="btn primary" style="flex:1" onclick="closeSheet();duelCreate()">🤺 چالش دوئل</button>'
+  +(p.is_friend?'':'<button class="btn green" style="flex:1" onclick="friendAdd('+Number(id)+')">➕ دوست</button>')+'</div>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">🔍</span>'+esc(e.message)+'</div>'}
 }
 
-/* ================= ARENA (رنک‌دار) ================= */
-async function renderArenaPage(){
- var el=$('pg-arena');
- el.innerHTML='<div class="sk tall"></div>';
- try{
-  var d=await api('/api/miniapp/arena');
-  var me=(D.user||{}).id||0;
-  var h=gmHead('🎯','آرنا رنک‌دار','اولین '+fa(d.target)+' امتیاز — برنده ELO می‌گیرد','renderGames()');
-  h+='<div class="grid g4" style="margin-bottom:12px">'
-  +'<div class="stat"><small>لیگ</small><b style="font-size:13px">'+d.tier_icon+' '+esc(d.tier)+'</b></div>'
-  +'<div class="stat"><small>ELO</small><b>'+fa(d.elo)+'</b></div>'
-  +'<div class="stat"><small>برد</small><b>'+fa(d.wins)+'</b></div>'
-  +'<div class="stat"><small>باخت</small><b>'+fa(d.losses)+'</b></div></div>';
-  if(d.active&&d.match){
-   var m=d.match;
-   h+='<div class="duelbar">'
-   +'<div class="side me"><b>تو</b><div class="sc">'+fa(m.me.score)+'</div></div>'
-   +'<div class="vs">'+fa(d.target)+' امتیازی</div>'
-   +'<div class="side"><b>'+esc(m.opp.name)+'</b><div class="sc">'+fa(m.opp.score)+'</div></div></div>';
-   if(m.my_turn&&m.question){
-    h+='<div class="qcard"><span class="qtag">❓ نوبت تو — جواب درست = ادامه نوبت</span>'
-    +'<div class="qtext">'+esc(m.question.text)+'</div></div>';
-    var letters=['🅰','🅱','🅲','🅳'];
-    m.question.options.forEach(function(o,i){
-     h+='<button class="opt" onclick="arenaAns('+i+',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
-    });
-   }else{
-    h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">حریف دارد جواب می‌دهد...</span><div class="bs">'+esc(m.opp.name)+' · ELO '+fa(m.opp.elo)+'</div></div>';
-   }
-  }else if(d.in_queue){
-   h+='<div class="bigres"><span class="bico">🎯</span><span class="bt">در صف جستجوی حریف...</span>'
-   +'<div class="bs">نزدیک‌ترین ELO به تو پیدا می‌شود · '+fa(d.queue_len)+' نفر در صف</div></div>'
-   +'<button class="btn red wide" onclick="arenaLeave()">🚪 خروج از صف</button>';
-  }else{
-   h+='<div class="bigres"><span class="bico">🏆</span><span class="bt">آرنا منتظر توست!</span>'
-   +'<div class="bs">با حریفی هم‌سطح خودت روبه‌رو شو — برنده ELO و جایزه می‌گیرد</div></div>'
-   +'<button class="btn primary wide glow" onclick="arenaJoin()">🎯 پیدا کردن حریف</button>';
-  }
-  el.innerHTML=h;
-  if(d.active||d.in_queue)arenaWatch();
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">🎯</span>'+esc(e.message)+'</div>'}
-}
-function arenaWatch(){
- stopPoll('arena');
- startPoll('arena',function(){
-  if(PAGE!=='arena'){stopPoll('arena');return}
-  renderArenaPage();
- },2500);
-}
-async function arenaJoin(){
- try{
-  var d=await api('/api/miniapp/arena/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
-  if(!d.ok){toast(d.error,'err');return}
-  if(d.matched){haptic('ok');confetti();toast(d.message,'ok')}
-  else toast(d.message,'ok');
-  renderArenaPage();
- }catch(e){toast(e.message,'err')}
-}
-async function arenaLeave(){
- try{
-  var d=await api('/api/miniapp/arena/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
-  toast(d.message,'ok');
-  renderArenaPage();
- }catch(e){toast(e.message,'err')}
-}
-async function arenaAns(i,btn){
- if(btn.disabled)return;
- try{
-  var d=await api('/api/miniapp/arena/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idx:i})});
-  haptic(d.correct?'ok':'error');
-  if(d.correct)btn.classList.add('right');else btn.classList.add('wrong');
-  if(d.finished&&d.finish){
-   stopPoll('arena');
-   setTimeout(function(){
-    var f=d.finish;
-    var el=$('pg-arena');
-    el.innerHTML=gmHead('🏆','پایان نبرد آرنا','نبرد #'+fa(f.id||0),'renderArenaPage()')
-    +'<div class="bigres"><span class="bico">'+(f.winner===((D.user||{}).id||0)?'🏆':'🏁')+'</span>'
-    +'<span class="bt">'+esc(f.winner_name)+' برنده شد!</span>'
-    +'<div class="bs">'+fa(f.score[0])+' - '+fa(f.score[1])+'</div>'
-    +'<div class="bs">ELO جدید: '+fa(f.new_elo)+(f.promo?' · 🎉 ارتقای لیگ!':'')+'</div></div>'
-    +'<button class="btn primary wide" onclick="renderArenaPage()">🎯 نبرد جدید</button>';
-    confetti();
-   },900);
-   return;
-  }
-  setTimeout(function(){renderArenaPage()},d.correct?700:900);
- }catch(e){toast(e.message,'err')}
-}
+/* ════════════════════════════════════════════════════════════════
+   TITAN — آمار / تاریخچه / مایلستون / رقبا / تجارت / مسابقات
+   ════════════════════════════════════════════════════════════════ */
 
-/* ================= STATS PAGE ================= */
+/* ================= 📊 Stats Dashboard ================= */
 async function renderStatsPage(){
+ var g=renderGen();
  var el=$('pg-stats');
  el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
  try{
   var d=await api('/api/miniapp/stats');
-  var g=d.general,mm=d.matchmaking,sv=d.survival,mg=d.mini_games,cas=d.casino;
-  var h=gmHead('📊','Stats Dashboard','داشبورد کامل شخصی — همان آمار ربات','renderGames()');
-  /* کلی */
+  if(isStale(g))return;
+  var gn=d.general,mm=d.matchmaking,sv=d.survival,mg=d.mini_games,cas=d.casino;
+  var h=gmHead('📊','Stats Dashboard','داشبورد کامل شخصی — همان آمار ربات','play');
+  /* کلی + نمودار نرخ برد */
   h+='<div class="section"><div class="shead"><b>📈 آمار کلی</b><small>GENERAL</small></div>'
   +'<div class="grid g4">'
-  +'<div class="stat"><small>بازی</small><b>'+fa(g.games)+'</b></div>'
-  +'<div class="stat"><small>برد</small><b>'+fa(g.wins)+'</b></div>'
-  +'<div class="stat"><small>باخت</small><b>'+fa(g.losses)+'</b></div>'
-  +'<div class="stat"><small>نرخ برد</small><b>'+fa(g.winrate)+'٪</b></div>'
-  +'<div class="stat"><small>سطح</small><b>'+fa(g.level)+'</b></div>'
-  +'<div class="stat"><small>XP کل</small><b>'+faK(g.xp)+'</b></div>'
-  +'<div class="stat"><small>استریک روز</small><b>'+fa(g.daily_streak)+'</b></div>'
-  +'<div class="stat"><small>رکورد استریک</small><b>'+fa(g.best_streak)+'</b></div>'
+  +'<div class="stat"><small>بازی</small><b>'+fa(gn.games)+'</b></div>'
+  +'<div class="stat"><small>برد</small><b>'+fa(gn.wins)+'</b></div>'
+  +'<div class="stat"><small>باخت</small><b>'+fa(gn.losses)+'</b></div>'
+  +'<div class="stat"><small>نرخ برد</small><b>'+faP(gn.winrate)+'</b></div>'
+  +'<div class="stat"><small>سطح</small><b>'+fa(gn.level)+'</b></div>'
+  +'<div class="stat"><small>XP کل</small><b>'+faK(gn.xp)+'</b></div>'
+  +'<div class="stat"><small>استریک روز</small><b>'+fa(gn.daily_streak)+'</b></div>'
+  +'<div class="stat"><small>رکورد استریک</small><b>'+fa(gn.best_streak)+'</b></div>'
   +'</div></div>';
-  /* matchmaking */
+  /* نمودار دونات برد/باخت/مساوی */
+  if(gn.games>0){
+   h+='<div class="card">'+donutBlock([
+    {label:'برد',val:gn.wins,color:'#31e981'},
+    {label:'باخت',val:gn.losses,color:'#ff5268'},
+    {label:'باقی',val:Math.max(0,gn.games-gn.wins-gn.losses),color:'#8b93ad'}
+   ],faP(gn.winrate),'نرخ برد')+'</div>';
+  }
+  /* آرنا و ELO */
   h+='<div class="section"><div class="shead"><b>🎯 آرنا و ELO</b><small>RANKED</small></div>'
   +'<div class="grid g4">'
   +'<div class="stat"><small>ELO</small><b>'+fa(mm.elo)+'</b></div>'
@@ -34216,18 +37805,18 @@ async function renderStatsPage(){
   +'<div class="stat"><small>بهترین استریک</small><b>'+fa(mm.mm_best)+'</b></div>'
   +'<div class="stat"><small>دوئل</small><b>'+fa(d.duels)+'</b></div>'
   +'</div></div>';
-  /* mode distribution */
+  /* توزیع مودها */
   if((d.mode_dist||[]).length){
    h+='<div class="section"><div class="shead"><b>🎮 سبک بازی من</b><small>MODES</small></div><div class="card">';
-   var mx=Math.max.apply(null,d.mode_dist.map(function(m){return m.count}));
+   var mx2=Math.max.apply(null,d.mode_dist.map(function(m){return m.count}));
    d.mode_dist.forEach(function(m){
-    var p=Math.round(m.count*100/mx);
-    h+='<div class="mbar"><div class="lb"><span>'+esc(m.label)+'</span><span>'+fa(m.count)+' · '+fa(m.pct)+'٪</span></div>'
+    var p=Math.round(m.count*100/mx2);
+    h+='<div class="mbar"><div class="lb"><span>'+esc(m.label)+'</span><span>'+fa(m.count)+' · '+faP(m.pct)+'</span></div>'
     +'<div class="bar" style="height:8px"><i style="width:'+Math.max(4,p)+'%"></i></div></div>';
    });
    h+='</div></div>';
   }
-  /* survival + mini games + casino */
+  /* ویژه */
   h+='<div class="section"><div class="shead"><b>🔥 بازی‌های ویژه</b><small>SPECIAL</small></div><div class="grid g2">';
   var svr=sv.records||{};
   h+='<div class="card"><b style="font-size:11px">🔥 رکورد Survival</b><p class="sub">'+fa(sv.best)+' روز'
@@ -34237,7 +37826,7 @@ async function renderStatsPage(){
   h+='<div class="card"><b style="font-size:11px">🎰 کازینو</b><p class="sub">'+fa(cas.spins)+' چرخ · '+fa(cas.jackpots)+' جکپات · خالص: '+fa(cas.net)+'</p></div>';
   h+='<div class="card"><b style="font-size:11px">👥 گروه‌های بازی</b><p class="sub">'+fa(d.groups_played)+' گروه · اعتبار: '+fa(d.reputation)+'</p></div>';
   h+='</div></div>';
-  /* history */
+  /* تاریخچه */
   if((d.history||[]).length){
    h+='<div class="section"><div class="shead"><b>📜 تاریخچه بازی‌ها</b><small>HISTORY</small></div><div class="list">';
    d.history.forEach(function(x){
@@ -34246,123 +37835,596 @@ async function renderStatsPage(){
    });
    h+='</div></div>';
   }
-  el.innerHTML=h;
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📊</span>'+esc(e.message)+'</div>'}
+  setPageHTML('stats',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📊</span>'+esc(e.message)+'</div>'}
 }
 
-/* ================= SHEETS: AI / COMPARE / LOVE2 / TOOLS ================= */
-async function aiSheet(){
- openSheet('<h3>🤖 AI Game Master</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--violet);animation:rot .9s linear infinite"></div></div>');
+/* ================= 📜 HISTORY ================= */
+async function renderHistory(){
+ var g=renderGen();
+ var el=$('pg-history');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
  try{
-  var d=await api('/api/miniapp/ai');
-  var h='<h3>🤖 AI Game Master</h3>'
-  +'<div class="card" style="margin-bottom:12px;text-align:center">'
-  +'<div class="sub">سبک بازی تو</div><b style="font-size:14px">'+esc(d.style.name)+'</b>'
-  +'<div class="sub">'+fa(d.style.total_answers)+' پاسخ تحلیل شد</div></div>'
-  +'<div class="qcard"><span class="qtag">🎯 پیشنهاد من</span>'
-  +'<div class="qtext">'+esc(d.suggestion.mode_label)+' · سختی '+esc(d.suggestion.difficulty)+'</div>'
-  +'<div class="sub" style="margin-top:8px">⭐ XP مورد انتظار: +'+fa(d.suggestion.expected_xp)+'</div></div>'
-  +'<p style="font-size:11px;line-height:2;color:var(--muted)">💡 '+esc(d.suggestion.reason)+'</p>'
-  +'<div class="card" style="font-size:10px;color:var(--cyan);text-align:center">'+esc(d.smart_tip)+'</div>'
-  +'<button class="btn primary wide" style="margin-top:12px" onclick="closeSheet();lobbyCreate()">🚀 با پیشنهاد شروع کن</button>'
-  +'<button class="btn wide" style="margin-top:8px" onclick="aiSheet()">🔄 پیشنهاد دیگر</button>';
-  $('sheetBody').innerHTML=h;
- }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">🤖</span>'+esc(e.message)+'</div>'}
+  var d=await api('/api/miniapp/history');
+  if(isStale(g))return;
+  var items=d.items||[];
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">📜</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">تاریخچه بازی‌ها</h1>'
+  +'<p class="sub">'+fa(d.count||items.length)+' بازی آخر — همان تاریخچه‌ی ربات، زنده</p></div></div></div>';
+  if(!items.length)h+='<div class="empty"><span class="ei">🕹</span>هنوز بازی‌ای ثبت نشده — یکی شروع کن!</div>';
+  else{
+   h+='<div class="card"><div class="tl">';
+   items.forEach(function(x){
+    var ic={'trivia':'🧠','word':'📝','number':'🔢','memory':'🃏','reaction':'⚡','ttt':'✖️','mine':'⛏','quiz':'🧮','luck':'🍀','ln':'🎰','survival':'🔥','lobby':'👥','duel':'🤺','arena':'🏆','love':'💌'}[x.mode]||'🎮';
+    var win=String(x.result).indexOf('برد')>-1||String(x.result).indexOf('win')>-1;
+    var draw=String(x.result).indexOf('مساوی')>-1;
+    h+='<div class="ev"><div class="b">'+ic+'</div><div class="grow"><b>'+esc(x.mode||'بازی')+' · '
+    +(win?'<span style="color:var(--green)">برد</span>':draw?'مساوی':'<span style="color:var(--red)">باخت</span>')+'</b>'
+    +'<small>+⭐'+fa(x.xp||0)+' · +🪙'+fa(x.coins||0)+(x.players?' · 👥'+fa(x.players):'')+'</small></div>'
+    +'<time>'+timeAgo(x.ts)+'</time></div>';
+   });
+   h+='</div></div>';
+  }
+  setPageHTML('history',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderHistory()">تلاش دوباره</button></div>'}
 }
-async function compareSheet(target){
- if(!target){
-  openSheet('<h3>⚖️ مقایسه بازیکنان</h3><p class="sub" style="margin-bottom:10px">آیدی عددی بازیکن دیگر را وارد کن (از پروفایلش کپی کن):</p>'
-  +'<input class="input" id="cmpId" type="number" placeholder="مثلاً: 123456789">'
-  +'<button class="btn primary wide" style="margin-top:10px" onclick="compareSheet(parseInt(document.getElementById(\'cmpId\').value||0,10))">⚖️ مقایسه کن</button>');
-  return;
- }
- openSheet('<div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--violet);animation:rot .9s linear infinite"></div></div>');
+
+/* ================= 🎯 MILESTONES ================= */
+async function renderMilestones(){
+ var g=renderGen();
+ var el=$('pg-milestones');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
  try{
-  var d=await api('/api/miniapp/compare?id='+Number(target));
-  var h='<h3>⚖️ مقایسه بازیکنان</h3>'
-  +'<div class="card" style="text-align:center;margin-bottom:12px"><b>'+esc(d.me.name)+'</b> <span class="tag cy">'+fa(d.score[0])+'</span>'
-  +' vs <span class="tag cy">'+fa(d.score[1])+'</span> <b>'+esc(d.them.name)+'</b></div>';
-  d.rows.forEach(function(r){
-   var mark=r.res==='win'?'🟢':(r.res==='lose'?'🔴':'🟡');
-   h+='<div class="row"><div class="medal">'+r.icon+'</div>'
-   +'<div class="grow"><b>'+esc(r.label)+'</b><small style="display:flex;justify-content:space-between"><span>'+faK(r.a)+'</span><span>'+mark+'</span><span>'+faK(r.b)+'</span></small></div></div>';
+  var d=await api('/api/miniapp/milestones');
+  if(isStale(g))return;
+  var items=d.items||[];
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🎯</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">Milestone Rewards</h1>'
+  +'<p class="sub">'+fa(d.claimed_count||0)+' از '+fa(d.total||13)+' دریافت‌شده — پاداش‌ها خودکار وصل می‌شوند</p></div>';
+  if(d.auto_granted)h+='<span class="tag ok">+'+fa(d.auto_granted)+' تازه!</span>';
+  h+='</div></div>';
+  h+='<div class="grid g2" style="margin-top:12px">'
+  +'<div class="card" style="text-align:center"><b style="color:var(--green);font-size:18px">'+fa(items.filter(function(x){return x.claimed}).length)+'</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:3px">گرفته‌شده ✅</small></div>'
+  +'<div class="card" style="text-align:center"><b style="color:var(--orange);font-size:18px">'+fa(items.filter(function(x){return x.ready&&!x.claimed}).length)+'</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:3px">در آستانه 🎯</small></div></div>';
+  h+='<div class="shead" style="margin-top:16px"><b>مسیر قهرمانی</b><small>MILESTONES</small></div><div class="list">';
+  items.forEach(function(m){
+   var pct=Math.min(100,Math.round(m.current*100/m.target));
+   var ring=2*Math.PI*22;
+   h+='<div class="row" style="align-items:flex-start"><div class="mring'+(m.claimed?' done':'')+'">'
+   +'<svg width="54" height="54" viewBox="0 0 54 54"><circle class="bgc" cx="27" cy="27" r="22"></circle>'
+   +'<circle class="fgc" cx="27" cy="27" r="22" stroke-dasharray="'+ring.toFixed(1)+'" stroke-dashoffset="'+(ring*(1-pct/100)).toFixed(1)+'"></circle></svg>'
+   +'<b>'+(m.claimed?'✓':fa(pct)+'٪')+'</b></div>'
+   +'<div class="grow"><b>'+esc(m.name)+'</b>'
+   +'<small>'+fa(m.current)+' / '+fa(m.target)+(m.title?' · 🏷 جایزه: عنوان ویژه':'')+'</small>'
+   +'<div class="bar" style="margin-top:8px;height:7px"><i style="width:'+Math.max(3,pct)+'%'+(m.claimed?';background:linear-gradient(90deg,var(--green),var(--cyan))':'')+'"></i></div>'
+   +'<div class="sub" style="margin-top:7px;font-size:9px">🪙 '+fa(m.coins)+' سکه · ⭐ '+fa(m.xp)+' XP</div></div>'
+   +(m.ready&&!m.claimed?'<span class="tag ok">آماده!</span>':m.claimed?'<span class="tag">گرفته ✓</span>':'')
+   +'</div>';
   });
-  h+='<div class="card" style="margin-top:12px;text-align:center;font-size:10px;color:var(--muted)">🟢 = تو بهتری · 🔴 = حریف بهتر · 🟡 = مساوی</div>';
-  $('sheetBody').innerHTML=h;
- }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">⚖️</span>'+esc(e.message)+'</div>'}
+  h+='</div>';
+  h+='<button class="btn primary wide glow" style="margin-top:14px" onclick="milestonesClaim()">🎯 بررسی و دریافت پاداش‌های آماده</button>';
+  setPageHTML('milestones',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderMilestones()">تلاش دوباره</button></div>'}
 }
-function love2Sheet(){
- openSheet('<h3>💌 عشق‌سنج دو نفره</h3>'
- +'<p class="sub" style="margin-bottom:10px">آیدی عددی طرف مقابل را وارد کن — هر دو نفر به ۴ سوال مخفیانه جواب می‌دهید و درصد هم‌صدایی محاسبه می‌شود!</p>'
- +'<input class="input" id="lvId" type="number" placeholder="آیدی عددی بازیکن دیگر...">'
- +'<button class="btn primary wide" style="margin-top:10px" onclick="love2Create()">💌 شروع عشق‌سنج</button>'
- +'<input class="input" id="lvCode" type="number" placeholder="یا کد عشق‌سنجی که دریافت کردی..." style="margin-top:10px">'
- +'<button class="btn wide" style="margin-top:8px" onclick="love2Open()">📬 باز کردن با کد</button>');
+async function milestonesClaim(){try{haptic('medium');
+ var d=await api('/api/miniapp/milestones/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+ toast(d.message,'ok');if(d.granted>0){confetti();SND.win()}await refresh(true);renderMilestones()}catch(e){toast(e.message,'err')}}
+
+/* ================= ⚔️ RIVALS ================= */
+async function renderRivals(){
+ var g=renderGen();
+ var el=$('pg-rivals');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/rivals');
+  if(isStale(g))return;
+  var items=d.items||[];
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">⚔️</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">رقبای من</h1>'
+  +'<p class="sub">دشمنانِ شایسته‌ی یک قهرمان — آمار رودررو</p></div>'
+  +'<button class="btn primary sm" onclick="rivalAddSheet()">➕</button></div></div>';
+  if(!items.length)h+='<div class="empty"><span class="ei">🥷</span>هنوز رقیبی ثبت نکردی — دوستت را رقیب کن تا آمار مسابقات‌تان ثبت شود!</div>';
+  else{
+   h+='<div class="list">';
+   items.forEach(function(x){
+    var lead=x.my_wins>x.opp_wins,eq=x.my_wins===x.opp_wins;
+    h+='<div class="row tap" onclick="rivalH2H('+x.id+')" style="cursor:pointer">'+avaHtml({id:x.id,name:x.name},'sm')
+    +'<div class="grow"><b>'+esc(x.name)+'</b>'
+    +'<small>'+(fa(x.my_wins)+'–'+fa(x.opp_wins))+' در '+fa(x.games)+' نبرد · برای رودررو بزن</small>'
+    +'<div style="display:flex;align-items:center;gap:7px;margin-top:7px"><span style="font-size:8.5px;color:var(--c3)">تو</span>'
+    +'<div class="hbar" style="width:70px"><i style="width:'+(x.games?Math.round(x.my_wins*100/Math.max(1,x.games)):50)+'%"></i></div>'
+    +'<span style="font-size:8.5px;color:var(--pink)">او</span>'
+    +(lead?'<span class="tag ok">پیشتی!</span>':eq?'<span class="tag">برابر</span>':'<span class="tag bad">عقب هستی</span>')+'</div></div>'
+    +'<div style="display:flex;flex-direction:column;gap:5px">'
+    +'<button class="btn primary sm" onclick="duelCreate()">🤺 دوئل</button>'
+    +'<button class="btn red sm" onclick="rivalAction(\'remove\','+x.id+')">✕ حذف</button></div></div>';
+   });
+   h+='</div>';
+  }
+  setPageHTML('rivals',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderRivals()">تلاش دوباره</button></div>'}
 }
-async function love2Create(){
- var t=parseInt(($('lvId')||{}).value||'0',10);
+function rivalAddSheet(){
+ var fr=(D.friends||[]);
+ var h='<h3>⚔️ افزودن رقیب</h3>';
+ if(fr.length){
+  h+='<div class="shead" style="padding:0"><b>از دوستانت</b></div><div class="list">';
+  fr.slice(0,8).forEach(function(f){h+='<div class="row tap" onclick="rivalAction(\'add\','+f.id+')" style="cursor:pointer">'
+  +avaHtml({id:f.id,name:f.name},'sm')+'<div class="grow"><b>'+esc(f.name)+'</b><small>LV '+fa(f.level)+'</small></div><span class="tag">⚔️ رقیب کن</span></div>'});
+  h+='</div>';
+ }
+ h+='<div class="shead" style="padding:0;margin-top:14px"><b>با آیدی عددی</b></div>'
+ +'<input class="input" id="rvId" type="number" placeholder="آیدی عددی بازیکن...">'
+ +'<button class="btn primary wide" style="margin-top:8px" onclick="rivalAction(\'add\',parseInt(document.getElementById(\'rvId\').value||0,10))">⚔️ ثبت رقیب</button>';
+ openSheet(h);
+}
+async function rivalAction(action,id){
+ if(action==='add'&&!id){toast('آیدی معتبر وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/rivals/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,target:id})});
+  toast(d.message,'ok');closeSheet();await refresh(true);renderRivals();
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= 🔄 TRADE CENTER ================= */
+var TRSEL={to:0,o:{type:'coins',amount:100},r:{type:'coins',amount:100}};
+async function renderTrade(){
+ var g=renderGen();
+ var el=$('pg-trade');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/trade');
+  if(isStale(g))return;
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🔄</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">Trade Center</h1>'
+  +'<p class="sub">'+fa(d.completed||0)+' تجارت کامل‌شده'+(d.cooldown>0?' · ⏳ '+fa(Math.ceil(d.cooldown/60))+' دقیقه کول‌داون':'')+'</p></div>'
+  +'<button class="btn primary sm" '+(d.cooldown>0?'disabled':'')+' onclick="tradeCreateSheet()">➕</button></div></div>';
+  var rec=d.received||[];
+  if(rec.filter(function(t){return t.status==='pending'}).length){
+   h+='<div class="shead" style="margin-top:16px"><b>📨 درخواست‌های دریافتی</b><small class="chipv">🆕 جدید</small></div>';
+   rec.forEach(function(t){if(t.status!=='pending')return;h+=tradeCard(t,true)});
+  }
+  var sent=d.sent||[];
+  if(sent.filter(function(t){return t.status==='pending'}).length){
+   h+='<div class="shead" style="margin-top:16px"><b>📤 درخواست‌های ارسالی</b><small>در انتظار پاسخ</small></div>';
+   sent.forEach(function(t){if(t.status!=='pending')return;h+=tradeCard(t,false)});
+  }
+  var done=rec.concat(sent).filter(function(t){return t.status!=='pending'});
+  if(done.length){
+   h+='<div class="shead" style="margin-top:16px"><b>🗂 اخیر</b><small>'+fa(done.length)+' مورد</small></div><div class="list">';
+   done.slice(0,5).forEach(function(t){
+    h+='<div class="row"><div class="medal">'+({'accepted':'✅','rejected':'❌','cancelled':'🚫'}[t.status]||'•')+'</div>'
+    +'<div class="grow"><b>'+esc(t.status==='accepted'?'تجارت انجام شد':'تجارت '+({'rejected':'رد شد','cancelled':'لغو شد'}[t.status]||t.status))+'</b>'
+    +'<small>'+(t.from===(D.user||{}).id?'به '+esc(t.to_name):'از '+esc(t.from_name))+'</small></div><time>'+timeAgo(t.ts)+'</time></div>';
+   });
+   h+='</div>';
+  }
+  if(!rec.length&&!sent.length)h+='<div class="empty" style="margin-top:14px"><span class="ei">🔄</span>هنوز تجارتی نداری — با دوستانت سکه و آیتم مبادله کن!</div>';
+  setPageHTML('trade',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderTrade()">تلاش دوباره</button></div>'}
+}
+function tradeLabel(side){
+ if(side.type==='coins')return '🪙 '+fa(side.amount)+' سکه';
+ return ({title:'🏷',frame:'🖼',badge:'🎖'}[side.type]||'•')+' '+esc(side.name||side.key||'');
+}
+function tradeCard(t,incoming){
+ var h='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
+ +avaHtml({id:t.from,name:t.from_name},'sm')
+ +'<div class="grow"><b>'+(incoming?'از '+esc(t.from_name):'به '+esc(t.to_name))+'</b><small>'+timeAgo(t.ts)+'</small></div>'
+ +(incoming?'<span class="tag cy">دریافتی</span>':'<span class="tag">ارسالی</span>')+'</div>'
+ +'<div class="ex"><div class="side o"><small style="color:var(--muted)">او می‌دهد</small><b>'+tradeLabel(t.offer)+'</b></div>'
+ +'<div class="arr">⇄</div>'
+ +'<div class="side r"><small style="color:var(--muted)">در برابر</small><b>'+tradeLabel(t.request)+'</b></div></div>';
+ if(t.status==='pending'){
+  h+='<div style="display:flex;gap:8px;margin-top:11px">';
+  if(incoming)h+='<button class="btn green sm" style="flex:1" onclick="tradeAction('+t.id+',\'accept\')">✅ قبول</button>'
+  +'<button class="btn red sm" style="flex:1" onclick="tradeAction('+t.id+',\'reject\')">❌ رد</button>';
+  else h+='<button class="btn red sm" style="flex:1" onclick="tradeAction('+t.id+',\'cancel\')">🚫 لغو درخواست</button>';
+  h+='</div>';
+ }
+ return h+'</div>';
+}
+function tradeCreateSheet(){
+ api('/api/miniapp/trade').then(function(d){
+  var friends=(d.friends||[]);
+  TRSEL={to:(friends[0]||{}).id||0,o:{type:'coins',amount:100},r:{type:'coins',amount:100}};
+  var h='<h3>🔄 ساخت تجارت</h3>'
+  +'<div class="shead" style="padding:0"><b>🎯 با چه کسی؟</b></div>'
+  +'<div class="chips" style="margin:0 0 10px">';
+  friends.forEach(function(f,i){h+='<button class="chip'+(i===0?' on':'')+'" data-tid="'+f.id+'" onclick="tradeSelTo(this,'+f.id+')">'+esc(f.name)+'</button>'});
+  if(!friends.length)h+='<small style="color:var(--muted)">اول دوست اضافه کن</small>';
+  h+='</div>'
+  +'<input class="input" id="trId" type="number" placeholder="یا آیدی عددی..." style="margin-bottom:12px">'
+  +'<div class="shead" style="padding:0"><b>📤 تو می‌دهی</b></div>'
+  +'<div class="chips" style="margin:0 0 8px">'
+  +[['coins','🪙 سکه'],['title','🏷 لقب'],['frame','🖼 قاب'],['badge','🎖 بج']].map(function(x,i){
+   return '<button class="chip'+(i===0?' on':'')+'" data-oside="'+x[0]+'" onclick="tradeSelSide(\'o\',this,\''+x[0]+'\')">'+x[1]+'</button>'}).join('')
+  +'</div><div id="trOw"></div>'
+  +'<div class="shead" style="padding:0;margin-top:12px"><b>📥 در برابر می‌گیری</b></div>'
+  +'<div class="chips" style="margin:0 0 8px">'
+  +[['coins','🪙 سکه'],['title','🏷 لقب'],['frame','🖼 قاب'],['badge','🎖 بج']].map(function(x,i){
+   return '<button class="chip'+(i===0?' on':'')+'" data-rside="'+x[0]+'" onclick="tradeSelSide(\'r\',this,\''+x[0]+'\')">'+x[1]+'</button>'}).join('')
+  +'</div><div id="trRw"></div>'
+  +'<button class="btn primary wide glow" style="margin-top:16px" onclick="tradeSubmit()">✈️ ارسال درخواست تجارت</button>';
+  openSheet(h);
+  window._TRINV=d.inventory||{};
+  tradeSelSide('o',document.querySelector('[data-oside=coins]'),'coins');
+  tradeSelSide('r',document.querySelector('[data-rside=coins]'),'coins');
+ }).catch(function(e){toast(e.message,'err')});
+}
+function tradeSelTo(el,id){
+ document.querySelectorAll('[data-tid]').forEach(function(c){c.classList.remove('on')});
+ el.classList.add('on');TRSEL.to=id;SND.tap();
+}
+function tradeSelSide(side,el,type){
+ document.querySelectorAll('[data-'+(side==='o'?'o':'r')+'side]').forEach(function(c){c.classList.remove('on')});
+ if(el)el.classList.add('on');
+ TRSEL[side].type=type;TRSEL[side].key='';
+ var w=$(side==='o'?'trOw':'trRw');if(!w)return;
+ var inv=window._TRINV||{};
+ if(type==='coins'){
+  w.innerHTML='<input class="input" type="number" id="tr'+side+'" placeholder="مقدار سکه..." value="'+(TRSEL[side].amount||100)+'">';
+ }else{
+  var list=inv[({title:'titles',frame:'frames',badge:'badges'})[type]]||[];
+  if(!list.length){w.innerHTML='<div class="empty" style="padding:10px;font-size:10px">چیزی از این نوع نداری</div>';TRSEL[side].key='';return}
+  var h='<div class="chips" style="margin:0">'+list.map(function(x){
+   return '<button class="chip" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\');TRSEL.'+side+'.key=\''+esc(x.key)+'\'">'+esc(x.name)+'</button>'}).join('')+'</div>';
+  w.innerHTML=h;TRSEL[side].key=list[0].key;
+  var first=w.querySelector('.chip');if(first)first.classList.add('on');
+ }
+}
+async function tradeSubmit(){
+ var to=TRSEL.to||parseInt(($('trId')||{}).value||0,10);
+ if(!to){toast('همسایه‌ی تجارت را انتخاب کن','err');return}
+ TRSEL.o.amount=parseInt(($('tro')||{}).value||TRSEL.o.amount||0,10);
+ TRSEL.r.amount=parseInt(($('trr')||{}).value||TRSEL.r.amount||0,10);
+ try{
+  var d=await api('/api/miniapp/trade/create',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({to:to,offer:TRSEL.o,request:TRSEL.r})});
+  toast(d.message,'ok');closeSheet();await refresh(true);renderTrade();
+ }catch(e){toast(e.message,'err')}
+}
+async function tradeAction(id,action){try{haptic('medium');
+ var d=await api('/api/miniapp/trade/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,action:action})});
+ toast(d.message,'ok');if(action==='accept'){confetti();SND.win()}await refresh(true);renderTrade()}catch(e){toast(e.message,'err')}}
+
+/* ================= 🏆 TOURNAMENT ================= */
+async function renderTournament(){
+ var g=renderGen();
+ var el=$('pg-tournament');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/tournament');
+  if(isStale(g))return;
+  var items=d.items||[];
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🏆</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">مسابقات ApexRival</h1>'
+  +'<p class="sub">'+fa(items.length)+' مسابقه‌ی باز — ساخت توسط ادمین/ناظر</p></div>'
+  +(d.can_create?'<button class="btn primary sm" onclick="tournamentCreateSheet()">➕</button>':'')+'</div></div>';
+  if(!items.length)h+='<div class="empty"><span class="ei">🏆</span>فعلاً مسابقه‌ای باز نیست — به‌زودی!</div>';
+  else{
+   h+='<div class="list">';
+   items.forEach(function(t){
+    var pct=Math.round(t.players.length*100/t.max_players);
+    h+='<div class="row" style="align-items:flex-start"><div class="medal">🏆</div>'
+    +'<div class="grow"><b>#'+fa(t.id)+' · '+esc(t.title)+'</b>'
+    +'<small>سازنده: '+esc(t.host_name)+' · 🪙 جایزه '+faK(t.prize)+'</small>'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-top:7px"><span style="font-size:8.5px;color:var(--muted)">👥 '+fa(t.players.length)+'/'+fa(t.max_players)+'</span>'
+    +'<div class="bar thin" style="flex:1;height:6px"><i style="width:'+Math.max(4,pct)+'%"></i></div></div></div>'
+    +(t.joined?'<span class="tag ok">عضو هستی</span>'
+    :'<button class="btn primary sm" '+(t.status!=='open'?'disabled':'')+' onclick="tournamentJoin('+t.id+')">➕ پیوستن</button>')
+    +'</div>';
+   });
+   h+='</div>';
+   var joined=items.filter(function(t){return t.joined})[0];
+   if(joined){
+    h+='<div class="shead" style="margin-top:16px"><b>👥 بازیکنان مسابقه‌ی #'+fa(joined.id)+'</b></div><div class="chips">';
+    joined.players.forEach(function(p){h+='<button class="chip" onclick="profileView('+p.id+')">'+esc(p.name)+'</button>'});
+    h+='</div>';
+   }
+  }
+  setPageHTML('tournament',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderTournament()">تلاش دوباره</button></div>'}
+}
+function tournamentCreateSheet(){
+ openSheet('<h3>🏆 ساخت مسابقه</h3>'
+ +'<input class="input" id="tmT" maxlength="60" placeholder="عنوان مسابقه...">'
+ +'<div class="grid g2" style="margin-top:10px">'
+ +'<div><small style="color:var(--muted);font-size:9px">جایزه (سکه)</small><input class="input" id="tmP" type="number" value="500"></div>'
+ +'<div><small style="color:var(--muted);font-size:9px">حداکثر بازیکن</small><input class="input" id="tmM" type="number" value="16"></div></div>'
+ +'<button class="btn primary wide glow" style="margin-top:14px" onclick="tournamentCreate()">🏆 ایجاد مسابقه</button>');
+}
+async function tournamentCreate(){try{haptic('medium');
+ var d=await api('/api/miniapp/tournament/create',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({title:($('tmT')||{}).value||'',prize:parseInt(($('tmP')||{}).value||500,10),max_players:parseInt(($('tmM')||{}).value||16,10)})});
+ toast(d.message,'ok');confetti();closeSheet();renderTournament()}catch(e){toast(e.message,'err')}}
+async function tournamentJoin(id){try{haptic('medium');
+ var d=await api('/api/miniapp/tournament/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})});
+ toast(d.message,'ok');await refresh(true);renderTournament()}catch(e){toast(e.message,'err')}}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN — وال / فصل / ریکاپ / پارتی / تنظیمات + شیت‌های ابزار
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 🌐 SOCIAL WALL ================= */
+async function renderWall(){
+ var g=renderGen();
+ var el=$('pg-wall');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/wall');
+  if(isStale(g))return;
+  var items=d.items||[];
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🌐</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">Social Wall</h1>'
+  +'<p class="sub">آخرین فعالیت‌های جامعه‌ی ApexRival — زنده</p></div>'
+  +'<span class="tag cy">LIVE</span></div></div>';
+  h+='<div class="wfeed" id="wallFeed">';
+  if(!items.length)h+='<div class="empty"><span class="ei">🕸</span>هنوز فعالیتی ثبت نشده — اولین باش!</div>';
+  items.forEach(function(x){h+=wallItem(x)});
+  h+='</div>';
+  setPageHTML('wall',h,g);
+  startPoll('wall',function(){if(PAGE==='wall')renderWallSilent()},15000);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderWall()">تلاش دوباره</button></div>'}
+}
+function wallItem(x){
+ return '<div class="wf"><div class="lvl '+esc(x.level||'info')+'"></div>'
+ +(x.actor?avaHtml({id:x.actor,name:x.actor_name},'xs'):'<div class="medal" style="width:32px;height:32px;font-size:13px">🤖</div>')
+ +'<div class="grow"><b>'+esc(x.actor_name)+'</b><small>'+esc(x.message)+'</small></div>'
+ +'<time>'+timeAgo(x.ts)+'</time></div>';
+}
+async function renderWallSilent(){try{
+ var d=await api('/api/miniapp/wall');
+ var items=d.items||[];var box=$('wallFeed');if(!box||PAGE!=='wall')return;
+ box.innerHTML=items.map(wallItem).join('')||'<div class="empty"><span class="ei">🕸</span>هنوز فعالیتی ثبت نشده</div>';
+}catch(e){}}
+
+/* ================= 🌐 SEASON ================= */
+async function renderSeason(){
+ var g=renderGen();
+ var el=$('pg-season');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/season');
+  if(isStale(g))return;
+  var h='<div class="gcard"><div class="in seasonhero"><span class="cal">🏆</span>'
+  +'<h1 class="h1 grad">فصل و رویداد</h1>'
+  +'<p class="sub">مسابقه‌ی فصلی قهرمانان'+(d.season_id?' — فصل '+esc(d.season_id):'')+'</p>'
+  +'<div class="grid g4" style="margin-top:12px">'
+  +st('روز مانده','ss_d',d.days_left)+st('XP فصل تو','ss_x',d.season_xp)
+  +st('رتبه‌ی تو','ss_r',d.season_rank?('#'+d.season_rank):'—')+st('رویداد فعال','ss_e',(d.events||[]).length)+'</div></div></div>';
+  if((d.events||[]).length){
+   h+='<div class="shead" style="margin-top:16px"><b>📢 رویدادهای فعال</b><small>EVENTS</small></div><div class="list">';
+   d.events.forEach(function(ev){
+    h+='<div class="row"><div class="medal">📢</div><div class="grow"><b>'+esc(ev.title)+'</b><small>'+esc(ev.type)+'</small></div></div>';
+   });
+   h+='</div>';
+  }else h+='<div class="card" style="margin-top:16px;text-align:center;color:var(--muted);font-size:11px">فعلاً رویدادی فعال نیست 🌙</div>';
+  h+='<div class="shead" style="margin-top:16px"><b>🏅 رتبه‌بندی فصل</b><small>TOP 10</small></div><div class="list">';
+  (d.leaderboard||[]).forEach(function(x){
+   var isMe=D.user&&Number(x.uid)===Number(D.user.id);
+   h+='<div class="row'+(isMe?' me':'')+' tap" onclick="profileView('+x.uid+')" style="cursor:pointer">'
+   +'<div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
+   +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+(isMe?' <span class="tag cy">تو</span>':'')+'</b><small>⭐ '+faK(x.xp)+' · 🏆 '+faK(x.wins)+'</small></div></div>';
+  });
+  if(!(d.leaderboard||[]).length)h+='<div class="empty"><span class="ei">🌱</span>هنوز کسی در فصل فعالیتی نداشته</div>';
+  h+='</div>';
+  setPageHTML('season',h,g);
+  countUp($('ss_d'),d.days_left);countUp($('ss_x'),d.season_xp);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderSeason()">تلاش دوباره</button></div>'}
+}
+
+/* ================= 📋 RECAP ================= */
+async function renderRecap(){
+ var g=renderGen();
+ var el=$('pg-recap');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/recap');
+  if(isStale(g))return;
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">📋</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">ریکاپ هفتگی من</h1>'
+  +'<p class="sub">خلاصه‌ی عملکردت — از دفتر XP زنده‌ی ربات</p></div></div>'
+  +'<div class="grid g4" style="margin-top:12px">'
+  +st('XP این هفته','rc_x',d.week_xp)+st('رتبه‌ی هفته','rc_r',d.week_rank?('#'+d.week_rank):'—')
+  +st('فعالیت','rc_a',d.activity_count)+st('استریک','rc_s',d.streak)+'</div></div>';
+  h+='<div class="grid g4" style="margin-top:12px">'
+  +st('بازی','rc_g',d.games)+st('برد','rc_w',d.wins)+st('دوئل','rc_d',d.duels)+st('مینی‌گیم','rc_m',d.mini_games)+'</div>';
+  if((d.top||[]).length){
+   h+='<div class="shead" style="margin-top:16px"><b>🏆 قهرمانان هفته</b><small>TOP 5</small></div><div class="list">';
+   d.top.forEach(function(x){
+    h+='<div class="row"><div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
+    +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>⭐ '+faK(x.xp)+' XP</small></div></div>';
+   });
+   h+='</div>';
+  }
+  setPageHTML('recap',h,g);
+  countUp($('rc_x'),d.week_xp);countUp($('rc_a'),d.activity_count);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderRecap()">تلاش دوباره</button></div>'}
+}
+
+/* ================= 🎉 PARTY HUB ================= */
+async function renderParty(){
+ var tabs=[['wyr','🤔','می‌کردی؟'],['nhie','🙈','هرگز نشده'],['likely','🎯','به‌احتمال زیاد'],['riddle','🧩','معمای ایموجی'],['fun','✨','سرگرمی']];
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🎉</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">پارتی‌هاب</h1>'
+ +'<p class="sub">بازی‌های گروهی ربات — محتوای تازه از همان بانک، داخل اپ</p></div></div></div>';
+ h+='<div class="seg" style="margin:12px 0">'+tabs.map(function(t,i){
+  return '<button class="'+(PTAB===i?'on':'')+'" onclick="PTAB='+i+';stateSave();renderParty()">'+t[1]+' '+t[2]+'</button>'}).join('')+'</div>';
+ h+='<div id="partyBox"><div class="sk tall"></div></div>';
+ $('pg-party').innerHTML=h;
+ partyLoad();
+}
+function partyLoad(){
+ var kinds=['wyr','nhie','likely','riddle','fun'];
+ api('/api/miniapp/party',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kinds[PTAB]})})
+ .then(function(d){partyRender(d)}).catch(function(e){
+  $('partyBox').innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'</div>'});
+}
+function partyRender(d){
+ var box=$('partyBox');if(!box)return;var h='';
+ if(d.kind==='wyr'){
+  var v=d.votes||{},tot=Math.max(1,(v.a||0)+(v.b||0));
+  h='<div class="card"><div style="text-align:center;margin-bottom:6px"><span class="tag cy">🗳 رأی‌گیری سراسری</span></div>'
+  +'<div class="wyr"><div class="wcard a tap" onclick="wyrVote(\'a\')"><b>'+esc(d.left)+'</b><span class="pct">'+fa(Math.round((v.a||0)*100/tot))+'٪</span><small style="color:var(--muted);font-size:8.5px">'+fa(v.a||0)+' رأی</small></div>'
+  +'<div class="vs">یا</div>'
+  +'<div class="wcard b tap" onclick="wyrVote(\'b\')"><b>'+esc(d.right)+'</b><span class="pct">'+fa(Math.round((v.b||0)*100/tot))+'٪</span><small style="color:var(--muted);font-size:8.5px">'+fa(v.b||0)+' رأی</small></div></div>'
+  +'<div style="text-align:center"><button class="btn sm" onclick="partyLoad()">🔄 سوال بعدی</button></div></div>';
+  window._WYRQ=d.question;
+ }else if(d.kind==='nhie'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">🙈 هرگز نشده</span>'
+  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">«من هرگز '+esc(d.prompt)+'»</b></div>'
+  +'<p class="sub" style="margin-top:10px">هر کی این کار را کرده، اعتراف کنه! 😈</p>'
+  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" style="flex:1" onclick="partyLoad()">🔄 جمله بعدی</button>'
+  +'<button class="btn primary sm" style="flex:1" onclick="shareText(\'🙈 هرگز نشده! «من هرگز '+esc(d.prompt)+'» — تو کردی؟ 😈\')">✈️ اشتراک در گروه</button></div></div></div>';
+ }else if(d.kind==='likely'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">🎯 به‌احتمال زیاد</span>'
+  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">'+esc(d.question)+'</b></div>'
+  +'<p class="sub" style="margin-top:10px">به نظرت کدام دوستت این کار را می‌کند؟</p>'
+  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" style="flex:1" onclick="partyLoad()">🔄 سوال بعدی</button>'
+  +'<button class="btn primary sm" style="flex:1" onclick="shareText(\'🎯 به‌احتمال زیاد، کی؟ '+esc(d.question)+' 👀\')">✈️ اشتراک در گروه</button></div></div></div>';
+ }else if(d.kind==='riddle'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">🧩 معمای ایموجی</span>'
+  +'<div class="riddle">'+esc(d.emoji)+'</div>';
+  (d.options||[]).forEach(function(o,i){
+   h+='<button class="btn ropt'+(i===0?' primary':'')+'" onclick="riddleAns(this,\''+esc(d.answer)+'\',\''+esc(o)+'\')">'+esc(o)+'</button>'});
+  h+='</div></div>';
+ }else if(d.kind==='fun'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">✨ سرگرمی</span>'
+  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">'+esc(d.prompt||d.question||d.text||'')+'</b></div>'
+  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" style="flex:1" onclick="partyLoad()">🔄 بعدی</button>'
+  +'<button class="btn primary sm" style="flex:1" onclick="shareText(\''+esc(d.prompt||d.question||d.text||'')+'\')">✈️ اشتراک</button></div></div></div>';
+ }
+ box.innerHTML=h;
+}
+async function wyrVote(choice){
+ try{
+  var d=await api('/api/miniapp/party/wyr',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:window._WYRQ||'',choice:choice})});
+  if(d&&d.message)toast(d.message,'ok');
+  haptic('ok');
+  partyLoad();
+ }catch(e){toast(e.message,'err')}
+}
+function riddleAns(btn,answer,chosen){
+ if(btn.disabled)return;btn.disabled=true;
+ if(answer===chosen){btn.classList.add('green');haptic('ok');confetti();SND.win()}
+ else{btn.classList.add('red');haptic('error');
+  [].forEach.call(document.querySelectorAll('.ropt'),function(b){if(b.textContent===answer)b.classList.add('green')})}
+}
+
+/* ================= ⚙️ تنظیمات ================= */
+async function renderSettings(){
+ var g=renderGen();
+ var el=$('pg-settings');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/settings');
+  if(isStale(g))return;
+  window._SET=d;
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">⚙️</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">تنظیمات</h1>'
+  +'<p class="sub">همه‌ی تنظیمات دقیقاً روی حساب ربات ذخیره می‌شوند</p></div></div></div>';
+  /* ظاهر */
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>🎨 ظاهر مینی‌اپ</b><small>UI</small></div>'
+  +'<div class="themegrid">'+THEMES.map(function(t){
+   return '<div class="themecard'+(UI.theme===t.id?' on':'')+'" onclick="uiSet(\'theme\',\''+t.id+'\');renderSettings()">'
+   +'<div class="swb" style="background:linear-gradient(135deg,'+t.c[0]+','+t.c[1]+' 55%,'+t.c[2]+')"></div>'
+   +'<small>'+t.name+'</small></div>'}).join('')+'</div>'
+  +'<div class="srow"><div class="ic">🌓</div><div class="grow"><b>حالت نمایش</b><small>تاریک یا روشن</small></div>'
+  +'<div class="chips" style="margin:0">'+[['dark','تاریک'],['light','روشن']].map(function(x){
+   return '<button class="chip'+(UI.mode===x[0]?' on':'')+'" onclick="uiSet(\'mode\',\''+x[0]+'\');renderSettings()">'+x[1]+'</button>'}).join('')+'</div></div>'
+  +'<div class="srow"><div class="ic">🔠</div><div class="grow"><b>اندازه‌ی متن</b><small>راحت چشم‌ات</small></div>'
+  +'<div class="chips" style="margin:0">'+[['s','کوچک'],['m','متوسط'],['l','بزرگ']].map(function(x){
+   return '<button class="chip'+(UI.fs===x[0]?' on':'')+'" onclick="uiSet(\'fs\',\''+x[0]+'\');renderSettings()">'+x[1]+'</button>'}).join('')+'</div></div>'
+  +'<div class="srow"><div class="ic">🌊</div><div class="grow"><b>انیمیشن</b><small>حرکت‌های نرم</small></div>'
+  +'<button class="sw'+(UI.motion==='on'?' on':'')+'" onclick="uiSet(\'motion\',UI.motion===\'on\'?\'off\':\'on\');renderSettings()"></button></div>'
+  +'<div class="srow"><div class="ic">🔊</div><div class="grow"><b>افکت صوتی</b><small>صدای دکمه‌ها و برد</small></div>'
+  +'<button class="sw'+(SND.on?' on':'')+'" onclick="SND.toggle();renderSettings()"></button></div>'
+  +'</div>';
+  /* اعلان‌ها */
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>🔔 اعلان‌ها</b><small>ربات ← تو</small></div>'
+  +setRow('level_up','🎉','Level Up','وقتی سطح می‌گیری خبرت کن',d.notifications)
+  +setRow('achievement','🏅','دستاوردها','افتتاح دستاورد جدید',d.notifications)
+  +setRow('private_invite','🎮','دعوت مسابقه','دعوت دوئل و مسابقه خصوصی',d.notifications)
+  +setRow('friend_req','👥','درخواست دوستی','پیام درخواست‌های جدید',d.notifications)
+  +'</div>';
+  /* حریم خصوصی */
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>🔒 حریم خصوصی</b><small>چه کسی چه چیزی ببیند</small></div>'
+  +setRow('show_stats','📊','نمایش آمار','آمار بازی‌ات برای بقیه',d.privacy,'priv.')
+  +setRow('show_friends','👥','نمایش دوستان','لیست دوستانت',d.privacy,'priv.')
+  +setRow('show_achievements','🎖','نمایش دستاوردها','تالار افتخاراتت',d.privacy,'priv.')
+  +setRow('allow_challenges','⚔️','اجازه چالش','بقیه بتوانند چالشت کنند',d.privacy,'priv.')
+  +'</div>';
+  /* وضعیت‌ها */
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>👤 وضعیت من</b><small>STATUS</small></div>'
+  +'<div class="srow"><div class="ic">🔇</div><div class="grow"><b>تگ‌شدن در گروه</b><small>ربات در گروه‌ها تگت کند</small></div>'
+  +'<button class="sw'+(d.mute?' on':'')+'" onclick="settingSet(\'mute\','+(!d.mute)+')"></button></div>'
+  +'<div class="srow"><div class="ic">🌙</div><div class="grow"><b>موقتاً نیستم (BRB)</b><small>ماه کنار اسمت می‌افتد</small></div>'
+  +'<button class="sw'+(d.brb?' on':'')+'" onclick="settingSet(\'brb\','+(!d.brb)+')"></button></div>'
+  +'<div class="srow"><div class="ic">🖥</div><div class="grow"><b>حالت نمایش ربات</b><small>قالب منوهای خود ربات</small></div>'
+  +'<div class="chips" style="margin:0">'+[['auto','خودکار'],['mobile','موبایل'],['desktop','دسکتاپ']].map(function(x){
+   return '<button class="chip'+(d.display_mode===x[0]?' on':'')+'" onclick="settingSet(\'display_mode\',\''+x[0]+'\')">'+x[1]+'</button>'}).join('')+'</div></div>'
+  +'<div class="srow"><div class="ic">🎂</div><div class="grow"><b>تاریخ تولد</b><small>'+(d.birthday?esc(d.birthday)+' — هر سال ۲۰۰ سکه + ۱۰۰ XP':'تنظیم نشده')+'</small></div>'
+  +'<button class="btn sm" onclick="birthdaySheet()">'+(d.birthday?'ویرایش':'تنظیم')+'</button></div>'
+  +'</div>';
+  setPageHTML('settings',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderSettings()">تلاش دوباره</button></div>'}
+}
+function setRow(key,ic,title,desc,obj,prefix){
+ var on=bool(obj,key);
+ return '<div class="srow"><div class="ic">'+ic+'</div><div class="grow"><b>'+title+'</b><small>'+desc+'</small></div>'
+ +'<button class="sw'+(on?' on':'')+'" onclick="settingSet(\''+(prefix||'notif.')+key+'\','+(!on)+')"></button></div>';
+}
+function bool(obj,key){return !!(obj||{})[key]}
+async function settingSet(key,val){try{haptic('medium');
+ var d=await api('/api/miniapp/settings/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,value:val})});
+ SND.tap();await refresh(true);renderSettings()}catch(e){toast(e.message,'err')}}
+function birthdaySheet(){
+ openSheet('<h3>🎂 تاریخ تولد</h3>'
+ +'<p class="sub" style="margin-bottom:10px">در روز تولدت هر سال ۲۰۰ سکه + ۱۰۰ XP هدیه می‌گیری!</p>'
+ +'<input class="input" id="bdIn" placeholder="YYYY-MM-DD (مثلاً 2000-05-15)" value="'+esc((window._SET||{}).birthday||'')+'" dir="ltr">'
+ +'<button class="btn primary wide" style="margin-top:12px" onclick="birthdaySave()">🎂 ذخیره</button>');
+}
+async function birthdaySave(){try{
+ var d=await api('/api/miniapp/birthday',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({birthday:($('bdIn')||{}).value||''})});
+ toast(d.message,'ok');confetti();closeSheet();renderSettings()}catch(e){toast(e.message,'err')}}
+
+/* ════════════════════════════════════════════════════════════════
+   شیت‌های ابزار — هدیه/قلب/دوستان/نام/یادآور/دعوت/VIP/راهنما/AI
+   ════════════════════════════════════════════════════════════════ */
+function giftSheet(fid){
+ var om=D.omega||{};
+ var h='<h3>🎁 هدیه‌ی سکه</h3>';
+ if(om.gifts_left===0)h+='<div class="empty" style="padding:16px"><span class="ei">🎁</span>سهمیه‌ی امروزت پر شده — فردا دوباره!</div>';
+ else{
+  h+='<p class="sub" style="margin-bottom:10px">روزانه یک بار — بین ۱ تا ۵۰ سکه به دوستت هدیه بده.</p>';
+  if(fid)h+='<input type="hidden" id="gfT" value="'+fid+'">';
+  else{
+   h+='<div class="chips" style="margin:0 0 10px">'+(D.friends||[]).slice(0,8).map(function(f,i){
+    return '<button class="chip'+(i===0?' on':'')+'" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\');document.getElementById(\'gfT\').value='+f.id+'">'+esc(f.name)+'</button>'}).join('')+'</div>'
+   +'<input class="input" id="gfT2" type="number" placeholder="یا آیدی عددی...">';
+  }
+  h+='<div class="chips" style="margin:10px 0">'+[5,10,20,50].map(function(v,i){
+   return '<button class="chip'+(i===0?' on':'')+'" data-ga="'+v+'" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\')">'+fa(v)+' 🪙</button>'}).join('')+'</div>'
+  +'<button class="btn primary wide glow" onclick="giftSend()">🎁 هدیه بده</button>';
+ }
+ openSheet(h);
+}
+async function giftSend(){
+ var t=parseInt(($('gfT')||{}).value||($('gfT2')||{}).value||'0',10);
+ var amt=parseInt((document.querySelector('[data-ga].on')||{}).getAttribute?document.querySelector('[data-ga].on').getAttribute('data-ga'):'5',10);
+ if(!t){toast('گیرنده را انتخاب کن','err');return}
+ try{
+  var d=await api('/api/miniapp/gift',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:t,amount:amt})});
+  toast(d.message,'ok');confetti();SND.coin();closeSheet();await refresh(true);
+ }catch(e){toast(e.message,'err')}
+}
+function heartSheet(fid){
+ openSheet('<h3>❤️ قلب محبت</h3>'
+ +'<p class="sub" style="margin-bottom:10px">روزانه — ۳ سکه از حساب خودت به طرف مقابل اهدا می‌شود و محبت ثبت می‌گردد.</p>'
+ +(fid?'<input type="hidden" id="htT" value="'+fid+'">':
+  '<input class="input" id="htT" type="number" placeholder="آیدی عددی بازیکن...">')
+ +'<button class="btn primary wide glow" style="margin-top:10px" onclick="heartSend()">❤️ اهدا کن</button>');
+}
+async function heartSend(){
+ var t=parseInt(($('htT')||{}).value||'0',10);
  if(!t){toast('آیدی را وارد کن','err');return}
  try{
-  var d=await api('/api/miniapp/love2/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:t})});
-  if(!d.ok){toast(d.error,'err');return}
-  LOVE2CODE=d.code;
-  closeSheet();
-  toast(d.message,'ok');
-  love2Flow();
+  var d=await api('/api/miniapp/heart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:t})});
+  toast(d.message,'ok');closeSheet();await refresh(true);
  }catch(e){toast(e.message,'err')}
 }
-async function love2Open(){
- var c=parseInt(($('lvCode')||{}).value||'0',10);
- if(!c){toast('کد را وارد کن','err');return}
- LOVE2CODE=c;
- closeSheet();
- love2Flow();
-}
-var LOVE2CODE=0;
-async function love2Flow(){
- var el=$('pg-games');
- el.innerHTML='<div class="sk tall"></div>';
- try{
-  var d=await api('/api/miniapp/love2/state?code='+LOVE2CODE);
-  var h=gmHead('💌','عشق‌سنج با '+esc(d.other.name),'۴ سوال مخفیانه — جواب‌ها فقط در نهایت مقایسه می‌شوند','renderGames()');
-  if(d.result){
-   h+='<div style="text-align:center"><div class="lovebar"><i style="width:'+d.result.score+'%"></i></div>'
-   +'<div style="font-size:23px;font-weight:900;color:var(--pink)">💘 '+fa(d.result.score)+'٪</div>'
-   +'<div class="sub">هم‌سویی: '+fa(d.result.matches)+' از '+fa(d.result.total)+' سوال</div></div>';
-   d.result.rows.forEach(function(r){
-    h+='<div class="card" style="margin-top:10px"><b style="font-size:10.5px">'+esc(r.q)+'</b>'
-    +'<div style="display:flex;gap:8px;margin-top:8px;font-size:10px">'
-    +'<div style="flex:1;padding:8px;border-radius:10px;background:#ff4fa312;border:1px solid #ff4fa33a">💜 '+esc(r.a)+'</div>'
-    +'<div style="flex:1;padding:8px;border-radius:10px;background:#15d8ff12;border:1px solid #15d8ff3a">💙 '+esc(r.b)+'</div></div>'
-    +(r.match?'<div style="text-align:center;color:var(--green);font-size:10px;margin-top:5px">✅ هم‌سو</div>':'')+'</div>';
-   });
-   h+='<button class="btn primary wide" style="margin-top:12px" onclick="renderGames()">🕹 مرکز بازی‌ها</button>';
-  }else if(d.my_done){
-   h+='<div class="bigres"><span class="bico">🤝</span><span class="bt">جواب‌هایت ثبت شد!</span>'
-   +'<div class="bs">منتظر '+esc(d.other.name)+' هستیم... '+(d.other_done?'✅ تمام کرد':'⏳ هنوز در جواب دادن است')+'</div></div>'
-   +'<button class="btn wide" onclick="love2Flow()">🔄 وضعیت را تازه کن</button>';
-  }else{
-   var qi=d.current_idx;
-   h+='<div class="qcard"><span class="qtag">سوال '+fa(qi+1)+' از '+fa(d.total)+' (مخفیانه)</span>'
-   +'<div class="qtext">'+esc(d.questions[qi])+'</div></div>'
-   +'<textarea class="input" id="lvAns" maxlength="400" placeholder="صادقانه و مخفیانه جواب بده..."></textarea>'
-   +'<button class="btn primary wide glow" style="margin-top:10px" onclick="love2Ans()">✍️ ثبت جواب مخفی</button>';
-  }
-  el.innerHTML=h;
- }catch(e){el.innerHTML=gmHead('💌','عشق‌سنج','خطا','renderGames()')+'<div class="empty"><span class="ei">💌</span>'+esc(e.message)+'</div>'}
-}
-async function love2Ans(){
- var t=($('lvAns')||{}).value||'';
- if(t.trim().length<2){toast('جوابت را بنویس','err');return}
- try{
-  var d=await api('/api/miniapp/love2/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:LOVE2CODE,text:t})});
-  if(!d.ok){toast(d.error,'err');return}
-  haptic('ok');toast(d.message,'ok');
-  love2Flow();
- }catch(e){toast(e.message,'err')}
-}
-
-/* ---------- TOOLS SHEETS ---------- */
 function friendsSheet(){
  var fr=D.friends||[];
  var h='<h3>👥 دوستان من</h3>';
@@ -34370,13 +38432,13 @@ function friendsSheet(){
   h+='<div class="list">';
   fr.forEach(function(f){
    h+='<div class="row">'+avaHtml({id:f.id,name:f.name},'sm')+'<div class="grow"><b>'+esc(f.name)+'</b><small>LV '+fa(f.level)+'</small></div>'
-   +'<button class="btn gold" style="padding:7px 10px" onclick="giftSheet('+f.id+')" title="هدیه سکه">🎁</button>'
-   +'<button class="btn" style="padding:7px 10px" onclick="heartSheet('+f.id+')" title="قلب محبت">❤️</button>'
-   +'<button class="btn red" style="padding:7px 10px" onclick="friendRemove('+f.id+')">✕</button></div>';
+   +'<button class="btn gold sm" onclick="giftSheet('+f.id+')" title="هدیه سکه">🎁</button>'
+   +'<button class="btn sm" onclick="heartSheet('+f.id+')" title="قلب محبت">❤️</button>'
+   +'<button class="btn red sm" onclick="friendRemove('+f.id+')">✕</button></div>';
   });
   h+='</div>';
  }else h+='<div class="empty" style="padding:16px"><span class="ei">👋</span>هنوز دوستی نداری!</div>';
- h+='<div class="shead" style="margin-top:14px"><b>➕ افزودن دوست</b></div>'
+ h+='<div class="shead" style="margin-top:14px;padding:0"><b>➕ افزودن دوست</b></div>'
  +'<input class="input" id="frId" type="number" placeholder="آیدی عددی بازیکن...">'
  +'<button class="btn primary wide" style="margin-top:8px" onclick="friendAdd(parseInt(document.getElementById(\'frId\').value||0,10))">➕ افزودن</button>';
  openSheet(h);
@@ -34439,7 +38501,7 @@ function inviteSheet(){
  +'<b>+۵۰ سکه برای هر دوستی که با لینک تو ثبت‌نام کند</b>'
  +'<div class="sub" style="margin-top:6px">دعوت‌شددها هم پاداش شروع می‌گیرند</div></div>'
  +'<div class="card" style="text-align:center"><div class="sub" style="margin-bottom:6px">لینک دعوت اختصاصی تو:</div>'
- +'<code style="color:var(--cyan);font-size:11px;word-break:break-all">https://t.me/'+esc(un)+'?start=ref_'+fa(u.id||0)+'</code></div>'
+ +'<code style="color:var(--c3);font-size:11px;word-break:break-all" dir="ltr">https://t.me/'+esc(un)+'?start=ref_'+fa(u.id||0)+'</code></div>'
  +'<div style="display:flex;gap:8px;margin-top:12px">'
  +'<button class="btn primary" style="flex:1" onclick="copyText(\'https://t.me/'+esc(un)+'?start=ref_'+(u.id||0)+'\')">📋 کپی لینک</button>'
  +'<button class="btn" style="flex:1" onclick="shareText(\'⚔️ بیا تو ApexRival بازی کنیم! با لینک من ثبت‌نام کن تا هر دو مان پاداش بگیریم: https://t.me/'+esc(un)+'?start=ref_'+(u.id||0)+'\')">✈️ اشتراک</button></div>');
@@ -34453,7 +38515,7 @@ function vipSheet(){
  +'⚡ اولویت در مچ‌میکینگ آرنا<br>'
  +'🎫 خرید Season Pass Premium = ۳۰ روز VIP</div></div>'
  +(D.user&&D.user.vip?'<div class="card" style="text-align:center;border-color:#ffc85744">✅ VIP فعال — '+fa(D.user.vip_days||0)+' روز مانده</div>'
- :'<button class="btn gold wide" onclick="closeSheet();show(\'pass\')">🎫 گرفتن VIP با Season Pass</button>'));
+ :'<button class="btn gold wide" onclick="closeSheet();show(\'pass\',{force:true})">🎫 گرفتن VIP با Season Pass</button>'));
 }
 function guideSheet(){
  var pages=[
@@ -34463,7 +38525,7 @@ function guideSheet(){
   ['🤺 دوئل','۱۰ راند تن‌به‌تن. هر جواب +۳ XP و ۱ امتیاز. برنده‌ی نهایی +۱۰ XP و +۵ سکه.'],
   ['🏆 آرنا رنک‌دار','حریف هم‌سطح با ELO پیدا کن. اولین ۵ امتیاز برنده است. برنده ELO و جایزه می‌گیرد و لیگش ارتقا می‌یابد.'],
   ['🔥 Survival','راگلایک تک‌نفره: هر روز یک چالش. قبول = روز بعد و پاداش؛ رد = یک جان کم. رویدادها: گنج، درمانگر، فروشنده، طوفان، کمین.'],
-  ['🕹 گیم‌زون','۱۳ بازی کامل داخل اپ: Trivia زنجیره‌ای، کلمات، حدس عدد، حافظه، واکنش، دوز، مین‌یاب، کوییز ریاضی، گردونه، کازینو و ابزار شانس.'],
+  ['🕹 گیم‌زون','۱۰ بازی کامل داخل اپ: Trivia زنجیره‌ای، کلمات، حدس عدد، حافظه، واکنش، دوز، مین‌یاب، کوییز ریاضی، گردونه، کازینو و ابزار شانس.'],
   ['🎯 مأموریت‌ها','هر روز مأموریت و Quest تازه. مأموریت‌ها ساعت ۰۰:۰۰ و Quest هفتگی هر دوشنبه به‌روز می‌شوند.'],
   ['🛍 فروشگاه','لقب، قاب، پاورآپ و جعبه — خریدها مستقیم روی حساب ربات اعمال می‌شوند.'],
   ['📊 آمار','داشبورد کامل: نرخ برد، ELO، توزیع مودها، رکوردهای Survival و کازینو.'],
@@ -34476,536 +38538,45 @@ function guideSheet(){
  });
  openSheet(h);
 }
-
-/* ================= 📜 HISTORY (تاریخچه بازی) ================= */
-var HISTV=false;
-async function renderHistory(){
- var el=$('pg-history');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+async function aiSheet(){
+ openSheet('<h3>🤖 AI Game Master</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
  try{
-  var d=await api('/api/miniapp/history');
-  var items=d.items||[];
-  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
-  +'<div style="font-size:30px">📜</div><div style="flex:1"><h1 class="h1" style="margin:0">تاریخچه بازی‌ها</h1>'
-  +'<p class="sub">'+fa(d.count||items.length)+' بازی آخر — همان تاریخچه‌ی ربات، زنده</p></div></div></div>';
-  if(!items.length)h+='<div class="empty"><span class="ei">🕹</span>هنوز بازی‌ای ثبت نشده — یکی شروع کن!</div>';
-  else{
-   h+='<div class="card"><div class="tl">';
-   items.forEach(function(x){
-    var ic={'trivia':'🧠','word':'📝','number':'🔢','memory':'🃏','reaction':'⚡','ttt':'✖️','mine':'⛏','quiz':'🧮','luck':'🍀','ln':'🎰','survival':'🔥','lobby':'👥','duel':'🤺','arena':'🏆','love':'💌'}[x.mode]||'🎮';
-    var win=String(x.result).indexOf('برد')>-1||String(x.result).indexOf('win')>-1;
-    var draw=String(x.result).indexOf('مساوی')>-1;
-    h+='<div class="ev"><div class="b">'+ic+'</div><div class="grow"><b>'+esc(x.mode||'بازی')+' · '
-    +(win?'<span style="color:var(--green)">برد</span>':draw?'مساوی':'<span style="color:var(--red)">باخت</span>')+'</b>'
-    +'<small>+⭐'+fa(x.xp||0)+' · +🪙'+fa(x.coins||0)+(x.players?' · 👥'+fa(x.players):'')+'</small></div>'
-    +'<time>'+timeAgo(x.ts)+'</time></div>';
-   });
-   h+='</div></div>';
-  }
-  el.innerHTML=h;
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderHistory()">تلاش دوباره</button></div>'}
+  var d=await api('/api/miniapp/ai');
+  var h='<h3>🤖 AI Game Master</h3>'
+  +'<div class="card" style="margin-bottom:12px;text-align:center">'
+  +'<div class="sub">سبک بازی تو</div><b style="font-size:14px">'+esc(d.style.name)+'</b>'
+  +'<div class="sub">'+fa(d.style.total_answers)+' پاسخ تحلیل شد</div></div>'
+  +'<div class="qcard"><span class="qtag">🎯 پیشنهاد من</span>'
+  +'<div class="qtext">'+esc(d.suggestion.mode_label)+' · سختی '+esc(d.suggestion.difficulty)+'</div>'
+  +'<div class="sub" style="margin-top:8px">⭐ XP مورد انتظار: +'+fa(d.suggestion.expected_xp)+'</div></div>'
+  +'<p style="font-size:11px;line-height:2;color:var(--muted)">💡 '+esc(d.suggestion.reason)+'</p>'
+  +'<div class="card" style="font-size:10px;color:var(--c3);text-align:center">'+esc(d.smart_tip)+'</div>'
+  +'<button class="btn primary wide" style="margin-top:12px" onclick="closeSheet();lobbyCreate()">🚀 با پیشنهاد شروع کن</button>'
+  +'<button class="btn wide" style="margin-top:8px" onclick="aiSheet()">🔄 پیشنهاد دیگر</button>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">🤖</span>'+esc(e.message)+'</div>'}
 }
-
-/* ================= 🎯 MILESTONES (پاداش‌های مسیر) ================= */
-async function renderMilestones(){
- var el=$('pg-milestones');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+async function compareSheet(target){
+ if(!target){
+  openSheet('<h3>⚖️ مقایسه بازیکنان</h3><p class="sub" style="margin-bottom:10px">آیدی عددی بازیکن دیگر را وارد کن (از پروفایلش کپی کن):</p>'
+  +'<input class="input" id="cmpId" type="number" placeholder="مثلاً: 123456789">'
+  +'<button class="btn primary wide" style="margin-top:10px" onclick="compareSheet(parseInt(document.getElementById(\'cmpId\').value||0,10))">⚖️ مقایسه کن</button>');
+  return;
+ }
+ openSheet('<div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
  try{
-  var d=await api('/api/miniapp/milestones');
-  var items=d.items||[],om=D.omega||{};
-  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
-  +'<div style="font-size:30px">🎯</div><div style="flex:1"><h1 class="h1" style="margin:0">Milestone Rewards</h1>'
-  +'<p class="sub">'+fa(d.claimed_count||0)+' از '+fa(d.total||13)+' دریافت‌شده — پاداش‌ها خودکار وصل می‌شوند</p></div>';
-  if(d.auto_granted)h+='<span class="tag ok">+'+fa(d.auto_granted)+' تازه!</span>';
-  h+='</div></div>';
-  h+='<div class="grid g2" style="margin-top:14px">'
-  +'<div class="card" style="text-align:center"><b style="color:var(--green);font-size:18px">'+fa(items.filter(function(x){return x.claimed}).length)+'</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:3px">گرفته‌شده ✅</small></div>'
-  +'<div class="card" style="text-align:center"><b style="color:var(--orange);font-size:18px">'+fa(items.filter(function(x){return x.ready&&!x.claimed}).length)+'</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:3px">در آستانه 🎯</small></div></div>';
-  h+='<div class="shead" style="margin-top:16px"><b>مسیر قهرمانی</b><small>MILESTONES</small></div><div class="list">';
-  items.forEach(function(m){
-   var pct=Math.min(100,Math.round(m.current*100/m.target));
-   var ring=2*Math.PI*22;
-   h+='<div class="row" style="align-items:flex-start"><div class="mring'+(m.claimed?' done':'')+'">'
-   +'<svg width="54" height="54" viewBox="0 0 54 54"><circle class="bgc" cx="27" cy="27" r="22"></circle>'
-   +'<circle class="fgc" cx="27" cy="27" r="22" stroke-dasharray="'+ring.toFixed(1)+'" stroke-dashoffset="'+(ring*(1-pct/100)).toFixed(1)+'"></circle></svg>'
-   +'<b>'+(m.claimed?'✓':fa(pct)+'٪')+'</b></div>'
-   +'<div class="grow"><b>'+esc(m.name)+'</b>'
-   +'<small>'+fa(m.current)+' / '+fa(m.target)+(m.title?' · 🏷 جایزه: عنوان ویژه':'')+'</small>'
-   +'<div class="bar" style="margin-top:8px;height:7px"><i style="width:'+Math.max(3,pct)+'%'+(m.claimed?';background:linear-gradient(90deg,var(--green),var(--cyan))':'')+'"></i></div>'
-   +'<div class="sub" style="margin-top:7px;font-size:9px">🪙 '+fa(m.coins)+' سکه · ⭐ '+fa(m.xp)+' XP</div></div>'
-   +(m.ready&&!m.claimed?'<span class="tag ok">آماده!</span>':m.claimed?'<span class="tag">گرفته ✓</span>':'')
-   +'</div>';
+  var d=await api('/api/miniapp/compare?id='+Number(target));
+  var h='<h3>⚖️ مقایسه بازیکنان</h3>'
+  +'<div class="card" style="text-align:center;margin-bottom:12px"><b>'+esc(d.me.name)+'</b> <span class="tag cy">'+fa(d.score[0])+'</span>'
+  +' vs <span class="tag cy">'+fa(d.score[1])+'</span> <b>'+esc(d.them.name)+'</b></div>';
+  d.rows.forEach(function(r){
+   var mark=r.res==='win'?'🟢':(r.res==='lose'?'🔴':'🟡');
+   h+='<div class="row"><div class="medal">'+r.icon+'</div>'
+   +'<div class="grow"><b>'+esc(r.label)+'</b><small style="display:flex;justify-content:space-between"><span>'+faK(r.a)+'</span><span>'+mark+'</span><span>'+faK(r.b)+'</span></small></div></div>';
   });
-  h+='</div>';
-  h+='<button class="btn primary wide glow" style="margin-top:14px" onclick="milestonesClaim()">🎯 بررسی و دریافت پاداش‌های آماده</button>';
-  el.innerHTML=h;
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderMilestones()">تلاش دوباره</button></div>'}
-}
-async function milestonesClaim(){try{haptic('medium');
- var d=await api('/api/miniapp/milestones/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
- toast(d.message,'ok');if(d.granted>0){confetti();SND.win()}await refresh(true);renderMilestones()}catch(e){toast(e.message,'err')}}
-
-/* ================= ⚔️ RIVALS (رقبا) ================= */
-async function renderRivals(){
- var el=$('pg-rivals');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
- try{
-  var d=await api('/api/miniapp/rivals');
-  var items=d.items||[];
-  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
-  +'<div style="font-size:30px">⚔️</div><div style="flex:1"><h1 class="h1" style="margin:0">رقبای من</h1>'
-  +'<p class="sub">دشمنانِ شایسته‌ی یک قهرمان — آمار رودررو</p></div>'
-  +'<button class="btn primary" onclick="rivalAddSheet()">➕</button></div></div>';
-  if(!items.length)h+='<div class="empty"><span class="ei">🥷</span>هنوز رقیبی ثبت نکردی — دوستت را رقیب کن تا آمار مسابقات‌تان ثبت شود!</div>';
-  else{
-   h+='<div class="list">';
-   items.forEach(function(x){
-    var lead=x.my_wins>x.opp_wins,eq=x.my_wins===x.opp_wins;
-    h+='<div class="row">'+avaHtml({id:x.id,name:x.name},'sm')
-    +'<div class="grow"><b>'+esc(x.name)+'</b>'
-    +'<small>'+(fa(x.my_wins)+'–'+fa(x.opp_wins))+' در '+fa(x.games)+' نبرد</small>'
-    +'<div style="display:flex;align-items:center;gap:7px;margin-top:7px"><span style="font-size:8.5px;color:var(--cyan)">تو</span>'
-    +'<div class="hbar" style="width:70px"><i style="width:'+(x.games?Math.round(x.my_wins*100/Math.max(1,x.games)):50)+'%"></i></div>'
-    +'<span style="font-size:8.5px;color:var(--pink)">او</span>'
-    +(lead?'<span class="tag ok">پیشتی!</span>':eq?'<span class="tag">برابر</span>':'<span class="tag bad">عقب هستی</span>')+'</div></div>'
-    +'<div style="display:flex;flex-direction:column;gap:5px">'
-    +'<button class="btn primary" style="padding:7px 11px" onclick="duelCreate()">🤺 دوئل</button>'
-    +'<button class="btn red" style="padding:5px 11px;font-size:9px" onclick="rivalAction(\'remove\','+x.id+')">✕ حذف</button></div></div>';
-   });
-   h+='</div>';
-  }
-  el.innerHTML=h;
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderRivals()">تلاش دوباره</button></div>'}
-}
-function rivalAddSheet(){
- var fr=(D.friends||[]);
- var h='<h3>⚔️ افزودن رقیب</h3>';
- if(fr.length){
-  h+='<div class="shead" style="padding:0"><b>از دوستانت</b></div><div class="list">';
-  fr.slice(0,8).forEach(function(f){h+='<div class="row" onclick="rivalAction(\'add\','+f.id+')" style="cursor:pointer">'
-  +avaHtml({id:f.id,name:f.name},'sm')+'<div class="grow"><b>'+esc(f.name)+'</b><small>LV '+fa(f.level)+'</small></div><span class="tag">⚔️ رقیب کن</span></div>'});
-  h+='</div>';
- }
- h+='<div class="shead" style="padding:0;margin-top:14px"><b>با آیدی عددی</b></div>'
- +'<input class="input" id="rvId" type="number" placeholder="آیدی عددی بازیکن...">'
- +'<button class="btn primary wide" style="margin-top:8px" onclick="rivalAction(\'add\',parseInt(document.getElementById(\'rvId\').value||0,10))">⚔️ ثبت رقیب</button>';
- openSheet(h);
-}
-async function rivalAction(action,id){
- if(action==='add'&&!id){toast('آیدی معتبر وارد کن','err');return}
- try{
-  var d=await api('/api/miniapp/rivals/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,target:id})});
-  toast(d.message,'ok');closeSheet();await refresh(true);renderRivals();
- }catch(e){toast(e.message,'err')}
-}
-
-/* ================= 🔄 TRADE CENTER (مرکز تجارت) ================= */
-var TRSEL={to:0,o:{type:'coins',amount:100},r:{type:'coins',amount:100}};
-async function renderTrade(){
- var el=$('pg-trade');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
- try{
-  var d=await api('/api/miniapp/trade');
-  var om=D.omega||{};
-  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
-  +'<div style="font-size:30px">🔄</div><div style="flex:1"><h1 class="h1" style="margin:0">Trade Center</h1>'
-  +'<p class="sub">'+fa(d.completed||0)+' تجارت کامل‌شده'+(d.cooldown>0?' · ⏳ '+fa(Math.ceil(d.cooldown/60))+' دقیقه کول‌داون':'')+'</p></div>'
-  +'<button class="btn primary" '+(d.cooldown>0?'disabled':'')+' onclick="tradeCreateSheet()">➕</button></div></div>';
-  var rec=d.received||[];
-  if(rec.filter(function(t){return t.status==='pending'}).length){
-   h+='<div class="shead" style="margin-top:16px"><b>📨 درخواست‌های دریافتی</b><small class="chipv">🆕 جدید</small></div>';
-   rec.forEach(function(t){
-    if(t.status!=='pending')return;
-    h+=tradeCard(t,true);
-   });
-  }
-  var sent=d.sent||[];
-  if(sent.filter(function(t){return t.status==='pending'}).length){
-   h+='<div class="shead" style="margin-top:16px"><b>📤 درخواست‌های ارسالی</b><small>در انتظار پاسخ</small></div>';
-   sent.forEach(function(t){
-    if(t.status!=='pending')return;
-    h+=tradeCard(t,false);
-   });
-  }
-  var done=rec.concat(sent).filter(function(t){return t.status!=='pending'});
-  if(done.length){
-   h+='<div class="shead" style="margin-top:16px"><b>🗂 اخیر</b><small>'+fa(done.length)+' مورد</small></div><div class="list">';
-   done.slice(0,5).forEach(function(t){
-    h+='<div class="row"><div class="medal">'+({'accepted':'✅','rejected':'❌','cancelled':'🚫'}[t.status]||'•')+'</div>'
-    +'<div class="grow"><b>'+esc(t.status==='accepted'?'تجارت انجام شد':'تجارت '+({'rejected':'رد شد','cancelled':'لغو شد'}[t.status]||t.status))+'</b>'
-    +'<small>'+(t.from===(D.user||{}).id?'به '+esc(t.to_name):'از '+esc(t.from_name))+'</small></div><time>'+timeAgo(t.ts)+'</time></div>';
-   });
-   h+='</div>';
-  }
-  if(!rec.length&&!sent.length)h+='<div class="empty" style="margin-top:14px"><span class="ei">🔄</span>هنوز تجارتی نداری — با دوستانت سکه و آیتم مبادله کن!</div>';
-  el.innerHTML=h;
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderTrade()">تلاش دوباره</button></div>'}
-}
-function tradeLabel(side){
- if(side.type==='coins')return '🪙 '+fa(side.amount)+' سکه';
- return ({title:'🏷',frame:'🖼',badge:'🎖'}[side.type]||'•')+' '+esc(side.name||side.key||'');
-}
-function tradeCard(t,incoming){
- var h='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
- +avaHtml({id:t.from,name:t.from_name},'sm')
- +'<div class="grow"><b>'+(incoming?'از '+esc(t.from_name):'به '+esc(t.to_name))+'</b><small>'+timeAgo(t.ts)+'</small></div>'
- +(incoming?'<span class="tag cy">دریافتی</span>':'<span class="tag">ارسالی</span>')+'</div>'
- +'<div class="ex"><div class="side o"><small style="color:var(--muted)">او می‌دهد</small><b>'+tradeLabel(t.offer)+'</b></div>'
- +'<div class="arr">⇄</div>'
- +'<div class="side r"><small style="color:var(--muted)">در برابر</small><b>'+tradeLabel(t.request)+'</b></div></div>';
- if(t.status==='pending'){
-  h+='<div style="display:flex;gap:8px;margin-top:11px">';
-  if(incoming)h+='<button class="btn green" style="flex:1" onclick="tradeAction('+t.id+',\'accept\')">✅ قبول</button>'
-  +'<button class="btn red" style="flex:1" onclick="tradeAction('+t.id+',\'reject\')">❌ رد</button>';
-  else h+='<button class="btn red" style="flex:1" onclick="tradeAction('+t.id+',\'cancel\')">🚫 لغو درخواست</button>';
-  h+='</div>';
- }
- return h+'</div>';
-}
-function tradeCreateSheet(){
- var inv=null;
- api('/api/miniapp/trade').then(function(d){
-  var friends=(d.friends||[]);
-  TRSEL={to:(friends[0]||{}).id||0,o:{type:'coins',amount:100},r:{type:'coins',amount:100}};
-  var h='<h3>🔄 ساخت تجارت</h3>'
-  +'<div class="shead" style="padding:0"><b>🎯 با چه کسی؟</b></div>'
-  +'<div class="chips" style="margin:0 0 10px">';
-  friends.forEach(function(f,i){h+='<button class="chip'+(i===0?' on':'')+'" data-tid="'+f.id+'" onclick="tradeSelTo(this,'+f.id+')">'+esc(f.name)+'</button>'});
-  if(!friends.length)h+='<small style="color:var(--muted)">اول دوست اضافه کن</small>';
-  h+='</div>'
-  +'<input class="input" id="trId" type="number" placeholder="یا آیدی عددی..." style="margin-bottom:12px">'
-  +'<div class="shead" style="padding:0"><b>📤 تو می‌دهی</b></div>'
-  +'<div class="chips" style="margin:0 0 8px">'
-  +[['coins','🪙 سکه'],['title','🏷 لقب'],['frame','🖼 قاب'],['badge','🎖 بج']].map(function(x,i){
-   return '<button class="chip'+(i===0?' on':'')+'" data-oside="'+x[0]+'" onclick="tradeSelSide(\'o\',this,\''+x[0]+'\')">'+x[1]+'</button>'}).join('')
-  +'</div><div id="trOw"></div>'
-  +'<div class="shead" style="padding:0;margin-top:12px"><b>📥 در برابر می‌گیری</b></div>'
-  +'<div class="chips" style="margin:0 0 8px">'
-  +[['coins','🪙 سکه'],['title','🏷 لقب'],['frame','🖼 قاب'],['badge','🎖 بج']].map(function(x,i){
-   return '<button class="chip'+(i===0?' on':'')+'" data-rside="'+x[0]+'" onclick="tradeSelSide(\'r\',this,\''+x[0]+'\')">'+x[1]+'</button>'}).join('')
-  +'</div><div id="trRw"></div>'
-  +'<button class="btn primary wide" style="margin-top:16px" onclick="tradeSubmit()">✈️ ارسال درخواست تجارت</button>';
-  openSheet(h);
-  window._TRINV=d.inventory||{};
-  tradeSelSide('o',document.querySelector('[data-oside=coins]'),'coins');
-  tradeSelSide('r',document.querySelector('[data-rside=coins]'),'coins');
- }).catch(function(e){toast(e.message,'err')});
-}
-function tradeSelTo(el,id){document.querySelectorAll('[data-tid]').forEach(function(c){c.classList.remove('on')});
- el.classList.add('on');TRSEL.to=id;SND.tap()}
-function tradeSelSide(side,el,type){
- document.querySelectorAll('[data-'+(side==='o'?'o':'r')+'side]').forEach(function(c){c.classList.remove('on')});
- el.classList.add('on');TRSEL[side].type=type;SND.tap();
- var inv=window._TRINV||{};
- var w=$(side==='o'?'trOw':'trRw');if(!w)return;
- if(type==='coins'){
-  w.innerHTML='<input class="input" type="number" id="tr'+side+'" placeholder="مقدار سکه..." value="'+(TRSEL[side].amount||100)+'">';
- }else{
-  var list=inv[({title:'titles',frame:'frames',badge:'badges'})[type]]||[];
-  if(!list.length){w.innerHTML='<div class="empty" style="padding:10px;font-size:10px">چیزی از این نوع نداری</div>';TRSEL[side].key='';return}
-  var h='<div class="chips" style="margin:0">'+list.map(function(x){
-   return '<button class="chip" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\');TRSEL.'+side+'.key=\''+esc(x.key)+'\'">'+esc(x.name)+'</button>'}).join('')+'</div>';
-  w.innerHTML=h;TRSEL[side].key=list[0].key;
-  var first=w.querySelector('.chip');if(first)first.classList.add('on');
- }
-}
-async function tradeSubmit(){
- var to=TRSEL.to||parseInt(($('trId')||{}).value||0,10);
- if(!to){toast('همسایه‌ی تجارت را انتخاب کن','err');return}
- TRSEL.o.amount=parseInt(($('tro')||{}).value||TRSEL.o.amount||0,10);
- TRSEL.r.amount=parseInt(($('trr')||{}).value||TRSEL.r.amount||0,10);
- try{
-  var d=await api('/api/miniapp/trade/create',{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({to:to,offer:TRSEL.o,request:TRSEL.r})});
-  toast(d.message,'ok');closeSheet();await refresh(true);renderTrade();
- }catch(e){toast(e.message,'err')}
-}
-async function tradeAction(id,action){try{haptic('medium');
- var d=await api('/api/miniapp/trade/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,action:action})});
- toast(d.message,'ok');if(action==='accept'){confetti();SND.win()}await refresh(true);renderTrade()}catch(e){toast(e.message,'err')}}
-
-/* ================= 🏆 TOURNAMENTS (مسابقات) ================= */
-async function renderTournament(){
- var el=$('pg-tournament');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
- try{
-  var d=await api('/api/miniapp/tournament');
-  var items=d.items||[];
-  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
-  +'<div style="font-size:30px">🏆</div><div style="flex:1"><h1 class="h1" style="margin:0">مسابقات ApexRival</h1>'
-  +'<p class="sub">'+fa(items.length)+' مسابقه‌ی باز — ساخت توسط ادمین/ناظر</p></div>'
-  +(d.can_create?'<button class="btn primary" onclick="tournamentCreateSheet()">➕</button>':'')+'</div></div>';
-  if(!items.length)h+='<div class="empty"><span class="ei">🏆</span>فعلاً مسابقه‌ای باز نیست — به‌زودی!</div>';
-  else{
-   h+='<div class="list">';
-   items.forEach(function(t){
-    var pct=Math.round(t.players.length*100/t.max_players);
-    h+='<div class="row" style="align-items:flex-start"><div class="medal">🏆</div>'
-    +'<div class="grow"><b>#'+fa(t.id)+' · '+esc(t.title)+'</b>'
-    +'<small>سازنده: '+esc(t.host_name)+' · 🪙 جایزه '+faK(t.prize)+'</small>'
-    +'<div style="display:flex;align-items:center;gap:8px;margin-top:7px"><span style="font-size:8.5px;color:var(--muted)">👥 '+fa(t.players.length)+'/'+fa(t.max_players)+'</span>'
-    +'<div class="bar" style="flex:1;height:6px"><i style="width:'+Math.max(4,pct)+'%"></i></div></div></div>'
-    +(t.joined?'<span class="tag ok">عضو هستی</span>'
-    :'<button class="btn primary" '+(t.status!=='open'?'disabled':'')+' onclick="tournamentJoin('+t.id+')">➕ پیوستن</button>')
-    +'</div>';
-   });
-   h+='</div>';
-   var joined=items.filter(function(t){return t.joined})[0];
-   if(joined){
-    h+='<div class="shead" style="margin-top:16px"><b>👥 بازیکنان مسابقه‌ی #'+fa(joined.id)+'</b></div><div class="chips">';
-    joined.players.forEach(function(p){h+='<button class="chip" onclick="profileView('+p.id+')">'+esc(p.name)+'</button>'});
-    h+='</div>';
-   }
-  }
-  el.innerHTML=h;
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderTournament()">تلاش دوباره</button></div>'}
-}
-function tournamentCreateSheet(){
- openSheet('<h3>🏆 ساخت مسابقه</h3>'
- +'<input class="input" id="tmT" maxlength="60" placeholder="عنوان مسابقه...">'
- +'<div class="grid g2" style="margin-top:10px">'
- +'<div><small style="color:var(--muted);font-size:9px">جایزه (سکه)</small><input class="input" id="tmP" type="number" value="500"></div>'
- +'<div><small style="color:var(--muted);font-size:9px">حداکثر بازیکن</small><input class="input" id="tmM" type="number" value="16"></div></div>'
- +'<button class="btn primary wide" style="margin-top:14px" onclick="tournamentCreate()">🏆 ایجاد مسابقه</button>');
-}
-async function tournamentCreate(){try{haptic('medium');
- var d=await api('/api/miniapp/tournament/create',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({title:($('tmT')||{}).value||'',prize:parseInt(($('tmP')||{}).value||500,10),max_players:parseInt(($('tmM')||{}).value||16,10)})});
- toast(d.message,'ok');confetti();closeSheet();renderTournament()}catch(e){toast(e.message,'err')}}
-async function tournamentJoin(id){try{haptic('medium');
- var d=await api('/api/miniapp/tournament/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})});
- toast(d.message,'ok');await refresh(true);renderTournament()}catch(e){toast(e.message,'err')}}
-
-/* ================= 🌐 SOCIAL WALL (وال اجتماعی) ================= */
-async function renderWall(){
- var el=$('pg-wall');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
- try{
-  var d=await api('/api/miniapp/wall');
-  var items=d.items||[];
-  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
-  +'<div style="font-size:30px">🌐</div><div style="flex:1"><h1 class="h1" style="margin:0">Social Wall</h1>'
-  +'<p class="sub">آخرین فعالیت‌های جامعه‌ی ApexRival — زنده</p></div>'
-  +'<span class="tag cy">LIVE</span></div></div>';
-  if(!items.length)h+='<div class="empty"><span class="ei">🕸</span>هنوز فعالیتی ثبت نشده — اولین باش!</div>';
-  else{
-   h+='<div class="wfeed">';
-   items.forEach(function(x){
-    h+='<div class="wf"><div class="lvl '+esc(x.level||'info')+'"></div>'
-    +(x.actor?avaHtml({id:x.actor,name:x.actor_name},'xs'):'<div class="medal" style="width:32px;height:32px;font-size:13px">🤖</div>')
-    +'<div class="grow"><b>'+esc(x.actor_name)+'</b><small>'+esc(x.message)+'</small></div>'
-    +'<time>'+timeAgo(x.ts)+'</time></div>';
-   });
-   h+='</div>';
-  }
-  el.innerHTML=h;
-  startPoll('wall',function(){if(PAGE==='wall')renderWallSilent()},15000);
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderWall()">تلاش دوباره</button></div>'}
-}
-async function renderWallSilent(){try{
- var d=await api('/api/miniapp/wall');
- var items=d.items||[];var el=$('pg-wall');if(!el||PAGE!=='wall')return;
- var h='<div class="wfeed">';
- items.forEach(function(x){
-  h+='<div class="wf"><div class="lvl '+esc(x.level||'info')+'"></div>'
-  +(x.actor?avaHtml({id:x.actor,name:x.actor_name},'xs'):'<div class="medal" style="width:32px;height:32px;font-size:13px">🤖</div>')
-  +'<div class="grow"><b>'+esc(x.actor_name)+'</b><small>'+esc(x.message)+'</small></div>'
-  +'<time>'+timeAgo(x.ts)+'</time></div>'});
- h+='</div>';
- var box=el.querySelector('.wfeed');if(box)box.outerHTML=h;
-}catch(e){}}
-
-/* ================= 🌐 SEASON (فصل و رویداد) ================= */
-async function renderSeason(){
- var el=$('pg-season');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
- try{
-  var d=await api('/api/miniapp/season');
-  var h='<div class="gcard hero"><div class="in seasonhero"><span class="cal">🏆</span>'
-  +'<h1 class="h1">🌐 فصل و رویداد</h1>'
-  +'<p class="sub">مسابقه‌ی فصلی قهرمانان'+(d.season_id?' — فصل '+esc(d.season_id):'')+'</p>'
-  +'<div class="grid g4" style="margin-top:12px">'
-  +st('روز مانده','ss_d',d.days_left)+st('XP فصل تو','ss_x',d.season_xp)
-  +st('رتبه‌ی تو','ss_r',d.season_rank?('#'+d.season_rank):'—')+st('رویداد فعال','ss_e',(d.events||[]).length)+'</div></div></div>';
-  if((d.events||[]).length){
-   h+='<div class="shead" style="margin-top:16px"><b>📢 رویدادهای فعال</b><small>EVENTS</small></div><div class="list">';
-   d.events.forEach(function(ev){
-    h+='<div class="row"><div class="medal">📢</div><div class="grow"><b>'+esc(ev.title)+'</b><small>'+esc(ev.type)+'</small></div></div>';
-   });
-   h+='</div>';
-  }else h+='<div class="card" style="margin-top:16px;text-align:center;color:var(--muted);font-size:11px">فعلاً رویدادی فعال نیست 🌙</div>';
-  h+='<div class="shead" style="margin-top:16px"><b>🏅 رتبه‌بندی فصل</b><small>TOP 10</small></div><div class="list">';
-  (d.leaderboard||[]).forEach(function(x){
-   var isMe=D.user&&Number(x.uid)===Number(D.user.id);
-   h+='<div class="row'+(isMe?' me':'')+'" onclick="profileView('+x.uid+')" style="cursor:pointer">'
-   +'<div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
-   +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+(isMe?' <span class="tag cy">تو</span>':'')+'</b><small>⭐ '+faK(x.xp)+' · 🏆 '+faK(x.wins)+'</small></div></div>';
-  });
-  if(!(d.leaderboard||[]).length)h+='<div class="empty"><span class="ei">🌱</span>هنوز کسی در فصل فعالیتی نداشته</div>';
-  h+='</div>';
-  el.innerHTML=h;
-  countUp($('ss_d'),d.days_left);countUp($('ss_x'),d.season_xp);
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderSeason()">تلاش دوباره</button></div>'}
-}
-
-/* ================= 📋 RECAP (ریکاپ هفتگی شخصی) ================= */
-async function renderRecap(){
- var el=$('pg-recap');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
- try{
-  var d=await api('/api/miniapp/recap');
-  var h='<div class="gcard hero"><div class="in"><h1 class="h1">📋 ریکاپ هفتگی من</h1>'
-  +'<p class="sub">خلاصه‌ی عملکردت — از دفتر XP زنده‌ی ربات</p>'
-  +'<div class="grid g4" style="margin-top:12px">'
-  +st('XP این هفته','rc_x',d.week_xp)+st('رتبه‌ی هفته','rc_r',d.week_rank?('#'+d.week_rank):'—')
-  +st('فعالیت','rc_a',d.activity_count)+st('استریک','rc_s',d.streak)+'</div></div></div>';
-  h+='<div class="grid g4" style="margin-top:14px">'
-  +st('بازی','rc_g',d.games)+st('برد','rc_w',d.wins)+st('دوئل','rc_d',d.duels)+st('مینی‌گیم','rc_m',d.mini_games)+'</div>';
-  if((d.top||[]).length){
-   h+='<div class="shead" style="margin-top:16px"><b>🏆 قهرمانان هفته</b><small>TOP 5</small></div><div class="list">';
-   d.top.forEach(function(x){
-    h+='<div class="row"><div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
-    +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>⭐ '+faK(x.xp)+' XP</small></div></div>';
-   });
-   h+='</div>';
-  }
-  el.innerHTML=h;
-  countUp($('rc_x'),d.week_xp);countUp($('rc_a'),d.activity_count);
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderRecap()">تلاش دوباره</button></div>'}
-}
-
-/* ================= ⚙️ SETTINGS (تنظیمات شخصی) ================= */
-async function renderSettings(){
- var el=$('pg-settings');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
- try{
-  var d=await api('/api/miniapp/settings');
-  window._SET=d;
-  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
-  +'<div style="font-size:30px">⚙️</div><div style="flex:1"><h1 class="h1" style="margin:0">تنظیمات</h1>'
-  +'<p class="sub">همه‌ی تنظیمات دقیقاً روی حساب ربات ذخیره می‌شوند</p></div></div></div>';
-  /* ظاهر اپ */
-  h+='<div class="card" style="margin-top:14px"><div class="shead" style="padding:0"><b>🎨 ظاهر مینی‌اپ</b><small>UI</small></div>'
-  +'<div class="themegrid">'+THEMES.map(function(t){
-   return '<div class="themecard'+(UI.theme===t.id?' on':'')+'" onclick="uiSet(\'theme\',\''+t.id+'\');renderSettings()">'
-   +'<div class="swb" style="background:linear-gradient(135deg,'+t.c[0]+','+t.c[1]+' 55%,'+t.c[2]+')"></div>'
-   +'<small>'+t.name+'</small></div>'}).join('')+'</div>'
-  +'<div class="srow"><div class="ic">🌓</div><div class="grow"><b>حالت نمایش</b><small>تاریک یا روشن</small></div>'
-  +'<div class="chips" style="margin:0">'+[['dark','تاریک'],['light','روشن']].map(function(x){
-   return '<button class="chip'+(UI.mode===x[0]?' on':'')+'" onclick="uiSet(\'mode\',\''+x[0]+'\');renderSettings()">'+x[1]+'</button>'}).join('')+'</div></div>'
-  +'<div class="srow"><div class="ic">🔠</div><div class="grow"><b>اندازه‌ی متن</b><small>راحت چشم‌ات</small></div>'
-  +'<div class="chips" style="margin:0">'+[['s','کوچک'],['m','متوسط'],['l','بزرگ']].map(function(x){
-   return '<button class="chip'+(UI.fs===x[0]?' on':'')+'" onclick="uiSet(\'fs\',\''+x[0]+'\');renderSettings()">'+x[1]+'</button>'}).join('')+'</div></div>'
-  +'<div class="srow"><div class="ic">🌊</div><div class="grow"><b>انیمیشن</b><small>حرکت‌های نرم</small></div>'
-  +'<button class="sw'+(UI.motion==='on'?' on':'')+'" onclick="uiSet(\'motion\',UI.motion===\'on\'?\'off\':\'on\');renderSettings()"></button></div>'
-  +'<div class="srow"><div class="ic">🔊</div><div class="grow"><b>افکت صوتی</b><small>صدای دکمه‌ها و برد</small></div>'
-  +'<button class="sw'+(SND.on?' on':'')+'" onclick="SND.toggle();renderSettings()"></button></div>'
-  +'</div>';
-  /* اعلان‌ها */
-  h+='<div class="card" style="margin-top:14px"><div class="shead" style="padding:0"><b>🔔 اعلان‌ها</b><small>ربات → تو</small></div>'
-  +setRow('level_up','🎉','Level Up','وقتی سطح می‌گیری خبرت کن',d.notifications)
-  +setRow('achievement','🏅','دستاوردها','افتتاح دستاورد جدید',d.notifications)
-  +setRow('private_invite','🎮','دعوت مسابقه','دعوت دوئل و مسابقه خصوصی',d.notifications)
-  +setRow('friend_req','👥','درخواست دوستی','پیام درخواست‌های جدید',d.notifications)
-  +'</div>';
-  /* حریم خصوصی */
-  h+='<div class="card" style="margin-top:14px"><div class="shead" style="padding:0"><b>🔒 حریم خصوصی</b><small>چه کسی چه چیزی ببیند</small></div>'
-  +setRow('show_stats','📊','نمایش آمار','آمار بازی‌ات برای بقیه',d.privacy,'priv.')
-  +setRow('show_friends','👥','نمایش دوستان','لیست دوستانت',d.privacy,'priv.')
-  +setRow('show_achievements','🎖','نمایش دستاوردها','تالار افتخاراتت',d.privacy,'priv.')
-  +setRow('allow_challenges','⚔️','اجازه چالش','بقیه بتوانند چالشت کنند',d.privacy,'priv.')
-  +'</div>';
-  /* وضعیت‌ها */
-  h+='<div class="card" style="margin-top:14px"><div class="shead" style="padding:0"><b>👤 وضعیت من</b><small>STATUS</small></div>'
-  +'<div class="srow"><div class="ic">🔇</div><div class="grow"><b>تگ‌شدن در گروه</b><small>ربات در گروه‌ها تگت کند</small></div>'
-  +'<button class="sw'+(d.mute?' on':'')+'" onclick="settingSet(\'mute\','+(!d.mute)+')"></button></div>'
-  +'<div class="srow"><div class="ic">🌙</div><div class="grow"><b>موقتاً نیستم (BRB)</b><small>ماه کنار اسمت می‌افتد</small></div>'
-  +'<button class="sw'+(d.brb?' on':'')+'" onclick="settingSet(\'brb\','+(!d.brb)+')"></button></div>'
-  +'<div class="srow"><div class="ic">🖥</div><div class="grow"><b>حالت نمایش ربات</b><small>قالب منوهای خود ربات</small></div>'
-  +'<div class="chips" style="margin:0">'+[['auto','خودکار'],['mobile','موبایل'],['desktop','دسکتاپ']].map(function(x){
-   return '<button class="chip'+(d.display_mode===x[0]?' on':'')+'" onclick="settingSet(\'display_mode\',\''+x[0]+'\')">'+x[1]+'</button>'}).join('')+'</div></div>'
-  +'<div class="srow"><div class="ic">🎂</div><div class="grow"><b>تاریخ تولد</b><small>'+(d.birthday?esc(d.birthday)+' — هر سال ۲۰۰ سکه + ۱۰۰ XP':'تنظیم نشده')+'</small></div>'
-  +'<button class="btn" onclick="birthdaySheet()">'+(d.birthday?'ویرایش':'تنظیم')+'</button></div>'
-  +'</div>';
-  el.innerHTML=h;
- }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderSettings()">تلاش دوباره</button></div>'}
-}
-function setRow(key,ic,title,desc,obj,prefix){
- var on=bool(obj,key);
- return '<div class="srow"><div class="ic">'+ic+'</div><div class="grow"><b>'+title+'</b><small>'+desc+'</small></div>'
- +'<button class="sw'+(on?' on':'')+'" onclick="settingSet(\''+(prefix||'notif.')+key+'\','+(!on)+')"></button></div>';
-}
-function bool(obj,key){return !!(obj||{})[key]}
-async function settingSet(key,val){try{haptic('medium');
- var d=await api('/api/miniapp/settings/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,value:val})});
- SND.tap();await refresh(true);renderSettings()}catch(e){toast(e.message,'err')}}
-function birthdaySheet(){
- openSheet('<h3>🎂 تاریخ تولد</h3>'
- +'<p class="sub" style="margin-bottom:10px">در روز تولدت هر سال ۲۰۰ سکه + ۱۰۰ XP هدیه می‌گیری!</p>'
- +'<input class="input" id="bdIn" placeholder="YYYY-MM-DD (مثلاً 2000-05-15)" value="'+esc((window._SET||{}).birthday||'')+'">'
- +'<button class="btn primary wide" style="margin-top:12px" onclick="birthdaySave()">🎂 ذخیره</button>');
-}
-async function birthdaySave(){try{
- var d=await api('/api/miniapp/birthday',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({birthday:($('bdIn')||{}).value||''})});
- toast(d.message,'ok');confetti();closeSheet();renderSettings()}catch(e){toast(e.message,'err')}}
-
-/* ================= 🎉 PARTY HUB (پارتی‌هاب) ================= */
-var PTAB=0;
-async function renderParty(){
- var tabs=[['wyr','🤔','می‌کردی؟'],['nhie','🙈','هرگز نشده'],['likely','🎯','به‌احتمال زیاد'],['riddle','🧩','معمای ایموجی'],['fun','✨','سرگرمی']];
- var h='<div class="gcard hero"><div class="in"><h1 class="h1">🎉 پارتی‌هاب</h1>'
- +'<p class="sub">بازی‌های گروهی ربات — محتوای تازه از همان بانک، داخل اپ</p></div></div>';
- h+='<div class="chips" style="margin-top:14px">'+tabs.map(function(t,i){
-  return '<button class="chip'+(PTAB===i?' on':'')+'" onclick="PTAB='+i+';renderParty()">'+t[1]+' '+t[2]+'</button>'}).join('')+'</div>';
- h+='<div id="partyBox"><div class="sk tall"></div></div>';
- $('pg-party').innerHTML=h;
- partyLoad();
-}
-function partyLoad(){
- var kinds=['wyr','nhie','likely','riddle','fun'];
- api('/api/miniapp/party',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kinds[PTAB]})})
- .then(function(d){partyRender(d)}).catch(function(e){
-  $('partyBox').innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'</div>'});
-}
-function partyRender(d){
- var box=$('partyBox');if(!box)return;var h='';
- if(d.kind==='wyr'){
-  var v=d.votes||{},tot=Math.max(1,(v.a||0)+(v.b||0));
-  h='<div class="card"><div style="text-align:center;margin-bottom:6px"><span class="tag cy">🗳 رأی‌گیری سراسری</span></div>'
-  +'<div class="wyr"><div class="wcard a" onclick="wyrVote(\'a\')"><b>'+esc(d.left)+'</b><span class="pct">'+fa(Math.round((v.a||0)*100/tot))+'٪</span><small style="color:var(--muted);font-size:8.5px">'+fa(v.a||0)+' رأی</small></div>'
-  +'<div class="vs">یا</div>'
-  +'<div class="wcard b" onclick="wyrVote(\'b\')"><b>'+esc(d.right)+'</b><span class="pct">'+fa(Math.round((v.b||0)*100/tot))+'٪</span><small style="color:var(--muted);font-size:8.5px">'+fa(v.b||0)+' رأی</small></div></div>'
-  +'<div style="text-align:center"><button class="btn" onclick="partyLoad()">🔄 سوال بعدی</button></div></div>';
-  window._WYRQ=d.question;
- }else if(d.kind==='nhie'){
-  h='<div class="card"><div style="text-align:center"><span class="tag">🙈 هرگز نشده</span>'
-  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">«من هرگز '+esc(d.prompt)+'»</b></div>'
-  +'<p class="sub" style="margin-top:10px">هر کی این کار را کرده، اعتراف کنه! 😈</p>'
-  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn" style="flex:1" onclick="partyLoad()">🔄 جمله بعدی</button>'
-  +'<button class="btn primary" style="flex:1" onclick="shareText(\'🙈 هرگز نشده! «من هرگز '+esc(d.prompt)+'» — تو کردی؟ 😈\')">✈️ اشتراک در گروه</button></div></div></div>';
- }else if(d.kind==='likely'){
-  h='<div class="card"><div style="text-align:center"><span class="tag">🎯 به‌احتمال زیاد</span>'
-  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">'+esc(d.question)+'</b></div>'
-  +'<p class="sub" style="margin-top:10px">به نظرت کدام دوستت این کار را می‌کند؟</p>'
-  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn" style="flex:1" onclick="partyLoad()">🔄 سوال بعدی</button>'
-  +'<button class="btn primary" style="flex:1" onclick="shareText(\'🎯 به‌احتمال زیاد، کی؟ '+esc(d.question)+' 👀\')">✈️ اشتراک در گروه</button></div></div></div>';
- }else if(d.kind==='riddle'){
-  h='<div class="card"><div style="text-align:center"><span class="tag">🧩 معمای ایموجی</span>'
-  +'<div class="riddle">'+esc(d.emoji)+'</div>';
-  (d.options||[]).forEach(function(o,i){
-   h+='<button class="btn ropt'+(i===0?' primary':'')+'" onclick="riddleAns(this,\''+esc(d.answer)+'\',\''+esc(o)+'\')">'+esc(o)+'</button>'});
-  h+='<button class="btn wide" style="margin-top:10px" onclick="partyLoad()">🔄 معمای بعدی</button></div>';
-  window._RIDDLE={answer:d.answer};
- }else if(d.kind==='tip'){
-  h='<div class="card"><div style="text-align:center"><span class="tag">💡 نکته‌ی روز</span>'
-  +'<div class="partybox"><b style="font-size:12px;line-height:2.2">'+esc(d.text||'')+'</b></div>'
-  +'<button class="btn wide" style="margin-top:12px" onclick="partyLoad()">🔄 نکته‌ی بعدی</button></div></div>';
- }
- box.innerHTML=h;
-}
-async function wyrVote(ch){try{haptic('medium');
- var d=await api('/api/miniapp/party/wyr',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({question:window._WYRQ||'',choice:ch})});
- SND.ok();toast(d.message,'ok');
- var box=$('partyBox');if(box){var cards=box.querySelectorAll('.wcard');
-  if(cards[0]&&cards[1]){cards[0].querySelector('.pct').textContent=fa(d.pa)+'٪';cards[1].querySelector('.pct').textContent=fa(d.pb)+'٪';
-   cards[ch==='a'?0:1].classList.add('pick')}}
-}catch(e){toast(e.message,'err')}}
-function riddleAns(btn,answer,opt){
- var ok=opt===answer;
- if(ok){btn.style.borderColor='var(--green)';btn.style.background='#31e98118';SND.win();confetti();toast('درست! 🎉'+(window._RIDDLE&&window._RIDDLE.answer?' جواب: '+esc(answer):''),'ok')}
- else{btn.style.borderColor='var(--red)';btn.style.opacity=.5;SND.lose();toast('نه! جواب درست: '+esc(answer),'err')}
+  h+='<div class="card" style="margin-top:12px;text-align:center;font-size:10px;color:var(--muted)">🟢 = تو بهتری · 🔴 = حریف بهتر · 🟡 = مساوی</div>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">⚖️</span>'+esc(e.message)+'</div>'}
 }
 function personaSheet(){
  openSheet('<h3>🎭 کارت شخصیت</h3><div id="pBox"><div class="sk tall"></div></div>');
@@ -35019,112 +38590,34 @@ function personaSheet(){
   +'<div class="pv"><span>💔 نقطه‌ضعف</span><b>'+esc(p.weak||'')+'</b></div>'
   +'<div class="pv"><span>❤️ جان</span><b>'+fa(p.hp||0)+' / ⚔️ قدرت '+fa(p.pwr||0)+'</b></div></div>'
   +'<button class="btn primary wide" style="margin-top:12px" onclick="personaSheet()">🎲 شخصیت جدید (+۲ XP)</button>';
-  $('pBox').innerHTML=h;SND.whoosh();
- }).catch(function(e){$('pBox').innerHTML='<div class="empty">'+esc(e.message)+'</div>'});
+  $('pBox').innerHTML=h;
+ }).catch(function(e){$('pBox').innerHTML='<div class="empty"><span class="ei">🎭</span>'+esc(e.message)+'</div>'});
 }
-
-/* ================= 🎁 GIFT / ❤️ HEART / 🔥 STREAK / 🏅 SHOWCASE ================= */
-function giftSheet(fid){
- var om=D.omega||{};
- var h='<h3>🎁 هدیه‌ی سکه</h3>';
- if(om.gifts_left===0)h+='<div class="empty" style="padding:16px"><span class="ei">🎁</span>سهمیه‌ی امروزت پر شده — فردا دوباره!</div>';
- else{
-  h+='<p class="sub" style="margin-bottom:10px">روزانه یک بار — بین ۱ تا ۵۰ سکه به دوستت هدیه بده.</p>';
-  if(fid)h+='<input type="hidden" id="gfT" value="'+fid+'">';
-  else{
-   h+='<div class="chips" style="margin:0 0 10px">'+(D.friends||[]).slice(0,8).map(function(f,i){
-    return '<button class="chip'+(i===0?' on':'')+'" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\');document.getElementById(\'gfT\').value='+f.id+'">'+esc(f.name)+'</button>'}).join('')+'</div>'
-   +'<input class="input" id="gfT2" type="number" placeholder="یا آیدی عددی...">';
-  }
-  h+='<div class="chips" style="margin:10px 0">'+[5,10,20,50].map(function(v,i){
-   return '<button class="chip'+(i===0?' on':'')+'" data-ga="'+v+'" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\')">'+fa(v)+' 🪙</button>'}).join('')+'</div>'
-  +'<button class="btn primary wide glow" onclick="giftSend()">🎁 هدیه بده</button>';
- }
- openSheet(h);
-}
-async function giftSend(){
- var tid=parseInt(($('gfT')||{}).value||($('gfT2')||{}).value||0,10);
- var amt=5;var sel=document.querySelector('[data-ga].on');if(sel)amt=parseInt(sel.getAttribute('data-ga'),10);
- if(!tid){toast('گیرنده را انتخاب کن','err');return}
- try{haptic('medium');
-  var d=await api('/api/miniapp/gift',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:tid,amount:amt})});
-  toast(d.message,'ok');confetti();SND.coin();closeSheet();await refresh(true);
- }catch(e){toast(e.message,'err')}}
-function heartSheet(fid){
- var om=D.omega||{};
- var h='<h3>❤️ قلب محبت</h3>';
- if(om.hearts_left===0)h+='<div class="empty" style="padding:16px"><span class="ei">💘</span>سهمیه‌ی ۶ قلب امروزت پر شد!</div>';
- else{
-  h+='<p class="sub" style="margin-bottom:10px">هر قلب +۳ سکه به طرف مقابل — '+fa(om.hearts_left)+' قلب باقی‌مانده‌ی امروز.</p>';
-  if(fid)h+='<input type="hidden" id="htT" value="'+fid+'">';
-  else{
-   h+='<div class="chips" style="margin:0 0 10px">'+(D.friends||[]).slice(0,8).map(function(f,i){
-    return '<button class="chip'+(i===0?' on':'')+'" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\');document.getElementById(\'htT\').value='+f.id+'">'+esc(f.name)+'</button>'}).join('')+'</div>'
-   +'<input class="input" id="htT2" type="number" placeholder="یا آیدی عددی...">';
-  }
-  h+='<button class="btn primary wide glow" onclick="heartSend()">❤️ قلب بفرست</button>';
- }
- openSheet(h);
-}
-async function heartSend(){
- var tid=parseInt(($('htT')||{}).value||($('htT2')||{}).value||0,10);
- if(!tid){toast('گیرنده را انتخاب کن','err');return}
- try{haptic('medium');
-  var d=await api('/api/miniapp/heart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:tid})});
-  toast(d.message,'ok');SND.ok();closeSheet();await refresh(true);heartSheet();
- }catch(e){toast(e.message,'err')}}
 function loginstreakSheet(){
- openSheet('<div id="lsBox"><div class="sk tall"></div></div>');
  api('/api/miniapp/loginstreak').then(function(d){
-  var h='<h3>🔥 پاداش استریک لاگین</h3>'
-  +'<div class="card" style="text-align:center;margin-bottom:12px"><div style="font-size:34px">🔥</div>'
-  +'<b style="font-size:16px">'+fa(d.streak)+' روز پیاپی</b>'
-  +'<p class="sub" style="margin-top:6px">هر روز بیا و استریکت را نگه دار — پاداش‌ها صعودی می‌شوند!</p></div>';
-  if(d.reward){
-   h+='<div class="card" style="border-color:#ffc85744;text-align:center;margin-bottom:12px">'
-   +'<small style="color:var(--muted);font-size:9px">پاداش فعلی تو (استریک '+fa(d.reward.streak)+'+)</small>'
-   +'<div style="margin-top:8px;font-size:12px;font-weight:800">🪙 '+fa(d.reward.coins)+' سکه · ⭐ '+fa(d.reward.xp)+' XP'
-   +(d.reward.item?' · 🎒 آیتم: '+esc(d.reward.item):'')+(d.reward.title?' · 🏷 عنوان ویژه':'')+'</div></div>';
-   h+=(d.claimed_today?'<button class="btn wide" disabled>✅ امروز گرفته‌ای — فردا دوباره!</button>'
-   :'<button class="btn primary wide glow" onclick="loginstreakClaim()">🔥 دریافت پاداش امروز</button>');
-  }else h+='<div class="empty" style="padding:14px">هنوز پاداشی آماده نیست — استریکت را ادامه بده!</div>';
-  h+='<div class="shead" style="margin-top:16px"><b>escalating rewards</b><small>جدول پاداش‌ها</small></div><div class="list">';
-  (d.table||[]).forEach(function(r){
-   var cur=d.streak>=r.streak;
-   h+='<div class="row'+(cur?'':'" style="opacity:.55')+'"><div class="medal">'+(cur?'✅':'🔒')+'</div>'
-   +'<div class="grow"><b>'+fa(r.streak)+' روز پیاپی</b>'
-   +'<small>🪙 '+fa(r.coins)+' · ⭐ '+fa(r.xp)+(r.item?' · 🎒 '+esc(r.item):'')+(r.title?' · 🏆 '+esc(r.title):'')+'</small></div></div>';
+  var days=d.days||[];
+  var h='<h3>🔥 استریک لاگین</h3>'
+  +'<div class="card" style="text-align:center;margin-bottom:12px">'
+  +'<b style="font-size:22px;color:var(--orange)">'+fa(d.streak||0)+'</b> روز پیاپی'
+  +'<div class="sub" style="margin-top:4px">رکوردت: '+fa(d.best||0)+' روز</div></div>'
+  +'<div class="grid g7" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">';
+  days.forEach(function(x){
+   h+='<div class="stat" style="padding:8px 2px;'+(x.today?';border-color:#ff9e4f66':'')+'">'
+   +'<small style="font-size:7.5px">'+esc(x.label||fa(x.day))+'</small>'
+   +'<b style="font-size:10px">'+(x.claimed?'✅':x.today?'🎁':'·')+'</b></div>';
   });
   h+='</div>';
-  $('lsBox').innerHTML=h;
- }).catch(function(e){$('lsBox').innerHTML='<div class="empty">'+esc(e.message)+'</div>'});
+  if(d.ready)h+='<button class="btn primary wide glow" style="margin-top:12px" onclick="loginstreakClaim()">🔥 دریافت پاداش امروز</button>';
+  else h+='<div class="card" style="margin-top:12px;text-align:center;color:var(--muted);font-size:10px">✅ امروز گرفته‌ای — فردا دوباره!</div>';
+  openSheet(h);
+ }).catch(function(e){toast(e.message,'err')});
 }
-async function loginstreakClaim(){try{haptic('medium');
- var d=await api('/api/miniapp/loginstreak/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
- toast(d.message,'ok');confetti();SND.win();await refresh(true);loginstreakSheet()}catch(e){toast(e.message,'err')}}
-function showcaseSheet(){
- var a=(D.achievements||[]).filter(function(x){return x.owned});
- var sc=(D.omega||{}).showcase||[];
- var h='<h3>🏅 شوکیس دستاوردها</h3>'
- +'<p class="sub" style="margin-bottom:12px">۳ دستاورد برجسته‌ات را روی پروفایلت نمایش بده — ربات هم همین‌ها را نشان می‌دهد.</p>';
- if(!a.length){h+='<div class="empty"><span class="ei">🏅</span>هنوز دستاوردی نداری!</div>'}
- else{
-  h+='<div class="list">';
-  a.forEach(function(x){
-   var inS=sc.indexOf(x.key)>-1;
-   h+='<div class="row"><div class="medal">'+x.ico+'</div>'
-   +'<div class="grow"><b>'+esc(x.name)+'</b><small>'+esc(x.desc||'')+'</small></div>'
-   +(inS?'<button class="btn red" onclick="showcaseAction(\'remove\',\''+esc(x.key)+'\')">✕ حذف</button>'
-   :'<button class="btn green" '+(sc.length>=3?'disabled':'')+' onclick="showcaseAction(\'add\',\''+esc(x.key)+'\')">⭐ افزودن</button>')
-   +'</div>';
-  });
-  h+='</div>';
- }
- openSheet(h);
+async function loginstreakClaim(){
+ try{
+  var d=await api('/api/miniapp/loginstreak/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  toast(d.message,'ok');confetti();SND.win();await refresh(true);loginstreakSheet();
+ }catch(e){toast(e.message,'err')}
 }
-async function showcaseAction(action,key){try{haptic('medium');
- var d=await api('/api/miniapp/showcase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,key:key})});
- toast(d.message,'ok');await refresh(true);showcaseSheet();renderMe()}catch(e){toast(e.message,'err')}}
 function themeSheet(){
  var h='<h3>🎨 تم ظاهری</h3><div class="themegrid">'+THEMES.map(function(t){
   return '<div class="themecard'+(UI.theme===t.id?' on':'')+'" onclick="uiSet(\'theme\',\''+t.id+'\');themeSheet()">'
@@ -35134,91 +38627,6485 @@ function themeSheet(){
  +'<button class="sw'+(UI.mode==='light'?' on':'')+'" onclick="uiSet(\'mode\',UI.mode===\'light\'?\'dark\':\'light\');themeSheet()"></button></div>';
  openSheet(h);
 }
-
-/* ================= 👋 ONBOARDING (اولین اجرا) ================= */
-var OB_STEPS=[
- ['🎮','همه‌چیز همین‌جاست','تمام بازی‌ها، پاداش‌ها، آمار و حتی پنل مدیریت ربات داخل همین مینی‌اپ اجرا می‌شود — دیگر لازم نیست به چت ربات برگردی.'],
- ['🔎','پالت فرمان','دکمه‌ی 🔎 بالای صفحه (یا Ctrl+K) را بزن: هر صفحه، بازی یا اقدامی را با چند حرف پیدا و مستقیم اجرا کن.'],
- ['🔥','پاداش‌های هر روز','پاداش روزانه، پاداش استریک لاگین، مأموریت‌ها و Milestone ها را هر روز از صفحه‌ی مأموریت بردار — سکه و XP واقعی ربات!'],
- ['🎨','تم ظاهری','۵ تم رنگی، حالت روشن/تاریک، اندازه‌ی متن و افکت صوتی — همه از تنظیمات قابل تغییر است.'],
- ['🚀','آماده‌ای قهرمان؟','Play Hub منتظرته: لابی بساز، دوئل بده، در آرنا ELO بجنگ و افسانه شو!']];
-var OBI=0;
-function obStart(){OBI=0;obShow();$('ob').classList.add('on');SND.whoosh()}
-function obShow(){
- var s=OB_STEPS[OBI];
- $('obIc').textContent=s[0];$('obT').textContent=s[1];$('obP').textContent=s[2];
- $('obNext').textContent=OBI===OB_STEPS.length-1?'شروع بازی ⚡':'بعدی ›';
- $('obDots').innerHTML=OB_STEPS.map(function(_,i){return '<i'+(i===OBI?' class="on"':'')+'></i>'}).join('');
+function fbSheet(){
+ openSheet('<h3>📝 ارسال بازخورد</h3>'
+ +'<p class="sub" style="margin-bottom:12px">نظر، پیشنهاد یا مشکل‌ات را بنویس — مستقیم به تیم ربات می‌رسد و از «بازخوردهای من» قابل پیگیری است.</p>'
+ +'<textarea id="fbTxt" class="input" maxlength="500" placeholder="متن بازخورد…"></textarea>'
+ +'<button class="btn primary wide glow" style="margin-top:12px" onclick="fbSend()">✈️ ارسال بازخورد</button>');
 }
-function obNext(){haptic('medium');SND.tap();
- if(OBI<OB_STEPS.length-1){OBI++;obShow()}else obSkip()}
-function obSkip(){$('ob').classList.remove('on');
- try{localStorage.setItem('apex_ob','1')}catch(e){}}
-function cmdkInit(){
+async function fbSend(){try{
+ var t=($('fbTxt').value||'').trim();
+ if(t.length<3){toast('متن خیلی کوتاه است','err');return}
+ haptic('medium');closeSheet();
+ var d=await api('/api/miniapp/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
+ toast(d.message,'ok')}catch(e){toast(e.message,'err')}}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN ADMIN — مرکز فرماندهی کامل
+   آینه‌ی ۱۰۰٪ پنل ادمین ربات (نسخه ۱۱.۰) — ۶ دسته / ۲۹ بخش
+   ════════════════════════════════════════════════════════════════ */
+var ACAT=[
+ {id:'community',ic:'🫂',t:'جامعه',secs:['home','users','groups','perms']},
+ {id:'content',ic:'🎮',t:'بازی و محتوا',secs:['games','analytics','bank','ach','feedback','qreports']},
+ {id:'monitor',ic:'📡',t:'مانیتور زنده',secs:['duels','lobbies','trades','tournaments','season_admin']},
+ {id:'economy',ic:'💰',t:'اقتصاد',secs:['econ','rewards','broadcast','giftall']},
+ {id:'security',ic:'🛡',t:'امنیت',secs:['syscfg','bankguard','doctor','vitals','elo','integrity']},
+ {id:'system',ic:'🧰',t:'سیستم',secs:['backups','export','logs','settings','maint','maintsch']},
+ {id:'commander',ic:'⚡',t:'فرمانده',secs:['quick','clean','pulse','gpanels','punish']}
+];
+var ASEC={
+ home:['🖥','داشبورد فرماندهی','KPI زنده + نقشه‌ی کامل'],
+ users:['👥','مدیریت کاربران','جستجو، فیلتر، ابزار کامل'],
+ groups:['🏘','گروه‌ها','روشن/خاموش، آمار'],
+ perms:['🛡','دسترسی‌ها','ادمین و ناظر'],
+ games:['🎮','بازی‌های فعال','مانیتور زنده'],
+ analytics:['📊','آنالیتیکس','ساعتی، ۷روزه، محتوای برتر'],
+ bank:['🏦','بانک سوالات','۲۱ بانک — نمایش کامل'],
+ ach:['🏆','دستاوردها','سفارشی، اهدای، خاموش/روشن'],
+ feedback:['📨','بازخوردها','خواندن و رسیدگی'],
+ qreports:['🚩','گزارش سوالات','رسیدگی به گزارش‌ها'],
+ econ:['💰','اقتصاد','سکه در گردش، VIP'],
+ rewards:['🎁','کدهای هدیه','ساخت و مدیریت'],
+ broadcast:['📢','پیام همگانی','صف ارسال ربات'],
+ giftall:['🎀','هدیه همگانی','سکه/XP برای همه'],
+ syscfg:['🎛','سیستم و ضداسپم','تنظیمات کلیدی'],
+ bankguard:['🛡','محافظ بانک','وضعیت حفاظت'],
+ doctor:['🩺','دکتر داده','تشخیص و اصلاح'],
+ vitals:['🫀','ویترین‌ها','سلامت سیستم'],
+ backups:['💾','بکاپ‌ها','ساخت و فهرست'],
+ export:['📤','خروجی','CSV و JSON'],
+ logs:['🧾','لاگ‌ها','Audit + فیلتر سطح'],
+ settings:['⚙️','تنظیمات','نمای خام سیستم'],
+ maint:['🛠','تعمیرات','روشن/خاموش'],
+ maintsch:['⏰','زمان‌بندی تعمیر','برنامه‌ریزی'],
+ quick:['⚡','اقدامات سریع','میان‌برهای فرمانده'],
+ clean:['♻️','بهینه‌سازی','پاک‌سازی داده'],
+ pulse:['⏱','موتور نبض','وضعیت رفرش زنده'],
+ gpanels:['🌐','پنل گروه‌ها','کنترل پنل‌ها'],
+ punish:['⚖️','مجازات‌ها','بخش و پیگیری'],
+ duels:['🤺','دوئل‌های فعال','مانیتور زنده'],
+ lobbies:['👥','لابی‌های فعال','چندنفره زنده'],
+ trades:['🔄','تجارت‌های منتظر','در انتظار پاسخ'],
+ tournaments:['🏟','مسابقات','وضعیت و پایان'],
+ season_admin:['🌐','فصل (مدیر)','شرکت‌کنندگان و رشد'],
+ elo:['🎯','توزیع ELO','نمودار مهارت جامعه'],
+ integrity:['💎','سلامت اقتصادی','بررسی مقادیر'],
+ about_system:['ℹ️','درباره‌ی سیستم','اطلاعات فنی سرور']
+};
+var ADMDATA={};   /* کش داده‌ی هر بخش */
+
+function renderAdmin(){
+ if(!D.admin){$('pg-admin').innerHTML='<div class="empty"><span class="ei">🛡️</span>دسترسی مدیر لازم است.</div>';return}
+ /* دسته‌ی فعال را از تب فعلی پیدا کن */
+ var curCat='community';
+ ACAT.forEach(function(c){if(c.secs.indexOf(ADMINTAB)>=0)curCat=c.id});
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🛡️</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">مرکز فرماندهی</h1>'
+ +'<p class="sub">پنل وب کامل — همان داده‌ی زنده‌ی ربات · ۶ دسته / ۲۹ بخش</p></div></div>'
+ +'<div class="grid g4" style="margin-top:12px">'
+ +'<div class="stat"><small>USERS</small><b id="a_users">—</b></div>'
+ +'<div class="stat"><small>GROUPS</small><b id="a_groups">—</b></div>'
+ +'<div class="stat"><small>GAMES</small><b id="a_games">—</b></div>'
+ +'<div class="stat"><small>ACTIVE</small><b id="a_active">—</b></div></div></div>';
+ /* نوار دسته‌ها */
+ h+='<div class="adm-cat">'+ACAT.map(function(c){
+  return '<button class="acat'+(c.id===curCat?' on':'')+'" onclick="admCat(\''+c.id+'\')">'+c.ic+' '+c.t+'</button>'}).join('')+'</div>';
+ /* تب‌های بخش دسته‌ی فعال */
+ var secs=ACAT.filter(function(c){return c.id===curCat})[0].secs;
+ h+='<div class="seg" style="margin:6px 0 12px;flex-wrap:wrap;overflow-x:auto">'
+ +secs.map(function(s){return '<button class="'+(ADMINTAB===s?'on':'')+'" onclick="admGo(\''+s+'\')">'+ASEC[s][0]+' '+ASEC[s][1]+'</button>'}).join('')+'</div>';
+ h+='<div id="adminBody"></div>';
+ $('pg-admin').innerHTML=h;
+ adminPage(ADMINTAB);
+}
+function admCat(cid){
+ var secs=ACAT.filter(function(c){return c.id===cid})[0].secs;
+ admGo(secs[0]);
+}
+function admGo(sec){
+ ADMINTAB=sec;stateSave();
+ renderAdmin();
+}
+async function adminPage(kind){
+ if(!D.admin)return;
+ ADMINTAB=kind;
+ var b=$('adminBody');if(!b)return;
+ b.innerHTML='<div class="sk tall"></div><div class="sk row-sk" style="margin-top:10px"></div><div class="sk row-sk" style="margin-top:10px"></div>';
  try{
-  var inp=$('cmdkIn');
-  inp.addEventListener('input',function(){cmdkRender(inp.value)});
-  inp.addEventListener('keydown',function(e){
-   if(e.key==='Enter'){var s=$('cmdkList').querySelector('.sel');if(s)cmdkRun(CMDS[0].fn)}
-   else if(e.key==='ArrowDown'){e.preventDefault();cmdkNav(1)}
-   else if(e.key==='ArrowUp'){e.preventDefault();cmdkNav(-1)}
-   else if(e.key==='Escape'){cmdkClose()}
-  });
-  $('cmdk').addEventListener('click',function(e){if(e.target===this)cmdkClose()});
-  document.addEventListener('keydown',function(e){
-   if((e.ctrlKey||e.metaKey)&&(e.key==='k'||e.key==='K')){e.preventDefault();
-    if($('cmdk').classList.contains('on'))cmdkClose();else cmdkOpen()}
-   if(e.key==='/'&&!/input|textarea/i.test((document.activeElement||{}).tagName||'')){e.preventDefault();cmdkOpen()}
-  });
+  var d=await api('/api/miniapp/admin/v5?section='+encodeURIComponent(kind));
+  ADMDATA[kind]=d;
+  var h='';
+  if(kind==='home')h=admHome(d);
+  else if(kind==='users')h=admUsers(d);
+  else if(kind==='groups')h=admGroups(d);
+  else if(kind==='perms')h=admPerms(d);
+  else if(kind==='games')h=admGames(d);
+  else if(kind==='analytics')h=admAnalytics(d);
+  else if(kind==='bank')h=admBank(d);
+  else if(kind==='ach')h=admAch(d);
+  else if(kind==='feedback')h=admFeedback(d);
+  else if(kind==='qreports')h=admQreports(d);
+  else if(kind==='econ')h=admEcon(d);
+  else if(kind==='rewards')h=admRewards(d);
+  else if(kind==='broadcast')h=admBroadcast(d);
+  else if(kind==='giftall')h=admGiftall(d);
+  else if(kind==='syscfg')h=admSyscfg(d);
+  else if(kind==='bankguard')h=admBankguard(d);
+  else if(kind==='doctor')h=admDoctor(d);
+  else if(kind==='vitals')h=admVitals(d);
+  else if(kind==='backups')h=admBackups(d);
+  else if(kind==='export')h=admExport(d);
+  else if(kind==='logs')h=admLogs(d);
+  else if(kind==='settings')h=admSettings(d);
+  else if(kind==='maint')h=admMaint(d);
+  else if(kind==='maintsch')h=admMaintsch(d);
+  else if(kind==='quick')h=admQuick(d);
+  else if(kind==='clean')h=admClean(d);
+  else if(kind==='pulse')h=admPulse(d);
+  else if(kind==='gpanels')h=admGpanels(d);
+  else if(kind==='punish')h=admPunish(d);
+  else if(kind==='duels')h=admDuels(d);
+  else if(kind==='lobbies')h=admLobbies(d);
+  else if(kind==='trades')h=admTrades(d);
+  else if(kind==='tournaments')h=admTournaments(d);
+  else if(kind==='season_admin')h=admSeasonAdmin(d);
+  else if(kind==='elo')h=admElo(d);
+  else if(kind==='integrity')h=admIntegrity(d);
+  else if(kind==='ads')h=admAds(d);
+  else if(kind==='bc_history')h=admBcHistory(d);
+  else if(kind==='reset'){setTimeout(function(){admResetSheet(d)},30);h='<div class="empty"><span class="ei">🔴</span>شیت تأیید ریست باز شد.</div>'}
+  else if(kind==='about_system')h=admAboutSystem(d);
+  b.innerHTML=h||b.innerHTML;
+  /* آمار بالای پنل همیشه زنده */
+  admLiveStats();
+ }catch(e){b.innerHTML='<div class="empty"><span class="ei">⚠️</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="adminPage(\''+kind+'\')">تلاش دوباره</button></div>'}
+}
+function admLiveStats(){
+ try{
+  api('/api/miniapp/live').then(function(lv){
+   if($('a_users'))countUp($('a_users'),lv.users||0);
+   if($('a_groups'))countUp($('a_groups'),lv.groups||0);
+   if($('a_games'))countUp($('a_games'),lv.games_total||0);
+   if($('a_active'))countUp($('a_active'),lv.active_games||0);
+  }).catch(function(){});
  }catch(e){}
 }
+function adm(lbl,val){return '<div class="stat"><small>'+lbl+'</small><b>'+faK(val||0)+'</b></div>'}
+function kpi(ic,lbl,val,delta){
+ var d='';
+ if(delta&&delta.text)d='<span class="delta '+(delta.up?'up':'down')+'">'+delta.text+'</span>';
+ return '<div class="kpi"><div class="ki">'+ic+'</div><div class="grow"><small>'+lbl+'</small><b>'+val+'</b></div>'+d+'</div>';
+}
 
-/* ================= REFRESH + BOOT ================= */
-async function refresh(silent){
+/* ---------- 🖥 داشبورد فرماندهی ---------- */
+function admHomeBase(d){
+ var h='<div class="adm-grid" style="margin-bottom:12px">'
+ +kpi('👥','کل کاربران',faK(d.users))
+ +kpi('🔥','فعال امروز',faK(d.today.active_users))
+ +kpi('🎮','بازی فعال',faK(d.active_games))
+ +kpi('🪙','سکه در گردش',faK(d.total_coins))
+ +kpi('🚫','مسدود',faK(d.banned))
+ +kpi('👑','وی‌آی‌پی',faK(d.vip))
+ +kpi('✅','تأییدشده',faK(d.verified))
+ +kpi('👪','گروه‌ها',faK(d.groups))
+ +kpi('⭐','مجموع XP',faK(d.total_xp))
+ +kpi('🏦','بانک سوال',faK(d.bank_prompts))
+ +kpi('💾','حجم داده',fmtSize(d.data_size||0))
+ +kpi('⏱','آپتایم',esc(d.uptime||'—'))+'</div>';
+ /* نمودار ۷ روزه */
+ if((d.week||[]).length){
+  h+='<div class="card"><div class="shead" style="padding:0"><b>📈 بازی‌های ۷ روز اخیر</b><small>تعداد</small></div>'
+  +barsBlock((d.week||[]).map(function(w){return w.games}),(d.week||[]).map(function(w){return w.day}),150)+'</div>';
+ }
+ /* وضعیت سیستم */
+ h+='<div class="card"><b>⚙️ وضعیت سیستم</b>'
+ +'<p class="sub" style="margin:8px 0">نسخه: '+esc(d.version)+' · MiniApp: '+esc(d.miniapp_version||'')+'<br>'
+ +'حالت تعمیرات: '+(d.maintenance?'<b style="color:var(--red)">روشن ⚠️</b>':'<b style="color:var(--green)">خاموش ✅</b>')
+ +' · ذخیره‌سازی: '+esc(d.storage)+'</p>'
+ +'<div class="adm-tools" style="margin-top:10px">'
+ +'<button class="btn primary sm" onclick="admAction(\'backup_now\',{})">💾 بکاپ فوری</button>'
+ +'<button class="btn '+(d.maintenance?'green':'red')+' sm" onclick="admAction(\'maintenance_toggle\',{})">'+(d.maintenance?'خاموش کردن تعمیرات':'روشن کردن تعمیرات')+'</button>'
+ +'<button class="btn sm" onclick="admGo(\'doctor\')">🩺 دکتر داده</button>'
+ +'<button class="btn sm" onclick="admGo(\'vitals\')">🫀 ویترین‌ها</button></div></div>';
+ /* نقشه‌ی فرمان — گرید دسترسی سریع به همه‌ی بخش‌ها */
+ h+='<div class="section"><div class="shead"><b>🗂 نقشه‌ی فرمان</b><small>۶ دسته / ۲۹ بخش</small></div><div class="adm-grid">';
+ ACAT.forEach(function(c){
+  h+='<div class="card" style="grid-column:1/-1;margin-bottom:9px"><div class="shead" style="padding:0"><b>'+c.ic+' '+c.t+'</b><small>'+fa(c.secs.length)+' بخش</small></div><div class="adm-grid">';
+  c.secs.forEach(function(s){
+   var m=ASEC[s];
+   h+='<button class="adm-tile" onclick="admGo(\''+s+'\')"><span class="ti">'+m[0]+'</span><b>'+m[1]+'</b><small>'+m[2]+'</small></button>';
+  });
+  h+='</div></div>';
+ });
+ h+='</div></div>';
+ return h;
+}
+
+/* ---------- 👥 مدیریت کاربران ---------- */
+var USRFILTER='all';
+function admUsers(d){
+ var h='<div class="card"><div class="searchbar"><span class="sic">🔍</span>'
+ +'<input class="input" id="uq" placeholder="جستجوی نام، یوزرنیم یا ID…" onkeydown="if(event.key===\'Enter\')loadUsers(0)"></div>'
+ +'<div class="seg" style="margin-top:10px">'
+ +[['all','همه'],['vip','👑 VIP'],['banned','🚫 مسدود'],['verified','✔ تأیید']].map(function(f){
+  return '<button class="'+(USRFILTER===f[0]?'on':'')+'" onclick="USRFILTER=\''+f[0]+'\';loadUsers(0)">'+f[1]+'</button>'}).join('')+'</div>'
+ +'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary sm" style="flex:1" onclick="loadUsers(0)">🔎 جستجو</button>'
+ +'<button class="btn gold sm" style="flex:1" onclick="adminCsv()">📄 CSV</button>'
+ +'<button class="btn sm" style="flex:1" onclick="adminJson()">📦 JSON</button></div></div>'
+ +'<div class="list" id="usersList"></div>';
+ setTimeout(function(){loadUsers(0)},30);
+ return h;
+}
+async function loadUsers(pg){
+ pg=pg==null?USERSPG:Math.max(0,pg);USERSPG=pg;
+ var box=$('usersList');if(!box)return;
+ box.innerHTML='<div class="sk row-sk"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
  try{
-  var d=await api('/api/miniapp/me');
-  D=d;READY=true;setErr(false);
-  try{sessionStorage.setItem('apexmini',JSON.stringify(D))}catch(e){}
-  renderAll();
-  $('splash').classList.add('off');
- }catch(e){
-  if(!READY&&!(Object.keys(D).length)){
-   var sp=$('splash');if(sp){sp.querySelector('p').textContent='اتصال برقرار نشد';var spn=sp.querySelector('.spin');if(spn)spn.style.display='none'}
+  var q=encodeURIComponent(($('uq')&&$('uq').value)||'');
+  var d=await api('/api/miniapp/admin/v5?section=users&q='+q+'&filter='+USRFILTER+'&page='+pg);
+  ADMDATA.users=d;
+  var h='';
+  (d.items||[]).forEach(function(x){
+   h+='<div class="row tap" onclick="userSheet('+x.id+')" style="cursor:pointer">'+avaHtml({id:x.id,name:x.name},'sm')
+   +'<div class="grow"><b>'+(x.vip?'👑 ':'')+esc(x.name)+(x.banned?' <span class="tag bad">بن</span>':'')+(x.verified?' <span class="tag cy">✔</span>':'')+'</b><small>ID '+fa(x.id)+' · LV '+fa(x.level)+' · '+faK(x.xp)+' XP · 🪙 '+faK(x.coins)+(x.last_active?' · '+timeAgo(x.last_active):'')+'</small></div><span style="color:var(--muted)">‹</span></div>';
+  });
+  if(!h)h='<div class="empty"><span class="ei">🔍</span>کاربری پیدا نشد.</div>';
+  if((d.pages||1)>1){
+   h+='<div class="pager">'
+   +(pg>0?'<button class="btn sm" onclick="loadUsers('+(pg-1)+')">› قبلی</button>':'')
+   +'<span>صفحه '+fa(pg+1)+' از '+fa(d.pages)+' — '+fa(d.total)+' کاربر</span>'
+   +(pg+1<(d.pages||1)?'<button class="btn sm" onclick="loadUsers('+(pg+1)+')">بعدی ‹</button>':'')+'</div>';
   }
-  setErr(true,e.message);
-  if(!silent)toast(e.message,'err');
+  box.innerHTML=h;
+ }catch(e){box.innerHTML='<div class="empty"><span class="ei">⚠️</span>'+esc(e.message)+'</div>'}
+}
+async function userSheet(id){
+ openSheet('<div style="text-align:center;padding:18px 0"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var u=await api('/api/miniapp/admin/user?id='+Number(id));
+  var h='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">'
+  +avaHtml({id:u.id,name:u.name},'')+'<div style="flex:1;min-width:0"><h3 style="margin:0">'+(u.vip?'👑 ':'')+esc(u.name||'کاربر')
+  +(u.banned?' <span class="tag bad">مسدود</span>':'')+(u.verified?' <span class="tag cy">✔</span>':'')+'</h3>'
+  +'<p class="sub" style="margin:2px 0 0">ID '+fa(u.id)+(u.username?' · @'+esc(u.username):'')+'</p></div></div>';
+  h+='<div class="grid g4" style="margin:12px 0">'
+  +adm('سطح',u.level)+adm('XP',u.xp)+adm('سکه',u.coins)+adm('بازی',u.games)+'</div>';
+  h+='<div class="grid g4" style="margin-bottom:12px">'
+  +adm('برد',u.wins)+adm('دوئل',u.duels)+adm('ELO',u.elo_rating)+adm('دستاورد',(u.achievements||[]).length)+'</div>';
+  /* وضعیت‌ها */
+  h+='<div class="chips" style="margin:0 0 12px">'
+  +(u.vip?'<span class="tag vip">👑 VIP'+(u.vip_days?' · '+fa(u.vip_days)+'روز':'')+'</span>':'')
+  +(u.banned?'<span class="tag bad">مسدود</span>':'<span class="tag ok">فعال</span>')
+  +(u.verified?'<span class="tag cy">تأییدشده</span>':'')
+  +(u.mute?'<span class="tag">🔇 میوت</span>':'')
+  +(u.gender?'<span class="tag">'+(u.gender==='male'?'پسر':'دختر')+'</span>':'')+'</div>';
+  /* ابزار مقدار */
+  h+='<div class="shead" style="padding:0"><b>⚡ عملیات سریع</b></div>'
+  +'<div class="adm-tools" style="margin:8px 0 4px">'
+  +'<button class="btn green sm" onclick="admAction(\'add_coins\',{target:'+u.id+',value:100})">+۱۰۰ 🪙</button>'
+  +'<button class="btn gold sm" onclick="admAction(\'add_coins\',{target:'+u.id+',value:1000})">+۱۰۰۰ 🪙</button>'
+  +'<button class="btn primary sm" onclick="admAction(\'add_xp\',{target:'+u.id+',value:500})">+۵۰۰ XP</button>'
+  +'<button class="btn red sm" onclick="admAction(\'sub_coins\',{target:'+u.id+',value:100})">−۱۰۰ 🪙</button>'
+  +'<button class="btn '+(u.banned?'green':'red')+' sm" onclick="admAction(\'ban_toggle\',{target:'+u.id+'})">'+(u.banned?'رفع بن':'بن کردن')+'</button></div>'
+  +'<div class="adm-tools" style="margin-top:8px">'
+  +'<button class="btn '+(u.verified?'':'green')+' sm" onclick="admAction(\'verify_toggle\',{target:'+u.id+'})">'+(u.verified?'لغو تأیید ✖':'تأیید هویت ✅')+'</button>'
+  +'<button class="btn sm" onclick="admAction(\'mute_toggle\',{target:'+u.id+'})">🔇 میوت روشن/خاموش</button></div>';
+  /* مقدار دلخواه */
+  h+='<div class="shead" style="padding:0;margin-top:14px"><b>✏️ مقدار دلخواه</b></div>'
+  +'<div style="display:flex;gap:8px;margin:8px 0"><input class="input" id="uval" type="number" placeholder="مقدار…" style="flex:1">'
+  +'<button class="btn green sm" onclick="admAction(\'add_coins\',{target:'+u.id+',value:Number(document.getElementById(\'uval\').value)||0})">+ سکه</button>'
+  +'<button class="btn primary sm" onclick="admAction(\'add_xp\',{target:'+u.id+',value:Number(document.getElementById(\'uval\').value)||0})">+ XP</button></div>';
+  /* پیام خصوصی */
+  h+='<div class="shead" style="padding:0;margin-top:14px"><b>📩 پیام خصوصی</b></div>'
+  +'<textarea id="dmTxt" class="input" style="min-height:70px;margin-top:8px" placeholder="متن پیام به کاربر…"></textarea>'
+  +'<button class="btn cy sm wide" style="margin-top:8px" onclick="admDm('+u.id+')">✈️ ارسال پیام</button>';
+  /* یادداشت */
+  h+='<div class="shead" style="padding:0;margin-top:14px"><b>📝 یادداشت ادمین</b></div>'
+  +'<textarea id="note" class="input" style="margin-top:8px;min-height:80px" placeholder="یادداشت…">'+esc(u.admin_note||'')+'</textarea>'
+  +'<div style="display:flex;gap:8px;margin-top:8px">'
+  +'<button class="btn primary sm" style="flex:1" onclick="admAction(\'save_note\',{target:'+u.id+',note:document.getElementById(\'note\').value})">💾 ذخیره</button>'
+  +'<button class="btn red sm" onclick="admAction(\'note_del\',{target:'+u.id+'})">🗑 حذف</button></div>';
+  /* موجودی */
+  if((u.inventory||[]).length||Object.keys(u.inventory||{}).length){
+   h+='<div class="shead" style="padding:0;margin-top:14px"><b>🎒 موجودی بازیکن</b></div><div class="chips" style="margin:8px 0 0">';
+   var inv=u.inventory;
+   if(Array.isArray(inv))inv.forEach(function(i){h+='<span class="tag">'+esc(i.name||i.key)+' ×'+fa(i.count||1)+'</span>'});
+   else Object.keys(inv).forEach(function(k){h+='<span class="tag">'+esc(k)+' ×'+fa(inv[k])+'</span>'});
+   h+='</div>';
+  }
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">⚠️</span>'+esc(e.message)+'</div>'}
+}
+async function admDm(id){
+ var t=($('dmTxt')||{}).value||'';
+ if(t.trim().length<2){toast('متن پیام را بنویس','err');return}
+ await admAction('dm',{target:id,text:t});
+}
+
+/* ---------- 🏘 گروه‌ها ---------- */
+function admGroups(d){
+ var h='';
+ (d.items||[]).forEach(function(x){
+  h+='<div class="row tap" onclick="admGroupSheet('+x.id+')" style="cursor:pointer"><div class="medal">🏘</div>'
+  +'<div class="grow"><b>'+esc(x.title)+'</b><small>ID '+fa(x.id)+' · '+fa(x.created_games)+' بازی · سقف '+fa(x.max_players)+' نفر · '+fa(x.members||0)+' عضو</small></div>'
+  +'<div style="display:flex;gap:6px;flex-direction:column;align-items:flex-end">'
+  +'<span class="tag '+(x.adult_mode?'bad':'ok')+'">'+(x.adult_mode?'18+':'SAFE')+'</span>'
+  +'<span class="tag '+(x.enabled===false?'bad':'ok')+'">'+(x.enabled===false?'خاموش':'فعال')+'</span></div>'
+  +'<button class="btn '+(x.enabled===false?'green':'red')+' sm" onclick="admAction(\'group_toggle\',{target:'+x.id+'})">'+(x.enabled===false?'روشن':'خاموش')+'</button></div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">🏘</span>گروهی ثبت نشده است.</div>';
+ return '<div class="card" style="text-align:center;margin-bottom:12px">'+faK((d.items||[]).length)+' گروه فعال</div><div class="list">'+h+'</div>';
+}
+
+/* ---------- 🛡 دسترسی‌ها ---------- */
+function admPerms(d){
+ var h='<div class="card" style="margin-bottom:12px"><b>🛡 افزودن دسترسی</b>'
+ +'<p class="sub" style="margin:6px 0">قالب: آیدی عددی + نقش (admin یا mod)</p>'
+ +'<div style="display:flex;gap:8px"><input class="input" id="prmId" type="number" placeholder="آیدی عددی..." style="flex:1">'
+ +'<div class="seg"><button class="on" id="prmRole" onclick="this.parentNode.querySelectorAll(\'button\').forEach(function(b){b.classList.remove(\'on\')});this.classList.add(\'on\')">admin</button>'
+ +'<button onclick="this.parentNode.querySelectorAll(\'button\').forEach(function(b){b.classList.remove(\'on\')});this.classList.add(\'on\')">mod</button></div></div>'
+ +'<button class="btn primary wide sm" style="margin-top:10px" onclick="admPermAdd()">➕ افزودن دسترسی</button></div>';
+ h+='<div class="list">';
+ (d.items||[]).forEach(function(p){
+  h+='<div class="row"><div class="medal">'+(p.role==='admin'?'🛡':'🎖')+'</div>'
+  +'<div class="grow"><b>'+esc(p.name||('ID '+fa(p.id)))+'</b><small>ID '+fa(p.id)+' · نقش: '+esc(p.role)+'</small></div>'
+  +'<button class="btn red sm" onclick="admAction(\'perm_del\',{target:'+p.id+'})">🗑 حذف</button></div>';
+ });
+ if(!(d.items||[]).length)h+='<div class="empty"><span class="ei">🛡</span>فقط خودت داری دسترسی کامل!</div>';
+ h+='</div>';
+ return h;
+}
+async function admPermAdd(){
+ var id=parseInt(($('prmId')||{}).value||'0',10);
+ var role=(document.querySelector('#prmRole.parentNode .on')||{}).textContent;
+ /* نقش از دکمه‌ی فعال خوانده می‌شود */
+ var btns=document.querySelectorAll('.seg .on');var role='admin';
+ [].forEach.call(btns,function(b){if(b.textContent==='admin'||b.textContent==='mod')role=b.textContent});
+ if(!id){toast('آیدی معتبر وارد کن','err');return}
+ await admAction('perm_add',{target:id,role:role});
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN ADMIN — بخش ۲: محتوا / اقتصاد / امنیت / سیستم / فرمانده
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- 🎮 بازی‌های فعال ---------- */
+function admGames(d){
+ var h='';
+ (d.items||[]).forEach(function(x){
+  h+='<div class="row"><div class="medal">🎮</div><div class="grow"><b>'+esc(x.mode||x.key||'بازی')+'</b><small>'+esc(x.key)+' · '+esc(x.status)+' · '+fa(x.players)+' بازیکن · '+esc(x.chat_id||'')+'</small></div><span class="tag '+(x.status==='active'?'ok':'')+'">'+esc(x.status)+'</span></div>'});
+ if(!h)h='<div class="empty"><span class="ei">🎮</span>بازی فعالی در جریان نیست.</div>';
+ return '<div class="list">'+h+'</div>';
+}
+
+/* ---------- 📊 آنالیتیکس ---------- */
+function admAnalyticsBase(d){
+ var h='<div class="adm-grid" style="margin-bottom:12px">'
+ +kpi('🎮','بازی امروز',faK(d.today.games_started))
+ +kpi('👥','فعال امروز',faK(d.today.active_users))
+ +kpi('🌱','عضو جدید',faK(d.today.new_users))
+ +kpi('🪙','درآمد امروز',faK(d.today.coins_earned))+'</div>';
+ if((d.week||[]).length){
+  h+='<div class="card"><div class="shead" style="padding:0"><b>📈 روند ۷ روزه — بازی‌ها / کاربران</b><small>WEEK</small></div>'
+  +lineBlock([
+   {data:(d.week||[]).map(function(w){return w.games}),color:'#7c5cff'},
+   {data:(d.week||[]).map(function(w){return w.active}),color:'#15d8ff'}
+  ],null,150)+'</div>';
+ }
+ if((d.hourly||[]).length){
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>🕐 فعالیت ساعتی امروز</b><small>24H</small></div>'
+  +barsBlock((d.hourly||[]).map(function(x){return x.v}),(d.hourly||[]).map(function(x){return x.h}),160)+'</div>';
+ }
+ if((d.top||[]).length){
+  h+='<div class="shead" style="margin-top:16px"><b>🏆 محتوای برتر</b><small>TOP</small></div><div class="list">';
+  (d.top||[]).forEach(function(x){
+   h+='<div class="row"><div class="medal">'+esc(x.icon||'🔥')+'</div><div class="grow"><b>'+esc(x.label)+'</b><small>'+faK(x.count)+' بار</small></div></div>';
+  });
+  h+='</div>';
+ }
+ return h;
+}
+
+/* ---------- 🏦 بانک سوالات (نمایش — بدون تغییر محتوا) ---------- */
+function admBank(d){
+ var h='<div class="card" style="text-align:center;margin-bottom:12px">'
+ +'<b style="font-size:18px">🏦 '+faK(d.total)+' سوال</b><div class="sub">در '+fa((d.banks||[]).length)+' بانک — محتوای بانک دست‌نخورده می‌ماند</div></div>';
+ h+='<div class="list">';
+ (d.banks||[]).forEach(function(b){
+  h+='<div class="row tap" onclick="admBankSheet(\''+esc(b.key)+'\')"><div class="medal">'+esc(b.icon||'📚')+'</div>'
+  +'<div class="grow"><b>'+esc(b.name)+'</b><small>'+faK(b.count)+' سوال'+(b.levels?' · '+esc(b.levels):'')+'</small></div>'
+  +'<span style="color:var(--muted)">‹</span></div>';
+ });
+ h+='</div>';
+ return h;
+}
+async function admBankSheet(key){
+ openSheet('<h3>🏦 '+esc(key)+'</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=bank_view&key='+encodeURIComponent(key));
+  var h='<h3>🏦 '+esc(d.name)+'</h3>'
+  +'<div class="grid g4" style="margin:12px 0">'+adm('سوال',d.count)+adm('نمونه',d.samples.length)+adm('وضعیت',d.enabled?'فعال':'خاموش')+adm('سطح‌ها',d.levels)+'</div>';
+  if(d.guard)h+='<div class="card" style="font-size:10px;color:var(--muted)">🛡 محافظ بانک فعال است — محتوا قفل است.</div>';
+  h+='<div class="shead" style="padding:0;margin-top:12px"><b>👁 نمونه سوالات</b><small>فقط نمایش</small></div>';
+  (d.samples||[]).forEach(function(s,i){
+   h+='<div class="card" style="margin-bottom:8px"><b style="font-size:11px">'+fa(i+1)+'. '+esc(s.q||s.text||s.prompt||String(s))+'</b>'
+   +(s.a||s.answer?'<div class="sub" style="margin-top:4px">پاسخ: '+esc(s.a||s.answer)+'</div>':'')+'</div>';
+  });
+  h+='<div class="card" style="text-align:center;font-size:9.5px;color:var(--muted)">🔒 محتوای بانک سوالات طبق قوانین ربات از پنل وب قابل ویرایش نیست.</div>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+}
+
+/* ---------- 🏆 دستاوردها ---------- */
+function admAch(d){
+ var h='<div class="card" style="margin-bottom:12px">'
+ +'<div class="adm-grid">'+adm('کل',d.total)+adm('گرفته‌شده',d.granted)+adm('سفارشی',d.custom)+'</div>'
+ +'<button class="btn primary sm wide" style="margin-top:10px" onclick="admAchNew()">➕ دستاورد سفارشی جدید</button></div>';
+ h+='<div class="list">';
+ (d.items||[]).forEach(function(a){
+  h+='<div class="row"><div class="medal">'+(a.owned?'🏆':'🔒')+'</div>'
+  +'<div class="grow"><b>'+esc(a.title)+(a.custom?' <span class="tag cy">سفارشی</span>':'')+(a.off?' <span class="tag bad">خاموش</span>':'')+'</b>'
+  +'<small>'+esc(a.desc)+' · 🎁 '+fa(a.reward)+' سکه · '+fa(a.holders)+' دارنده</small></div>'
+  +'<div style="display:flex;gap:5px;flex-direction:column">'
+  +'<button class="btn sm" onclick="admAction(\'ach_grant\',{key:\''+esc(a.key)+'\'})">🏆 اهدا</button>'
+  +'<button class="btn '+(a.off?'green':'')+' sm" onclick="admAction(\'ach_toggle\',{key:\''+esc(a.key)+'\'})">'+(a.off?'روشن':'خاموش')+'</button>'
+  +(a.custom?'<button class="btn red sm" onclick="admAction(\'ach_del\',{key:\''+esc(a.key)+'\'})">🗑</button>':'')+'</div></div>';
+ });
+ h+='</div>';
+ return h;
+}
+function admAchNew(){
+ openSheet('<h3>🏆 دستاورد سفارشی جدید</h3>'
+ +'<input class="input" id="achK" placeholder="کلید (انگلیسی، مثل my_ach)" dir="ltr">'
+ +'<input class="input" id="achT" placeholder="عنوان (مثل 🏆 قهرمان)" style="margin-top:8px">'
+ +'<input class="input" id="achD" placeholder="توضیح" style="margin-top:8px">'
+ +'<input class="input" id="achR" type="number" placeholder="پاداش سکه" style="margin-top:8px">'
+ +'<button class="btn primary wide glow" style="margin-top:12px" onclick="admAction(\'ach_new\',{key:document.getElementById(\'achK\').value,title:document.getElementById(\'achT\').value,desc:document.getElementById(\'achD\').value,reward:Number(document.getElementById(\'achR\').value)||0},\''+'ach\')">➕ ساخت دستاورد</button>');
+}
+
+/* ---------- 📨 بازخوردها ---------- */
+function admFeedback(d){
+ var h='';
+ (d.items||[]).forEach(function(f){
+  h+='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
+  +avaHtml({id:f.uid,name:f.name},'sm')
+  +'<div class="grow"><b>'+esc(f.name)+'</b><small>'+timeAgo(f.ts)+'</small></div>'
+  +(f.resolved?'<span class="tag ok">رسیدگی ✓</span>':'<span class="tag cy">جدید</span>')+'</div>'
+  +'<p style="margin:10px 0 0;font-size:11px;line-height:2">'+esc(f.text)+'</p>'
+  +(f.resolved?'':'<div style="display:flex;gap:8px;margin-top:10px">'
+  +'<button class="btn green sm" style="flex:1" onclick="admAction(\'fb_resolve\',{id:'+f.id+'})">✅ رسیدگی شد</button></div>')+'</div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">📭</span>بازخوردی رسیده نکرده است.</div>';
+ return '<div class="card" style="text-align:center;margin-bottom:12px">'+fa((d.items||[]).filter(function(f){return!f.resolved}).length)+' بازخورد خوانده‌نشده</div>'+h;
+}
+
+/* ---------- 🚩 گزارش سوالات ---------- */
+function admQreports(d){
+ var h='';
+ (d.items||[]).forEach(function(r){
+  h+='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
+  +'<div class="medal">🚩</div>'
+  +'<div class="grow"><b>گزارش برای بانک '+esc(r.bank||'؟')+'</b><small>گزارش‌دهنده: '+esc(r.by_name||fa(r.by))+' · '+timeAgo(r.ts)+'</small></div></div>'
+  +'<p style="margin:10px 0 0;font-size:11px;line-height:2">«'+esc(r.reason||r.text||'')+'»</p>'
+  +'<div style="display:flex;gap:8px;margin-top:10px">'
+  +'<button class="btn green sm" style="flex:1" onclick="admAction(\'qr_resolve\',{id:'+r.id+'})">✅ رسیدگی شد</button>'
+  +'<button class="btn red sm" style="flex:1" onclick="admAction(\'qr_dismiss\',{id:'+r.id+'})">🚫 رد</button></div></div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">🕊</span>گزارشی در صف نیست — سوالات سالم‌اند!</div>';
+ return h;
+}
+
+/* ---------- 💰 اقتصاد ---------- */
+function admEcon(d){
+ var h='<div class="adm-grid" style="margin-bottom:12px">'
+ +kpi('🪙','سکه در گردش',faK(d.coins))
+ +kpi('👑','کاربران VIP',faK(d.vip))
+ +kpi('🛍','آیتم فروشگاه',faK(d.shop_items))
+ +kpi('👥','کاربران',faK(d.users))+'</div>';
+ h+='<div class="card"><div class="shead" style="padding:0"><b>💵 جریان امروز</b><small>TODAY</small></div>'
+ +'<div class="grid g4" style="margin-top:10px">'
+ +adm('درآمد',d.today.coins_earned)+adm('مصرف',d.today.coins_spent)+adm('خریدها',d.today.shop_buys)+adm('خالص',(d.today.coins_earned||0)-(d.today.coins_spent||0))+'</div></div>';
+ if((d.week||[]).length){
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>📈 درآمد ۷ روزه</b><small>EARN</small></div>'
+  +lineBlock([{data:(d.week||[]).map(function(w){return w.earned}),color:'#ffc857'}],null,140)+'</div>';
+ }
+ return h;
+}
+
+/* ---------- 🎁 کدهای هدیه ---------- */
+function admRewards(d){
+ var h='<div class="card" style="margin-bottom:12px"><b>🎁 ساخت کد هدیه</b>'
+ +'<p class="sub" style="margin:6px 0">کد برای همه قابل استفاده است — هر نفر یک بار.</p>'
+ +'<div style="display:flex;gap:8px"><input class="input" id="gcCode" placeholder="کد (مثل NOWROZ)" dir="ltr" style="flex:1">'
+ +'<input class="input" id="gcAmt" type="number" placeholder="سکه" style="width:90px"></div>'
+ +'<button class="btn primary wide sm" style="margin-top:10px" onclick="admAction(\'gift_new\',{code:document.getElementById(\'gcCode\').value,amount:Number(document.getElementById(\'gcAmt\').value)||0})">🎁 ثبت کد</button></div>';
+ h+='<div class="list">';
+ (d.items||[]).forEach(function(g){
+  h+='<div class="row"><div class="medal">🎁</div><div class="grow"><b>'+esc(g.code)+'</b><small>🪙 '+fa(g.amount)+' سکه · '+fa(g.used||0)+' استفاده · '+(g.expires?'تا '+timeAgo(g.expires):'بی‌نهایت')+'</small></div>'
+  +'<button class="btn red sm" onclick="admAction(\'gift_del\',{code:\''+esc(g.code)+'\'})">🗑</button></div>';
+ });
+ if(!(d.items||[]).length)h+='<div class="empty"><span class="ei">🎁</span>کدی ثبت نشده است.</div>';
+ h+='</div>';
+ return h;
+}
+
+/* ---------- 📢 پیام همگانی ---------- */
+function admBroadcast(d){
+ return '<div class="card"><b>📢 ارسال پیام همگانی</b>'
+ +'<p class="sub" style="margin:8px 0">پیام برای همه‌ی کاربران ربات در صف ارسال قرار می‌گیرد (همان Broadcast ربات).'+(d.pending?' در صف فعلی: '+fa(d.pending)+' پیام':'')+'</p>'
+ +'<textarea id="bcTxt" class="input" maxlength="900" placeholder="متن پیام همگانی..." style="min-height:110px"></textarea>'
+ +'<button class="btn primary wide glow" style="margin-top:10px" onclick="adminBroadcast()">✈️ قرار دادن در صف ارسال</button></div>';
+}
+async function adminBroadcast(){
+ var t=($('bcTxt')||{}).value||'';
+ if(t.trim().length<3){toast('متن خیلی کوتاه است','err');return}
+ try{
+  haptic('medium');
+  var d=await api('/api/miniapp/admin/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
+  toast(d.message||'قرار گرفت','ok');$('bcTxt').value='';
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- 🎀 هدیه همگانی ---------- */
+function admGiftall(d){
+ var h='<div class="card" style="margin-bottom:12px"><b>🎀 هدیه همگانی</b>'
+ +'<p class="sub" style="margin:6px 0">به همه‌ی کاربران ربات سکه یا XP اهدا کن — با تأیید نهایی.</p>'
+ +'<div class="adm-grid">'
+ +'<button class="adm-tile good" onclick="admGiftallGo(\'coins\',50)"><span class="ti">🪙</span><b>+۵۰ سکه</b><small>همه‌ی کاربران</small></button>'
+ +'<button class="adm-tile good" onclick="admGiftallGo(\'coins\',100)"><span class="ti">💰</span><b>+۱۰۰ سکه</b><small>همه‌ی کاربران</small></button>'
+ +'<button class="adm-tile good" onclick="admGiftallGo(\'coins\',500)"><span class="ti">💎</span><b>+۵۰۰ سکه</b><small>همه‌ی کاربران</small></button>'
+ +'<button class="adm-tile good" onclick="admGiftallGo(\'xp\',100)"><span class="ti">⭐</span><b>+۱۰۰ XP</b><small>همه‌ی کاربران</small></button></div></div>';
+ h+='<div class="card"><b>✏️ مقدار سفارشی</b>'
+ +'<div style="display:flex;gap:8px;margin-top:10px">'
+ +'<div class="seg"><button class="on" id="gaKind" onclick="this.parentNode.querySelectorAll(\'button\').forEach(function(b){b.classList.remove(\'on\')});this.classList.add(\'on\')">سکه</button>'
+ +'<button onclick="this.parentNode.querySelectorAll(\'button\').forEach(function(b){b.classList.remove(\'on\')});this.classList.add(\'on\')">XP</button></div>'
+ +'<input class="input" id="gaAmt" type="number" placeholder="مقدار..." style="flex:1"></div>'
+ +'<button class="btn primary wide sm" style="margin-top:10px" onclick="admGiftallCustom()">🎀 اهدای سفارشی</button></div>';
+ return h;
+}
+function admGiftallGo(kind,amt){
+ askConfirm('هدیه همگانی','به همه‌ی کاربران <b>'+fa(amt)+' '+(kind==='coins'?'سکه':'XP')+'</b> اهدا شود؟ این کار به همه اعمال می‌شود.','اهدا کن',function(){
+  admAction('giftall',{kind:kind,amount:amt});
+ });
+}
+function admGiftallCustom(){
+ var amt=parseInt(($('gaAmt')||{}).value||'0',10);
+ var kind='coins';
+ [].forEach.call(document.querySelectorAll('.seg .on'),function(b){if(b.textContent==='سکه'||b.textContent==='XP')kind=b.textContent==='سکه'?'coins':'xp'});
+ if(!amt||amt<1){toast('مقدار معتبر وارد کن','err');return}
+ admGiftallGo(kind,amt);
+}
+
+/* ---------- 🎛 سیستم و ضداسپم ---------- */
+function admSyscfg(d){
+ var h='<div class="card"><b>🎛 تنظیمات کلیدی سیستم</b>'
+ +'<p class="sub" style="margin:6px 0 10px">تغییر هر کلید با سوئیچ اعمال و بلافاصله ذخیره می‌شود.</p>';
+ Object.keys(d.cfg||{}).forEach(function(k){
+  var v=d.cfg[k];
+  if(typeof v==='boolean'){
+   h+='<div class="srow"><div class="ic">🎛</div><div class="grow"><b>'+esc(k)+'</b><small>'+(v?'فعال':'غیرفعال')+'</small></div>'
+   +'<button class="sw'+(v?' on':'')+'" onclick="admAction(\'syscfg_set\',{key:\''+esc(k)+'\',value:'+(!v)+'})"></button></div>';
+  }else{
+   h+='<div class="srow"><div class="ic">🎚</div><div class="grow"><b>'+esc(k)+'</b><small dir="ltr">'+esc(String(v))+'</small></div></div>';
+  }
+ });
+ h+='</div>';
+ h+='<div class="card" style="margin-top:12px"><b>🧾 نمای کامل</b><pre class="json" style="margin-top:10px">'+esc(JSON.stringify(d.cfg||{},null,2))+'</pre></div>';
+ return h;
+}
+
+/* ---------- 🛡 محافظ بانک ---------- */
+function admBankguard(d){
+ var h='<div class="adm-grid" style="margin-bottom:12px">'
+ +'<div class="vital"><div class="vl '+(d.enabled?'ok':'bad')+'"></div><div class="grow"><b>وضعیت محافظ</b><small>قفل ویرایش بانک سوالات</small></div><div class="vv">'+(d.enabled?'فعال ✅':'خاموش ⚠️')+'</div></div>'
+ +'<div class="vital"><div class="vl '+(d.locked?'warn':'ok')+'"></div><div class="grow"><b>قفل محتوا</b><small>ویرایش از همه‌ی مسیرها</small></div><div class="vv">'+(d.locked?'قفل':'آزاد')+'</div></div></div>';
+ h+='<div class="card">'
+ +'<button class="btn '+(d.enabled?'red':'green')+' wide" onclick="admAction(\'bankguard_toggle\',{})">'+(d.enabled?'🔓 خاموش کردن محافظ':'🛡 روشن کردن محافظ')+'</button>'
+ +'<p class="sub" style="margin-top:10px">💡 محافظ بانک جلوی تغییر تصادفی/مخرب بانک سوالات را می‌گیرد. محتوای بانک طبق قوانین ربات از پنل وب قابل ویرایش نیست.</p></div>';
+ return h;
+}
+
+/* ---------- 🩺 دکتر داده ---------- */
+function admDoctor(d){
+ var h='<div class="card" style="margin-bottom:12px"><b>🩺 وضعیت سلامت داده</b>'
+ +'<p class="sub" style="margin:8px 0">'+((d.issues||[]).length?fa(d.issues.length)+' مورد قابل اصلاح یافت شد':'✅ همه‌چیز سالم است! هیچ اصلاحی لازم نیست.')+'</p>'
+ +'<button class="btn primary wide" onclick="admAction(\'doctor_run\',{})">🩺 بررسی مجدد</button>'
+ +((d.issues||[]).length?'<button class="btn green wide" style="margin-top:8px" onclick="admDoctorFix()">🔧 اصلاح موارد یافت‌شده</button>':'')+'</div>';
+ (d.issues||[]).forEach(function(f){
+  h+='<div class="row"><div class="medal">⚠️</div><div class="grow"><b>'+esc(f)+'</b></div></div>';
+ });
+ return h;
+}
+function admDoctorFix(){
+ askConfirm('اصلاح داده','دکتر داده همه‌ی موارد یافت‌شده را اصلاح کند؟','اصلاح کن',function(){
+  admAction('doctor_fix',{});
+ });
+}
+
+/* ---------- 🫀 ویترین‌ها (سلامت سیستم) ---------- */
+function admVitals(d){
+ var rows=[
+  ['وضعیت کلی',d.healthy?'آنلاین ✅':'نیاز به بررسی ⚠️',d.healthy?'ok':'warn'],
+  ['آپتایم',esc(d.uptime||'—'),'ok'],
+  ['حافظه',fa(d.memory_mb||0)+' MB',(d.memory_mb||0)<400?'ok':'warn'],
+  ['حجم داده',fmtSize(d.data_size||0),'ok'],
+  ['نسخه ربات',esc(d.version||'—'),'ok'],
+  ['نسخه مینی‌اپ',esc(d.miniapp_version||'—'),'ok'],
+  ['کاربران',faK(d.users||0),'ok'],
+  ['گروه‌ها',faK(d.groups||0),'ok'],
+  ['بازی فعال',faK(d.active_games||0),'ok'],
+  ['صف مچ‌میکینگ',faK(d.queue_matchmaking||0),'ok'],
+  ['مجازات فعال',faK(d.punishments||0),(d.punishments||0)>0?'warn':'ok'],
+  ['دوئل‌های کل',faK(d.duels||0),'ok']
+ ];
+ var h='<div class="adm-grid">';
+ rows.forEach(function(r){
+  h+='<div class="vital"><div class="vl '+r[2]+'"></div><div class="grow"><b>'+r[0]+'</b></div><div class="vv">'+r[1]+'</div></div>';
+ });
+ h+='</div>';
+ h+='<div class="card" style="margin-top:12px;text-align:center"><button class="btn primary sm" onclick="adminPage(\'vitals\')">🔄 تازه‌سازی</button></div>';
+ return h;
+}
+
+/* ---------- 💾 بکاپ‌ها ---------- */
+function admBackups(d){
+ var h='<div class="card" style="margin-bottom:12px">'
+ +'<button class="btn primary wide glow" onclick="admAction(\'backup_now\',{})">💾 ساخت بکاپ جدید</button></div>';
+ h+='<div class="list">';
+ (d.items||[]).forEach(function(x){
+  h+='<div class="row"><div class="medal">💾</div><div class="grow"><b>'+esc(x.name)+'</b><small>'+fmtSize(x.size)+' · '+timeAgo(x.mtime)+'</small></div></div>'});
+ if(!(d.items||[]).length)h+='<div class="empty"><span class="ei">💾</span>بکاپی پیدا نشد.</div>';
+ h+='</div>';
+ return h;
+}
+
+/* ---------- 📤 خروجی ---------- */
+function admExport(d){
+ return '<div class="adm-grid">'
+ +'<button class="adm-tile" onclick="adminCsv()"><span class="ti">📄</span><b>خروجی CSV</b><small>'+faK(d.users||0)+' کاربر — UTF-8</small></button>'
+ +'<button class="adm-tile" onclick="adminJson()"><span class="ti">📦</span><b>خروجی JSON</b><small>نسخه‌ی کامل داده</small></button>'
+ +'<button class="adm-tile" onclick="admExportBank()"><span class="ti">🏦</span><b>آمار بانک</b><small>'+faK(d.bank_prompts||0)+' سوال — ۲۱ بانک</small></button>'
+ +'<button class="adm-tile" onclick="admExportLogs()"><span class="ti">🧾</span><b>لاگ‌های Audit</b><small>'+faK(d.audit||0)+' رکورد</small></button></div>';
+}
+async function adminCsv(){
+ try{
+  var d=await api('/api/miniapp/admin/csv');
+  var blob=new Blob(["\ufeff"+d.csv],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='apexrival_users.csv';document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},400);
+  toast('خروجی CSV با '+fa(d.count)+' کاربر ساخته شد 📄','ok');
+ }catch(e){toast(e.message,'err')}}
+async function adminJson(){
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=export_json');
+  var blob=new Blob([JSON.stringify(d.data,null,2)],{type:'application/json'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='apexrival_data.json';document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},400);
+  toast('خروجی JSON کامل ساخته شد 📦','ok');
+ }catch(e){toast(e.message,'err')}}
+async function admExportBank(){
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=bank');
+  var blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='apexrival_banks.json';document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},400);
+  toast('آمار بانک‌ها خروجی شد 🏦','ok');
+ }catch(e){toast(e.message,'err')}}
+async function admExportLogs(){
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=export_logs');
+  var blob=new Blob(["\ufeff"+d.csv],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='apexrival_audit.csv';document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},400);
+  toast('لاگ‌های Audit خروجی شد 🧾','ok');
+ }catch(e){toast(e.message,'err')}}
+
+/* ---------- 🧾 لاگ‌ها ---------- */
+function admLogs(d){
+ var h='<div class="seg" style="margin:0 0 12px">'+[['all','همه'],['info','Info'],['warn','Warn'],['error','Error']].map(function(l){
+  return '<button class="'+(LOGLV===l[0]?'on':'')+'" onclick="LOGLV=\''+l[0]+'\';stateSave();adminPage(\'logs\')">'+l[1]+'</button>'}).join('')+'</div>';
+ h+='<div class="list">';
+ (d.items||[]).forEach(function(x){
+  var lv=String(x.level||x.type||'info').toLowerCase();
+  h+='<div class="row"><div class="grow"><b>'+esc(x.message||x.action||'event')+'</b><small>'+esc(x.category||'')+(x.details?' · '+esc(x.details):'')+(x.actor?' · توسط '+fa(x.actor):'')+'</small></div><span class="loglv '+lv+'">'+lv+'</span><time style="color:var(--dim);font-size:8px;white-space:nowrap">'+timeAgo(x.ts)+'</time></div>'});
+ if(!(d.items||[]).length)h+='<div class="empty"><span class="ei">🧾</span>لاگی در این سطح نیست.</div>';
+ h+='</div>';
+ return h;
+}
+
+/* ---------- ⚙️ تنظیمات خام ---------- */
+function admSettings(d){
+ return '<div class="card"><b>⚙️ تنظیمات کلیدی سیستم</b><pre class="json" style="margin-top:10px">'+esc(JSON.stringify(d,null,2))+'</pre></div>';
+}
+
+/* ---------- 🛠 تعمیرات ---------- */
+function admMaint(d){
+ var h='<div class="card" style="text-align:center;margin-bottom:12px;'+(d.active?'border-color:#ff526844':'')+'">'
+ +'<div style="font-size:34px;margin-bottom:8px">'+(d.active?'🛠':'✅')+'</div>'
+ +'<b>'+(d.active?'حالت تعمیرات روشن است':'ربات کاملاً فعال است')+'</b>'
+ +'<div class="sub" style="margin-top:6px">'+(d.active?'در تعمیرات، دستورات جدید کاربران بلاک می‌شوند.':'همه‌چیز عادی کار می‌کند.')+'</div>'
+ +'<button class="btn '+(d.active?'green':'red')+' wide" style="margin-top:12px" onclick="admAction(\'maintenance_toggle\',{})">'+(d.active?'✅ خاموش کردن تعمیرات':'🛠 روشن کردن تعمیرات')+'</button></div>';
+ return h;
+}
+
+/* ---------- ⏰ زمان‌بندی تعمیر ---------- */
+function admMaintsch(d){
+ var h='';
+ if(d.scheduled){
+  h+='<div class="card" style="text-align:center;border-color:#ff9e4f44;margin-bottom:12px">'
+  +'<b>⏰ تعمیر زمان‌بندی‌شده</b><div class="sub" style="margin-top:6px">حدود '+timeAgo(d.scheduled)+' فعال می‌شود (زمان آینده: '+fa(d.in_minutes)+' دقیقه دیگر)</div>'
+  +'<button class="btn red sm" style="margin-top:10px" onclick="admAction(\'maint_cancel\',{})">✖ لغو زمان‌بندی</button></div>';
+ }
+ h+='<div class="card"><b>⏰ برنامه‌ریزی تعمیرات</b>'
+ +'<p class="sub" style="margin:6px 0">بعد از این تعداد دقیقه، حالت تعمیرات خودکار روشن می‌شود.</p>'
+ +'<div class="adm-tools">'
+ +[10,30,60,120,360].map(function(m){
+  return '<button class="btn sm" onclick="admAction(\'maint_sched\',{minutes:'+m+'})">'+fa(m)+' دقیقه</button>'}).join('')+'</div></div>';
+ return h;
+}
+
+/* ---------- ⚡ اقدامات سریع ---------- */
+function admQuick(d){
+ return '<div class="adm-grid">'
+ +'<button class="adm-tile" onclick="admAction(\'backup_now\',{})"><span class="ti">💾</span><b>بکاپ فوری</b><small>همین حالا</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'broadcast\')"><span class="ti">📢</span><b>پیام همگانی</b><small>به همه کاربران</small></button>'
+ +'<button class="adm-tile good" onclick="admGo(\'giftall\')"><span class="ti">🎀</span><b>هدیه همگانی</b><small>سکه/XP برای همه</small></button>'
+ +'<button class="adm-tile warn" onclick="admAction(\'maintenance_toggle\',{})"><span class="ti">🛠</span><b>تغییر تعمیرات</b><small>روشن/خاموش سریع</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'doctor\')"><span class="ti">🩺</span><b>دکتر داده</b><small>بررسی سلامت</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'vitals\')"><span class="ti">🫀</span><b>ویترین‌ها</b><small>پایش سیستم</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'clean\')"><span class="ti">♻️</span><b>بهینه‌سازی</b><small>پاک‌سازی داده</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'logs\')"><span class="ti">🧾</span><b>لاگ‌ها</b><small>آخرین رویدادها</small></button></div>';
+}
+
+/* ---------- ♻️ بهینه‌سازی ---------- */
+function admClean(d){
+ return '<div class="adm-grid">'
+ +'<button class="adm-tile warn" onclick="admCleanAsk(\'games\')"><span class="ti">🎮</span><b>پاک‌سازی بازی‌های مرده</b><small>'+faK(d.dead_games||0)+' بازی تمام‌شده قدیمی</small></button>'
+ +'<button class="adm-tile warn" onclick="admCleanAsk(\'panels\')"><span class="ti">🌐</span><b>پاک‌سازی پنل‌های مرده</b><small>'+faK(d.dead_panels||0)+' پنل بی‌صاحب</small></button>'
+ +'<button class="adm-tile warn" onclick="admCleanAsk(\'cache\')"><span class="ti">⚡</span><b>خالی کردن کش موقت</b><small>'+faK(d.temp_items||0)+' رکورد موقت</small></button></div>';
+}
+function admCleanAsk(what){
+ askConfirm('بهینه‌سازی','«'+({'games':'بازی‌های مرده','panels':'پنل‌های مرده','cache':'کش موقت'}[what])+'» پاک‌سازی شود؟','پاک‌سازی کن',function(){
+  admAction('clean',{what:what});
+ });
+}
+
+/* ---------- ⏱ موتور نبض ---------- */
+function admPulse(d){
+ var h='<div class="adm-grid" style="margin-bottom:12px">'
+ +kpi('⏱','فاصله رفرش',fa(d.interval||5)+' ثانیه')
+ +kpi('🌐','پنل فعال',faK(d.panels||0))
+ +kpi('🧹','پنل مرده',faK(d.dead_panels||0))+'</div>';
+ h+='<div class="card"><b>🎛 تنظیم فاصله‌ی نبض</b>'
+ +'<p class="sub" style="margin:6px 0">سرعت به‌روزرسانی خودکار پنل‌های زنده‌ی ربات.</p>'
+ +'<div class="adm-tools">'
+ +[-2,-1,1,2].map(function(dd){
+  return '<button class="btn sm" onclick="admAction(\'pulse_interval\',{delta:'+dd+'})">'+(dd>0?'+':'')+fa(dd)+'s</button>'}).join('')+'</div></div>';
+ h+='<div class="card" style="margin-top:12px"><div class="adm-tools">'
+ +'<button class="btn primary sm" onclick="admAction(\'pulse_refresh\',{})">⚡ رفرش فوری همه پنل‌ها</button>'
+ +'<button class="btn sm" onclick="admAction(\'pulse_cleanup\',{})">🧹 پاک‌سازی پنل‌های مرده</button></div></div>';
+ return h;
+}
+
+/* ---------- 🌐 پنل گروه‌ها ---------- */
+function admGpanels(d){
+ var h='';
+ (d.items||[]).forEach(function(p){
+  h+='<div class="row"><div class="medal">🌐</div><div class="grow"><b>'+esc(p.title||('گروه '+fa(p.gid)))+'</b><small>آخرین نبض: '+timeAgo(p.last_beat)+' · '+(p.alive?'زنده':'بی‌جان')+'</small></div>'
+  +'<button class="btn primary sm" onclick="admAction(\'gpanel_refresh\',{target:'+p.gid+'})">⚡ تازه‌سازی</button></div>'});
+ if(!h)h='<div class="empty"><span class="ei">🌐</span>پنل فعالی ثبت نشده است.</div>';
+ return '<div class="list">'+h+'</div>';
+}
+
+/* ---------- ⚖️ مجازات‌ها ---------- */
+function admPunish(d){
+ var h='';
+ (d.items||[]).forEach(function(p){
+  h+='<div class="row"><div class="medal">⚖️</div><div class="grow"><b>'+esc(p.name)+' — محکوم</b>'
+  +'<small>قاضی: '+esc(p.by_name)+' · «'+esc(p.text)+'» · '+timeAgo(p.ts)+'</small></div>'
+  +'<button class="btn green sm" onclick="admAction(\'punish_forgive\',{pid:\''+esc(p.pid)+'\'})">🤝 بخشش</button></div>'});
+ if(!h)h='<div class="empty"><span class="ei">🕊</span>هیچ مجازاتی در جریان نیست — صلح و صفایی!</div>';
+ return '<div class="list">'+h+'</div>';
+}
+
+/* ---------- اکشن عمومی ادمین v5 ---------- */
+async function admAction(action,body,afterSec){
+ body=body||{};
+ try{
+  haptic('medium');
+  var d=await api('/api/miniapp/admin/v5',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify(Object.assign({action:action},body))});
+  toast(d.message||'انجام شد','ok');
+  if(action==='backup_now'||action==='maintenance_toggle')adminPage(afterSec||'home');
+  else if(action&&String(action).indexOf('giftall')===0){confetti();SND.win();adminPage('home')}
+  else if(body&&body.target&&String(action).indexOf('perm')<0&&String(action).indexOf('group')<0)userSheet(body.target);
+  else adminPage(afterSec||ADMINTAB);
+  if(body&&body.target&&afterSec==='ach')adminPage('ach');
+  await refresh(true);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- ℹ️ درباره‌ی سیستم ---------- */
+function admAboutSystem(d){
+ var rows=[
+  ['🐍 پایتون',esc(d.python||'—'),'ok'],
+  ['🖥 پلتفرم',esc(d.platform||'—'),'ok'],
+  ['🧵 نخ‌های فعال',fa(d.threads||0),(d.threads||0)<20?'ok':'warn'],
+  ['🧠 حافظه',fa(d.memory_mb||0)+' MB',(d.memory_mb||0)<400?'ok':'warn'],
+  ['💾 دیسک آزاد',faK(d.disk_free_mb||0)+' MB','ok'],
+  ['⏱ آپتایم',esc(d.uptime||'—'),'ok'],
+  ['📦 نسخه ربات',esc(d.version||'—'),'ok'],
+  ['🛡 نسخه مینی‌اپ',esc(d.miniapp_version||'—'),'ok'],
+  ['🏦 بانک‌ها',fa(d.banks||0)+' × '+faK(d.bank_total||0)+' سوال','ok'],
+  ['🔒 مهر بانک',esc((d.bank_digest||'—').slice(0,10))+'…','ok']
+ ];
+ var h='<div class="adm-grid">';
+ rows.forEach(function(r){
+  h+='<div class="vital"><div class="vl '+r[2]+'"></div><div class="grow"><b>'+r[0]+'</b></div><div class="vv">'+r[1]+'</div></div>';
+ });
+ h+='</div>';
+ h+='<div class="card" style="margin-top:12px;text-align:center"><button class="btn primary sm" onclick="adminPage(\'about_system\')">🔄 تازه‌سازی</button></div>';
+ return h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN PLUS ۱ — مرکز راهنما / VIP / دعوت / مرجع دستورات ربات
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 🎓 مرکز راهنما (صفحه‌ی کامل) ================= */
+var GUIDE_TOPICS=[
+ {ic:'🎮',t:'شروع سریع',s:'اولین ۵ دقیقه',body:[
+  'مینی‌اپ را باز کن و از Play Hub یک لابی بساز. کد ۶ حرفی را برای دوستانت بفرست تا بپیوندند. سرگروه «شروع بازی» را می‌زند و نوبت‌ها می‌چرخند.',
+  'همه‌ی چیزها — بازی، پاداش، آمار، فروشگاه و حتی پنل مدیریت — داخل همین مینی‌اپ اجرا می‌شود. دیگر لازم نیست به چت ربات برگردی.',
+  'برای شروع سریع‌تر، سه دکمه‌ی پایین صفحه (ناوبری) را امتحان کن: «بازی» همه‌ی حالت‌ها را یک‌جا دارد و «گیم‌ها» ۱۰ بازی فوری را.']},
+ {ic:'🔄',t:'چرخه‌ی نوبت لابی',s:'پرسشگر، هدف، سوال',body:[
+  'هر نوبت یک «پرسشگر» مشخص می‌شود. پرسشگر ابتدا موضوع (اعتراف، جرئت، شوخ‌باش و…) و سپس بازیکن هدف را انتخاب می‌کند.',
+  'سوال صادر می‌شود و بازیکن هدف باید در زمان تعیین‌شده جواب بدهد. جواب‌های مفصل‌تر پاداش بیشتری می‌گیرند.',
+  'با ثبت جواب، XP و سکه می‌گیری و نوبت به بازیکن بعدی می‌رسد. بازی تا زمانی که سرگروه «پایان» را بزند ادامه دارد.']},
+ {ic:'🌶',t:'موتور گرما',s:'از آرام تا آتیشی',body:[
+  'سوال‌ها با پیشرفت بازی داغ‌تر می‌شوند: 🟢 آرام ← 🟡 معتدل ← 🟠 داغ ← 🔴 آتیشی ← 🔥 خطرناک.',
+  'هر راند که می‌گذرد، موتور گرما یک پله بالا می‌رود و سوال‌های عمیق‌تر و جسورانه‌تری صادر می‌شود.',
+  'اگر بازی گروهی حساس است، سرگروه می‌تواند هر لحظه بازی را تمام کند — همه‌ی پاداش‌های تا آن لحظه محفوظ می‌مانند.']},
+ {ic:'🤺',t:'دوئل تن‌به‌تن',s:'۱۰ راند، یک قهرمان',body:[
+  'دوئل دونفره با ۱۰ راند انجام می‌شود. هر جواب +۳ XP و ۱ امتیاز می‌گیرد.',
+  'هر راند، یکی از دو نفر موضوع را انتخاب می‌کند و دیگری به سوال جواب می‌دهد — نوبت‌ها یکی‌درمیان می‌چرخند.',
+  'برنده‌ی نهایی +۱۰ XP و +۵ سکه می‌گیرد. کد دوئل را بفرست تا حریفت از داخل مینی‌اپ وارد شود.']},
+ {ic:'🏆',t:'آرنا رنک‌دار',s:'ELO و لیگ‌ها',body:[
+  'در آرنا، سیستم حریفی با نزدیک‌ترین ELO به تو پیدا می‌کند. اولین نفر که به ۵ امتیاز برسد برنده است.',
+  'برنده ELO می‌گیرد و بازنده کمی از دست می‌دهد — لیگ‌ها از برنز تا الماس حرکت می‌کنند.',
+  'هر برد/باخت در آمار رنک‌دارت ثبت می‌شود و در داشبورد آمار قابل مشاهده است.']},
+ {ic:'🔥',t:'بقای تایتان',s:'راگلایک روزانه',body:[
+  'Survival یک ماجراجویی راگلایک تک‌نفره است: هر روز یک چالش. قبول کن = روز بعد و پاداش؛ رد کن = یک جان کم.',
+  'رویدادهای تصادفی: 🎁 جعبه رهاشده، 🩺 چادر درمانگر، 🛒 فروشنده سیار، ☄️ طوفان شنی، 🧛 کمین شبانه.',
+  'آیتم‌ها (🧪 درمان و 🛡 سپر) را استراتژیک مصرف کن — برداشت نهایی بر اساس روزهای بقا و امتیاز محاسبه می‌شود.']},
+ {ic:'🕹',t:'گیم‌زون',s:'۱۰ بازی فوری',body:[
+  'Trivia زنجیره‌ای: هر جواب درست زنجیره را ادامه می‌دهد؛ اولین غلط پایان است. هر ۵ تایی +۲۵ سکه جایزه.',
+  'کلمات/حدس عدد/حافظه/واکنش: هرکدام رکورد شخصی دارند و پاداش فوری می‌دهند.',
+  'دوز با AI، مین‌یاب شرطی، کوییز ریاضی روزانه، گردونه ۲۰ ساعته و کازینوی Lucky Number با جکپات ×۲۵.']},
+ {ic:'🎯',t:'مأموریت و کوئست',s:'روزانه و هفتگی',body:[
+  'مأموریت‌های روزانه هر شب ساعت ۰۰:۰۰ تازه می‌شوند — معمولاً ۳ تا ۵ مورد ساده.',
+  'Quest روزانه و هفتگی جدا هستند؛ Quest هفتگی هر دوشنبه بازنشانی می‌شود و پاداش بزرگ‌تری دارد.',
+  'نشان قرمز روی تب «مأموریت» در نوار پایین یعنی پاداش آماده‌ی دریافت داری!']},
+ {ic:'🛍',t:'فروشگاه و آیتم‌ها',s:'لقب، قاب، پاورآپ',body:[
+  'لقب‌ها کنار اسمت نمایش داده می‌شوند؛ قاب‌ها دور آواتارت می‌درخشند؛ بج‌ها نشان افتخار پروفایل‌اند.',
+  'پاورآپ‌ها (سپر، ریرول، پاس) در دوئل و بقا مصرف می‌شوند — جعبه‌ها محتوای شانسی دارند.',
+  'حراج روزانه با ۳۰٪ تخفیف هر ۲۴ ساعت تازه می‌شود. خریدها مستقیم روی حساب ربات اعمال می‌شوند.']},
+ {ic:'🎫',t:'Season Pass',s:'مسیر ۵۰ مرحله‌ای',body:[
+  'با کسب XP، Tier های مسیر رایگان را باز می‌کنی — سکه، لقب و آیتم.',
+  'Premium Pass پاداش‌های دوبرابر + قاب‌های ویژه + ۳۰ روز VIP می‌دهد.',
+  'فصل‌ها دوره‌ای پایان می‌یابند و رتبه‌بندی فصلی در صفحه‌ی «فصل و رویداد» قابل مشاهده است.']},
+ {ic:'🔄',t:'مرکز تجارت',s:'تبادل امن',body:[
+  'با دوستانت می‌توانی سکه، لقب، قاب و بج مبادله کنی — دو طرف باید تأیید کنند.',
+  'درخواست‌های دریافتی و ارسالی در Trade Center قابل پیگیری‌اند؛ رد/لغو هر لحظه ممکن است.',
+  'برای جلوگیری از سوءاستفاده، بین هر دو تجارت کول‌داون کوتاهی وجود دارد.']},
+ {ic:'📊',t:'آمار و ریکاپ',s:'عملکردت را بشناس',body:[
+  'داشبورد آمار کامل شامل نرخ برد، ELO، توزیع سبک بازی، رکوردهای Survival و کازینو است.',
+  'ریکاپ هفتگی خلاصه‌ی هفته‌ات را نشان می‌دهد: XP، رتبه، برد، دوئل.',
+  'کارت شخصیت (Persona) بر اساس سبک بازی‌ات یک شخصیت خیالی با قدرت و ضعف می‌سازد!']},
+ {ic:'👑',t:'VIP و مزایا',s:'۱۰٪ پاداش بیشتر',body:[
+  'VIP ها ۱۰٪ پاداش XP و سکه بیشتر در همه‌ی بازی‌ها می‌گیرند.',
+  'قاب و نشان ویژه در پروفایل + اولویت در مچ‌میکینگ آرنا.',
+  'سریع‌ترین راه: خرید Season Pass Premium که ۳۰ روز VIP فعال می‌کند.']},
+ {ic:'💡',t:'نکات طلایی',s:'حرفه‌ای بازی کن',body:[
+  'استریک روزانه‌ات را هر روز بگیر — بعد از چند روز پیاپی، پاداش‌ها به‌طور چشمگیری رشد می‌کنند.',
+  'در دوئل‌ها جواب‌های بلندتر بنویس؛ سیستم پاداش، کیفیت پاسخ را هم می‌سنجد.',
+  'قبل از خرید گران‌قیمت، حراج روزانه را چک کن — همان آیتم ممکن است ۳۰٪ ارزان‌تر باشد!']}
+];
+var GUIDEQ='';
+function renderGuide(){
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🎓</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">مرکز راهنما</h1>'
+ +'<p class="sub">'+fa(GUIDE_TOPICS.length)+' موضوع کامل — همه‌چیز درباره‌ی بازی</p></div></div></div>';
+ h+='<div class="searchbar"><span class="sic">🔍</span>'
+ +'<input class="input" id="gdQ" placeholder="جستجو در راهنما..." value="'+esc(GUIDEQ)+'" oninput="GUIDEQ=this.value;guideList()"></div>';
+ h+='<div id="gdList" style="margin-top:10px"></div>';
+ $('pg-guide').innerHTML=h;
+ guideList();
+}
+function guideList(){
+ var q=GUIDEQ.trim().toLowerCase();
+ var box=$('gdList');if(!box)return;
+ var list=GUIDE_TOPICS.filter(function(g){
+  if(!q)return true;
+  return (g.t+' '+g.s+' '+g.body.join(' ')).toLowerCase().indexOf(q)>-1});
+ var h='<div class="list">';
+ if(!list.length)h+='<div class="empty"><span class="ei">🔍</span>چیزی پیدا نشد.</div>';
+ list.forEach(function(g){
+  h+='<div class="row tap" onclick="guideOpen(\''+esc(g.t).replace(/'/g,'')+'\')">'
+  +'<div class="medal">'+g.ic+'</div>'
+  +'<div class="grow"><b>'+esc(g.t)+'</b><small>'+esc(g.s)+' · '+fa(g.body.length)+' بخش</small></div>'
+  +'<span style="color:var(--muted)">‹</span></div>';
+ });
+ h+='</div>';
+ box.innerHTML=h;
+}
+function guideOpen(title){
+ var g=null;
+ GUIDE_TOPICS.forEach(function(x){if(x.t===title)g=x});
+ if(!g)return;
+ var h='<h3>'+g.ic+' '+esc(g.t)+'</h3>';
+ g.body.forEach(function(p,i){
+  h+='<div class="card" style="margin-bottom:9px"><b style="font-size:10px;color:var(--c3)">بخش '+fa(i+1)+'</b>'
+  +'<p style="margin:6px 0 0;font-size:11.5px;line-height:2.2">'+esc(p)+'</p></div>';
+ });
+ h+='<button class="btn primary wide" onclick="closeSheet()">پرسش‌هایت پاسخ گرفت ✓</button>';
+ openSheet(h);
+}
+
+/* ================= 👑 مرکز VIP (صفحه‌ی کامل) ================= */
+function renderVip(){
+ var u=D.user||{};
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">👑</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1 grad" style="margin:0">عضویت VIP</h1>'
+ +'<p class="sub">مزایای واقعی، بدون تغییر در قوانین ربات</p></div></div>';
+ if(u.vip){
+  var days=u.vip_days||0;
+  h+='<div class="card" style="text-align:center;border-color:#ffc85755;background:linear-gradient(150deg,#1a1508,#0c0a16)">'
+  +'<div style="font-size:34px">👑</div><b style="color:var(--gold)">VIP فعال است</b>'
+  +'<div class="sub" style="margin-top:4px">'+fa(days)+' روز مانده — لذت می‌بری!</div></div>';
+ }else{
+  h+='<div class="card" style="text-align:center">'
+  +'<div style="font-size:34px">🪙</div><b>فعلاً عضویت عادی</b>'
+  +'<div class="sub" style="margin-top:4px">با یک قدم می‌توانی VIP شوی — پایین‌تر را ببین</div></div>';
+ }
+ h+='</div></div>';
+ /* جدول مزایا */
+ var rows=[
+  ['✨','پاداش بیشتر','۱۰٪ XP و سکه اضافه در همه‌ی بازی‌ها','همه‌جا'],
+  ['🏷','قاب و نشان ویژه','قاب طلایی پروفایل + نشان VIP در لابی/دوئل','پروفایل و بازی‌ها'],
+  ['⚡','اولویت مچ‌میکینگ','در صف آرنا جلوتر از بقیه حریف پیدا می‌کنی','آرنا'],
+  ['🎫','دسترسی Premium Pass','خرید Premium شامل ۳۰ روز VIP است','Season Pass'],
+  ['🌐','تأیید نمایشی','نشان VIP کنار اسمت در رتبه‌بندی‌ها','رتبه‌بندی']];
+ h+='<div class="section"><div class="shead"><b>💎 مزایای کامل</b><small>VIP</small></div><div class="list">';
+ rows.forEach(function(r){
+  h+='<div class="row"><div class="medal">'+r[0]+'</div><div class="grow"><b>'+r[1]+'</b><small>'+r[2]+'</small></div><span class="tag gold">'+r[3]+'</span></div>';
+ });
+ h+='</div></div>';
+ /* راه‌های رسیدن */
+ h+='<div class="section"><div class="shead"><b>🚀 چطور VIP شوم؟</b><small>مسیرها</small></div>'
+ +'<div class="card tap" onclick="show(\'pass\',{force:true})"><div style="display:flex;align-items:center;gap:10px">'
+ +'<div style="font-size:24px">🎫</div><div style="flex:1"><b>خرید Season Pass Premium</b>'
+ +'<div class="sub">سریع‌ترین راه — ۳۰ روز VIP + پاداش دوبرابر طول مسیر</div></div><span style="color:var(--muted)">‹</span></div></div>'
+ +'<div class="card" style="text-align:center;color:var(--muted);font-size:10px;line-height:2">💡 گاهی رویدادهای فصلی هم VIP هدیه می‌دهند — صفحه‌ی «فصل و رویداد» را دنبال کن.</div></div>';
+ $('pg-vip').innerHTML=h;
+}
+
+/* ================= 🎁 مرکز دعوت (صفحه‌ی کامل) ================= */
+function renderInvite(){
+ var un=(D.bot||'').replace(/^@/,'');
+ var u=D.user||{};
+ var link='https://t.me/'+un+'?start=ref_'+(u.id||0);
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🎁</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">مرکز دعوت</h1>'
+ +'<p class="sub">دوستانت را بیاور، هر دو سکه بگیرید</p></div></div></div>';
+ /* پاداش‌ها */
+ h+='<div class="grid g3" style="margin-bottom:12px">'
+ +'<div class="stat big"><small>شما می‌گیرید</small><b style="color:var(--green)">+۵۰🪙</b></div>'
+ +'<div class="stat big"><small>دوست می‌گیرد</small><b style="color:var(--c3)">+۳۰🪙</b></div>'
+ +'<div class="stat big"><small>سقف روزانه</small><b>۵ نفر</b></div></div>';
+ /* لینک */
+ h+='<div class="card" style="text-align:center">'
+ +'<div class="sub" style="margin-bottom:8px">لینک اختصاصی تو:</div>'
+ +'<div class="codechip" style="font-size:11px;letter-spacing:0;word-break:break-all;white-space:normal" dir="ltr">'+esc(link)+'</div>'
+ +'<div style="display:flex;gap:8px;margin-top:12px">'
+ +'<button class="btn primary" style="flex:1" onclick="copyText(\''+esc(link)+'\')">📋 کپی</button>'
+ +'<button class="btn gold" style="flex:1" onclick="shareText(\'⚔️ بیا تو ApexRival بازی کنیم! با لینک من ثبت‌نام کن تا هر دو مان پاداش بگیریم: '+esc(link)+'\')">✈️ دعوت</button></div></div>';
+ /* مراحل */
+ h+='<div class="section"><div class="shead"><b>🪜 پاداش‌های پلکانی</b><small>هرچه بیشتر، بهتر</small></div><div class="list">';
+ var steps=[['۱ دعوت','+۵۰ سکه'],['۳ دعوت','+۲۰۰ سکه'],['۵ دعوت','+۴۰۰ سکه + نشان 🎯'],['۱۰ دعوت','+۱۰۰۰ سکه + لقب ویژه'],['۲۵ دعوت','+۳۰۰۰ سکه + قاب اختصاصی']];
+ steps.forEach(function(s,i){
+  h+='<div class="tier open"><div class="tno">'+fa(i+1)+'</div>'
+  +'<div class="grow"><b>'+s[0]+'</b><small>'+s[1]+'</small></div>'
+  +'<span class="tag '+(i<2?'ok':'')+'">'+(i<2?'در دسترس':'هدف بعدی')+'</span></div>';
+ });
+ h+='</div></div>';
+ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);line-height:2">💡 دعوت‌شددها باید با لینک تو /start بزنند تا پاداش هر دو طرف فعال شود — همان سیستم ارجاع ربات.</div>';
+ $('pg-invite').innerHTML=h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   📖 مرجع دستورات ربات — تمام ۸۸ دستور، قابل جستجو
+   (آینه‌ی /apexhelp ربات — برای وقتی که کاربر در چت ربات است)
+   ════════════════════════════════════════════════════════════════ */
+var BOT_CMDS=[
+ ['🎮','بازی و شروع','/apex','شروع بازی گروهی جرئت/حقیقت در گروه'],
+ ['🎮','بازی و شروع','/apexend','پایان دادن به بازی جاری گروه'],
+ ['👥','بازی و شروع','/apexteams','بازی تیمی دو گروهه'],
+ ['🚀','بازی و شروع','/apexjoin','پیوستن به بازی جاری گروه'],
+ ['🔥','بازی و شروع','/apexstartall','شروع بازی برای همه‌ی اعضای گروه'],
+ ['👑','پیشرفت','/apexprofile','پروفایل کامل کاربر'],
+ ['👑','پیشرفت','/apexstats','آمار کامل بازیکن'],
+ ['👑','پیشرفت','/apexstats_me','داشبورد آمار شخصی'],
+ ['👑','پیشرفت','/apexlevel','وضعیت سطح و XP (از پروفایل)'],
+ ['🎯','پیشرفت','/apexmissions','مأموریت‌های روزانه'],
+ ['🎯','پیشرفت','/apexquests','کوئست‌های روزانه و هفتگی'],
+ ['🎯','پیشرفت','/apexmilestones','پاداش‌های مسیر قهرمانی'],
+ ['🎫','پیشرفت','/apexpass','Season Pass و مسیر پاداش'],
+ ['🌐','پیشرفت','/apexseason','فصل جاری و رتبه‌بندی فصلی'],
+ ['🏅','پیشرفت','/apexachievements','تالار دستاوردها'],
+ ['🏅','پیشرفت','/apexhof','تالار افسانه‌ها — بهترین‌های تاریخ'],
+ ['📜','پیشرفت','/apexhistory','تاریخچه‌ی بازی‌های اخیر'],
+ ['📋','پیشرفت','/apexrecap','ریکاپ هفتگی شخصی'],
+ ['🎁','پیشرفت','/apexdaily_reward','پاداش روزانه'],
+ ['🎁','پیشرفت','/apexdaily','پاداش روزانه (میان‌بر)'],
+ ['🔥','پیشرفت','/apexloginstreak','استریک لاگین'],
+ ['🎂','پیشرفت','/apexbirthday','ثبت تاریخ تولد'],
+ ['🏆','رتبه‌بندی','/apextop','برترین‌های گروه'],
+ ['🏆','رتبه‌بندی','/apextop_all','برترین‌های سراسری'],
+ ['🏆','رتبه‌بندی','/apextop_month','برترین‌های ماهانه'],
+ ['🏆','رتبه‌بندی','/apexgrouptop','رتبه‌بندی گروهی'],
+ ['🏆','رتبه‌بندی','/apexseason_top','رتبه‌بندی فصل (از فصل)'],
+ ['🎮','مینی‌گیم','/apexminigames','مرکز مینی‌گیم‌ها'],
+ ['🧠','مینی‌گیم','/apextrivia','Trivia زنجیره‌ای'],
+ ['📝','مینی‌گیم','/apexword','بازی کلمات'],
+ ['🔢','مینی‌گیم','/apexnumber','حدس عدد'],
+ ['🃏','مینی‌گیم','/apexmemory','بازی حافظه'],
+ ['⚡','مینی‌گیم','/apexreaction','سرعت واکنش'],
+ ['✖️','مینی‌گیم','/apexttt','دوز با هوش مصنوعی'],
+ ['⛏','مینی‌گیم','/apexmine','مین‌یاب شرطی'],
+ ['🧮','مینی‌گیم','/apexquiz','کوییز ریاضی روزانه'],
+ ['🍀','مینی‌گیم','/apexluck','گردونه شانس'],
+ ['🎰','مینی‌گیم','/apexlucky','کازینوی Lucky Number'],
+ ['🎲','ابزار','/apexdice','پرتاب تاس'],
+ ['🪙','ابزار','/apexcoin','شیر یا خط'],
+ ['🔮','ابزار','/apex8ball','توپ جادویی ۸'],
+ ['🎭','ابزار','/apexname','تغییر نام نمایشی'],
+ ['⚔️','ابزار','/apexcompare','مقایسه با بازیکن دیگر'],
+ ['🤖','ابزار','/apexai','پیشنهاد بازی با AI'],
+ ['⏰','ابزار','/apexreminder','یادآور شخصی'],
+ ['💬','ابزار','/apexfeedback','ارسال بازخورد'],
+ ['🤺','رقابت','/apexduel','دوئل تن‌به‌تن'],
+ ['🎯','رقابت','/apexmatchmaking','ورود به صف آرنا'],
+ ['⚔️','رقابت','/apexrivals','مدیریت رقبا'],
+ ['🏆','رقابت','/apextournament','مسابقات و تورنمنت'],
+ ['🔥','رقابت','/apexsurvival','حالت بقا'],
+ ['🏟','رقابت','/apexmatch','مسابقه خصوصی'],
+ ['🤝','رقابت','/apexteambattle','نبرد تیمی'],
+ ['💌','رقابت','/apexlove','عشق‌سنج گروهی'],
+ ['💌','رقابت','/apexlove2','عشق‌سنج دونفره مخفی'],
+ ['👥','اجتماعی','/apexfriends','مدیریت دوستان'],
+ ['👥','اجتماعی','/apexinvite','دعوت دوستان'],
+ ['🌐','اجتماعی','/apexwall','دیوار اجتماعی'],
+ ['🌐','اجتماعی','/apexlive','نبض زنده ربات'],
+ ['🎉','پارتی','/apexwyr','می‌کردی؟'],
+ ['🙈','پارتی','/apexnhie','من هرگز'],
+ ['🎯','پارتی','/apexlikely','به‌احتمال زیاد'],
+ ['🧩','پارتی','/apexriddle','معمای ایموجی'],
+ ['✨','پارتی','/apexpotd','سوال روز'],
+ ['💡','پارتی','/apextip','نکته طلایی'],
+ ['🧠','پارتی','/apexsmart','پیشنهاد هوشمند'],
+ ['🔄','اقتصاد','/shop','فروشگاه'],
+ ['🛍','اقتصاد','/apexshop','فروشگاه (میان‌بر)'],
+ ['🔄','اقتصاد','/apextrade','مرکز تجارت'],
+ ['🎁','اقتصاد','/apexgift','هدیه سکه به دوست'],
+ ['❤️','اقتصاد','/apexheart','قلب محبت'],
+ ['👑','اقتصاد','/apexvip','وضعیت VIP'],
+ ['⚙️','تنظیمات','/apexsettings','تنظیمات شخصی'],
+ ['⚙️','تنظیمات','/apexsettings_me','تنظیمات حریم خصوصی'],
+ ['🎨','تنظیمات','/apextheme','انتخاب تم ربات'],
+ ['🔔','تنظیمات','/apexnotify','مدیریت اعلان‌ها'],
+ ['🌙','تنظیمات','/apexbrb','حالت موقتاً نیستم'],
+ ['🔙','تنظیمات','/apexback','برگشت از BRB'],
+ ['🔇','تنظیمات','/apexmute /apexunmute','خاموش/روشن کردن تگ'],
+ ['🎭','تنظیمات','/apexpersona','کارت شخصیت'],
+ ['🌟','تنظیمات','/apexshowcase','شوکیس دستاوردها'],
+ ['📖','راهنما','/apexhelp','فهرست دستورات'],
+ ['📖','راهنما','/apexguide','راهنمای کامل'],
+ ['📖','راهنما','/apextutorial','آموزش گام‌به‌گام'],
+ ['📖','راهنما','/apexrules','قوانین بازی'],
+ ['📖','راهنما','/apexmodes','توضیح حالت‌های بازی'],
+ ['📖','راهنما','/apexquick','شروع سریع'],
+ ['📡','سیستم','/apexping','سنجش سرعت ربات'],
+ ['📡','سیستم','/apexabout','درباره‌ی ربات'],
+ ['📡','سیستم','/apexid','نمایش آیدی عددی'],
+ ['📢','مدیریت','/apexpanel','پنل مدیریت (ادمین)'],
+ ['📢','مدیریت','/apexbroadcast','پیام همگانی (ادمین)'],
+ ['📊','مدیریت','/apexexport','خروجی داده (ادمین)'],
+ ['📄','مدیریت','/apexcsv','خروجی CSV (ادمین)'],
+ ['⚖️','مدیریت','/apexpunish','مجازات (ادمین)'],
+ ['⚖️','مدیریت','/apexforgive','بخشش (ادمین)'],
+ ['⚖️','مدیریت','/apexpunishments','فهرست مجازات‌ها (ادمین)'],
+ ['🛡','مدیریت','/apexmute /apexunmute','مدیریت کاربر (ادمین/ناظر)']
+];
+var CMDCATF='all';
+var CMDQ='';
+function renderCmdsBase(){
+ var cats=[['all','همه'],['🎮','بازی'],['👑','پیشرفت'],['🏆','رتبه'],['🕹','مینی‌گیم'],['🤺','رقابت'],['👥','اجتماعی'],['🎉','پارتی'],['🛍','اقتصاد'],['⚙️','تنظیم'],['📖','راهنما'],['🛡','مدیریت']];
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">📖</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">مرجع دستورات</h1>'
+ +'<p class="sub">'+fa(BOT_CMDS.length)+' دستور ربات — همه با یک جستجو</p></div></div></div>';
+ h+='<div class="searchbar"><span class="sic">🔍</span>'
+ +'<input class="input" id="cmdQ" placeholder="مثلاً: دوئل، فروشگاه، آمار..." value="'+esc(CMDQ)+'" oninput="CMDQ=this.value;cmdList()"></div>';
+ h+='<div class="adm-cat" style="margin-top:10px">'+cats.map(function(c){
+  return '<button class="acat'+(CMDCATF===c[0]?' on':'')+'" onclick="CMDCATF=\''+c[0]+'\';cmdList()">'+c[0]+' '+c[1]+'</button>'}).join('')+'</div>';
+ h+='<div id="cmdList" style="margin-top:10px"></div>';
+ $('pg-cmds').innerHTML=h;
+ cmdList();
+}
+function cmdList(){
+ var q=CMDQ.trim().toLowerCase();
+ var box=$('cmdList');if(!box)return;
+ var list=BOT_CMDS.filter(function(c){
+  if(CMDCATF!=='all'&&c[1]!==CMDCATF.replace(/^[^ ]* /,''))return false;
+  if(!q)return true;
+  return (c[2]+' '+c[3]).toLowerCase().indexOf(q)>-1});
+ var h='<div class="list">';
+ if(!list.length)h+='<div class="empty"><span class="ei">🔍</span>دستوری پیدا نشد.</div>';
+ list.forEach(function(c){
+  h+='<div class="row"><div class="medal">'+c[0]+'</div>'
+  +'<div class="grow"><b dir="ltr" style="text-align:right">'+esc(c[2])+'</b><small>'+esc(c[3])+'</small></div></div>';
+ });
+ h+='</div>';
+ h+='<div class="card" style="margin-top:12px;text-align:center;font-size:10px;color:var(--muted);line-height:2">💡 همه‌ی این‌ها داخل همین مینی‌اپ هم هستند — از پالت جستجو (🔎 بالای صفحه) سریع‌تر به آن‌ها برس.</div>';
+ box.innerHTML=h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN PLUS ۲ — ابزارهای غنی: تاریخ شمسی، شمارش معکوس،
+   نمودار رادار/گیج، آکاردئون، تولتیپ، بنر آفلاین، رویدادها
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- 📅 تبدیل تاریخ شمسی (جلالی) — الگوریتم استاندارد ---------- */
+function toJalali(gy, gm, gd) {
+ var g_d_m=[0,31,59,90,120,151,181,212,243,273,304,334];
+ var jy,jm,jd,gy2,days;
+ gy2=(gm>2)?(gy+1):gy;
+ days=355666+(365*gy)+Math.floor((gy2+3)/4)-Math.floor((gy2+99)/100)
+      +Math.floor((gy2+399)/400)+gd+g_d_m[gm-1];
+ jy=-1595+(33*Math.floor(days/12053));
+ days%=12053;
+ jy+=4*Math.floor(days/1461);
+ days%=1461;
+ if(days>365){jy+=Math.floor((days-1)/365);days=(days-1)%365;}
+ if(days<186){jm=1+Math.floor(days/31);jd=1+(days%31);}
+ else{jm=7+Math.floor((days-186)/30);jd=1+((days-186)%30);}
+ return[jy,jm,jd];
+}
+var JMONTHS=['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];
+function faDate(ts){
+ try{
+  var d=new Date(Number(ts||0)*1000);
+  var j=toJalali(d.getFullYear(),d.getMonth()+1,d.getDate());
+  return fa(j[2])+' '+JMONTHS[j[1]-1]+' '+fa(j[0]);
+ }catch(e){return '—'}
+}
+function faDateShort(ts){
+ try{
+  var d=new Date(Number(ts||0)*1000);
+  var j=toJalali(d.getFullYear(),d.getMonth()+1,d.getDate());
+  return fa(j[1])+'/'+fa(j[2]);
+ }catch(e){return '—'}
+}
+function faTime(ts){
+ try{
+  var d=new Date(Number(ts||0)*1000);
+  return fa(String(d.getHours()).padStart(2,'0'))+':'+fa(String(d.getMinutes()).padStart(2,'0'));
+ }catch(e){return '—'}
+}
+function faDateTime(ts){return faDate(ts)+' · '+faTime(ts)}
+
+/* ---------- ⏱ شمارش معکوس زنده (بدون رندر مجدد) ---------- */
+var CDOWN={};
+function countdown(id,untilTs,onEnd){
+ stopCountdown(id);
+ var el0=$(id);if(!el0)return;
+ CDOWN[id]=setInterval(function(){
+  var el=$(id);if(!el){stopCountdown(id);return}
+  var left=Math.max(0,Math.floor(untilTs-Date.now()/1000));
+  var d=Math.floor(left/86400),h=Math.floor((left%86400)/3600),m=Math.floor((left%3600)/60),s=left%60;
+  if(d>0)el.textContent=fa(d)+' روز و '+fa(h)+' ساعت';
+  else if(h>0)el.textContent=fa(h)+':'+fa(String(m).padStart(2,'0'))+':'+fa(String(s).padStart(2,'0'));
+  else el.textContent=fa(m)+':'+fa(String(s).padStart(2,'0'));
+  if(left<=0){stopCountdown(id);if(onEnd)try{onEnd()}catch(e){}}
+ },1000);
+}
+function stopCountdown(id){if(CDOWN[id]){clearInterval(CDOWN[id]);delete CDOWN[id]}}
+function stopAllCountdowns(){Object.keys(CDOWN).forEach(stopCountdown)}
+/* کارت شمارش معکوس */
+function cdCard(icon,title,id,untilTs,note){
+ return '<div class="card" style="text-align:center;'+(note?'':'')+'">'
+ +'<div style="font-size:23px;margin-bottom:4px">'+icon+'</div>'
+ +'<small style="font-size:9px;color:var(--muted);letter-spacing:1px;font-weight:800">'+title+'</small>'
+ +'<b id="'+id+'" style="display:block;font-size:15px;margin-top:5px;font-variant-numeric:tabular-nums">…</b>'
+ +(note?'<small style="display:block;font-size:8.5px;color:var(--dim);margin-top:3px">'+note+'</small>':'')+'</div>';
+}
+
+/* ---------- 📊 نمودار رادار (تحلیل سبک بازی) ---------- */
+TCH.radar=function(canvas,labels,series,opt){
+ opt=opt||{};
+ var v=TCH.init(canvas,{height:opt.height||200});
+ var ctx=v.ctx,W=v.w,H=v.h;
+ var cx=W/2,cy=H/2+4,R=Math.min(W,H)/2-30;
+ var n=labels.length;
+ var mx=opt.max||Math.max.apply(null,series.map(function(s){return Math.max.apply(null,s.data)}).concat([1]));
+ ctx.clearRect(0,0,W,H);
+ /* شبکه */
+ for(var ring=1;ring<=4;ring++){
+  ctx.beginPath();
+  for(var i=0;i<=n;i++){
+   var a=-Math.PI/2+2*Math.PI*(i%n)/n;
+   var r=R*ring/4;
+   var x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;
+   i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  }
+  ctx.strokeStyle='rgba(255,255,255,.06)';ctx.lineWidth=1;ctx.stroke();
+ }
+ for(var i=0;i<n;i++){
+  var a=-Math.PI/2+2*Math.PI*i/n;
+  ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(a)*R,cy+Math.sin(a)*R);
+  ctx.strokeStyle='rgba(255,255,255,.06)';ctx.stroke();
+  ctx.fillStyle='rgba(139,147,173,.95)';ctx.font='700 8.5px Vazirmatn';ctx.textAlign='center';
+  ctx.fillText(labels[i],cx+Math.cos(a)*(R+16),cy+Math.sin(a)*(R+16)+3);
+ }
+ series.forEach(function(s,si){
+  var col=s.color||TCH.col(si);
+  ctx.beginPath();
+  for(var i=0;i<=n;i++){
+   var a=-Math.PI/2+2*Math.PI*(i%n)/n;
+   var r=R*(s.data[i%n]/mx);
+   var x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;
+   i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  }
+  ctx.closePath();
+  ctx.fillStyle=col+'22';ctx.fill();
+  ctx.strokeStyle=col;ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.stroke();
+  for(var i=0;i<n;i++){
+   var a=-Math.PI/2+2*Math.PI*i/n;
+   var r=R*(s.data[i]/mx);
+   ctx.beginPath();ctx.arc(cx+Math.cos(a)*r,cy+Math.sin(a)*r,3,0,7);
+   ctx.fillStyle=col;ctx.fill();
+  }
+ });
+ return v;
+};
+function radarBlock(labels,series,height){
+ var id='rd'+Math.floor(Math.random()*1e6);
+ setTimeout(function(){var c=document.getElementById(id);if(c)TCH.radar(c,labels,series,{height:height})},30);
+ return '<div class="chartbox"><canvas id="'+id+'"></canvas></div>';
+}
+/* ---------- 📊 گیج نیم‌دایره ---------- */
+TCH.gauge=function(canvas,val,max,label,color){
+ var v=TCH.init(canvas,{height:120});
+ var ctx=v.ctx,W=v.w,H=v.h;
+ var cx=W/2,cy=H-8,R=Math.min(W/2,H)-12;
+ ctx.clearRect(0,0,W,H);
+ var a0=Math.PI,a1=2*Math.PI;
+ ctx.beginPath();ctx.arc(cx,cy,R,a0,a1);ctx.strokeStyle='#ffffff10';ctx.lineWidth=11;ctx.lineCap='round';ctx.stroke();
+ var p=Math.max(0,Math.min(1,(val||0)/(max||1)));
+ ctx.beginPath();ctx.arc(cx,cy,R,a0,a0+Math.PI*p);
+ ctx.strokeStyle=color||TCH.col(0);ctx.lineWidth=11;ctx.lineCap='round';ctx.stroke();
+ ctx.fillStyle='#eef0fa';ctx.font='900 17px Vazirmatn';ctx.textAlign='center';
+ ctx.fillText(fa(val),cx,cy-14);
+ ctx.fillStyle='#8b93ad';ctx.font='700 8.5px Vazirmatn';
+ ctx.fillText(label||'',cx,cy+2);
+ return v;
+};
+function gaugeBlock(val,max,label,color){
+ var id='gg'+Math.floor(Math.random()*1e6);
+ setTimeout(function(){var c=document.getElementById(id);if(c)TCH.gauge(c,val,max,label,color)},30);
+ return '<div class="chartbox" style="max-width:210px;margin:0 auto"><canvas id="'+id+'"></canvas></div>';
+}
+/* ---------- 🔥 هیت‌مپ فعالیت ۳۰ روزه ---------- */
+function heatmapBlock(days){
+ /* days: [{d:'MM-DD',v:n}] */
+ var h='<div class="card"><div class="shead" style="padding:0"><b>🔥 فعالیت ۳۰ روزه</b><small>HEATMAP</small></div>'
+ +'<div class="hmap" id="hmap30" style="margin-top:10px"></div>'
+ +'<div style="display:flex;align-items:center;gap:6px;margin-top:10px;justify-content:center;font-size:8.5px;color:var(--dim)">'
+ +'<span>کمتر</span>';
+ for(var i=1;i<=5;i++){
+  h+='<i style="width:9px;height:9px;border-radius:3px;display:inline-block;background:rgba(124,92,255,'+(0.08+i*0.16)+')"></i>';
+ }
+ h+='<span>بیشتر</span></div></div>';
+ setTimeout(function(){
+  var box=$('hmap30');if(!box)return;
+  TCH.heatmap(box,days.map(function(x){return{t:x.d,v:x.v}}));
+ },30);
+ return h;
+}
+
+/* ---------- 🔀 آکاردئون ---------- */
+function accordion(items){
+ var h='<div class="acc-wrap">';
+ items.forEach(function(it,i){
+  h+='<div class="acc"><button class="acc-h" onclick="accToggle(this)">'
+  +'<span class="ai">'+(it.ic||'▸')+'</span><b>'+esc(it.t)+'</b><span class="chev">⌄</span></button>'
+  +'<div class="acc-b">'+it.body+'</div></div>';
+ });
+ return h+'</div>';
+}
+function accToggle(btn){
+ var body=btn.nextElementSibling;
+ var open=body.classList.contains('on');
+ btn.parentNode.parentNode.querySelectorAll('.acc-b').forEach(function(b){b.classList.remove('on')});
+ btn.parentNode.parentNode.querySelectorAll('.chev').forEach(function(c){c.classList.remove('on')});
+ if(!open){body.classList.add('on');btn.querySelector('.chev').classList.add('on');SND.tap()}
+}
+
+/* ---------- 💬 تولتیپ ساده ---------- */
+function tip(text){
+ return '<span class="tipdot" onclick="event.stopPropagation()">ℹ<span class="tipbox">'+esc(text)+'</span></span>';
+}
+
+/* ---------- 📡 بنر آفلاین ---------- */
+var ONLINE=true;
+window.addEventListener('online',function(){ONLINE=true;var b=$('offbar');if(b)b.classList.remove('on')});
+window.addEventListener('offline',function(){ONLINE=false;var b=$('offbar');if(b)b.classList.add('on')});
+
+/* ---------- 🚌 رویدادها (event bus) سبک ---------- */
+var BUS={};
+function on(ev,fn){(BUS[ev]=BUS[ev]||[]).push(fn)}
+function emit(ev,data){(BUS[ev]||[]).forEach(function(fn){try{fn(data)}catch(e){}})}
+/* رویدادهای مفید */
+on('coins:changed',function(n){SND.coin()});
+on('level:up',function(){confetti();SND.level();toast('سطح جدید! 🎉','ok')});
+
+/* ---------- 🔁 صف تلاش مجدد برای عملیات ناموفق ---------- */
+var RETRYQ=[];
+function queueRetry(fn,label){
+ RETRYQ=RETRYQ.filter(function(r){return r.label!==label});
+ RETRYQ.push({fn:fn,label:label,tries:0});
+}
+async function flushRetries(){
+ for(var i=RETRYQ.length-1;i>=0;i--){
+  var r=RETRYQ[i];
+  try{await r.fn();RETRYQ.splice(i,1)}
+  catch(e){r.tries++;if(r.tries>=3)RETRYQ.splice(i,1)}
  }
 }
-/* ================= IN-APP SHARE (جایگزین کامل خروج به ربات) ================= */
-function shareText(txt){
- /* اشتراک‌گذاری کد لابی/دوئل — از شیت اشتراک خود تلگرام، بدون ترک مینی‌اپ */
+setInterval(function(){if(ONLINE&&READY&&RETRYQ.length)flushRetries()},20000);
+
+/* ---------- 🧰 ابزارهای ریز ---------- */
+function debounce(fn,ms){
+ var t=null;return function(){
+  var args=arguments,ctx=this;
+  clearTimeout(t);t=setTimeout(function(){fn.apply(ctx,args)},ms||300);
+ }
+}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function pct(a,b){return b?Math.round(a*100/Math.max(1,b)):0}
+function safeJson(s,dft){
+ try{return JSON.parse(s)}catch(e){return dft}
+}
+/* شناسه‌ی یکتا برای نمودارها */
+var _uid=0;
+function uid(prefix){return (prefix||'u')+(++_uid)+Math.floor(Math.random()*1e4)}
+
+/* ---------- 🖼 گالری رکوردها ---------- */
+function recordsGallery(recs){
+ if(!recs||!recs.length)return '';
+ var h='<div class="section"><div class="shead"><b>🖼 گالری رکوردها</b><small>RECORDS</small></div><div class="grid g2">';
+ recs.forEach(function(r){
+  h+='<div class="card tap" style="text-align:center">'
+  +'<div style="font-size:24px;margin-bottom:5px">'+(r.ic||'🏆')+'</div>'
+  +'<b style="font-size:11px">'+esc(r.t)+'</b>'
+  +'<div style="font-size:15px;font-weight:900;color:var(--gold);margin-top:4px">'+esc(r.v)+'</div>'
+  +(r.s?'<small style="display:block;font-size:8.5px;color:var(--muted);margin-top:3px">'+esc(r.s)+'</small>':'')+'</div>';
+ });
+ return h+'</div></div>';
+}
+
+/* ---------- 🗓 تقویم فعالیت ماهانه ---------- */
+function activityCalendar(days){
+ /* days: {'MM-DD': count} */
+ var h='<div class="card"><div class="shead" style="padding:0"><b>🗓 تقویم فعالیت</b><small>'+JMONTHS[(new Date()).getMonth()]+'</small></div>'
+ +'<div class="calgrid" style="margin-top:10px">';
+ var mx=1;Object.keys(days||{}).forEach(function(k){mx=Math.max(mx,days[k])});
+ for(var i=1;i<=31;i++){
+  var k=String(new Date().getMonth()+1).padStart(2,'0')+'-'+String(i).padStart(2,'0');
+  var v=(days||{})[k]||0;
+  var op=v?(0.15+0.85*v/mx):0.04;
+  h+='<i style="background:rgba(124,92,255,'+op.toFixed(2)+')" title="'+fa(i)+' — '+fa(v)+' فعالیت"></i>';
+ }
+ h+='</div></div>';
+ return h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN PLUS ۳ — آمار پیشرفته + پروفایل حرفه‌ای + ارتقای صفحات
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 📊 Stats Dashboard v2 (رادار + هیت‌مپ + رکوردها) ================= */
+async function renderStatsPage2(){
+ var g=renderGen();
+ var el=$('pg-stats');
+ el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
  try{
-  var un=(D.bot||'').replace(/^@/,'');
-  var url='https://t.me/share/url?url='+encodeURIComponent('https://t.me/'+un)+'&text='+encodeURIComponent(txt);
-  if(tg&&tg.openTelegramLink){tg.openTelegramLink(url);return}
+  var d=await api('/api/miniapp/stats');
+  if(isStale(g))return;
+  var gn=d.general,mm=d.matchmaking,sv=d.survival,mg=d.mini_games,cas=d.casino;
+  var u=D.user||{};
+  var h=gmHead('📊','Stats Dashboard','داشبورد کامل شخصی — همان آمار ربات','play');
+  /* گیج سطح */
+  h+='<div class="card">'+gaugeBlock(u.xp_in_level||0,u.xp_per_level||100,'پیشرفت سطح '+fa(u.level||1),'#7c5cff')+'</div>';
+  /* کلی */
+  h+='<div class="section"><div class="shead"><b>📈 آمار کلی</b><small>GENERAL</small></div>'
+  +'<div class="grid g4">'
+  +'<div class="stat"><small>بازی</small><b>'+fa(gn.games)+'</b></div>'
+  +'<div class="stat"><small>برد</small><b>'+fa(gn.wins)+'</b></div>'
+  +'<div class="stat"><small>باخت</small><b>'+fa(gn.losses)+'</b></div>'
+  +'<div class="stat"><small>نرخ برد</small><b>'+faP(gn.winrate)+'</b></div>'
+  +'<div class="stat"><small>سطح</small><b>'+fa(gn.level)+'</b></div>'
+  +'<div class="stat"><small>XP کل</small><b>'+faK(gn.xp)+'</b></div>'
+  +'<div class="stat"><small>استریک روز</small><b>'+fa(gn.daily_streak)+'</b></div>'
+  +'<div class="stat"><small>رکورد استریک</small><b>'+fa(gn.best_streak)+'</b></div>'
+  +'</div></div>';
+  /* دونات برد/باخت */
+  if(gn.games>0){
+   h+='<div class="card">'+donutBlock([
+    {label:'برد',val:gn.wins,color:'#31e981'},
+    {label:'باخت',val:gn.losses,color:'#ff5268'},
+    {label:'باقی',val:Math.max(0,gn.games-gn.wins-gn.losses),color:'#8b93ad'}
+   ],faP(gn.winrate),'نرخ برد')+'</div>';
+  }
+  /* رادار سبک بازی */
+  var s=D.stats||{};
+  h+='<div class="card"><div class="shead" style="padding:0"><b>🕸 رادار سبک بازی</b><small>RADAR</small></div>'
+  +radarBlock(['حقیقت','جرئت','شوخ','سرعت','رأی'],[{data:[s.truth||0,s.dare||0,s.flirty||0,s.speed||0,s.vote||0],color:'#7c5cff'}],210)+'</div>';
+  /* آرنا */
+  h+='<div class="section"><div class="shead"><b>🎯 آرنا و ELO</b><small>RANKED</small></div>'
+  +'<div class="grid g4">'
+  +'<div class="stat"><small>ELO</small><b>'+fa(mm.elo)+'</b></div>'
+  +'<div class="stat"><small>بهترین ELO</small><b>'+fa(mm.best_elo)+'</b></div>'
+  +'<div class="stat"><small>برد</small><b>'+fa(mm.wins)+'</b></div>'
+  +'<div class="stat"><small>باخت</small><b>'+fa(mm.losses)+'</b></div>'
+  +'<div class="stat"><small>مساوی</small><b>'+fa(mm.draws)+'</b></div>'
+  +'<div class="stat"><small>نبرد رنک‌دار</small><b>'+fa(mm.ranked_games)+'</b></div>'
+  +'<div class="stat"><small>بهترین استریک</small><b>'+fa(mm.mm_best)+'</b></div>'
+  +'<div class="stat"><small>دوئل</small><b>'+fa(d.duels)+'</b></div>'
+  +'</div></div>';
+  /* توزیع مودها */
+  if((d.mode_dist||[]).length){
+   h+='<div class="section"><div class="shead"><b>🎮 توزیع حالت‌های بازی</b><small>MODES</small></div><div class="card">';
+   var mx2=Math.max.apply(null,d.mode_dist.map(function(m){return m.count}));
+   d.mode_dist.forEach(function(m){
+    var p=Math.round(m.count*100/mx2);
+    h+='<div class="mbar"><div class="lb"><span>'+esc(m.label)+'</span><span>'+fa(m.count)+' · '+faP(m.pct)+'</span></div>'
+    +'<div class="bar" style="height:8px"><i style="width:'+Math.max(4,p)+'%"></i></div></div>';
+   });
+   h+='</div></div>';
+  }
+  /* گالری رکوردها */
+  h+=recordsGallery([
+   {ic:'🔥',t:'رکورد Survival',v:fa(sv.best)+' روز',s:'زنده ماندن پیاپی'},
+   {ic:'🧠',t:'رکورد Trivia',v:fa(mg.best.trivia||0)+' تایی',s:'زنجیره پاسخ درست'},
+   {ic:'⚡',t:'بهترین واکنش',v:(mg.best.reaction_ms?fa(mg.best.reaction_ms)+'ms':'—'),s:'سرعت بازتاب'},
+   {ic:'🎰',t:'جکپات‌های کازینو',v:fa(cas.jackpots)+' بار',s:'عدد دقیق ×۲۵'},
+   {ic:'🪙',t:'خالص کازینو',v:faK(cas.net)+' سکه',s:'برد منهای باخت'},
+   {ic:'🏆',t:'بهترین استریک برد',v:fa(gn.best_streak)+' پیاپی',s:'رکورد تاریخی'},
+   {ic:'⚔️',t:'دوئل‌ها',v:fa(d.duels)+' نبرد',s:'کل دوئل‌های تن‌به‌تن'},
+   {ic:'👥',t:'گروه‌های بازی',v:fa(d.groups_played),s:'گروه‌های فعال'}
+  ]);
+  /* هیت‌مپ ۳۰ روزه از تاریخچه */
+  if((d.history||[]).length){
+   var days={};var byDay={};
+   d.history.forEach(function(x){
+    var k=faDateShort(x.ts).replace(/[۰-۹]/g,function(c){return '۰۱۲۳۴۵۶۷۸۹'.indexOf(c)});
+    byDay[k]=(byDay[k]||0)+1;
+   });
+   var heat=Object.keys(byDay).map(function(k){return{d:k,v:byDay[k]}});
+   if(heat.length>2)h+=heatmapBlock(heat.slice(0,30));
+  }
+  /* ویژه */
+  h+='<div class="section"><div class="shead"><b>🔥 بازی‌های ویژه</b><small>SPECIAL</small></div><div class="grid g2">';
+  var svr=sv.records||{};
+  h+='<div class="card"><b style="font-size:11px">🔥 رکورد Survival</b><p class="sub">'+fa(sv.best)+' روز'
+  +(svr.hard?' · سخت: '+fa((svr.hard||{}).points||0):'')+(svr.nightmare?' · کابوس: '+fa((svr.nightmare||{}).points||0):'')+'</p></div>';
+  h+='<div class="card"><b style="font-size:11px">🕹 مینی‌گیم</b><p class="sub">'+fa(mg.played)+' بازی · '+fa(mg.won)+' برد'
+  +(mg.best.trivia?' · رکورد Trivia: '+fa(mg.best.trivia):'')+'</p></div>';
+  h+='<div class="card"><b style="font-size:11px">🎰 کازینو</b><p class="sub">'+fa(cas.spins)+' چرخ · '+fa(cas.jackpots)+' جکپات · خالص: '+fa(cas.net)+'</p></div>';
+  h+='<div class="card"><b style="font-size:11px">👥 گروه‌های بازی</b><p class="sub">'+fa(d.groups_played)+' گروه · اعتبار: '+fa(d.reputation)+'</p></div>';
+  h+='</div></div>';
+  /* تاریخچه */
+  if((d.history||[]).length){
+   h+='<div class="section"><div class="shead"><b>📜 تاریخچه بازی‌ها</b><small>HISTORY</small></div><div class="list">';
+   d.history.forEach(function(x){
+    h+='<div class="row"><div class="medal">'+(x.result==='win'?'🏆':x.result==='loss'?'💔':'🎮')+'</div>'
+    +'<div class="grow"><b>'+esc(x.mode||'بازی')+'</b><small>'+(x.ts?faDateTime(x.ts):'')+'</small></div></div>';
+   });
+   h+='</div></div>';
+  }
+  setPageHTML('stats',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📊</span>'+esc(e.message)+'</div>'}
+}
+
+/* ================= 🏆 Leaderboard v2 — کارت رتبه + آمار اسکوپ ================= */
+async function loadBoard2(scope,keep){
+ LBSCOPE=scope||LBSCOPE;stateSave();
+ var g=renderGen();
+ var el=$('pg-board');
+ if(!keep)el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d;
+  if(LBSCOPE==='hof'){
+   var hd=await api('/api/miniapp/hof');
+   d={scope:'hof',items:(hd.items||[]).map(function(x,i){return{rank:i+1,uid:x.uid,name:x.name,xp:x.xp,wins:x.wins}}),me:null};
+  }else{
+   d=await api('/api/miniapp/leaderboard?scope='+LBSCOPE);
+  }
+  if(isStale(g))return;
+  var items=d.items||[];
+  var me=D.user||{};
+  var myRank=d.me!=null?d.me:(me.rank||0);
+  var h='<div class="gcard"><div class="in">'
+  +'<h1 class="h1">'+(LBSCOPE==='hof'?'👑 تالار افسانه‌ها':'🏆 رتبه‌بندی')+'</h1>'
+  +'<p class="sub">'+({'weekly':'امتیازهای این هفته','monthly':'XP فصل جاری (ماهانه)','global':'همه‌ی زمان‌ها','season':'فصل فعال','hof':'بهترین‌های تاریخ — جاودانه'}[LBSCOPE]||'')+'</p>';
+  /* کارت رتبه‌ی خودت */
+  if(myRank){
+   h+='<div class="card" style="margin-top:12px;display:flex;align-items:center;gap:12px;border-color:#7c5cff44;background:#7c5cff0a">'
+   +'<div class="medal'+(myRank<4?' m'+myRank:'')+'">#'+fa(myRank)+'</div>'
+   +avaHtml({id:me.id,name:me.name,frame:me.frame},'sm')
+   +'<div class="grow"><b>رتبه‌ی تو</b><small>'+faK(me.xp)+' XP کل · رتبه‌ی '+esc((D.rank||{}).name||'')+'</small></div>'
+   +'<div class="ring" style="width:52px;height:52px"><svg viewBox="0 0 52 52"><circle class="tr" cx="26" cy="26" r="22"></circle>'
+   +'<circle class="vl" cx="26" cy="26" r="22" stroke-dasharray="'+(2*Math.PI*22).toFixed(1)+'" stroke-dashoffset="'+(2*Math.PI*22*(1-Math.min(1,30/Math.max(1,myRank)))).toFixed(1)+'"></circle></svg>'
+   +'<div><b style="font-size:10px">TOP</b></div></div></div>';
+  }
+  h+='<div class="seg" style="margin:12px 0 0">'
+  +[['weekly','هفتگی'],['monthly','ماهانه'],['global','کلی'],['season','فصلی'],['hof','افسانه‌ها']].map(function(s){return '<button class="'+(LBSCOPE===s[0]?'on':'')+'" onclick="loadBoard2(\''+s[0]+'\')">'+s[1]+'</button>'}).join('')
+  +'</div></div></div>';
+  if(items.length>=3){
+   h+='<div class="card"><div class="podium">';
+   var order=[1,0,2];
+   for(var oi=0;oi<3;oi++){var x=items[order[oi]];
+    h+='<div class="pod p'+(order[oi]+1)+'">'+avaHtml({id:x.uid,name:x.name},'')
+    +'<b>'+esc(x.name)+'</b><small>'+faK(x.xp)+' XP</small><div class="base">'+['🥇','🥈','🥉'][order[oi]]+'</div></div>';
+   }
+   h+='</div></div>';
+  }
+  h+='<div class="list" id="boardList">';
+  items.forEach(function(x){
+   var isMe=D.user&&Number(x.uid)===Number(D.user.id);
+   h+='<div class="row'+(isMe?' me':'')+' tap" onclick="profileView('+x.uid+')" style="cursor:pointer">'
+   +'<div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
+   +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+(isMe?' <span class="tag cy">تو</span>':'')+'</b><small>'+faK(x.xp)+' XP'+(x.wins?' · '+faK(x.wins)+' برد':'')+'</small></div></div>';
+  });
+  if(!items.length)h+='<div class="empty"><span class="ei">🏜</span>هنوز کسی در این رده نیست — فرصت طلایی برای صدر!</div>';
+  h+='</div>';
+  setPageHTML('board',h,g);
+ }catch(e){
+  if(isStale(g))return;
+  el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="loadBoard2(\''+LBSCOPE+'\')">تلاش دوباره</button></div>';
+ }
+}
+
+/* ================= 🌐 Wall v2 — با فیلتر سطح ================= */
+var WALLF='all';
+async function renderWall2(){
+ var g=renderGen();
+ var el=$('pg-wall');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/wall');
+  if(isStale(g))return;
+  var items=(d.items||[]).filter(function(x){
+   return WALLF==='all'||String(x.level||'info')===WALLF});
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🌐</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">Social Wall</h1>'
+  +'<p class="sub">آخرین فعالیت‌های جامعه‌ی ApexRival — زنده</p></div>'
+  +'<span class="tag cy">LIVE</span></div></div>';
+  h+='<div class="seg" style="margin:0 0 12px">'+[['all','همه'],['info','اطلاع'],['warn','هشدار'],['error','خطا']].map(function(f){
+   return '<button class="'+(WALLF===f[0]?'on':'')+'" onclick="WALLF=\''+f[0]+'\';renderWall2()">'+f[1]+'</button>'}).join('')+'</div>';
+  h+='<div class="wfeed" id="wallFeed">';
+  if(!items.length)h+='<div class="empty"><span class="ei">🕸</span>فعالیتی در این فیلتر نیست.</div>';
+  items.forEach(function(x){h+=wallItem(x)});
+  h+='</div>';
+  setPageHTML('wall',h,g);
+  startPoll('wall',function(){if(PAGE==='wall')renderWallSilent()},15000);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderWall2()">تلاش دوباره</button></div>'}
+}
+
+/* ================= 🏠 Home v2 — شمارش معکوس‌های زنده ================= */
+function homeCountdowns(){
+ var d=D.daily||{},om=D.omega||{};
+ var h='';
+ /* ریست روزانه — نیمه‌شب */
+ var now=new Date();
+ var midnight=new Date(now);midnight.setHours(24,0,0,0);
+ h+=cdCard('🔄','ریست روزانه','cdDaily',Math.floor(midnight.getTime()/1000),'مأموریت‌ها و پاداش‌ها تازه می‌شوند');
+ if(!d.eligible){
+  /* اگر پاداش امروز گرفته شده — فردا */
+ }else{
+  h=h.replace('cdDaily','cdDaily'); /* همان */
+ }
+ countdown('cdDaily',Math.floor(midnight.getTime()/1000));
+ return '<div class="grid g3">'+h+'</div>';
+}
+
+/* ================= 👤 پروفایل v2 — تقویم + شوکیس پیشرفته ================= */
+function renderMe2(){
+ var u=D.user||{},s=D.stats||{},r=D.rank||{};
+ var photo=null;try{if(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.photo_url)photo=tg.initDataUnsafe.user.photo_url}catch(e){}
+ var h='<div class="gcard"><div class="in" style="text-align:center">';
+ h+='<div style="display:flex;justify-content:center;margin-bottom:10px">'+avaHtml({id:u.id,name:u.name,photo:photo,frame:u.frame},'lg')+'</div>';
+ h+='<h1 class="h1">'+esc(u.name||'بازیکن')+(u.verified?' <span class="tag cy">✔</span>':'')+'</h1>';
+ h+='<p class="sub">'+(u.username?'@'+esc(u.username)+' · ':'')+(r.icon||'')+' '+esc(r.name||'')+' · رتبه‌ی جهانی '+(u.rank?'#'+fa(u.rank):'—')+'</p>';
+ if(u.created_at)h+='<p class="sub" style="margin-top:3px">📅 عضو از '+faDate(u.created_at)+'</p>';
+ h+='<div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-top:10px">'
+ +(u.title?'<span class="tag">🏷 '+esc(u.title)+'</span>':'')
+ +(u.badge?'<span class="tag">🎖 '+esc(u.badge)+'</span>':'')
+ +(u.vip?'<span class="tag vip">👑 VIP'+(u.vip_days?' · '+fa(u.vip_days)+' روز مانده':'')+'</span>':'<span class="tag">عضویت عادی</span>')
+ +((D.omega||{}).brb?'<span class="tag">🌙 موقتاً نیستم</span>':'')
+ +((D.omega||{}).mute?'<span class="tag">🔇 تگ خاموش</span>':'')
+ +((D.omega||{}).birthday?'<span class="tag">🎂 '+esc((D.omega||{}).birthday)+'</span>':'')
+ +'</div>';
+ var sc=(D.omega||{}).showcase||[];
+ if(sc.length){
+  var aMap={};(D.achievements||[]).forEach(function(x){aMap[x.key]=x});
+  h+='<div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-top:10px">'
+  +sc.map(function(k){var a=aMap[k];return a?'<span class="tag cy">🏅 '+esc(a.title)+'</span>':''}).join('')+'</div>';
+ }
+ h+='<div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" style="flex:1" onclick="equipSheet()">✨ تجهیز</button>'
+ +'<button class="btn" style="flex:1" onclick="showcaseSheet()">🏅 شوکیس</button>'
+ +'<button class="btn" style="flex:1" onclick="show(\'vip\',{force:true})">👑 VIP</button></div>'
+ +'<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" style="flex:1" onclick="show(\'settings\',{force:true})">⚙️ تنظیمات</button>'
+ +'<button class="btn" style="flex:1" onclick="fbSheet()">📝 بازخورد</button></div>';
+ h+='</div></div>';
+ h+='<div class="grid g4" style="margin-top:12px">'
+ +st('سطح','p_lv',u.level)+st('XP','p_xp',u.xp)+st('سکه','p_co',u.coins)+st('برد','p_w',u.wins)
+ +st('باخت','p_l',u.losses)+st('نرخ برد','p_wr',u.winrate)+st('استریک','p_st',u.streak)+st('رکورد','p_bs',u.best_streak)
+ +st('دوئل','p_d',u.duels)+st('ELO','p_e',u.elo)+st('شهرت','p_r',u.reputation)+st('استریک روز','p_ds',u.daily_streak)
+ +'</div>';
+ /* رادار سبک */
+ h+='<div class="card"><div class="shead" style="padding:0"><b>🕸 سبک بازی من</b><small>RADAR</small></div>'
+ +radarBlock(['حقیقت','جرئت','شوخ','سرعت','رأی'],[{data:[s.truth||0,s.dare||0,s.flirty||0,s.speed||0,s.vote||0],color:'#15d8ff'}],200)+'</div>';
+ /* آمار اضافی */
+ h+='<div class="grid g2">'
+ +'<div class="card"><b style="font-size:11px">🎮 بازی خصوصی</b><p class="sub">'+fa(s.private_games||0)+' مسابقه</p></div>'
+ +'<div class="card"><b style="font-size:11px">🏟 مسابقات برده</b><p class="sub">'+fa(s.tournaments_won||0)+' قهرمانی</p></div>'
+ +'<div class="card"><b style="font-size:11px">🔥 رکورد Survival</b><p class="sub">'+fa(s.survival_best||0)+' استریک</p></div>'
+ +'<div class="card"><b style="font-size:11px">🤝 بازی تیمی</b><p class="sub">'+fa(s.team_battles||0)+' نبرد</p></div>'
+ +'</div>';
+ /* دوستان و رقبا */
+ h+='<div class="section"><div class="shead"><b>👥 دوستان</b><small>'+fa((D.friends||[]).length)+' نفر</small></div>';
+ if((D.friends||[]).length){
+  h+='<div class="chips" style="margin:0 0 4px">';
+  D.friends.forEach(function(f){h+='<button class="chip" onclick="profileView('+f.id+')" style="display:flex;align-items:center;gap:7px">'+avaHtml({id:f.id,name:f.name},'xs')+'<span>'+esc(f.name)+' · LV'+fa(f.level)+'</span></button>'});
+  h+='</div>';
+ }else h+='<div class="empty" style="padding:18px"><span class="ei">👋</span>هنوز دوستی نداری — از Play Hub اضافه کن!</div>';
+ h+='</div>';
+ if((D.inventory||[]).length){
+  h+='<div class="section"><div class="shead"><b>🎒 موجودی من</b><small>'+fa(D.inventory.length)+' قلم</small></div><div class="chips" style="margin:0">';
+  D.inventory.forEach(function(i){h+='<span class="tag" style="font-size:10px;padding:7px 12px">'+esc(i.name)+' ×'+fa(i.count)+'</span>'});
+  h+='</div></div>';
+ }
+ if((D.activity||[]).length){
+  h+='<div class="section"><div class="shead"><b>📜 آخرین فعالیت‌ها</b><small>ACTIVITY</small></div><div class="card"><div class="tl">';
+  D.activity.forEach(function(a){
+   h+='<div class="ev"><div class="b">⚡</div><div class="grow"><b>'+esc(a.action)+'</b>'+(a.details?'<small>'+esc(a.details)+'</small>':'')+'<small style="color:var(--dim)">'+faDateTime(a.ts)+'</small></div></div>';
+  });
+  h+='</div></div></div>';
+ }
+ $('pg-me').innerHTML=h;
+ countUp($('p_lv'),u.level);countUp($('p_xp'),u.xp);countUp($('p_co'),u.coins);countUp($('p_w'),u.wins);
+ countUp($('p_l'),u.losses);countUp($('p_wr'),u.winrate);countUp($('p_st'),u.streak);countUp($('p_bs'),u.best_streak);
+ countUp($('p_d'),u.duels);countUp($('p_e'),u.elo);countUp($('p_r'),u.reputation);countUp($('p_ds'),u.daily_streak);
+}
+
+/* ================= 🎉 Party Hub v2 — پنج حالت اضافه پشتیبانی‌شده ================= */
+var PTABS2=[['wyr','🤔','می‌کردی؟'],['nhie','🙈','هرگز نشده'],['likely','🎯','به‌احتمال زیاد'],
+ ['riddle','🧩','معمای ایموجی'],['tip','💡','نکته طلایی'],['smart','🧠','هوشمند'],['potd','📅','سوال روز'],['fun','✨','سرگرمی']];
+async function renderParty2(){
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🎉</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">پارتی‌هاب</h1>'
+ +'<p class="sub">بازی‌های گروهی ربات — همه‌ی ۸ حالت، داخل اپ</p></div></div></div>';
+ h+='<div class="adm-cat" style="margin:12px 0">'+PTABS2.map(function(t,i){
+  return '<button class="acat'+(PTAB===i?' on':'')+'" onclick="PTAB='+i+';stateSave();renderParty2()">'+t[1]+' '+t[2]+'</button>'}).join('')+'</div>';
+ h+='<div id="partyBox"><div class="sk tall"></div></div>';
+ $('pg-party').innerHTML=h;
+ partyLoad2();
+}
+function partyLoad2(){
+ var kinds=PTABS2.map(function(t){return t[0]});
+ api('/api/miniapp/party',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kinds[PTAB]})})
+ .then(function(d){partyRender2(d)}).catch(function(e){
+  $('partyBox').innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'</div>'});
+}
+function partyRender2(d){
+ var box=$('partyBox');if(!box)return;var h='';
+ if(d.kind==='wyr'){
+  var v=d.votes||{},tot=Math.max(1,(v.a||0)+(v.b||0));
+  h='<div class="card"><div style="text-align:center;margin-bottom:6px"><span class="tag cy">🗳 رأی‌گیری سراسری</span></div>'
+  +'<div class="wyr"><div class="wcard a tap" onclick="wyrVote(\'a\')"><b>'+esc(d.left)+'</b><span class="pct">'+fa(Math.round((v.a||0)*100/tot))+'٪</span><small style="color:var(--muted);font-size:8.5px">'+fa(v.a||0)+' رأی</small></div>'
+  +'<div class="vs">یا</div>'
+  +'<div class="wcard b tap" onclick="wyrVote(\'b\')"><b>'+esc(d.right)+'</b><span class="pct">'+fa(Math.round((v.b||0)*100/tot))+'٪</span><small style="color:var(--muted);font-size:8.5px">'+fa(v.b||0)+' رأی</small></div></div>'
+  +'<div style="text-align:center"><button class="btn sm" onclick="partyLoad2()">🔄 سوال بعدی</button></div></div>';
+  window._WYRQ=d.question;
+ }else if(d.kind==='tip'||d.kind==='smart'||d.kind==='potd'){
+  var heads={tip:['💡','نکته طلایی'],smart:['🧠','پیشنهاد هوشمند'],potd:['📅','سوال روز']};
+  var hd=heads[d.kind]||['✨','سرگرمی'];
+  h='<div class="card"><div style="text-align:center"><span class="tag cy">'+hd[0]+' '+hd[1]+'</span>'
+  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">'+esc(d.tip||d.text||d.prompt||d.question||'')+'</b></div>'
+  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" style="flex:1" onclick="partyLoad2()">🔄 بعدی</button>'
+  +'<button class="btn primary sm" style="flex:1" onclick="shareText(\''+esc(d.tip||d.text||d.prompt||d.question||'').replace(/'/g,'')+'\')">✈️ اشتراک در گروه</button></div></div></div>';
+ }else{
+  /* بقیه حالت‌ها با رندر قبلی */
+  h=partyRenderLegacy(d);
+ }
+ box.innerHTML=h;
+}
+function partyRenderLegacy(d){
+ var h='';
+ if(d.kind==='nhie'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">🙈 هرگز نشده</span>'
+  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">«من هرگز '+esc(d.prompt)+'»</b></div>'
+  +'<p class="sub" style="margin-top:10px">هر کی این کار را کرده، اعتراف کنه! 😈</p>'
+  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" style="flex:1" onclick="partyLoad2()">🔄 جمله بعدی</button>'
+  +'<button class="btn primary sm" style="flex:1" onclick="shareText(\'🙈 هرگز نشده! «من هرگز '+esc(d.prompt)+'» — تو کردی؟ 😈\')">✈️ اشتراک</button></div></div></div>';
+ }else if(d.kind==='likely'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">🎯 به‌احتمال زیاد</span>'
+  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">'+esc(d.question)+'</b></div>'
+  +'<p class="sub" style="margin-top:10px">به نظرت کدام دوستت این کار را می‌کند؟</p>'
+  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" style="flex:1" onclick="partyLoad2()">🔄 سوال بعدی</button>'
+  +'<button class="btn primary sm" style="flex:1" onclick="shareText(\'🎯 به‌احتمال زیاد، کی؟ '+esc(d.question)+' 👀\')">✈️ اشتراک</button></div></div></div>';
+ }else if(d.kind==='riddle'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">🧩 معمای ایموجی</span>'
+  +'<div class="riddle">'+esc(d.emoji)+'</div>';
+  (d.options||[]).forEach(function(o,i){
+   h+='<button class="btn ropt'+(i===0?' primary':'')+'" onclick="riddleAns(this,\''+esc(d.answer)+'\',\''+esc(o)+'\')">'+esc(o)+'</button>'});
+  h+='</div></div>';
+ }else{
+  h='<div class="card"><div style="text-align:center"><span class="tag">✨ سرگرمی</span>'
+  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">'+esc(d.prompt||d.question||d.text||'')+'</b></div>'
+  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" style="flex:1" onclick="partyLoad2()">🔄 بعدی</button></div></div></div>';
+ }
+ return h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN PLUS ۴ — پنل ادمین پیشرفته: جزئیات کاربر حرفه‌ای،
+   آنالیتیکس ۳۰روزه، مرور بانک صفحه‌بندی‌شده، پاسخ بازخورد
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- 👤 کاربر حرفه‌ای: تاریخچه + اهدای دستاورد + تنبیه سریع ---------- */
+async function userSheet2(id){
+ openSheet('<div style="text-align:center;padding:18px 0"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var u=await api('/api/miniapp/admin/user?id='+Number(id));
+  var h='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">'
+  +avaHtml({id:u.id,name:u.name},'')+'<div style="flex:1;min-width:0"><h3 style="margin:0">'+(u.vip?'👑 ':'')+esc(u.name||'کاربر')
+  +(u.banned?' <span class="tag bad">مسدود</span>':'')+(u.verified?' <span class="tag cy">✔</span>':'')+'</h3>'
+  +'<p class="sub" style="margin:2px 0 0">ID '+fa(u.id)+(u.username?' · @'+esc(u.username):'')+'</p>'
+  +(u.created_at?'<p class="sub" style="margin:0">عضویت: '+faDate(u.created_at)+'</p>':'')+'</div></div>';
+  /* گیج XP تا سطح بعد */
+  h+='<div class="card" style="padding:8px">'+gaugeBlock(u.xp_in_level||0,u.xp_per_level||100,'سطح '+fa(u.level),'#31e981')+'</div>';
+  h+='<div class="grid g4" style="margin:12px 0">'
+  +adm('سطح',u.level)+adm('XP',u.xp)+adm('سکه',u.coins)+adm('بازی',u.games)+'</div>';
+  h+='<div class="grid g4" style="margin-bottom:12px">'
+  +adm('برد',u.wins)+adm('دوئل',u.duels)+adm('ELO',u.elo_rating)+adm('دستاورد',(u.achievements||[]).length)+'</div>';
+  h+='<div class="chips" style="margin:0 0 12px">'
+  +(u.vip?'<span class="tag vip">👑 VIP'+(u.vip_days?' · '+fa(u.vip_days)+'روز':'')+'</span>':'')
+  +(u.banned?'<span class="tag bad">مسدود</span>':'<span class="tag ok">فعال</span>')
+  +(u.verified?'<span class="tag cy">تأییدشده</span>':'')+'</div>';
+  /* ابزار */
+  h+='<div class="shead" style="padding:0"><b>⚡ عملیات سریع</b></div>'
+  +'<div class="adm-tools" style="margin:8px 0 4px">'
+  +'<button class="btn green sm" onclick="admAction(\'add_coins\',{target:'+u.id+',value:100})">+۱۰۰ 🪙</button>'
+  +'<button class="btn gold sm" onclick="admAction(\'add_coins\',{target:'+u.id+',value:1000})">+۱۰۰۰ 🪙</button>'
+  +'<button class="btn primary sm" onclick="admAction(\'add_xp\',{target:'+u.id+',value:500})">+۵۰۰ XP</button>'
+  +'<button class="btn red sm" onclick="admAction(\'sub_coins\',{target:'+u.id+',value:100})">−۱۰۰ 🪙</button>'
+  +'<button class="btn '+(u.banned?'green':'red')+' sm" onclick="admAction(\'ban_toggle\',{target:'+u.id+'})">'+(u.banned?'رفع بن':'بن کردن')+'</button></div>'
+  +'<div class="adm-tools" style="margin-top:8px">'
+  +'<button class="btn '+(u.verified?'':'green')+' sm" onclick="admAction(\'verify_toggle\',{target:'+u.id+'})">'+(u.verified?'لغو تأیید ✖':'تأیید هویت ✅')+'</button>'
+  +'<button class="btn sm" onclick="admAction(\'mute_toggle\',{target:'+u.id+'})">🔇 میوت</button>'
+  +'<button class="btn sm" onclick="admGrantAchSheet('+u.id+')">🏆 اهدای دستاورد</button></div>';
+  /* مقدار دلخواه */
+  h+='<div class="shead" style="padding:0;margin-top:14px"><b>✏️ مقدار دلخواه</b></div>'
+  +'<div style="display:flex;gap:8px;margin:8px 0"><input class="input" id="uval" type="number" placeholder="مقدار…" style="flex:1">'
+  +'<button class="btn green sm" onclick="admAction(\'add_coins\',{target:'+u.id+',value:Number(document.getElementById(\'uval\').value)||0})">+ سکه</button>'
+  +'<button class="btn primary sm" onclick="admAction(\'add_xp\',{target:'+u.id+',value:Number(document.getElementById(\'uval\').value)||0})">+ XP</button></div>';
+  /* پیام خصوصی */
+  h+='<div class="shead" style="padding:0;margin-top:14px"><b>📩 پیام خصوصی</b></div>'
+  +'<textarea id="dmTxt" class="input" style="min-height:70px;margin-top:8px" placeholder="متن پیام به کاربر…"></textarea>'
+  +'<button class="btn cy sm wide" style="margin-top:8px" onclick="admDm('+u.id+')">✈️ ارسال پیام</button>';
+  /* یادداشت */
+  h+='<div class="shead" style="padding:0;margin-top:14px"><b>📝 یادداشت ادمین</b></div>'
+  +'<textarea id="note" class="input" style="margin-top:8px;min-height:80px" placeholder="یادداشت…">'+esc(u.admin_note||'')+'</textarea>'
+  +'<div style="display:flex;gap:8px;margin-top:8px">'
+  +'<button class="btn primary sm" style="flex:1" onclick="admAction(\'save_note\',{target:'+u.id+',note:document.getElementById(\'note\').value})">💾 ذخیره</button>'
+  +'<button class="btn red sm" onclick="admAction(\'note_del\',{target:'+u.id+'})">🗑 حذف</button></div>';
+  /* موجودی */
+  var inv=u.inventory||{};
+  var invKeys=Object.keys(inv);
+  if(invKeys.length){
+   h+='<div class="shead" style="padding:0;margin-top:14px"><b>🎒 موجودی بازیکن</b></div><div class="chips" style="margin:8px 0 0">';
+   invKeys.forEach(function(k){h+='<span class="tag">'+esc(k)+' ×'+fa(inv[k])+'</span>'});
+   h+='</div>';
+  }
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">⚠️</span>'+esc(e.message)+'</div>'}
+}
+/* اهدای دستاورد به کاربر مشخص */
+async function admGrantAchSheet(uid){
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=ach');
+  var h='<h3>🏆 اهدای دستاورد به '+fa(uid)+'</h3>'
+  +'<p class="sub" style="margin-bottom:10px">یک دستاورد را انتخاب کن تا مستقیم به این کاربر اهدا شود.</p><div class="list">';
+  (d.items||[]).slice(0,40).forEach(function(a){
+   h+='<div class="row tap" onclick="admAction(\'ach_grant\',{key:\''+esc(a.key)+'\',target:'+uid+'})">'
+   +'<div class="medal">'+esc(a.icon||'🎖')+'</div>'
+   +'<div class="grow"><b>'+esc(a.title)+'</b><small>'+esc(a.desc)+'</small></div>'
+   +(a.off?'<span class="tag bad">خاموش</span>':'<span class="tag cy">اهدا</span>')+'</div>';
+  });
+  h+='</div>';
+  openSheet(h);
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ---------- 📊 آنالیتیکس ۳۰ روزه ---------- */
+function admAnalytics30(d){
+ var h='<div class="card"><div class="shead" style="padding:0"><b>📈 روند ۳۰ روزه</b><small>MONTH</small></div>'
+ +(d.month?lineBlock([
+   {data:d.month.map(function(x){return x.games}),color:'#7c5cff'},
+   {data:d.month.map(function(x){return x.active}),color:'#15d8ff'}
+  ],null,170):'')+'</div>';
+ return h;
+}
+
+/* ---------- 🏦 مرور بانک با صفحه‌بندی ---------- */
+var BANKPAGE=0;
+async function admBankBrowse(key,page){
+ openSheet('<h3>🏦 '+esc(key)+'</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=bank_view&key='+encodeURIComponent(key)+'&page='+page);
+  var h='<h3>🏦 '+esc(d.name)+'</h3>'
+  +'<div class="grid g4" style="margin:12px 0">'+adm('سوال',d.count)+adm('نمونه',d.samples.length)+adm('وضعیت',d.enabled?'فعال':'خاموش')+adm('سطح‌ها',d.levels)+'</div>';
+  if(d.digest)h+='<div class="card" style="text-align:center;font-size:9px;color:var(--muted)">🔒 مهر سلامت بانک: <code dir="ltr">'+esc(d.digest)+'…</code></div>';
+  h+='<div class="shead" style="padding:0;margin-top:12px"><b>👁 نمونه سوالات</b><small>فقط نمایش</small></div>';
+  (d.samples||[]).forEach(function(s,i){
+   h+='<div class="card" style="margin-bottom:8px"><b style="font-size:11px">'+fa(i+1)+'. '+esc(s.q||s.text||s.prompt||String(s))+'</b>'
+   +(s.a||s.answer?'<div class="sub" style="margin-top:4px">پاسخ: '+esc(s.a||s.answer)+'</div>':'')+'</div>';
+  });
+  h+='<div class="card" style="text-align:center;font-size:9.5px;color:var(--muted)">🔒 محتوای بانک سوالات طبق قوانین ربات از پنل وب قابل ویرایش نیست — این فقط نمایش است.</div>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+}
+
+/* ---------- 📨 بازخورد با پاسخ DM ---------- */
+function admFeedback2(d){
+ var h='';
+ (d.items||[]).forEach(function(f){
+  h+='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
+  +avaHtml({id:f.uid,name:f.name},'sm')
+  +'<div class="grow"><b>'+esc(f.name)+'</b><small>'+faDateTime(f.ts)+'</small></div>'
+  +(f.resolved?'<span class="tag ok">رسیدگی ✓</span>':'<span class="tag cy">جدید</span>')+'</div>'
+  +'<p style="margin:10px 0 0;font-size:11px;line-height:2">'+esc(f.text)+'</p>'
+  +(f.resolved?'':'<div style="display:flex;gap:8px;margin-top:10px">'
+  +'<button class="btn green sm" style="flex:1" onclick="admAction(\'fb_resolve\',{id:'+f.id+'})">✅ رسیدگی شد</button>'
+  +'<button class="btn cy sm" style="flex:1" onclick="admFbReply('+f.uid+')">💬 پاسخ</button></div>')+'</div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">📭</span>بازخوردی رسیده نکرده است.</div>';
+ return '<div class="card" style="text-align:center;margin-bottom:12px">'+fa((d.items||[]).filter(function(f){return!f.resolved}).length)+' بازخورد خوانده‌نشده از '+fa((d.items||[]).length)+' مورد</div>'+h;
+}
+async function admFbReply(uid){
+ openSheet('<h3>💬 پاسخ به بازخورد</h3>'
+ +'<textarea id="dmTxt" class="input" style="min-height:90px" placeholder="پاسخ‌ات را بنویس — به صندوق پیام کاربر می‌رود…"></textarea>'
+ +'<button class="btn primary wide glow" style="margin-top:10px" onclick="admDm('+uid+')">✈️ ارسال پاسخ</button>');
+}
+
+/* ---------- 📢 همگانی با پیش‌نمایش زنده ---------- */
+function admBroadcast2(d){
+ return '<div class="card"><b>📢 ارسال پیام همگانی</b>'
+ +'<p class="sub" style="margin:8px 0">پیام برای همه‌ی کاربران ربات در صف ارسال قرار می‌گیرد (همان Broadcast ربات).'+(d.pending?' در صف فعلی: '+fa(d.pending)+' پیام.':'')+'</p>'
+ +'<textarea id="bcTxt" class="input" maxlength="900" placeholder="متن پیام همگانی..." style="min-height:110px" oninput="bcPreview()"></textarea>'
+ +'<div class="card" style="margin-top:10px;padding:10px;background:var(--panel3)">'
+ +'<b style="font-size:10px">👁 پیش‌نمایش:</b><div class="sub" id="bcPrev" style="margin-top:6px">متن پیام اینجا نمایش داده می‌شود…</div></div>'
+ +'<button class="btn primary wide glow" style="margin-top:10px" onclick="adminBroadcast()">✈️ قرار دادن در صف ارسال</button></div>';
+}
+function bcPreview(){
+ var t=($('bcTxt')||{}).value||'';
+ var p=$('bcPrev');
+ if(p)p.textContent=t.trim()||'متن پیام اینجا نمایش داده می‌شود…';
+}
+
+/* ---------- 🛡 دسترسی‌ها با جستجو ---------- */
+function admPerms2(d){
+ var h='<div class="card" style="margin-bottom:12px"><b>🛡 افزودن دسترسی</b>'
+ +'<p class="sub" style="margin:6px 0">آیدی عددی + نقش — همان سیستم دسترسی ربات.</p>'
+ +'<div style="display:flex;gap:8px">'
+ +'<input class="input" id="prmId" type="number" placeholder="آیدی عددی..." style="flex:1" dir="ltr">'
+ +'<div class="seg" id="prmRoleSeg"><button class="on" data-role="admin">admin</button><button data-role="mod">mod</button></div></div>'
+ +'<button class="btn primary wide sm" style="margin-top:10px" onclick="admPermAdd2()">➕ افزودن دسترسی</button></div>';
+ h+='<div class="list">';
+ (d.items||[]).forEach(function(p){
+  h+='<div class="row"><div class="medal">'+(p.role==='admin'?'🛡':p.role==='owner'?'👑':'🎖')+'</div>'
+  +'<div class="grow"><b>'+esc(p.name||('ID '+fa(p.id)))+'</b><small>ID '+fa(p.id)+' · نقش: '+esc(p.role)+'</small></div>'
+  +(p.role!=='owner'?'<button class="btn red sm" onclick="admAction(\'perm_del\',{target:'+p.id+'})">🗑 حذف</button>':'<span class="tag gold">مالک</span>')+'</div>';
+ });
+ if(!(d.items||[]).length)h+='<div class="empty"><span class="ei">🛡</span>هیچ دسترسی اضافه‌ای ثبت نشده!</div>';
+ h+='</div>';
+ return h;
+}
+async function admPermAdd2(){
+ var id=parseInt(($('prmId')||{}).value||'0',10);
+ var role='admin';
+ var on=document.querySelector('#prmRoleSeg .on');
+ if(on&&on.getAttribute('data-role'))role=on.getAttribute('data-role');
+ if(!id){toast('آیدی معتبر وارد کن','err');return}
+ await admAction('perm_add',{target:id,role:role},'perms');
+}
+
+/* ---------- 🧾 لاگ‌ها با جستجو و صفحه‌بندی ---------- */
+var LOGQ='';
+function admLogs2(d){
+ var h='<div class="seg" style="margin:0 0 10px">'+[['all','همه'],['info','Info'],['warn','Warn'],['error','Error']].map(function(l){
+  return '<button class="'+(LOGLV===l[0]?'on':'')+'" onclick="LOGLV=\''+l[0]+'\';stateSave();adminPage(\'logs\')">'+l[1]+'</button>'}).join('')+'</div>';
+ h+='<div class="searchbar"><span class="sic">🔍</span><input class="input" id="lgQ" placeholder="جستجو در لاگ‌ها..." value="'+esc(LOGQ)+'" oninput="LOGQ=this.value;logFilter()"></div>';
+ h+='<div class="list" id="logList" style="margin-top:10px">';
+ h+=logRows(d.items||[]);
+ h+='</div>';
+ setTimeout(function(){
+  var el=$('lgQ');
+  if(el)el.addEventListener('input',debounce(function(){LOGQ=el.value;logFilter()},250));
+ },40);
+ return h;
+}
+function logRows(items){
+ var q=LOGQ.trim().toLowerCase();
+ var h='';
+ items.forEach(function(x){
+  if(q){
+   var t=(String(x.message||x.action||'')+' '+String(x.category||'')+' '+String(x.details||'')).toLowerCase();
+   if(t.indexOf(q)<0)return;
+  }
+  var lv=String(x.level||x.type||'info').toLowerCase();
+  h+='<div class="row"><div class="grow"><b>'+esc(x.message||x.action||'event')+'</b><small>'+esc(x.category||'')+(x.details?' · '+esc(x.details):'')+(x.actor?' · توسط '+fa(x.actor):'')+'</small><small style="color:var(--dim)">'+faDateTime(x.ts)+'</small></div><span class="loglv '+lv+'">'+lv+'</span></div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">🧾</span>لاگی مطابق فیلتر نیست.</div>';
+ return h;
+}
+function logFilter(){
+ var box=$('logList');if(!box)return;
+ var d=ADMDATA.logs||{};
+ box.innerHTML=logRows(d.items||[]);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN DEEP ۱ — مسیر کامل Season Pass + دستاوردهای حرفه‌ای +
+   مأموریت‌های تقویمی + بقا با جدول سختی + آزمایشگاه ظاهر
+   (توابع هم‌نام، نسخه‌های قبلی را ارتقا می‌دهند)
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 🎫 Season Pass — مسیر دو rails ================ */
+function renderPass(){
+ var p=D.pass||{},u=D.user||{};
+ var pct=p.per_tier?Math.round((p.xp%p.per_tier)*100/p.per_tier):0;
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🎫</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1 grad" style="margin:0">Season Pass</h1>'
+ +'<p class="sub">Tier '+fa(p.tier||0)+' از '+fa(p.max_tier||50)+' · '+fa(p.to_next||0)+' XP تا Tier بعد</p>'
+ +'<div class="bar" style="margin-top:8px"><i style="width:'+pct+'%"></i></div></div>'
+ +'<div class="ring" style="width:66px;height:66px"><svg viewBox="0 0 66 66"><circle class="tr" cx="33" cy="33" r="28"></circle>'
+ +'<circle class="vl" cx="33" cy="33" r="28" stroke-dasharray="'+(2*Math.PI*28).toFixed(1)+'" stroke-dashoffset="'+(2*Math.PI*28*(1-pct/100)).toFixed(1)+'"></circle></svg>'
+ +'<div><b style="font-size:14px">'+fa(p.tier||0)+'</b><small>TIER</small></div></div></div></div>';
+ if(!p.premium){
+  h+='<div class="card" style="margin:14px 0;border-color:#ffc85744;background:linear-gradient(150deg,#1a1508,#0c0a16)">'
+  +'<div style="display:flex;align-items:center;gap:12px"><div style="font-size:26px">👑</div>'
+  +'<div style="flex:1"><b>Premium Pass</b><div class="sub">۲ برابر پاداش + قاب‌های ویژه + ۳۰ روز VIP</div></div>'
+  +'<button class="btn gold" onclick="passPremiumAsk()">🪙 '+fa(p.premium_price||1500)+'</button></div></div>';
+ }else{
+  h+='<div class="card" style="margin:14px 0;border-color:#ffc85744;display:flex;align-items:center;gap:10px"><span style="font-size:22px">👑</span><b>Premium فعال است</b><span class="tag vip">کامل</span></div>';
+ }
+ /* مسیر دو ریل — رایگان و پرمیوم کنار هم با خط پیشرفت */
+ var free=p.free||[],prem=p.premium_track||[];
+ var maxN=Math.max(free.length,prem.length);
+ h+='<div class="section"><div class="shead"><b>🗺 مسیر کامل پاداش‌ها</b><small>'+fa(maxN)+' Tier</small></div>';
+ h+='<div class="passtrack">';
+ for(var i=0;i<maxN;i++){
+  var f=free[i],r=prem[i];
+  var openF=f&&f.open,openR=r&&r.open;
+  h+='<div class="pt-row'+((f&&f.tier===p.tier)?' current':'')+'">';
+  /* ریل رایگان */
+  h+='<div class="pt-cell free'+(openF?' open':' lockt')+(f&&f.claimed?' claimed':'')+'">'
+  +(f?'<div class="pt-tier">'+fa(f.tier)+'</div>'
+  +'<div class="pt-body"><b>'+(f.title?'🏷 '+esc(f.title):f.item?'🎒 '+esc(f.item):'🪙 '+fa(f.coins||0))+'</b>'
+  +'<small>'+(f.coins?'+'+fa(f.coins)+' سکه':'پاداش')+'</small></div>'
+  +(f.claimed?'<span class="pt-mark">✓</span>':openF?'<button class="btn primary xs" onclick="passClaim('+f.tier+',false)">دریافت</button>':'<span class="pt-mark lock">🔒</span>')
+  :'<div class="pt-empty">—</div>')+'</div>';
+  /* ریل پرمیوم */
+  h+='<div class="pt-cell prem'+(openR?' open':' lockt')+(r&&r.claimed?' claimed':'')+'" style="'+(p.premium?'':'opacity:.6')+'">'
+  +(r?'<div class="pt-tier">👑</div>'
+  +'<div class="pt-body"><b>'+(r.title?'🏷 '+esc(r.title):r.frame?'🖼 '+esc(r.frame):r.item?'🎒 '+esc(r.item):'🪙 '+fa(r.coins||0))+'</b>'
+  +'<small>'+(r.coins?'+'+fa(r.coins)+' سکه':'پاداش VIP')+'</small></div>'
+  +(r.claimed?'<span class="pt-mark">✓</span>':(openR&&p.premium)?'<button class="btn gold xs" onclick="passClaim('+r.tier+',true)">دریافت</button>':p.premium?'<span class="pt-mark lock">🔒</span>':'<span class="pt-mark vip">👑</span>')
+  :'<div class="pt-empty">—</div>')+'</div>';
+  h+='</div>';
+ }
+ h+='</div></div>';
+ /* خلاصه */
+ var fCan=(free.filter(function(t){return t.open&&!t.claimed})).length;
+ var pCan=p.premium?(prem.filter(function(t){return t.open&&!t.claimed})).length:0;
+ h+='<div class="grid g3" style="margin-top:12px">'
+ +'<div class="stat big"><small>آماده‌ی دریافت (رایگان)</small><b style="color:var(--green)">'+fa(fCan)+'</b></div>'
+ +'<div class="stat big"><small>آماده‌ی دریافت (Premium)</small><b style="color:var(--gold)">'+fa(pCan)+'</b></div>'
+ +'<div class="stat big"><small>کل پاداش‌ها</small><b>'+fa(maxN*2)+'</b></div></div>';
+ $('pg-pass').innerHTML=h;
+}
+function passPremiumAsk(){
+ askConfirm('خرید Premium Pass','با '+fa((D.pass||{}).premium_price||1500)+' سکه، Premium فعال می‌شود: ۲ برابر پاداش + ۳۰ روز VIP. می‌خری؟','خرید',passPremium);
+}
+
+/* ================= 🏅 دستاوردها v2 — پیشرفت + اشتراک‌گذاری ================ */
+var ACHCATS=[['all','همه'],['progress','پیشرفت'],['combat','رقابت'],['social','اجتماعی'],['economy','اقتصاد'],['special','ویژه']];
+function achCatOf(x){
+ var t=String(x.title||'')+String(x.desc||'');
+ if(/برد|دوئل|آرنا|ELO|رقاب|دوز|کازینو/i.test(t))return 'combat';
+ if(/دوست|هدیه|تجارت|دعوت|گروه|اجتماع/i.test(t))return 'social';
+ if(/سکه|خرید|فروشگاه|گنج|ثروت/i.test(t))return 'economy';
+ if(/سطح|XP|بازی|استریک|مایلستون|مسیر/i.test(t))return 'progress';
+ return 'special';
+}
+function renderAch(){
+ var a=D.achievements||[];var got=a.filter(function(x){return x.owned}).length;
+ var pct=a.length?Math.round(got*100/a.length):0;
+ var h='<div class="gcard"><div class="in"><div style="display:flex;align-items:center;gap:14px">'
+ +'<div class="ring" style="width:76px;height:76px"><svg viewBox="0 0 76 76"><circle class="tr" cx="38" cy="38" r="33"></circle><circle class="vl" cx="38" cy="38" r="33" stroke-dasharray="'+(2*Math.PI*33).toFixed(1)+'" stroke-dashoffset="'+(2*Math.PI*33*(1-pct/100)).toFixed(1)+'"></circle></svg>'
+ +'<div style="text-align:center"><b style="font-size:16px">'+fa(pct)+'٪</b><small>کامل</small></div></div>'
+ +'<div><b style="font-size:14px">تالار افتخارات</b><div class="sub">'+fa(got)+' از '+fa(a.length)+' باز شده</div>'
+ +'<div class="bar thin" style="margin-top:7px"><i style="width:'+pct+'%"></i></div></div></div>'
+ +'<div style="display:flex;gap:8px;margin-top:12px">'
+ +'<button class="btn primary sm" style="flex:1" onclick="showcaseSheet()">🏅 شوکیس (۳ ستاره)</button>'
+ +'<button class="btn sm" style="flex:1" onclick="achShare()">📤 کارت افتخارات</button></div></div></div>';
+ /* فیلتر دسته */
+ h+='<div class="adm-cat" style="margin:12px 0">'+ACHCATS.map(function(c){
+  return '<button class="acat'+(ACHF===c[0]?' on':'')+'" onclick="ACHF=\''+c[0]+'\';stateSave();renderAch()">'+c[1]+'</button>'}).join('')+'</div>';
+ var list=a.filter(function(x){
+  if(ACHF==='all')return true;
+  if(ACHF==='got')return x.owned;
+  if(ACHF==='lock')return !x.owned;
+  return achCatOf(x)===ACHF;
+ });
+ h+='<div class="achg">';
+ list.forEach(function(x){
+  var cat=achCatOf(x);
+  h+='<div class="ach '+(x.owned?'got':'lock')+'"><span class="ico">'+(x.owned?'🏆':'🔒')+'</span>'
+  +'<h4>'+esc(x.title)+'</h4><p>'+esc(x.desc)+'</p>'
+  +'<div style="margin-top:8px;font-size:9.5px;color:var(--gold)">🎁 +'+fa(x.reward)+' سکه'+(x.xp?' · +'+fa(x.xp)+' XP':'')+'</div>'
+  +'<span class="tag" style="margin-top:6px">'+({'progress':'📈 پیشرفت','combat':'⚔️ رقابت','social':'👥 اجتماعی','economy':'💰 اقتصاد','special':'✨ ویژه'}[cat])+'</span></div>';
+ });
+ if(!list.length)h+='<div class="empty" style="grid-column:1/-1"><span class="ei">🏅</span>این‌جا خالی است.</div>';
+ h+='</div>';
+ /* نزدیک‌ترین دستاورد بعدی */
+ var nextAch=a.filter(function(x){return !x.owned}).slice(0,3);
+ if(nextAch.length){
+  h+='<div class="section"><div class="shead"><b>🎯 بعدی‌ها — به این‌ها نزدیک‌تری</b><small>NEXT</small></div><div class="list">';
+  nextAch.forEach(function(x){
+   h+='<div class="row"><div class="medal">🔒</div><div class="grow"><b>'+esc(x.title)+'</b><small>'+esc(x.desc)+'</small></div><span class="tag gold">+'+fa(x.reward)+'🪙</span></div>';
+  });
+  h+='</div></div>';
+ }
+ $('pg-ach').innerHTML=h;
+}
+function achShare(){
+ var a=D.achievements||[];var got=a.filter(function(x){return x.owned}).length;
+ var pct=a.length?Math.round(got*100/a.length):0;
+ var u=D.user||{};
+ var top=(a.filter(function(x){return x.owned}).slice(0,3).map(function(x){return x.title})).join(' · ');
+ openSheet('<h3>📤 کارت افتخارات</h3>'
+ +'<div class="card" style="text-align:center;background:linear-gradient(160deg,#1a1508,#0c0a16);border-color:#ffc85744">'
+ +'<div style="font-size:30px">🏆</div>'
+ +'<b style="font-size:15px">'+esc(u.name||'بازیکن')+'</b>'
+ +'<div style="font-size:22px;font-weight:900;color:var(--gold);margin-top:6px">'+fa(pct)+'٪ کامل</div>'
+ +'<div class="sub" style="margin-top:4px">'+fa(got)+' از '+fa(a.length)+' دستاورد</div>'
+ +(top?'<div class="sub" style="margin-top:8px">⭐ '+esc(top)+'</div>':'')+'</div>'
+ +'<button class="btn primary wide" onclick="shareText(\'🏆 کارت افتخارات من در ApexRival: '+fa(pct)+'٪ کامل ('+fa(got)+'/'+fa(a.length)+')'+(top?' — برترها: '+esc(top):'')+' — تو هم چالشت می‌کنم! ⚔️\')">✈️ اشتراک‌گذاری کارت</button>');
+}
+
+/* ================= 🎯 مأموریت‌ها v2 — تقویم + خلاصه ================ */
+function renderMiss(){
+ var ms=D.missions||[],qd=(D.quests&&D.quests.daily)||[],qw=(D.quests&&D.quests.weekly)||[];
+ var om=D.omega||{};
+ var allDone=(ms.concat(qd,qw).filter(function(m){return m.completed&&!m.claimed})).length;
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🎯</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">مرکز مأموریت‌ها</h1>'
+ +'<p class="sub">'+fa(allDone)+' پاداش آماده‌ی دریافت از '+fa(ms.length+qd.length+qw.length)+' مورد</p></div></div></div>';
+ /* خلاصه سه‌گانه */
+ var totalXP=0,totalCN=0;
+ ms.concat(qd,qw).forEach(function(m){if(!m.claimed){totalXP+=m.reward_xp||0;totalCN+=m.reward_coins||0}});
+ h+='<div class="grid g3" style="margin-bottom:12px">'
+ +'<div class="stat big"><small>پاداش در انتظار</small><b style="color:var(--green)">'+fa(allDone)+'</b></div>'
+ +'<div class="stat big"><small>XP قابل دریافت</small><b style="color:var(--c3)">+'+faK(totalXP)+'</b></div>'
+ +'<div class="stat big"><small>سکه قابل دریافت</small><b style="color:var(--gold)">+'+faK(totalCN)+'</b></div></div>';
+ /* تقویم هفتگی فعالیت */
+ h+='<div class="card"><div class="shead" style="padding:0"><b>📅 تقویم هفته</b><small>ریست‌ها</small></div>'
+ +'<div class="calgrid" style="margin-top:10px">';
+ var names=['ش','ی','د','س','چ','پ','ج'];
+ var today=new Date().getDay();
+ var persianToday=(today+1)%7; /* شنبه=۰ */
+ for(var i=0;i<7;i++){
+  var cls=i===persianToday?' border-color:#31e98166;box-shadow:0 4px 14px #31e98122':'';
+  var lbl=i===0?'مأموریت+Quest':(i===1?'Quest هفتگی':'—');
+  h+='<div class="stat" style="padding:8px 2px;'+cls+'"><small style="font-size:8px">'+names[i]+'</small>'
+  +'<b style="font-size:9px">'+lbl+'</b></div>';
+ }
+ h+='</div><div class="sub" style="margin-top:8px;text-align:center">مأموریت‌ها هر شب ۰۰:۰۰ · Quest هفتگی هر دوشنبه</div></div>';
+ /* استریک + مایلستون */
+ h+='<div class="grid g2" style="margin-bottom:12px">';
+ h+='<div class="card tap" onclick="loginstreakSheet()" style="'+(om.loginstreak_ready?'border-color:#ff9e4f66;box-shadow:0 12px 40px #ff9e4f18':'')+'"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🔥</div><div style="flex:1"><b style="font-size:12px">پاداش استریک</b><div class="sub">'+(om.loginstreak_ready?'<b style="color:var(--orange)">آماده دریافت!</b>':'امروز گرفته‌ای ✓')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='<div class="card tap" onclick="show(\'milestones\',{force:true})"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎯</div><div style="flex:1"><b style="font-size:12px">Milestone ها</b><div class="sub">'+fa(om.milestones_claimed||0)+'/'+fa(om.milestones_total||13)+(om.milestones_ready?' · <b style="color:var(--green)">'+fa(om.milestones_ready)+' آماده!</b>':'')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='</div>';
+ /* سه تب */
+ h+='<div class="seg" style="margin:12px 0">'
+ +['مأموریت روزانه ('+fa(ms.length)+')','Quest روزانه ('+fa(qd.length)+')','Quest هفتگی ('+fa(qw.length)+')'].map(function(c,i){return '<button class="'+(QTAB===i?'on':'')+'" onclick="QTAB='+i+';stateSave();renderMiss()">'+c+'</button>'}).join('')+'</div>';
+ var list=QTAB===0?ms:QTAB===1?qd:qw;
+ if(!list.length){h+='<div class="empty"><span class="ei">🌙</span>فعلاً چیزی اینجا نیست — کمی بعد دوباره سر بزن.</div>'}
+ else{
+  h+='<div class="list">';
+  list.forEach(function(m){
+   var pc=Math.min(100,Math.round((m.progress||0)*100/Math.max(1,m.target||1)));
+   var can=m.completed&&!m.claimed;
+   h+='<div class="mrow'+(m.completed?' done':'')+'"><div class="top">';
+   h+='<div class="ic">'+(m.claimed?'✅':m.completed?'🎉':QTAB===0?'🎯':QTAB===1?'⭐':'🗓')+'</div>';
+   h+='<div class="grow"><b>'+esc(m.name||'مأموریت')+'</b><div class="rw">+'+fa(m.reward_xp||0)+' XP · +'+fa(m.reward_coins||0)+' 🪙 · '+fa(m.progress||0)+'/'+fa(m.target||1)+' ('+faP(pc)+')</div></div>';
+   if(QTAB===0)h+='<button class="btn primary sm'+(can?' glow':'')+'" '+(can?'':'disabled')+' onclick="claim(\''+esc(m.key)+'\')">'+(m.claimed?'دریافت شد':m.completed?'دریافت 🎁':'در حال انجام')+'</button>';
+   else h+='<button class="btn primary sm'+(can?' glow':'')+'" '+(can?'':'disabled')+' onclick="qclaim(\''+(QTAB===1?'daily':'weekly')+'\',\''+esc(m.key)+'\')">'+(m.claimed?'دریافت شد':m.completed?'دریافت 🎁':'در حال انجام')+'</button>';
+   h+='</div><div class="bar thin" style="margin-top:10px"><i style="width:'+pc+'%;'+(m.completed?'background:linear-gradient(90deg,var(--green),var(--cyan))':'')+'"></i></div></div>';
+  });
+  h+='</div>';
+ }
+ $('pg-miss').innerHTML=h;
+}
+
+/* ================= 🔥 بقا v2 — جدول سختی + قیمت آیتم‌ها ================ */
+async function renderSurvival(){
+ var g=renderGen();
+ var el=$('pg-survival');
+ el.innerHTML='<div class="sk tall"></div>';
+ try{
+  var d=await api('/api/miniapp/survival');
+  if(isStale(g))return;
+  var h=gmHead('🔥','بقای تایتان','راگلایک واقعی — روزها، جان‌ها، رویدادها','play');
+  if(d.active&&d.session){
+   h+=svCard(d.session);
+  }else{
+   /* جدول مقایسه سختی */
+   h+='<div class="section"><div class="shead"><b>🎯 انتخاب سختی</b><small>۳ سطح</small></div>';
+   h+='<div class="card" style="padding:0;overflow:hidden"><table class="svtable"><thead><tr>'
+   +'<th>سطح</th><th>جان</th><th>ضریب</th><th>رکورد</th><th></th></tr></thead><tbody>';
+   d.diffs.forEach(function(x){
+    h+='<tr><td><b>'+x.icon+' '+esc(x.name)+'</b></td><td>'+fa(x.hearts)+' ❤️</td>'
+    +'<td>×'+fa(x.mult)+'</td><td>'+(x.best_points?fa(x.best_points)+' امتیاز':'—')+'</td>'
+    +'<td><button class="btn primary xs" onclick="svStart(\''+x.key+'\')">شروع</button></td></tr>';
+   });
+   h+='</tbody></table></div></div>';
+   /* راهنمای آیتم‌ها و رویدادها */
+   h+='<div class="grid g2" style="margin-top:12px">'
+   +'<div class="card"><b style="font-size:11px">🎒 فروشنده سیار</b>'
+   +'<div class="sub" style="margin-top:6px;line-height:2.2">🧪 درمان کامل — ۳۰ سکه<br>🛡 سپر یک‌روزه — ۲۵ سکه</div></div>'
+   +'<div class="card"><b style="font-size:11px">🎲 رویدادها</b>'
+   +'<div class="sub" style="margin-top:6px;line-height:2.2">🎁 گنج · 🩺 درمانگر<br>☄️ طوفان (×۲) · 🧛 کمین</div></div></div>';
+   h+='<div class="card" style="text-align:center;color:var(--muted);font-size:10px">🏆 بهترین استریک کلی: '+fa(d.survival_best)+' روز</div>';
+  }
+  setPageHTML('survival',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">🔥</span>'+esc(e.message)+'</div>'}
+}
+
+/* ================= ⚙️ تنظیمات v2 — آزمایشگاه ظاهر ================ */
+async function renderSettings(){
+ var g=renderGen();
+ var el=$('pg-settings');
+ el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/settings');
+  if(isStale(g))return;
+  window._SET=d;
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">⚙️</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">تنظیمات</h1>'
+  +'<p class="sub">همه‌ی تنظیمات دقیقاً روی حساب ربات ذخیره می‌شوند</p></div></div></div>';
+  /* آزمایشگاه ظاهر */
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>🎨 آزمایشگاه ظاهر</b><small>LAB</small></div>'
+  +'<div class="themegrid">'+THEMES.map(function(t){
+   return '<div class="themecard'+(UI.theme===t.id?' on':'')+'" onclick="uiSet(\'theme\',\''+t.id+'\');renderSettings()">'
+   +'<div class="swb" style="background:linear-gradient(135deg,'+t.c[0]+','+t.c[1]+' 55%,'+t.c[2]+')"></div>'
+   +'<small>'+t.name+'</small></div>'}).join('')+'</div>';
+  /* پیش‌نمایش زنده */
+  h+='<div class="labprev"><div class="lab-in">'
+  +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+  +avaHtml({id:555,name:'پیش‌نمایش'},'sm')
+  +'<div style="flex:1"><b style="font-size:11px">نمونه‌ی کارت</b><div class="sub">با تم فعلی‌ات</div></div>'
+  +'<span class="tag cy">تگ</span></div>'
+  +'<div class="bar thin"><i style="width:68%"></i></div>'
+  +'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary sm" style="flex:1">دکمه اصلی</button>'
+  +'<button class="btn gold sm" style="flex:1">طلایی</button></div></div></div>';
+  h+='<div class="srow"><div class="ic">🌓</div><div class="grow"><b>حالت نمایش</b><small>تاریک یا روشن</small></div>'
+  +'<div class="chips" style="margin:0">'+[['dark','تاریک'],['light','روشن']].map(function(x){
+   return '<button class="chip'+(UI.mode===x[0]?' on':'')+'" onclick="uiSet(\'mode\',\''+x[0]+'\');renderSettings()">'+x[1]+'</button>'}).join('')+'</div></div>'
+  +'<div class="srow"><div class="ic">🔠</div><div class="grow"><b>اندازه‌ی متن</b><small>راحت چشم‌ات</small></div>'
+  +'<div class="chips" style="margin:0">'+[['s','کوچک'],['m','متوسط'],['l','بزرگ']].map(function(x){
+   return '<button class="chip'+(UI.fs===x[0]?' on':'')+'" onclick="uiSet(\'fs\',\''+x[0]+'\');renderSettings()">'+x[1]+'</button>'}).join('')+'</div></div>'
+  +'<div class="srow"><div class="ic">🌊</div><div class="grow"><b>انیمیشن</b><small>حرکت‌های نرم</small></div>'
+  +'<button class="sw'+(UI.motion==='on'?' on':'')+'" onclick="uiSet(\'motion\',UI.motion===\'on\'?\'off\':\'on\');renderSettings()"></button></div>'
+  +'<div class="srow"><div class="ic">🔊</div><div class="grow"><b>افکت صوتی</b><small>صدای دکمه‌ها و برد</small></div>'
+  +'<button class="sw'+(SND.on?' on':'')+'" onclick="SND.toggle();renderSettings()"></button></div>'
+  +'<div class="srow"><div class="ic">🎚</div><div class="grow"><b>بلندی صداهای تفکیکی</b><small>هر افکت جداگانه</small></div>'
+  +'<button class="btn sm" onclick="sndVolSheet()">تنظیم</button></div>'
+  +'<div class="srow"><div class="ic">🎨</div><div class="grow"><b>رنگ سفارشی</b><small>رنگ اصلی اپ را خودت انتخاب کن</small></div>'
+  +'<button class="btn sm" onclick="customColorSheet()">انتخاب</button></div>'
+  +'<div class="srow"><div class="ic">🌗</div><div class="grow"><b>کنتراست بالا</b><small>برای دیدن بهتر جزئیات</small></div>'
+  +'<button class="sw'+((document.body.getAttribute('data-contrast')==='high')?' on':'')+'" onclick="uiToggleA11y(\'contrast\')"></button></div>'
+  +'<div class="srow"><div class="ic">🧊</div><div class="grow"><b>حالت سبک (بدون شیشه)</b><small>روی گوشی‌های ضعیف روان‌تر</small></div>'
+  +'<button class="sw'+((document.body.getAttribute('data-glass')==='off')?' on':'')+'" onclick="uiToggleA11y(\'glass\')"></button></div>'
+  +'</div>';
+  /* اعلان‌ها */
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>🔔 اعلان‌ها</b><small>ربات ← تو</small></div>'
+  +setRow('level_up','🎉','Level Up','وقتی سطح می‌گیری خبرت کن',d.notifications)
+  +setRow('achievement','🏅','دستاوردها','افتتاح دستاورد جدید',d.notifications)
+  +setRow('private_invite','🎮','دعوت مسابقه','دعوت دوئل و مسابقه خصوصی',d.notifications)
+  +setRow('friend_req','👥','درخواست دوستی','پیام درخواست‌های جدید',d.notifications)
+  +'</div>';
+  /* حریم خصوصی */
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>🔒 حریم خصوصی</b><small>چه کسی چه چیزی ببیند</small></div>'
+  +setRow('show_stats','📊','نمایش آمار','آمار بازی‌ات برای بقیه',d.privacy,'priv.')
+  +setRow('show_friends','👥','نمایش دوستان','لیست دوستانت',d.privacy,'priv.')
+  +setRow('show_achievements','🎖','نمایش دستاوردها','تالار افتخاراتت',d.privacy,'priv.')
+  +setRow('allow_challenges','⚔️','اجازه چالش','بقیه بتوانند چالشت کنند',d.privacy,'priv.')
+  +'</div>';
+  /* وضعیت‌ها */
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>👤 وضعیت من</b><small>STATUS</small></div>'
+  +'<div class="srow"><div class="ic">🔇</div><div class="grow"><b>تگ‌شدن در گروه</b><small>ربات در گروه‌ها تگت کند</small></div>'
+  +'<button class="sw'+(d.mute?' on':'')+'" onclick="settingSet(\'mute\','+(!d.mute)+')"></button></div>'
+  +'<div class="srow"><div class="ic">🌙</div><div class="grow"><b>موقتاً نیستم (BRB)</b><small>ماه کنار اسمت می‌افتد</small></div>'
+  +'<button class="sw'+(d.brb?' on':'')+'" onclick="settingSet(\'brb\','+(!d.brb)+')"></button></div>'
+  +'<div class="srow"><div class="ic">🖥</div><div class="grow"><b>حالت نمایش ربات</b><small>قالب منوهای خود ربات</small></div>'
+  +'<div class="chips" style="margin:0">'+[['auto','خودکار'],['mobile','موبایل'],['desktop','دسکتاپ']].map(function(x){
+   return '<button class="chip'+(d.display_mode===x[0]?' on':'')+'" onclick="settingSet(\'display_mode\',\''+x[0]+'\')">'+x[1]+'</button>'}).join('')+'</div></div>'
+  +'<div class="srow"><div class="ic">🎂</div><div class="grow"><b>تاریخ تولد</b><small>'+(d.birthday?esc(d.birthday)+' — هر سال ۲۰۰ سکه + ۱۰۰ XP':'تنظیم نشده')+'</small></div>'
+  +'<button class="btn sm" onclick="birthdaySheet()">'+(d.birthday?'ویرایش':'تنظیم')+'</button></div>'
+  +'</div>';
+  setPageHTML('settings',h,g);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderSettings()">تلاش دوباره</button></div>'}
+}
+
+/* ================= 🔔 اعلان‌ها v2 — گروه‌بندی روزانه ================ */
+function renderNotif(){
+ var n=D.notifications||{},items=n.items||[];
+ var groups={};
+ items.forEach(function(x){
+  var day=timeAgo(x.ts);
+  var key=day.indexOf('همین حالا')>=0||day.indexOf('دقیقه')>=0||day.indexOf('ساعت')>=0?'امروز':day;
+  (groups[key]=groups[key]||[]).push(x);
+ });
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🔔</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">اعلان‌ها</h1>'
+ +'<p class="sub">'+fa(n.unread||0)+' خوانده‌نشده از '+fa(items.length)+' — گروه‌بندی روزانه</p></div>'
+ +(n.unread?'<button class="btn primary sm" onclick="notifRead()">✓ خوانده شد</button>':'')+'</div></div>';
+ if(!items.length)h+='<div class="empty"><span class="ei">📭</span>صندوق‌ات خالی است — هنوز خبری نیامده!</div>';
+ else{
+  Object.keys(groups).forEach(function(day){
+   h+='<div class="shead" style="margin-top:14px"><b>📅 '+esc(day)+'</b><small>'+fa(groups[day].length)+' مورد</small></div><div class="list">';
+   groups[day].forEach(function(x){
+    var ic={'level_up':'⬆️','achievement':'🏆','private_invite':'🎮','friend_req':'👥','season_end':'🌐','tournament':'🏟','admin_dm':'📩'}[x.type]||'🔔';
+    h+='<div class="row" style="'+(x.read?'':'border-color:#7c5cff44;background:#7c5cff0a')+'">'
+    +'<div class="medal">'+ic+'</div><div class="grow"><b>'+esc(x.title||'اعلان')+'</b>'+(x.body?'<small>'+esc(x.body)+'</small>':'')+'<small style="color:var(--dim)">'+faTime(x.ts)+'</small></div></div>';
+   });
+   h+='</div>';
+  });
+ }
+ $('pg-notif').innerHTML=h;
+}
+
+/* ================= 🛍 فروشگاه v2 — نشان مالکیت + راهنمای کمیابی ================ */
+function renderShop(){
+ var s=D.shop||{},items=s.items||[],u=D.user||{};
+ var owned={};((D.inventory||[]).forEach(function(i){owned[i.key]=1}));
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🛍</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1 grad" style="margin:0">Apex Store</h1>'
+ +'<p class="sub">خریدها مستقیماً روی حساب واقعی ربات اعمال می‌شوند.</p></div>'
+ +'<div style="text-align:center"><div style="font-size:17px;font-weight:900;color:var(--gold)">🪙 '+faK(u.coins||0)+'</div><small style="font-size:8px;color:var(--muted);letter-spacing:1px">موجودی</small></div></div></div>';
+ var deals=s.deals||[];
+ if(deals.length){
+  h+='<div class="section"><div class="shead"><b>🔥 حراج روزانه</b><small>فقط امروز — ۳۰٪ تخفیف</small></div><div class="deals">';
+  deals.forEach(function(dl){
+   var it=items.filter(function(x){return x.key===dl.key})[0]||{};
+   h+='<div class="deal tap" onclick="buySheet(\''+dl.key+'\')"><span class="off">'+fa(dl.off)+'٪−</span>'
+   +'<h4>'+esc(it.name||dl.name)+'</h4><p class="sub" style="margin:4px 0 8px">'+esc(it.desc||'')+'</p>'
+   +'<div><s>'+fa(it.price||0)+'🪙</s> <span class="price">'+fa(dl.price)+'🪙</span></div></div>';
+  });
+  h+='</div></div>';
+ }
+ /* راهنمای کمیابی */
+ h+='<div class="chips" style="margin:0 0 10px">'
+ +Object.keys(RARC).map(function(r){return '<span class="tag" style="border-color:'+RARC[r]+'55;color:'+RARC[r]+'">'+r+'</span>'}).join('')+'</div>';
+ h+='<div class="seg" style="margin:12px 0">'+CATS.map(function(c){return '<button class="'+(SHOPCAT===c[0]?'on':'')+'" onclick="SHOPCAT=\''+c[0]+'\';stateSave();renderShop()">'+c[1]+'</button>'}).join('')+'</div>';
+ var show=items.filter(function(i){return SHOPCAT==='all'||i.cat===SHOPCAT});
+ h+='<div class="items">';
+ show.forEach(function(i){
+  var afford=(u.coins||0)>=(i.price||0);
+  var have=owned[i.key];
+  h+='<div class="item tap" onclick="buySheet(\''+i.key+'\')"><div class="rt" style="--rc:'+rarCol(i)+'"></div>'
+  +(have?'<span class="tag ok" style="position:absolute;top:9px;left:9px">در اختیار ✓</span>':'')
+  +'<div class="rar">'+i.rar+' '+esc(i.rarity)+'</div><h3>'+esc(i.name)+'</h3><p>'+esc(i.desc)+'</p>'
+  +'<div class="foot"><span class="price">🪙 '+faK(i.price)+'</span>'
+  +'<button class="btn sm '+(afford?'primary':'')+'" '+(afford?'':'disabled')+' onclick="event.stopPropagation();buySheet(\''+i.key+'\')">'+(afford?'خرید':'کم دارم')+'</button></div></div>';
+ });
+ if(!show.length)h+='<div class="empty" style="grid-column:1/-1"><span class="ei">🔍</span>آیتمی در این دسته نیست.</div>';
+ h+='</div>';
+ $('pg-shop').innerHTML=h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN DEEP ۲ — دانشنامه‌ی راهنما: واژه‌نامه + پرسش‌های پرتکرار +
+   مثال کاربردی برای مرجع دستورات
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 📖 واژه‌نامه‌ی بازی (۴۰ اصطلاح) ================= */
+var GLOSSARY=[
+ ['XP','امتیاز تجربه — با بازی، جواب دادن و مأموریت جمع می‌شود؛ سطح تو را بالا می‌برد.'],
+ ['سکه (Coins)','ارز اصلی ربات — برای فروشگاه، مین‌یاب، کازینو و تجارت.'],
+ ['سطح (Level)','بر اساس XP کل محاسبه می‌شود؛ هر سطح پاداش مایلستون دارد.'],
+ ['رتبه (Rank)','عنوانی مثل «جنگاور» که با XP کل تعیین می‌شود و کنار اسمت می‌آید.'],
+ ['ELO','امتیاز مهارت در آرنا — با برد بالا و با باخت پایین می‌رود.'],
+ ['لیگ (Tier)','دسته‌بندی ELO: از برنز تا الماس — در صفحه‌ی آرنا.'],
+ ['استریک (Streak)','روزهای پیاپی ورود به ربات — هرچه بیشتر، پاداش روزانه بزرگ‌تر.'],
+ ['مایلستون','پاداش‌های مسیر قهرمانی: در نقاط خاص XP/بازی/برد خودکار باز می‌شوند.'],
+ ['Quest','مأموریت‌های روزانه و هفتگی با پاداش بزرگ‌تر از مأموریت معمولی.'],
+ ['Season Pass','مسیر پاداش فصلی ۵۰ Tier ای با ریل رایگان و Premium.'],
+ ['Tier','پله‌های Season Pass — با XP فصلی باز می‌شوند.'],
+ ['Premium Pass','مسیر ویژه با پاداش دوبرابر + ۳۰ روز VIP.'],
+ ['VIP','عضویت ویژه: ۱۰٪ پاداش بیشتر + قاب طلایی + اولویت مچ.'],
+ ['لقب (Title)','متنی که کنار اسمت نمایش داده می‌شود — از فروشگاه یا مایلستون.'],
+ ['قاب (Frame)','حلقه‌ی نورانی دور آواتارت — نئون، طلایی، رنگین‌کمان…'],
+ ['بج (Badge)','نشان افتخار زیر اسم در پروفایل.'],
+ ['شوکیس','۳ دستاورد برجسته که روی پروفایلت نمایش داده می‌شوند.'],
+ ['پارسشگر','نفرِ صادرکننده‌ی سوال در هر نوبت لابی — موضوع و هدف را انتخاب می‌کند.'],
+ ['هدف (Target)','بازیکنی که سوال از او پرسیده می‌شود.'],
+ ['موتور گرما','داغ‌شدن تدریجی سوال‌ها با پیشرفت راندهای لابی.'],
+ ['راند','یک چرخه‌ی کامل «موضوع ← هدف ← سوال ← جواب» در لابی.'],
+ ['دوئل','نبرد ۱۰ رانده دونفره — نوبت‌ها یکی‌درمیان.'],
+ ['آرنا','صف مچ‌میکینگ رنک‌دار بر اساس ELO.'],
+ ['بقا (Survival)','ماجراجویی راگلایک روزانه با جان و رویداد.'],
+ ['رویداد (Event)','اتفاق تصادفی در بقا: گنج، درمانگر، فروشنده، طوفان، کمین.'],
+ ['طوفان','رویدادی که سوال سخت‌تر ولی پاداش دوبرابر می‌دهد.'],
+ ['مین‌یاب','بازی شرطی: هر خانه امن ضریب را بالا می‌برد؛ مین یعنی سوختن گنج.'],
+ ['جکپات','برد دقیق در کازینو با ضریب ×۲۵.'],
+ ['گردونه','چرخش رایگان ۲۰ ساعته با جایزه تا ۵۰ سکه.'],
+ ['کوییز ریاضی','محاسبه ۶۰ ثانیه‌ای روزانه — یک بار در روز.'],
+ ['Trivia زنجیره‌ای','هر پاسخ درست زنجیره را ادامه می‌دهد؛ غلط = پایان.'],
+ ['پارتی‌هاب','بازی‌های گروهی: می‌کردی؟، هرگز نشده، به‌احتمال زیاد، معما و…'],
+ ['وال اجتماعی','فید زنده‌ی فعالیت‌های جامعه‌ی ربات.'],
+ ['تالار افسانه‌ها (HOF)','فهرست جاودانه‌ی بهترین‌های تاریخ ربات.'],
+ ['ریکاپ','خلاصه‌ی آماری هفته‌ی تو.'],
+ ['تجارت','تبادل سکه/لقب/قاب/بج بین دو بازیکن با تأیید دوطرفه.'],
+ ['قلب محبت','اهدای ۳ سکه به بازیکن دیگر — نشانه‌ی محبت روزانه.'],
+ ['BRB','حالت «موقتاً نیستم» — ماه کنار اسمت می‌افتد.'],
+ ['میوت (Mute)','خاموش‌کردن تگ‌شدن در گروه‌ها.'],
+ ['حریم خصوصی','کنترل اینکه چه کسی آمار/دوستان/دستاوردهایت را ببیند.'],
+ ['دکتر داده','ابزار ادمین برای تشخیص و اصلاح ساختار داده‌ها.'],
+ ['موتور نبض','سیستم به‌روزرسانی خودکار پنل‌های زنده‌ی ربات.'],
+ ['محافظ بانک','قفل امنیتی بانک سوالات که جلوی تغییر محتوا را می‌گیرد.'],
+ ['دیپ‌لینک','لینک ورود مستقیم به لابی/دوئل از داخل تلگرام.']
+];
+function glossarySheet(){
+ openSheet('<h3>📖 واژه‌نامه‌ی بازی</h3>'
+ +'<input class="input" id="glQ" placeholder="جستجوی اصطلاح..." style="margin-bottom:10px" oninput="glFilter()">'
+ +'<div id="glList">'+glRows('')+'</div>');
+}
+function glRows(q){
+ q=q.trim().toLowerCase();
+ var h='<div class="list">';
+ GLOSSARY.forEach(function(g){
+  if(q&&(g[0]+' '+g[1]).toLowerCase().indexOf(q)<0)return;
+  h+='<div class="row" style="align-items:flex-start"><div class="medal">📖</div>'
+  +'<div class="grow"><b>'+esc(g[0])+'</b><small style="white-space:normal;line-height:2">'+esc(g[1])+'</small></div></div>';
+ });
+ return h+'</div>';
+}
+function glFilter(){
+ var q=($('glQ')||{}).value||'';
+ var box=$('glList');if(box)box.innerHTML=glRows(q);
+}
+
+/* ================= ❓ پرسش‌های پرتکرار (۲۴ پرسش) ================= */
+var FAQ=[
+ ['چطور بازی گروهی شروع کنم؟','از Play Hub روی «ساخت لابی» بزن. کد ۶ حرفی ساخته می‌شود؛ آن را برای دوستانت بفرست (دکمه‌ی دعوت) تا با کد وارد شوند. وقتی همه آماده شدند، «شروع بازی» را بزن.'],
+ ['جوابی که می‌نویسم وسط بازی پاک می‌شود؟','خیر! در نسخه ۵ نوشته‌ات هرگز پاک نمی‌شود — به‌روزرسانی‌های زنده فقط بخش‌های دیگر صفحه را تازه می‌کنند و ورودی تو دست‌نخورده می‌ماند.'],
+ ['پاداش‌ها واقعاً به ربات می‌رسند؟','بله — همه‌ی XP و سکه‌ها با همان توابع رسمی ربات روی حساب واقعی‌ات ثبت می‌شوند؛ اعدادی که در چت ربات می‌بینی همان‌ها هستند.'],
+ ['اگر از مینی‌اپ خارج شوم چه می‌شود؟','وضعیت صفحه‌ات ذخیره می‌شود؛ دفعه‌ی بعد که باز کنی دقیقاً همان‌جایی هستی که بودی — حتی وسط بازی یا لابی.'],
+ ['دکمه‌ی برگشت تلگرام چه می‌کند؟','به صفحه‌ی قبلی واقعی برمی‌گردد (مثل دکمه‌ی Back مرورگر) — نه به صفحه‌ی اول.'],
+ ['چطور VIP شوم؟','سریع‌ترین راه خرید Season Pass Premium است که ۳۰ روز VIP فعال می‌کند. مزایا: ۱۰٪ پاداش بیشتر + قاب طلایی + اولویت مچ.'],
+ ['سکه‌ام کم است، چه کنم؟','پاداش روزانه، استریک لاگین، گردونه ۲۰ ساعته، چرخ رایگان کازینو، مأموریت‌ها و مایلستون‌ها — همه منابع رایگان روزانه‌اند.'],
+ ['مین‌یاب چیست و چطور می‌برم؟','ورودی ۲۰ سکه است؛ هر خانه‌ی امن ضریب را بالا می‌برد. هر لحظه می‌توانی «برداشت» بزنی — طمع = انفجار!'],
+ ['کازینو چه شکلی پرداخت می‌کند؟','عدد دقیق ×۲۵ · فاصله ≤۲ می‌شود ×۶ · فاصله ≤۵ می‌شود ×۲ · فاصله ≤۱۰ می‌شود ×۱.۵.'],
+ ['در دوئل چه کسی برنده می‌شود؟','بعد از ۱۰ راند، کسی که امتیاز بیشتری دارد +۱۰ XP و +۵ سکه می‌گیرد؛ مساوی یعنی هیچ‌کس پاداش نهایی نمی‌گیرد.'],
+ ['آرنا چطور حریف پیدا می‌کند؟','صف مچ‌میکینگ، نزدیک‌ترین ELO به تو را انتخاب می‌کند — مبارزه‌های هم‌سطح و منصفانه.'],
+ ['Survival چطور کار می‌کند؟','هر روز یک چالش: قبول کنی روز بعد + پاداش؛ رد کنی یک جان کم. با آیتم‌ها (درمان/سپر) و رویدادها مسیر را بچرخ.'],
+ ['تجارت چگونه امن است؟','هیچ چیزی قبل از تأیید هر دو طرف جابه‌جا نمی‌شود؛ هر لحظه می‌توانی رد یا لغو کنی.'],
+ ['چطور دوست اضافه کنم؟','شیت دوستان از Play Hub — با آیدی عددی بازیکن. بعد هدیه و قلب روزانه هم باز می‌شود.'],
+ ['رقبا چه فرقی با دوستان دارند؟','رقیب آمار رودرروی نبردهایت را ثبت می‌کند — «چند بار برده‌ای، چند بار باخته‌ای» — و دکمه‌ی دوئل سریع دارد.'],
+ ['فروشگاه حراج روزانه کی ریست می‌شود؟','هر ۲۴ ساعت — ساعت ریست در کارت شمارش معکوس صفحه‌ی خانه نشان داده می‌شود.'],
+ ['چرا بعضی بازی‌ها کول‌داون دارند؟','گردونه هر ۲۰ ساعت، کوییز ریاضی روزی یک بار و چرخ رایگان کازینو روزی یک بار — همان قوانین خود ربات.'],
+ ['چطور تم و رنگ اپ را عوض کنم؟','تنظیمات ← آزمایشگاه ظاهر: ۸ تم + روشن/تاریک + اندازه‌ی متن + خاموش‌کردن انیمیشن و صدا.'],
+ ['پالت جستجو (🔎) چیست؟','می‌توانی همه‌ی صفحات، بازی‌ها و اقدامات را با Ctrl+K یا دکمه‌ی ذره‌بین جستجو کنی و مستقیم اجرا کنی.'],
+ ['اعلان‌ها را کجا مدیریت کنم؟','تنظیمات ← اعلان‌ها: Level Up، دستاوردها، دعوت مسابقه و درخواست دوستی جداگانه قابل خاموش‌کردن‌اند.'],
+ ['تاریخ تولد چه فایده‌ای دارد؟','در روز تولدت هر سال ۲۰۰ سکه + ۱۰۰ XP هدیه می‌گیری و نشان 🎂 کنار پروفایل‌ات می‌آید.'],
+ ['کارت شخصیت چیست؟','بر اساس سبک بازی‌ات یک شخصیت خیالی با «شخصیت/قدرت/ضعف/جان» می‌سازد — برای سرگرمی و اشتراک‌گذاری.'],
+ ['اگر مینی‌اپ وسط بازی خوابید؟','وضعیت بازی روی سرور ربات است، نه گوشی‌ات — دوباره باز کن؛ همان‌جا ادامه می‌دهی.'],
+ ['ادمین چه امکاناتی در مینی‌اپ دارد؟','مرکز فرماندهی کامل: کاربران، گروه‌ها، دسترسی‌ها، آنالیتیکس، بانک (نمایش)، دستاوردها، بازخورد، گزارش‌ها، اقتصاد، کدهای هدیه، همگانی، محافظ بانک، دکتر داده، بکاپ، خروجی، لاگ، تعمیرات، بهینه‌سازی، نبض، پنل‌ها، مجازات‌ها و مانیتور بازی‌های زنده.']
+];
+function faqSheet(){
+ openSheet('<h3>❓ پرسش‌های پرتکرار</h3>'
+ +'<input class="input" id="faqQ" placeholder="جستجو در پرسش‌ها..." style="margin-bottom:10px" oninput="faqFilter()">'
+ +'<div id="faqList">'+accordion(FAQ.map(function(f){
+  return {ic:'❓',t:f[0],body:'<p style="margin:0;font-size:11px;line-height:2.2;color:var(--muted)">'+esc(f[1])+'</p>'};
+ }))+'</div>');
+}
+function faqFilter(){
+ var q=($('faqQ')||{}).value||'';
+ var box=$('faqList');if(!box)return;
+ var list=FAQ.filter(function(f){return (f[0]+' '+f[1]).toLowerCase().indexOf(String(q).toLowerCase())>-1});
+ box.innerHTML=accordion(list.map(function(f){
+  return {ic:'❓',t:f[0],body:'<p style="margin:0;font-size:11px;line-height:2.2;color:var(--muted)">'+esc(f[1])+'</p>'};
+ }));
+}
+
+/* ================= 📖 مرجع دستورات — با مثال کاربردی ================= */
+var CMD_EX={
+ '/apex':'در گروه بنویس: /apex — بازی جرئت/حقیقت برای همه شروع می‌شود',
+ '/apexend':'/apexend — بازی جاری همان‌جا تمام و نتیجه ثبت می‌شود',
+ '/apexduel':'/apexduel @حریف — کد دوئل می‌سازد؛ حریف با /apexduel join وارد می‌شود',
+ '/apexquiz':'/apexquiz — سوال ریاضی امروز؛ ۶۰ ثانیه فرصت داری',
+ '/apexluck':'/apexluck — گردونه می‌چرخد (هر ۲۰ ساعت یک بار)',
+ '/apexlucky':'/apexlucky 50 — روی عدد ۵۰ شرط می‌بندی',
+ '/apexgift':'/apexgift @دوست 20 — ۲۰ سکه هدیه می‌دهی',
+ '/apexheart':'/apexheart @بازیکن — قلب محبت (۳ سکه)',
+ '/apextrade':'/apextrade — وارد مرکز تجارت می‌شوی',
+ '/shop':'/shop — فروشگاه کامل با دسته‌بندی',
+ '/apexprofile':'/apexprofile — پروفایل کامل‌ات را می‌بینی',
+ '/apexstats':'/apexstats — آمار کامل بازیکن',
+ '/apextop':'/apextop — برترین‌های همین گروه',
+ '/apextop_all':'/apextop_all — برترین‌های سراسری ربات',
+ '/apexminigames':'/apexminigames — منوی ۱۰ مینی‌گیم',
+ '/apexwyr':'/apexwyr — سوال «می‌کردی؟» با دو گزینه',
+ '/apexnhie':'/apexnhie — جمله‌ی «من هرگز…» صادر می‌شود',
+ '/apexlikely':'/apexlikely — «به‌احتمال زیاد، کی؟»',
+ '/apexriddle':'/apexriddle — معمای ایموجی با ۴ گزینه',
+ '/apexpotd':'/apexpotd — سوال روز همه',
+ '/apexsurvival':'/apexsurvival — شروع بقا با انتخاب سختی',
+ '/apexmatchmaking':'/apexmatchmaking — وارد صف آرنا می‌شوی',
+ '/apexfriends':'/apexfriends add @آیدی — مدیریت دوستان',
+ '/apexrivals':'/apexrivals — فهرست رقبا و آمار رودررو',
+ '/apextournament':'/apextournament — مسابقات باز',
+ '/apexreminder':'/apexreminder 30 جلسه بازی — ۳۰ دقیقه بعد یادآوری',
+ '/apexfeedback':'/apexfeedback متن — نظرت به تیم می‌رسد',
+ '/apexai':'/apexai — تحلیل سبک و پیشنهاد حالت بازی',
+ '/apexcompare':'/apexcompare @بازیکن — مقایسه آمار',
+ '/apexpersona':'/apexpersona — کارت شخصیت جدید',
+ '/apexpanel':'/apexpanel — پنل مدیریت (ادمین)',
+ '/apexbroadcast':'/apexbroadcast متن — پیام به همه (ادمین)',
+ '/apexpunish':'/apexpunish @کاربر دلیل — مجازات (ادمین)',
+ '/apexforgive':'/apexforgive @کاربر — بخشش (ادمین)',
+ '/apexexport':'/apexexport — خروجی داده (ادمین)',
+ '/apexcsv':'/apexcsv — خروجی CSV کاربران (ادمین)'
+};
+function cmdExample(cmd){
+ return CMD_EX[cmd]||null;
+}
+/* ارتقای رندر مرجع دستورات با مثال */
+function renderCmds(){
+ renderCmdsBase();
+ /* مثال‌ها به ردیف‌ها اضافه می‌شوند */
+ try{
+  var box=$('cmdList');if(!box)return;
+  box.querySelectorAll('.row').forEach(function(row){
+   var b=row.querySelector('b');
+   if(!b)return;
+   var cmd=String(b.textContent||'').split(' ')[0];
+   var ex=cmdExample(cmd);
+   if(ex){
+    var sm=document.createElement('small');
+    sm.style.cssText='display:block;color:var(--dim);font-size:8.5px;margin-top:3px;white-space:normal;line-height:1.9';
+    sm.textContent='مثال: '+ex;
+    row.querySelector('.grow').appendChild(sm);
+   }
+  });
  }catch(e){}
- toast('متن دعوت کپی شد — برای دوستت بفرست','ok');
 }
-function copyText(t){
- try{navigator.clipboard.writeText(t).then(function(){toast('کپی شد ✓','ok')},function(){toast('کپی نشد','err')})}catch(e){toast(t,'ok')}
+/* ورود به راهنما با تب‌های تازه */
+var GUIDETAB=0;
+function renderGuideTabbed(){
+ var tabs=[['topics','📚','موضوعات'],['glossary','📖','واژه‌نامه'],['faq','❓','پرسش‌ها']];
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🎓</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">مرکز راهنما</h1>'
+ +'<p class="sub">'+fa(GUIDE_TOPICS.length)+' موضوع · '+fa(GLOSSARY.length)+' اصطلاح · '+fa(FAQ.length)+' پرسش</p></div></div></div>';
+ h+='<div style="display:flex;gap:8px;margin:12px 0"><button class="btn primary sm" style="flex:1" onclick="tourStart()">🧭 شروع تور ۶۰ ثانیه‌ای</button></div>';
+ h+='<div class="seg" style="margin:12px 0">'+tabs.map(function(t,i){
+  return '<button class="'+(GUIDETAB===i?'on':'')+'" onclick="GUIDETAB='+i+';renderGuideTabbed()">'+t[1]+' '+t[2]+'</button>'}).join('')+'</div>';
+ h+='<div id="guideBox"></div>';
+ $('pg-guide').innerHTML=h;
+ if(GUIDETAB===0){
+  /* موضوعات با جستجو */
+  $('guideBox').innerHTML='<div class="searchbar"><span class="sic">🔍</span>'
+  +'<input class="input" id="gdQ" placeholder="جستجو در راهنما..." value="'+esc(GUIDEQ)+'" oninput="GUIDEQ=this.value;guideList()"></div>'
+  +'<div id="gdList" style="margin-top:10px"></div>';
+  guideList();
+ }else if(GUIDETAB===1){
+  $('guideBox').innerHTML='<div class="searchbar"><span class="sic">🔍</span>'
+  +'<input class="input" id="glQ" placeholder="جستجوی اصطلاح..." oninput="glFilter()"></div>'
+  +'<div id="glList" style="margin-top:10px">'+glRows('')+'</div>';
+ }else{
+  $('guideBox').innerHTML='<div class="searchbar"><span class="sic">🔍</span>'
+  +'<input class="input" id="faqQ" placeholder="جستجو در پرسش‌ها..." oninput="faqFilter()"></div>'
+  +'<div id="faqList" style="margin-top:10px">'+accordion(FAQ.map(function(f){
+   return {ic:'❓',t:f[0],body:'<p style="margin:0;font-size:11px;line-height:2.2;color:var(--muted)">'+esc(f[1])+'</p>'};
+  }))+'</div>';
+ }
 }
-/* pull-to-refresh */
-var pty0=null,ptdy=0;
-document.addEventListener('touchstart',function(e){if(window.scrollY<=0&&e.touches.length===1)pty0=e.touches[0].clientY;else pty0=null},{passive:true});
-document.addEventListener('touchmove',function(e){if(pty0!=null){ptdy=e.touches[0].clientY-pty0}else ptdy=0},{passive:true});
-document.addEventListener('touchend',function(){if(pty0!=null&&ptdy>85){haptic('medium');refresh(true);toast('به‌روزرسانی شد ✨')}pty0=null;ptdy=0},{passive:true});
-/* scroll → fab */
-window.addEventListener('scroll',function(){$('fab').classList.toggle('on',window.scrollY>420)},{passive:true});
-/* back button */
-try{if(tg&&tg.BackButton){tg.BackButton.onClick(function(){show('home')})}}catch(e){}
-/* auto refresh */
-setInterval(function(){if(document.visibilityState==='visible'&&READY)refresh(true)},90000);
-document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&READY)refresh(true)});
-/* keyboard: Esc closes sheet */
-document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSheet()});
-/* ================= BOOT ================= */
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN DEEP ۳ — مانیتورینگ ادمین: دوئل/لابی/تجارت/مسابقات/فصل
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- 🤺 دوئل‌های فعال ---------- */
+function admDuels(d){
+ var h='';
+ (d.items||[]).forEach(function(x){
+  h+='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
+  +'<div class="medal">🤺</div>'
+  +'<div class="grow"><b>دوئل #'+esc(x.code)+'</b>'
+  +'<small>'+esc(x.a_name)+' '+fa(x.a_score)+' — '+fa(x.b_score)+' '+esc(x.b_name)+'</small>'
+  +'<small>وضعیت: '+esc(x.state)+' · راند '+fa(Math.min(x.round+1,x.total_rounds))+'/'+fa(x.total_rounds)+(x.ts?' · '+timeAgo(x.ts):'')+'</small></div>'
+  +'<button class="btn red sm" onclick="admDuelEndAsk(\''+esc(x.code)+'\')">🚪 بستن</button></div>'
+  +'<div class="duelbar" style="margin-top:10px">'
+  +'<div class="side"><b>'+esc(x.a_name)+'</b><div class="sc">'+fa(x.a_score)+'</div></div>'
+  +'<div class="vs">VS</div>'
+  +'<div class="side"><b>'+esc(x.b_name)+'</b><div class="sc">'+fa(x.b_score)+'</div></div></div></div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">🤺</span>دوئل فعالی در جریان نیست.</div>';
+ return '<div class="card" style="text-align:center;margin-bottom:12px">'+fa((d.items||[]).length)+' دوئل زنده</div>'+h;
+}
+function admDuelEndAsk(code){
+ askConfirm('بستن دوئل','دوئل #'+esc(code)+' بدون پاداش نهایی بسته شود؟ (برای دوئل‌های قفل‌شده)','بستن',function(){
+  admAction('duel_end',{code:code},'duels');
+ });
+}
+
+/* ---------- 👥 لابی‌های فعال ---------- */
+function admLobbies(d){
+ var h='';
+ (d.items||[]).forEach(function(x){
+  h+='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
+  +'<div class="medal">👥</div>'
+  +'<div class="grow"><b>لابی '+esc(x.code)+'</b>'
+  +'<small>فاز: '+esc(x.phase)+' · راند '+fa(x.round)+' · '+fa(x.count)+' بازیکن'+(x.ts?' · '+timeAgo(x.ts):'')+'</small></div>'
+  +'<button class="btn red sm" onclick="admAction(\'lobby_end\',{code:\''+esc(x.code)+'\'})">🚪 بستن</button></div>';
+  (x.players||[]).forEach(function(p){
+   h+='<div class="pl" style="margin-top:7px">'+avaHtml({id:p.id,name:p.name},'xs')
+   +'<div class="grow"><b style="font-size:10px">'+esc(p.name)+(p.ready?' ✅':'')+'</b></div>'
+   +'<span class="sc" style="font-size:11px">'+fa(p.score)+'</span></div>';
+  });
+  h+='</div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">👥</span>لابی فعالی وجود ندارد.</div>';
+ return '<div class="card" style="text-align:center;margin-bottom:12px">'+fa((d.items||[]).length)+' لابی زنده</div>'+h;
+}
+
+/* ---------- 🔄 تجارت‌های منتظر ---------- */
+function admTrades(d){
+ var h='';
+ (d.items||[]).forEach(function(t){
+  h+='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
+  +'<div class="medal">🔄</div>'
+  +'<div class="grow"><b>تجارت #'+fa(t.id)+'</b>'
+  +'<small>'+esc(t.from_name)+' ⇄ '+esc(t.to_name)+(t.ts?' · '+timeAgo(t.ts):'')+'</small></div>'
+  +'<button class="btn red sm" onclick="admTradeCancelAsk('+t.id+')">🚫 لغو</button></div>'
+  +'<div class="ex"><div class="side o"><small style="color:var(--muted)">می‌دهد</small><b>'+tradeLabel(t.offer||{})+'</b></div>'
+  +'<div class="arr">⇄</div>'
+  +'<div class="side r"><small style="color:var(--muted)">می‌گیرد</small><b>'+tradeLabel(t.request||{})+'</b></div></div></div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">🔄</span>تجارتی در انتظار نیست.</div>';
+ return '<div class="card" style="text-align:center;margin-bottom:12px">'+fa((d.items||[]).length)+' تجارت در انتظار پاسخ</div>'+h;
+}
+function admTradeCancelAsk(id){
+ askConfirm('لغو تجارت','تجارت #'+fa(id)+' از سمت مدیریت لغو شود؟','لغو کن',function(){
+  admAction('trade_cancel',{id:id},'trades');
+ });
+}
+
+/* ---------- 🏟 مسابقات ---------- */
+function admTournaments(d){
+ var h='';
+ (d.items||[]).forEach(function(t){
+  var pc=Math.round(t.players*100/Math.max(1,t.max_players));
+  h+='<div class="row" style="align-items:flex-start"><div class="medal">🏟</div>'
+  +'<div class="grow"><b>#'+fa(t.id)+' · '+esc(t.title)+'</b>'
+  +'<small>سازنده: '+esc(t.host_name)+' · 🪙 '+faK(t.prize)+' · '+esc(t.status)+'</small>'
+  +'<div style="display:flex;align-items:center;gap:8px;margin-top:7px"><span style="font-size:8.5px;color:var(--muted)">👥 '+fa(t.players)+'/'+fa(t.max_players)+'</span>'
+  +'<div class="bar thin" style="flex:1;height:6px"><i style="width:'+Math.max(4,pc)+'%"></i></div></div></div>'
+  +(t.status==='open'?'<button class="btn red sm" onclick="admTournamentEndAsk('+t.id+')">🏁 پایان</button>':'<span class="tag ok">پایان‌یافته</span>')
+  +'</div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">🏟</span>مسابقه‌ای ثبت نشده است.</div>';
+ return '<div class="list">'+h+'</div>';
+}
+function admTournamentEndAsk(id){
+ askConfirm('پایان مسابقه','مسابقه #'+fa(id)+' پایان یابد و جایزه بین بازیکنان فعلی تقسیم شود؟','پایان بده',function(){
+  admAction('tournament_end',{id:id},'tournaments');
+ });
+}
+
+/* ---------- 🌐 فصل از دید مدیر ---------- */
+function admSeasonAdmin(d){
+ var h='<div class="adm-grid" style="margin-bottom:12px">'
+ +kpi('🌐','فصل فعال',esc(d.season_id||'—'))
+ +kpi('👥','شرکت‌کنندگان',faK(d.players))+'</div>';
+ if((d.top||[]).length){
+  h+='<div class="shead" style="margin-top:16px"><b>🏅 صدرنشینان فصل</b><small>TOP 10</small></div><div class="list">';
+  d.top.forEach(function(x,i){
+   h+='<div class="row"><div class="medal'+(i<3?' m'+(i+1):'')+'">'+(i===0?'🥇':i===1?'🥈':i===2?'🥉':fa(i+1))+'</div>'
+   +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>'+faK(x.xp)+' XP فصل</small></div></div>';
+  });
+  h+='</div>';
+ }else h+='<div class="empty"><span class="ei">🌱</span>فصل هنوز شرکت‌کننده ندارد.</div>';
+ return h;
+}
+
+/* ---------- ارتقای داشبورد با کاشی مانیتور ---------- */
+function admHome(d){
+ var h=admHomeBase(d);
+ /* پیش‌نمایش زنده‌ی مانیتورها بالای نقشه */
+ var live=d.active_games||0;
+ h='<div class="card" style="margin-bottom:12px"><div class="shead" style="padding:0">'
+ +'<b>📡 مانیتور زنده</b><small>MONITOR</small></div>'
+ +'<div class="adm-grid" style="margin-top:10px">'
+ +'<button class="adm-tile" onclick="admGo(\'duels\')"><span class="ti">🤺</span><b>دوئل‌های زنده</b><small>مانیتور و بستن اجباری</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'lobbies\')"><span class="ti">👥</span><b>لابی‌های زنده</b><small>بازیکنان و فازها</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'trades\')"><span class="ti">🔄</span><b>تجارت‌ها</b><small>در انتظار پاسخ</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'tournaments\')"><span class="ti">🏟</span><b>مسابقات</b><small>وضعیت و پایان</small></button></div></div>'+h;
+ return h;
+}
+
+/* ---------- ارتقای آنالیتیکس با نمودار ۳۰ روزه ---------- */
+function admAnalytics(d){
+ var h=admAnalyticsBase(d);
+ if((d.month||[]).length){
+  h+='<div class="card" style="margin-top:12px"><div class="shead" style="padding:0"><b>📆 روند ۳۰ روزه</b><small>MONTH</small></div>'
+  +lineBlock([{data:(d.month||[]).map(function(x){return x.games}),color:'#7c5cff'}],null,150)+'</div>';
+  /* جمع ماه */
+  var mg=(d.month||[]).reduce(function(a,x){return a+x.games},0);
+  var mu=(d.month||[]).reduce(function(a,x){return a+x.new},0);
+  h+='<div class="grid g4" style="margin-top:12px">'
+  +adm('بازی ماه',mg)+adm('عضو جدید ماه',mu)
+  +adm('میانگین روزانه',Math.round(mg/30))+adm('روز فعال',(d.month||[]).filter(function(x){return x.games>0}).length)+'</div>';
+ }
+ return h;
+}
+
+
+/* ---------- 🎯 توزیع ELO ---------- */
+function admElo(d){
+ var b=d.buckets||{};
+ var items=Object.keys(b).map(function(k){return{ic:'🎯',label:k,val:b[k]}});
+ return '<div class="card" style="margin-bottom:12px"><div class="shead" style="padding:0"><b>🎯 توزیع ELO بازیکنان</b><small>SKILL</small></div>'
+ +hbarList(items)+'</div>'
+ +'<div class="card" style="text-align:center;font-size:10px;color:var(--muted);line-height:2">💡 آرنا حریف‌های هم‌سطح پیدا می‌کند — توزیع سالم یعنی جامعه‌ی متوازن.</div>';
+}
+
+/* ---------- 💎 سلامت اقتصادی ---------- */
+function admIntegrity(d){
+ var h='<div class="adm-grid" style="margin-bottom:12px">'
+ +'<div class="vital"><div class="vl '+(d.healthy?'ok':'warn')+'"></div><div class="grow"><b>وضعیت کلی</b><small>سلامت داده‌ی اقتصادی</small></div><div class="vv">'+(d.healthy?'سالم ✅':'بررسی کن ⚠️')+'</div></div>'
+ +'<div class="vital"><div class="vl ok"></div><div class="grow"><b>کاربران بررسی‌شده</b><small>کل رکوردها</small></div><div class="vv">'+faK(d.users)+'</div></div>'
+ +'<div class="vital"><div class="vl '+(d.negative_coins?'bad':'ok')+'"></div><div class="grow"><b>سکه‌ی منفی</b><small>مقادیر نامعتبر</small></div><div class="vv">'+fa(d.negative_coins||0)+'</div></div>'
+ +'<div class="vital"><div class="vl '+(d.xp_overflow?'bad':'ok')+'"></div><div class="grow"><b>XP سرریز</b><small>مقادیر مشکوک</small></div><div class="vv">'+fa(d.xp_overflow||0)+'</div></div></div>';
+ if((d.issues||[]).length){
+  h+='<div class="shead" style="margin-top:14px"><b>⚠️ موارد یافت‌شده</b></div><div class="list">';
+  d.issues.forEach(function(i){h+='<div class="row"><div class="medal">⚠️</div><div class="grow"><b>'+esc(i)+'</b></div></div>'});
+  h+='</div>';
+ }
+ h+='<div class="card" style="margin-top:12px;text-align:center"><button class="btn primary sm" onclick="adminPage(\'integrity\')">🔄 بررسی مجدد</button></div>';
+ return h;
+}
+
+/* ---------- 🏘 شیت جزئیات گروه ---------- */
+async function admGroupSheet(gid){
+ openSheet('<h3>🏘 جزئیات گروه</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=group_detail&gid='+Number(gid));
+  var h='<h3>🏘 '+esc(d.title)+'</h3>'
+  +'<div class="grid g4" style="margin:12px 0">'
+  +adm('بازی',d.created_games)+adm('حداقل',d.min_players)+adm('حداکثر',d.max_players)+adm('ناظر',d.mods)+'</div>'
+  +'<div class="chips" style="margin:0 0 12px">'
+  +'<span class="tag '+(d.enabled?'ok':'bad')+'">'+(d.enabled?'فعال':'خاموش')+'</span>'
+  +'<span class="tag '+(d.adult_mode?'bad':'ok')+'">'+(d.adult_mode?'18+':'SAFE')+'</span></div>'
+  +'<button class="btn '+(d.enabled?'red':'green')+' wide" onclick="admAction(\'group_toggle\',{target:'+d.id+'})">'+(d.enabled?'خاموش کردن گروه':'روشن کردن گروه')+'</button>';
+  var st=d.stats||{};
+  if(Object.keys(st).length){
+   h+='<div class="shead" style="padding:0;margin-top:14px"><b>📊 آمار گروه</b></div><div class="chips" style="margin:8px 0 0">';
+   Object.keys(st).forEach(function(k){h+='<span class="tag">'+esc(k)+': '+fa(st[k])+'</span>'});
+   h+='</div>';
+  }
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN DEEP ۴ — لمس‌های نهایی: توست پیشرفته، ریپل،
+   نمودار ناحیه‌ای/انباشته، حالت‌های خالی مصور، نظم خروج
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- 🔔 توست پیشرفته با نوار زمان و دکمه ---------- */
+function toast2(s,kind,action){
+ var t=$('toast');
+ t.className=kind?'on '+kind:'on';
+ t.textContent='';
+ var wrap=document.createElement('div');
+ wrap.style.cssText='display:flex;align-items:center;gap:10px;direction:rtl';
+ var txt=document.createElement('span');
+ txt.style.flex='1';
+ txt.textContent=(kind==='err'?'⚠️ ':kind==='ok'?'✅ ':kind==='warn'?'⏳ ':'')+s;
+ wrap.appendChild(txt);
+ if(action&&action.label){
+  var btn=document.createElement('button');
+  btn.className='btn sm '+(action.cls||'primary');
+  btn.textContent=action.label;
+  btn.onclick=function(){clearTimeout(window.tt);t.classList.remove('on');try{action.fn()}catch(e){}};
+  wrap.appendChild(btn);
+ }
+ /* نوار زمان */
+ var prog=document.createElement('i');
+ prog.className='tprog';
+ t.appendChild(wrap);
+ t.appendChild(prog);
+ /* انیمیشن نوار */
+ prog.style.animation='tprog 2.6s linear forwards';
+ clearTimeout(window.tt);
+ window.tt=setTimeout(function(){t.classList.remove('on')},2600);
+ if(kind==='err')haptic('error');
+}
+/* جایگزینی toast اصلی با نسخه‌ی پیشرفته (سازگار با همه‌ی فراخوانی‌ها) */
+var _toastBase=toast;
+toast=function(s,kind){_toastBase(s,kind)};
+
+/* ---------- 💧 افکت ریپل روی دکمه‌های اصلی ---------- */
+document.addEventListener('pointerdown',function(e){
+ var btn=e.target.closest('.btn.primary,.btn.green,.btn.gold,.btn.red,.opt,.tile');
+ if(!btn)return;
+ try{
+  var rect=btn.getBoundingClientRect();
+  var r=document.createElement('span');
+  r.className='ripple';
+  var size=Math.max(rect.width,rect.height)*1.15;
+  r.style.width=r.style.height=size+'px';
+  r.style.left=(e.clientX-rect.left-size/2)+'px';
+  r.style.top=(e.clientY-rect.top-size/2)+'px';
+  btn.appendChild(r);
+  setTimeout(function(){r.remove()},650);
+ }catch(err){}
+},{passive:true});
+
+/* ---------- 📊 نمودار ناحیه‌ای انباشته ---------- */
+TCH.area=function(canvas,series,opt){
+ opt=opt||{};
+ var v=TCH.init(canvas,{height:opt.height});
+ var ctx=v.ctx,W=v.w,H=v.h,pad=26;
+ var n=Math.max.apply(null,series.map(function(s){return s.data.length}).concat([2]));
+ var mx=0;
+ for(var i=0;i<n;i++){
+  var sum=0;series.forEach(function(s){sum+=(s.data[i]||0)});
+  mx=Math.max(mx,sum);
+ }
+ mx=Math.max(1,mx);
+ ctx.clearRect(0,0,W,H);
+ ctx.strokeStyle='rgba(255,255,255,.055)';
+ for(var g=0;g<=3;g++){var y=pad+(H-2*pad)*g/3;ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke()}
+ /* انباشته از پایین */
+ var stacks=[];
+ var prev=new Array(n).fill(0);
+ series.forEach(function(s,si){
+  var pts=s.data.map(function(val,i){
+   var x=W-pad-(W-2*pad)*(i/Math.max(1,n-1));
+   var y=H-pad-(H-2*pad)*((prev[i]+(val||0))/mx);
+   return[x,y];
+  });
+  /* ناحیه تا لایه‌ی قبلی */
+  ctx.beginPath();
+  var prevPts=prev.map(function(pv,i){
+   var x=W-pad-(W-2*pad)*(i/Math.max(1,n-1));
+   var y=H-pad-(H-2*pad)*(pv/mx);
+   return[x,y];
+  });
+  ctx.moveTo(prevPts[0][0],prevPts[0][1]);
+  prevPts.forEach(function(p){ctx.lineTo(p[0],p[1])});
+  for(var i=pts.length-1;i>=0;i--)ctx.lineTo(pts[i][0],pts[i][1]);
+  ctx.closePath();
+  ctx.fillStyle=(s.color||TCH.col(si))+'2e';
+  ctx.fill();
+  ctx.beginPath();pts.forEach(function(p,i){i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])});
+  ctx.strokeStyle=s.color||TCH.col(si);ctx.lineWidth=2.2;ctx.stroke();
+  prev=prev.map(function(pv,i){return pv+(s.data[i]||0)});
+ });
+ return v;
+};
+function areaBlock(series,height){
+ var id='ar'+Math.floor(Math.random()*1e6);
+ setTimeout(function(){var c=document.getElementById(id);if(c)TCH.area(c,series,{height:height})},30);
+ return '<div class="chartbox"><canvas id="'+id+'"></canvas></div>';
+}
+/* لیست میله‌ای افقی */
+function hbarList(items){
+ var mx=Math.max.apply(null,items.map(function(i){return i.val}).concat([1]));
+ var h='<div class="list">';
+ items.forEach(function(it){
+  var p=Math.round(it.val*100/mx);
+  h+='<div class="row"><div class="medal">'+(it.ic||'•')+'</div>'
+  +'<div class="grow"><b>'+esc(it.label)+'</b>'
+  +'<div class="bar thin" style="margin-top:6px"><i style="width:'+Math.max(3,p)+'%;background:'+(it.color||'var(--grad)')+'"></i></div></div>'
+  +'<b style="color:var(--gold);font-size:12px;min-width:44px;text-align:center">'+(it.fmt?it.fmt(it.val):faK(it.val))+'</b></div>';
+ });
+ return h+'</div>';
+}
+
+/* ---------- 🖼 حالت‌های خالی مصور (SVG درون‌خطی) ---------- */
+function emptyArt(kind,text){
+ var arts={
+  game:'<circle cx="30" cy="30" r="26" fill="none" stroke="currentColor" stroke-width="2" opacity=".3"/><path d="M20 35 Q30 20 40 35" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="24" cy="26" r="2.5" fill="currentColor"/><circle cx="36" cy="26" r="2.5" fill="currentColor"/>',
+  trophy:'<path d="M22 18 h16 v6 a8 8 0 0 1 -16 0 z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M22 20 h-5 a5 5 0 0 0 5 6 M38 20 h5 a5 5 0 0 1 -5 6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M28 32 h4 v6 h-4 z M24 38 h12" stroke="currentColor" stroke-width="2" fill="none"/>',
+  coins:'<circle cx="24" cy="30" r="10" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="36" cy="30" r="10" fill="none" stroke="currentColor" stroke-width="2" opacity=".6"/>',
+  users:'<circle cx="24" cy="24" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M14 40 q10 -10 20 0" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="37" cy="27" r="5" fill="none" stroke="currentColor" stroke-width="2" opacity=".55"/>',
+  chart:'<path d="M18 38 V24 M27 38 V18 M36 38 V29" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".7"/>',
+  search:'<circle cx="26" cy="26" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M34 34 L42 42" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>'
+ };
+ var a=arts[kind]||arts.search;
+ return '<div class="empty" style="padding:26px 18px">'
+ +'<svg width="60" height="60" viewBox="0 0 60 60" style="margin:0 auto 10px;display:block;opacity:.5;color:var(--c1)">'+a+'</svg>'
+ +esc(text)+'</div>';
+}
+
+/* ---------- 🔃 بستن تمیز همه‌ی منابع هنگام ترک صفحه ---------- */
+function cleanupPage(fromId){
+ if(fromId==='games'){stopTimer('qzT')}
+ if(fromId==='lobby'){stopTimer('lbT')}
+ if(fromId==='duel'){stopTimer('duT')}
+ if(fromId==='home'){stopAllCountdowns()}
+}
+
+/* ---------- 🔍 دیباگ ملایم — بدون آزار کاربر ---------- */
+window.addEventListener('error',function(e){
+ try{
+  if(String(e.message||'').indexOf('Script error')>=0)return;
+  _mlog_warn_js(e.message);
+ }catch(err){}
+});
+function _mlog_warn_js(msg){
+ /* خطاهای JS فقط در کنسول — اپ هرگز کرش نمی‌کند */
+ try{console.warn('[TITAN]',msg)}catch(e){}
+}
+
+/* ---------- 📦 اشتراک‌گذاری کارت ریکاپ ---------- */
+function recapShareCard(d){
+ openSheet('<h3>📤 کارت ریکاپ هفتگی</h3>'
+ +'<div class="card" style="text-align:center;background:linear-gradient(160deg,#0c0a16,#111527)">'
+ +'<b style="font-size:14px">'+esc((D.user||{}).name||'بازیکن')+' — این هفته</b>'
+ +'<div class="grid g4" style="margin-top:12px">'
+ +'<div class="stat"><small>XP</small><b style="color:var(--c3)">+'+faK(d.week_xp)+'</b></div>'
+ +'<div class="stat"><small>بازی</small><b>'+fa(d.games)+'</b></div>'
+ +'<div class="stat"><small>برد</small><b style="color:var(--green)">'+fa(d.wins)+'</b></div>'
+ +'<div class="stat"><small>رتبه</small><b>'+(d.week_rank?'#'+fa(d.week_rank):'—')+'</b></div></div></div>'
+ +'<button class="btn primary wide" onclick="shareText(\'📋 ریکاپ هفته‌ی من در ApexRival: +'+faK(d.week_xp)+' XP · '+fa(d.games)+' بازی · '+fa(d.wins)+' برد'+(d.week_rank?' · رتبه #'+fa(d.week_rank):'')+' — تو کجای کارنامه‌ات هستی؟ ⚔️\')">✈️ اشتراک کارت</button>');
+}
+
+/* ---------- 🧭 میان‌برهای کیبوردی صفحه‌ها ---------- */
+document.addEventListener('keydown',function(e){
+ if(!READY)return;
+ if(/input|textarea/i.test((document.activeElement||{}).tagName||''))return;
+ if(e.key==='h'||e.key==='H')show('home');
+ else if(e.key==='g'||e.key==='G')show('games',{force:true});
+ else if(e.key==='p'||e.key==='P')show('play');
+ else if(e.key==='m'||e.key==='M')show('miss',{force:true});
+ else if(e.key==='b'||e.key==='B')show('board',{force:true});
+});
+
+/* ---------- 🎯 اهداف روزانه هوشمند (از داده‌های موجود) ---------- */
+function dailyGoals(){
+ var u=D.user||{},d=D.daily||{},ms=D.missions||[];
+ var goals=[];
+ var canClaim=ms.filter(function(m){return m.completed&&!m.claimed}).length;
+ goals.push({ic:'🎁',label:'پاداش روزانه',val:d.eligible?1:0,target:1,hint:d.eligible?'دریافتش کن!':'✅ انجام شد'});
+ goals.push({ic:'🎯',label:'مأموریت‌های آماده',val:canClaim,target:Math.max(1,ms.length),hint:canClaim?fa(canClaim)+' مورد آماده':'در حال انجام'});
+ if(u.daily_streak)goals.push({ic:'🔥',label:'استریک روز',val:Math.min(u.daily_streak,7),target:7,hint:fa(u.daily_streak)+' روز پیاپی'});
+ var h='<div class="card"><div class="shead" style="padding:0"><b>🎯 اهداف امروز</b><small>GOALS</small></div>';
+ goals.forEach(function(g){
+  var p=Math.round(g.val*100/g.target);
+  h+='<div class="mbar"><div class="lb"><span>'+g.ic+' '+g.label+'</span><span>'+g.hint+'</span></div>'
+  +'<div class="bar thin"><i style="width:'+Math.min(100,Math.max(4,p))+'%"></i></div></div>';
+ });
+ return h+'</div>';
+}
+/* اتصال به خانه */
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN TOOLS — برنامه‌ریز XP + ماشین‌حساب سکه + شتاب‌دهنده‌ی بازی
+   + پروفایل‌های صدا + مسیر بهینه‌ی پیشرفت
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 📈 برنامه‌ریز XP — «چطور سریع‌تر بالا بروم؟» ================= */
+async function plannerSheet(){
+ openSheet('<h3>📈 برنامه‌ریز پیشرفت</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/planner');
+  var u=D.user||{},r=D.rank||{};
+  var xpNeed=Math.max(0,(r.next_xp||((u.level||1)*100))-(u.xp||0));
+  var lvlNeed=Math.max(0,((u.xp_per_level||100)-(u.xp_in_level||0)));
+  var h='<h3>📈 برنامه‌ریز پیشرفت</h3>';
+  /* وضعیت فعلی */
+  h+='<div class="grid g2" style="margin-bottom:12px">'
+  +'<div class="card" style="text-align:center"><b style="font-size:16px;color:var(--c3)">'+faK(xpNeed)+'</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:3px">XP تا رتبه‌ی بعد</small></div>'
+  +'<div class="card" style="text-align:center"><b style="font-size:16px;color:var(--gold)">'+faK(lvlNeed)+'</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:3px">XP تا سطح بعد</small></div></div>';
+  /* مسیر بهینه — مرتب بر اساس XP بر دقیقه */
+  h+='<div class="shead" style="padding:0"><b>⚡ مؤثرترین مسیرها (XP)</b><small>BEST</small></div>';
+  var acts=(d.acts||[]).slice().sort(function(a,b){return b.xp-a.xp});
+  var mx=acts.length?acts[0].xp:1;
+  acts.forEach(function(a){
+   var p=Math.round(a.xp*100/mx);
+   h+='<div class="mbar"><div class="lb"><span>'+a.ic+' '+esc(a.label)+'</span><span>+'+fa(a.xp)+' XP'+(a.coins?' · +'+fa(a.coins)+'🪙':'')+'</span></div>'
+   +'<div class="bar thin"><i style="width:'+Math.max(4,p)+'%"></i></div>'
+   +'<small style="display:block;color:var(--dim);font-size:8.5px;margin-top:3px">'+esc(a.hint||'')+'</small></div>';
+  });
+  /* تخمین زمان */
+  if(acts.length){
+   var best=acts[0];
+   var games=Math.ceil(xpNeed/Math.max(1,best.xp));
+   h+='<div class="card" style="margin-top:12px;text-align:center;border-color:#31e98144">'
+   +'<b style="color:var(--green)">🎯 با «'+esc(best.label)+'» فقط حدود '+fa(games)+' بار</b>'
+   +'<div class="sub" style="margin-top:4px">تا رتبه‌ی بعدی می‌رسی — هر بار حدود '+fa(best.minutes||3)+' دقیقه</div></div>';
+  }
+  /* نکات VIP و بوستر */
+  h+='<div class="card" style="margin-top:10px;font-size:10px;color:var(--muted);line-height:2.1">'
+  +(u.vip?'👑 با VIP فعال، ۱۰٪ همه‌ی این‌ها بیشتر می‌شود!<br>':'👑 با VIP این اعداد ۱۰٪ بیشتر می‌شوند.<br>')
+  +'⭐ بوستر XP از فروشگاه، یک شبانه‌روز همه‌چیز دوبرابر می‌کند.<br>'
+  +'🔥 استریک روزانه را قطع نکن — پاداش‌اش تصاعدی است.</div>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">📈</span>'+esc(e.message)+'</div>'}
+}
+
+/* ================= 🧮 ماشین‌حساب سکه — «چی می‌تونم بخرم؟» ================= */
+function coinCalcSheet(){
+ var u=D.user||{};
+ var items=(D.shop&&D.shop.items)||[];
+ var coins=u.coins||0;
+ openSheet('<h3>🧮 ماشین‌حساب سکه</h3>'
+ +'<div class="card" style="text-align:center;margin-bottom:12px">'
+ +'<b style="font-size:20px;color:var(--gold)">🪙 '+faK(coins)+'</b><div class="sub">موجودی فعلی‌ات</div></div>'
+ +'<div class="shead" style="padding:0"><b>✅ همین الان می‌توانی بخری</b><small>از فروشگاه</small></div>');
+ setTimeout(function(){
+  var afford=items.filter(function(i){return i.price<=coins}).sort(function(a,b){return b.price-a.price});
+  var h='';
+  if(!afford.length)h='<div class="empty" style="padding:14px"><span class="ei">🪙</span>با موجودی فعلی چیزی نیست — گردونه ۲۰ ساعته را چرخان!</div>';
+  else{
+   h='<div class="list">';
+   afford.slice(0,8).forEach(function(i){
+    h+='<div class="row tap" onclick="buySheet(\''+i.key+'\')"><div class="medal">'+i.rar+'</div>'
+    +'<div class="grow"><b>'+esc(i.name)+'</b><small>'+esc(i.rarity)+' · باقی‌مانده: '+faK(coins-i.price)+'🪙</small></div>'
+    +'<span class="tag gold">'+faK(i.price)+'🪙</span></div>';
+   });
+   h+='</div>';
+  }
+  /* چقدر تا آیتم گران‌تر؟ */
+  var dream=items.filter(function(i){return i.price>coins}).sort(function(a,b){return a.price-b.price})[0];
+  if(dream){
+   h+='<div class="card" style="margin-top:12px;text-align:center;border-color:#ffc85733">'
+   +'<b>🎯 هدف بعدی: '+esc(dream.name)+'</b>'
+   +'<div class="sub" style="margin-top:4px">'+faK(dream.price-coins)+' سکه دیگر — گردونه + مأموریت + پاداش روزانه = حدود '+fa(Math.ceil((dream.price-coins)/40))+' ساعت بازی معمولی</div>'
+   +'<div class="bar thin" style="margin-top:8px"><i style="width:'+Math.min(100,Math.round(coins*100/dream.price))+'%;background:linear-gradient(90deg,var(--gold),var(--orange))"></i></div></div>';
+  }
+  $('sheetBody').insertAdjacentHTML('beforeend',h);
+ },30);
+}
+
+/* ================= 🚀 شتاب‌دهنده‌ی بازی (Quick Play) ================= */
+function quickPlaySheet(){
+ openSheet('<h3>🚀 شتاب‌دهنده‌ی بازی</h3>'
+ +'<p class="sub" style="margin-bottom:12px">سریع‌ترین راه‌های گرفتن پاداش همین الان — یک لمس:</p>'
+ +'<div class="list">'
+ +'<div class="row tap" onclick="closeSheet();gameView(\'trivia\')"><div class="medal">🧠</div>'
+ +'<div class="grow"><b>Trivia زنجیره‌ای</b><small>هر پاسخ درست +۴ تا +۱۴ XP و +۳ تا +۱۱ سکه — بی‌وقفه</small></div><span class="tag ok">سریع‌ترین</span></div>'
+ +'<div class="row tap" onclick="closeSheet();gameView(\'quiz\')"><div class="medal">🧮</div>'
+ +'<div class="grow"><b>کوییز ریاضی امروز</b><small>یک سوال ۶۰ ثانیه‌ای — +۸ XP</small></div>'+(window._quizDone?'<span class="tag">انجام شد</span>':'<span class="tag cy">۱ بار/روز</span>')+'</div>'
+ +'<div class="row tap" onclick="closeSheet();dclaim()"><div class="medal">🎁</div>'
+ +'<div class="grow"><b>پاداش روزانه</b><small>'+(D.daily&&D.daily.eligible?'الان آماده است!':'امروز گرفته‌ای ✓')+'</small></div>'
+ +(D.daily&&D.daily.eligible?'<span class="tag gold">آماده!</span>':'')+'</div>'
+ +'<div class="row tap" onclick="closeSheet();loginstreakSheet()"><div class="medal">🔥</div>'
+ +'<div class="grow"><b>استریک لاگین</b><small>'+((D.omega||{}).loginstreak_ready?'آماده‌ی دریافت!':'امروز گرفته‌ای ✓')+'</small></div></div>'
+ +'<div class="row tap" onclick="closeSheet();gameView(\'luck\')"><div class="medal">🍀</div>'
+ +'<div class="grow"><b>گردونه شانس</b><small>تا ۵۰ سکه — هر ۲۰ ساعت</small></div></div>'
+ +'<div class="row tap" onclick="closeSheet();gameView(\'ln\')"><div class="medal">🎁</div>'
+ +'<div class="grow"><b>چرخ رایگان کازینو</b><small>سکه‌ی مجانی روزانه + استریک</small></div></div>'
+ +'<div class="row tap" onclick="closeSheet();plannerSheet()"><div class="medal">📈</div>'
+ +'<div class="grow"><b>برنامه‌ریز پیشرفت</b><small>ببین چه چیزی سریع‌تر شما را بالا می‌برد</small></div></div>'
+ +'</div>');
+}
+
+/* ================= 🔊 پروفایل‌های صدا ================= */
+var SND_PROFILES=[
+ {id:'full',name:'کامل',desc:'همه‌ی افکت‌ها — تجربه‌ی کامل',map:{tap:1,ok:1,err:1,coin:1,win:1,lose:1,level:1,tick:1,spin:1,whoosh:1}},
+ {id:'minimal',name:'ملایم',desc:'فقط موفقیت/خطا/برد — بی‌سروصدا',map:{ok:1,err:1,win:1,coin:1}},
+ {id:'silent',name:'بی‌صدا',desc:'همه‌چیز خاموش',map:{}}
+];
+function sndProfileLoad(){
+ try{return localStorage.getItem('apex_sndprofile')||'full'}catch(e){return 'full'}
+}
+function sndProfileApply(id){
+ try{localStorage.setItem('apex_sndprofile',id)}catch(e){}
+ var prof=SND_PROFILES.filter(function(p){return p.id===id})[0]||SND_PROFILES[0];
+ SND.profileMap=prof.map;
+ if(id==='silent'){SND.on=false;try{localStorage.setItem('apex_snd','0')}catch(e){}}
+ else{SND.on=true;try{localStorage.setItem('apex_snd','1')}catch(e){}}
+}
+/* بین ابزارهای موتور صدا */
+(function(){
+ var _tone=SND.tone.bind(SND);
+ SND.profileMap={tap:1,ok:1,err:1,coin:1,win:1,lose:1,level:1,tick:1,spin:1,whoosh:1};
+ SND.tone=function(f,dur,type,vol,delay){
+  _tone(f,dur,type,vol,delay);
+ };
+ /* فیلتر بر اساس نقشه‌ی پروفایل — هر افکت خودش را اعلام می‌کند */
+ var wrap=function(name,fn){
+  SND[name]=function(){
+   if(SND.profileMap&&SND.profileMap[name]===0&&name!=='ok'&&name!=='err')return;
+   return fn.apply(SND,arguments);
+  };
+ };
+ wrap('tap',SND.tap.bind(SND));wrap('coin',SND.coin.bind(SND));wrap('win',SND.win.bind(SND));
+ wrap('lose',SND.lose.bind(SND));wrap('level',SND.level.bind(SND));wrap('tick',SND.tick.bind(SND));
+ wrap('spin',SND.spin.bind(SND));wrap('whoosh',SND.whoosh.bind(SND));wrap('pop',SND.pop.bind(SND));
+ sndProfileApply(sndProfileLoad());
+})();
+function sndProfileSheet(){
+ var cur=sndProfileLoad();
+ openSheet('<h3>🔊 پروفایل صدا</h3>'
+ +'<p class="sub" style="margin-bottom:12px">حالت مناسب تجربه‌ی خودت را انتخاب کن.</p><div class="list">'
+ +SND_PROFILES.map(function(p){
+  return '<div class="row tap" onclick="sndProfileApply(\''+p.id+'\');sndProfileSheet()">'
+  +'<div class="medal">'+(p.id==='full'?'🔊':p.id==='minimal'?'🔉':'🔇')+'</div>'
+  +'<div class="grow"><b>'+p.name+'</b><small>'+p.desc+'</small></div>'
+  +(cur===p.id?'<span class="tag ok">فعال ✓</span>':'<span class="tag">انتخاب</span>')+'</div>';
+ }).join('')+'</div>'
+ +'<div class="card" style="margin-top:12px;display:flex;gap:8px">'
+ +'<button class="btn sm" style="flex:1" onclick="SND.tap()">🔊 تست لمس</button>'
+ +'<button class="btn sm" style="flex:1" onclick="SND.ok()">✅ تست موفقیت</button>'
+ +'<button class="btn sm" style="flex:1" onclick="SND.win()">🏆 تست برد</button></div>');
+}
+
+/* ================= 🎯 هدف‌گذار هفتگی XP ================= */
+function weeklyGoalSheet(){
+ var u=D.user||{};
+ var goal=0;
+ try{goal=parseInt(localStorage.getItem('apex_wgoal')||'0',10)||0}catch(e){}
+ openSheet('<h3>🎯 هدف هفتگی XP</h3>'
+ +'<p class="sub" style="margin-bottom:12px">خودت هدف بگذار — نوار پیشرفت در صفحه‌ی خانه می‌آید.</p>'
+ +'<div class="chips">'+[500,1000,2000,5000,10000].map(function(v){
+  return '<button class="chip'+(goal===v?' on':'')+'" onclick="localStorage.setItem(\'apex_wgoal\','+v+');weeklyGoalSheet()">'+faK(v)+' XP</button>'}).join('')+'</div>'
+ +(goal?'<div class="card" style="text-align:center">'
+  +'<b style="font-size:15px">'+faK(goal)+' XP هدف این هفته</b>'
+  +'<div class="sub" style="margin-top:4px">با حدود '+fa(Math.ceil(goal/((D.recap&&D.recap.week_xp)||300)*7))+' ساعت بازی معمولی قابل دستیابی است</div>'
+  +'<button class="btn red sm" style="margin-top:10px" onclick="localStorage.removeItem(\'apex_wgoal\');weeklyGoalSheet()">حذف هدف</button></div>'
+ :'<div class="empty" style="padding:14px"><span class="ei">🎯</span>هنوز هدفی گذاشته‌ای</div>'));
+}
+
+/* ================= ⚡ اتصال به رابط‌ها ================= */
+/* دکمه‌ی شتاب‌دهنده در Play Hub — از طریق wire تزریق می‌شود */
+function injectQuickPlay(){
+ try{
+  var el=$('pg-play');
+  if(el&&!$('qpBanner')){
+   var b=document.createElement('div');
+   b.id='qpBanner';
+   b.innerHTML='<div class="card tap" style="margin-top:12px;border-color:#31e98144;cursor:pointer" onclick="quickPlaySheet()">'
+   +'<div style="display:flex;align-items:center;gap:11px"><div style="font-size:24px">🚀</div>'
+   +'<div style="flex:1"><b style="font-size:12px">شتاب‌دهنده‌ی بازی</b><div class="sub">سریع‌ترین پاداش‌های الان + برنامه‌ریز پیشرفت</div></div>'
+   +'<span style="color:var(--muted)">‹</span></div></div>';
+   var first=el.querySelector('.section');
+   if(first)el.insertBefore(b,first);else el.appendChild(b);
+  }
+ }catch(e){}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN VIEWS v2 — تاریخچه فیلتردار + جستجوی رتبه‌بندی + ردیاب راند
+   دوئل + سنجه‌ی گرما + رودرروی رقبا + انتخابگر تجارت تصویری
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 📜 تاریخچه v2 — فیلتر حالت + خلاصه ================= */
+var HISTF='all';
+async function renderHistory(){
+ var g=renderGen();
+ var el=$('pg-history');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/history');
+  if(isStale(g))return;
+  var items=d.items||[];
+  /* خلاصه */
+  var wins=items.filter(function(x){return String(x.result).indexOf('برد')>=0||String(x.result).indexOf('win')>=0}).length;
+  var xp=items.reduce(function(a,x){return a+(x.xp||0)},0);
+  var cn=items.reduce(function(a,x){return a+(x.coins||0)},0);
+  var modes={};items.forEach(function(x){modes[x.mode]=(modes[x.mode]||0)+1});
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">📜</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1" style="margin:0">تاریخچه بازی‌ها</h1>'
+  +'<p class="sub">'+fa(d.count||items.length)+' بازی آخر — زنده از ربات</p></div></div>'
+  +'<div class="grid g4" style="margin-top:12px">'
+  +st('برد در این صفحه','h_w',wins)+st('XP جمع','h_x',xp)+st('سکه جمع','h_c',cn)+st('حالت‌ها','h_m',Object.keys(modes).length)+'</div></div>';
+  /* فیلتر حالت */
+  var modeKeys=Object.keys(modes).sort(function(a,b){return modes[b]-modes[a]});
+  if(modeKeys.length>1){
+   h+='<div class="adm-cat" style="margin:12px 0"><button class="acat'+(HISTF==='all'?' on':'')+'" onclick="HISTF=\'all\';renderHistory()">همه</button>'
+   +modeKeys.map(function(m){
+    return '<button class="acat'+(HISTF===m?' on':'')+'" onclick="HISTF=\''+m+'\';renderHistory()">'+m+' ('+fa(modes[m])+')</button>'}).join('')+'</div>';
+  }
+  var flt=HISTF==='all'?items:items.filter(function(x){return x.mode===HISTF});
+  if(!flt.length)h+=emptyArt('game','در این فیلتر بازی‌ای نیست.');
+  else{
+   h+='<div class="card"><div class="tl">';
+   flt.forEach(function(x){
+    var ic={'trivia':'🧠','word':'📝','number':'🔢','memory':'🃏','reaction':'⚡','ttt':'✖️','mine':'⛏','quiz':'🧮','luck':'🍀','ln':'🎰','survival':'🔥','lobby':'👥','duel':'🤺','arena':'🏆','love':'💌'}[x.mode]||'🎮';
+    var win=String(x.result).indexOf('برد')>-1||String(x.result).indexOf('win')>-1;
+    var draw=String(x.result).indexOf('مساوی')>-1;
+    h+='<div class="ev"><div class="b">'+ic+'</div><div class="grow"><b>'+esc(x.mode||'بازی')+' · '
+    +(win?'<span style="color:var(--green)">برد</span>':draw?'مساوی':'<span style="color:var(--red)">باخت</span>')+'</b>'
+    +'<small>+⭐'+fa(x.xp||0)+' · +🪙'+fa(x.coins||0)+(x.players?' · 👥'+fa(x.players):'')+' · '+faDateTime(x.ts)+'</small></div>'
+    +'<time>'+timeAgo(x.ts)+'</time></div>';
+   });
+   h+='</div></div>';
+  }
+  setPageHTML('history',h,g);
+  countUp($('h_w'),wins);countUp($('h_x'),xp);countUp($('h_c'),cn);
+ }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderHistory()">تلاش دوباره</button></div>'}
+}
+
+/* ================= 🏆 رتبه‌بندی — جستجوی نام ================= */
+var LBQ='';
+async function loadBoard2(scope,keep){
+ LBSCOPE=scope||LBSCOPE;stateSave();
+ var g=renderGen();
+ var el=$('pg-board');
+ if(!keep)el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d;
+  if(LBSCOPE==='hof'){
+   var hd=await api('/api/miniapp/hof');
+   d={scope:'hof',items:(hd.items||[]).map(function(x,i){return{rank:i+1,uid:x.uid,name:x.name,xp:x.xp,wins:x.wins}}),me:null};
+  }else{
+   d=await api('/api/miniapp/leaderboard?scope='+LBSCOPE);
+  }
+  if(isStale(g))return;
+  var items=d.items||[];
+  var me=D.user||{};
+  var myRank=d.me!=null?d.me:(me.rank||0);
+  var h='<div class="gcard"><div class="in">'
+  +'<h1 class="h1">'+(LBSCOPE==='hof'?'👑 تالار افسانه‌ها':'🏆 رتبه‌بندی')+'</h1>'
+  +'<p class="sub">'+({'weekly':'امتیازهای این هفته','monthly':'XP فصل جاری (ماهانه)','global':'همه‌ی زمان‌ها','season':'فصل فعال','hof':'بهترین‌های تاریخ — جاودانه'}[LBSCOPE]||'')+'</p>';
+  if(myRank){
+   h+='<div class="card" style="margin-top:12px;display:flex;align-items:center;gap:12px;border-color:#7c5cff44;background:#7c5cff0a">'
+   +'<div class="medal'+(myRank<4?' m'+myRank:'')+'">#'+fa(myRank)+'</div>'
+   +avaHtml({id:me.id,name:me.name,frame:me.frame},'sm')
+   +'<div class="grow"><b>رتبه‌ی تو</b><small>'+faK(me.xp)+' XP کل · رتبه‌ی '+esc((D.rank||{}).name||'')+'</small></div></div>';
+  }
+  h+='<div class="seg" style="margin:12px 0 0">'
+  +[['weekly','هفتگی'],['monthly','ماهانه'],['global','کلی'],['season','فصلی'],['hof','افسانه‌ها']].map(function(s){return '<button class="'+(LBSCOPE===s[0]?'on':'')+'" onclick="loadBoard2(\''+s[0]+'\')">'+s[1]+'</button>'}).join('')
+  +'</div></div></div>';
+  /* جستجو */
+  h+='<div class="searchbar"><span class="sic">🔍</span>'
+  +'<input class="input" id="lbQ" placeholder="جستجوی بازیکن در این فهرست..." value="'+esc(LBQ)+'" oninput="lbFilter()"></div>';
+  if(items.length>=3){
+   h+='<div class="card"><div class="podium">';
+   var order=[1,0,2];
+   for(var oi=0;oi<3;oi++){var x=items[order[oi]];
+    h+='<div class="pod p'+(order[oi]+1)+'">'+avaHtml({id:x.uid,name:x.name},'')
+    +'<b>'+esc(x.name)+'</b><small>'+faK(x.xp)+' XP</small><div class="base">'+['🥇','🥈','🥉'][order[oi]]+'</div></div>';
+   }
+   h+='</div></div>';
+  }
+  h+='<div class="list" id="lbList">';
+  window._LBITEMS=items;
+  h+=lbRows(items);
+  h+='</div>';
+  setPageHTML('board',h,g);
+ }catch(e){
+  if(isStale(g))return;
+  el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="loadBoard2(\''+LBSCOPE+'\')">تلاش دوباره</button></div>';
+ }
+}
+function lbRows(items){
+ var q=LBQ.trim().toLowerCase();
+ var h='';
+ var flt=q?items.filter(function(x){return String(x.name||'').toLowerCase().indexOf(q)>-1}):items;
+ flt.forEach(function(x){
+  var isMe=D.user&&Number(x.uid)===Number(D.user.id);
+  h+='<div class="row'+(isMe?' me':'')+' tap" onclick="profileView('+x.uid+')" style="cursor:pointer">'
+  +'<div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
+  +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+(isMe?' <span class="tag cy">تو</span>':'')+'</b><small>'+faK(x.xp)+' XP'+(x.wins?' · '+faK(x.wins)+' برد':'')+'</small></div></div>';
+ });
+ if(!flt.length)h='<div class="empty"><span class="ei">🔍</span>بازیکنی با این نام در فهرست نیست.</div>';
+ return h;
+}
+function lbFilter(){
+ var el=$('lbQ');
+ LBQ=el?el.value:'';
+ var box=$('lbList');
+ var items=(window._LBITEMS||[]);
+ if(box)box.innerHTML=lbRows(items);
+}
+
+/* ================= 🌡 سنجه‌ی گرما (در لابی) ================= */
+function heatMeter(round){
+ /* گرما بر اساس راند: هر ۲ راند یک پله */
+ var lvl=Math.min(4,Math.floor((round-1)/2));
+ var names=['🟢 آرام','🟡 معتدل','🟠 داغ','🔴 آتیشی','🔥 خطرناک'];
+ var cols=['#31e981','#ffc857','#ff9e4f','#ff5268','#ff4fa3'];
+ var h='<div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px">'
+ +'<div class="hmeter"><i style="width:'+Math.round((lvl+1)*20)+'%;background:'+cols[lvl]+'"></i></div>'
+ +'<b style="font-size:10.5px;color:'+cols[lvl]+';white-space:nowrap">'+names[lvl]+'</b>'
+ +'<span class="tag" style="margin-right:auto">راند '+fa(round)+'</span></div>';
+ return h;
+}
+
+/* ================= 🤺 ردیاب راند دوئل (نقطه‌ها) ================= */
+function roundDots(cur,total){
+ var h='<div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;margin:8px 0">';
+ for(var i=1;i<=total;i++){
+  h+='<i class="rdot'+(i<=cur?' on':'')+(i===cur?' cur':'')+'"></i>';
+ }
+ return h+'</div>';
+}
+
+/* ================= ⚔️ رودرروی رقبا (شیت مقایسه) ================= */
+async function rivalH2H(id){
+ var name='رقبای تو';
+ try{var rv=(D.rivals||[]).filter(function(x){return Number(x.id)===Number(id)})[0];if(rv)name=rv.name}catch(e){}
+ openSheet('<h3>⚔️ رودررو با '+esc(name)+'</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/compare?id='+Number(id));
+  var h='<h3>⚔️ '+esc(d.me.name)+' در برابر '+esc(d.them.name)+'</h3>'
+  +'<div class="card" style="text-align:center;margin-bottom:12px">'
+  +'<b style="font-size:19px">'+fa(d.score[0])+' <span style="color:var(--dim);font-size:12px">—</span> '+fa(d.score[1])+'</b>'
+  +'<div class="sub">امتیاز کل رودررو</div></div>';
+  d.rows.forEach(function(r){
+   var tot=Math.max(1,(r.a||0)+(r.b||0));
+   var pa=Math.round((r.a||0)*100/tot);
+   h+='<div style="margin:11px 0"><div style="display:flex;justify-content:space-between;font-size:10px">'
+   +'<b style="color:var(--c3)">'+faK(r.a)+'</b><span style="color:var(--muted)">'+r.icon+' '+esc(r.label)+'</span><b style="color:var(--pink)">'+faK(r.b)+'</b></div>'
+   +'<div style="display:flex;gap:3px;height:8px;margin-top:5px">'
+   +'<i style="flex:'+Math.max(.5,pa)+';background:var(--c3);border-radius:99px 0 0 99px"></i>'
+   +'<i style="flex:'+Math.max(.5,100-pa)+';background:var(--pink);border-radius:0 99px 99px 0"></i></div></div>';
+  });
+  h+='<div style="display:flex;gap:8px;margin-top:14px">'
+  +'<button class="btn primary" style="flex:1" onclick="closeSheet();duelCreate()">🤺 چالش دوئل</button>'
+  +'<button class="btn" style="flex:1" onclick="closeSheet()">بستن</button></div>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty"><span class="ei">⚔️</span>'+esc(e.message)+'</div>'}
+}
+
+/* ================= 🏅 شیت جزئیات دستاورد ================= */
+function achDetail(key){
+ var a=(D.achievements||[]).filter(function(x){return x.key===key})[0];
+ if(!a)return;
+ var owned=!!a.owned;
+ openSheet('<h3>'+(owned?'🏆':'🔒')+' '+esc(a.title)+'</h3>'
+ +'<div class="card" style="text-align:center;margin-bottom:12px">'
+ +'<div style="font-size:44px;margin-bottom:8px">'+(owned?'🏆':'🔒')+'</div>'
+ +'<b style="font-size:14px">'+esc(a.title)+'</b>'
+ +'<p class="sub" style="margin-top:8px">'+esc(a.desc)+'</p></div>'
+ +'<div class="grid g2">'
+ +'<div class="card" style="text-align:center"><b style="color:var(--gold)">+'+fa(a.reward)+' 🪙</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:2px">سکه جایزه</small></div>'
+ +'<div class="card" style="text-align:center"><b style="color:var(--c3)">'+(a.xp?'+'+fa(a.xp)+' ⭐':'—')+'</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:2px">XP جایزه</small></div></div>'
+ +'<div class="card" style="text-align:center;font-size:10.5px;color:'+(owned?'var(--green)':'var(--muted)')+'">'
+ +(owned?'✅ این دستاورد را باز کرده‌ای!':'🔒 هنوز باز نشده — توضیح بالا راهنمای رسیدن به آن است.')+'</div>'
+ +(owned?'<button class="btn primary wide" onclick="shareText(\'🏆 دستاورد «'+esc(a.title)+'» را در ApexRival باز کردم! — '+esc(a.desc)+'\')">✈️ اشتراک‌گذاری</button>':''));
+}
+
+/* ================= 🔄 انتخابگر تجارت تصویری ================= */
+function tradePickSheet(side){
+ var inv=window._TRINV||{};
+ var types=[['coins','🪙 سکه'],['title','🏷 لقب'],['frame','🖼 قاب'],['badge','🎖 بج']];
+ var cur=TRSEL[side].type;
+ var h='<h3>'+(side==='o'?'📤 چه چیزی می‌دهی؟':'📥 چه چیزی می‌خواهی؟')+'</h3>'
+ +'<div class="seg" style="margin-bottom:12px">'+types.map(function(t){
+  return '<button class="'+(cur===t[0]?'on':'')+'" onclick="tradeSelSide(\''+side+'\',this,\''+t[0]+'\');tradeCreateSheetRefresh(\''+side+'\')">'+t[1]+'</button>'}).join('')+'</div>';
+ if(cur==='coins'){
+  h+='<div class="chips">'+[50,100,200,500,1000].map(function(v){
+   return '<button class="chip'+(TRSEL[side].amount===v?' on':'')+'" onclick="TRSEL.'+side+'.amount='+v+';tradeCreateSheetRefresh(\''+side+'\')">'+fa(v)+' 🪙</button>'}).join('')+'</div>';
+ }else{
+  var list=inv[({title:'titles',frame:'frames',badge:'badges'})[cur]]||[];
+  if(!list.length)h+='<div class="empty"><span class="ei">🎒</span>چیزی از این نوع نداری</div>';
+  else{
+   h+='<div class="list">';
+   list.forEach(function(x){
+    h+='<div class="row tap" onclick="TRSEL.'+side+'.key=\''+esc(x.key)+'\';tradeCreateSheetRefresh(\''+side+'\')">'
+    +'<div class="medal">'+({title:'🏷',frame:'🖼',badge:'🎖'})[cur]+'</div>'
+    +'<div class="grow"><b>'+esc(x.name)+'</b><small>در اختیار تو</small></div>'
+    +(TRSEL[side].key===x.key?'<span class="tag ok">انتخاب ✓</span>':'')+'</div>';
+   });
+   h+='</div>';
+  }
+ }
+ openSheet(h);
+}
+function tradeCreateSheetRefresh(side){
+ setTimeout(function(){tradePickSheet(side)},30);
+}
+
+/* ================= 🎭 آنبوردینگ ۸ مرحله‌ای ================= */
+var OB_STEPS=[
+ ['🎮','به ApexRival خوش آمدی!','همه‌ی بازی‌ها، دوئل‌ها، لابی‌ها و پنل مدیریت ربات — از این لحظه فقط داخل همین مینی‌اپ. دیگر هیچ‌وقت لازم نیست به چت ربات برگردی.'],
+ ['🕹','گیم‌زون کامل','۱۰ بازی کامل — از Trivia زنجیره‌ای تا کازینوی Lucky Number. پاداش‌ها مستقیم روی حساب واقعی ربات ثبت می‌شوند.'],
+ ['👥','لابی چندنفره','لابی بساز، کد ۶ حرفی را بفرست و با دوستانت جرئت/حقیقت بازی کن — با موضوع‌های داغ‌شونده و نوبت‌های چرخشی.'],
+ ['🏆','رقابت واقعی','آرنا رنک‌دار با ELO، دوئل تن‌به‌تن، مسابقات و رتبه‌بندی‌های زنده — همه داخل اپ.'],
+ ['🚀','شتاب‌دهنده‌ی بازی','هر روز: پاداش روزانه + استریک + گردونه + مأموریت‌ها — از Play Hub یک‌جا بگیر.'],
+ ['📈','برنامه‌ریز پیشرفت','نمی‌دانی چه بازی کنی؟ برنامه‌ریز XP بهت می‌گوید سریع‌ترین مسیر رشد الان چیست.'],
+ ['🎨','ظاهر تو، انتخاب خودته','۸ تم رنگی، حالت روشن/تاریک، اندازه‌ی متن و پروفایل صدا — همه از تنظیمات قابل تغییرند.'],
+ ['⚡','شروع کن!','مأموریت‌ها را ببین، استریک روزانه‌ات را جمع کن و قهرمان شو. موفق باشی قهرمان!']
+];
+
+/* ================= 👁 اسکرول‌ریویل (نمایش تدریجی کارت‌ها) ================= */
+var REVEAL_OBS=null;
+function initReveal(){
+ try{
+  if(!('IntersectionObserver' in window))return;
+  REVEAL_OBS=new IntersectionObserver(function(entries){
+   entries.forEach(function(en){
+    if(en.isIntersecting){
+     en.target.classList.add('rv');
+     REVEAL_OBS.unobserve(en.target);
+    }
+   });
+  },{rootMargin:'0px 0px -40px 0px',threshold:.06});
+ }catch(e){}
+}
+function observeReveals(rootEl){
+ try{
+  if(!REVEAL_OBS)return;
+  (rootEl||document).querySelectorAll('.card:not(.rv),.row:not(.rv),.tile:not(.rv)').forEach(function(el){
+   REVEAL_OBS.observe(el);
+  });
+ }catch(e){}
+}
+/* اتصال خودکار: در show() هسته فراخوانی می‌شود */
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN FINAL — بخش‌های تکمیلی ادمین (تبلیغات/VIP/موجودی/ریست)
+   + شیت راهنمای بازی‌ها + خلاصه‌ی پایان بازی + کارت سطح
+   ════════════════════════════════════════════════════════════════ */
+
+/* ================= 📢 مدیریت تبلیغات ================= */
+function admAds(d){
+ var h='<div class="card" style="margin-bottom:12px"><b>📢 تبلیغ جدید</b>'
+ +'<textarea id="adTxt" class="input" style="min-height:64px;margin-top:8px" placeholder="متن تبلیغ…"></textarea>'
+ +'<div style="display:flex;gap:8px;margin-top:8px;align-items:center">'
+ +'<input class="input" id="adFreq" type="number" value="5" style="width:90px" title="هر چند بازی یک بار">'
+ +'<small style="color:var(--muted);font-size:9px">هر چند بازی نمایش داده شود</small></div>'
+ +'<button class="btn primary wide sm" style="margin-top:10px" onclick="admAction(\'ad_add\',{text:document.getElementById(\'adTxt\').value,freq:Number(document.getElementById(\'adFreq\').value)||5},\'ads\')">➕ افزودن تبلیغ</button></div>';
+ h+='<div class="list">';
+ (d.items||[]).forEach(function(a){
+  h+='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
+  +'<div class="medal">'+(a.enabled?'📢':'🌙')+'</div>'
+  +'<div class="grow"><b>'+esc(a.text)+'</b><small>هر '+fa(a.freq)+' بازی · '+fa(a.shown)+' بار نمایش</small></div></div>'
+  +'<div style="display:flex;gap:6px;margin-top:10px">'
+  +'<button class="btn '+(a.enabled?'':'green')+' sm" onclick="admAction(\'ad_toggle\',{idx:'+a.idx+'},\'ads\')">'+(a.enabled?'خاموش':'روشن')+'</button>'
+  +'<button class="btn red sm" onclick="admAction(\'ad_del\',{idx:'+a.idx+'},\'ads\')">🗑</button></div></div>';
+ });
+ if(!(d.items||[]).length)h+='<div class="empty"><span class="ei">📢</span>تبلیغی ثبت نشده است.</div>';
+ h+='</div>';
+ return h;
+}
+
+/* ---------- 👑 ابزار VIP در شیت کاربر (تزریق خودکار) ---------- */
+function userVipTools(u){
+ return '<div class="shead" style="padding:0;margin-top:14px"><b>👑 مدیریت VIP</b></div>'
+ +'<div class="adm-tools" style="margin-top:8px">'
+ +[7,30,90].map(function(d){
+  return '<button class="btn gold sm" onclick="admAction(\'vip_days\',{target:'+u.id+',days:'+d+'})">+'+fa(d)+' روز</button>'}).join('')
+ +(u.vip?'<button class="btn red sm" onclick="admAction(\'vip_revoke\',{target:'+u.id+'})">لغو VIP</button>':'')
+ +'</div>'
+ +'<div class="adm-tools" style="margin-top:8px">'
+ +'<input class="input" id="vipD" type="number" placeholder="روز دلخواه…" style="width:110px;padding:7px 10px">'
+ +'<button class="btn gold sm" onclick="admAction(\'vip_days\',{target:'+u.id+',days:Number(document.getElementById(\'vipD\').value)||0})">اهدای دلخواه</button></div>';
+}
+/* ---------- 🎒 ابزار موجودی ---------- */
+function userInvTools(u){
+ return '<div class="shead" style="padding:0;margin-top:14px"><b>🎒 اهدای آیتم</b></div>'
+ +'<div style="display:flex;gap:8px;margin-top:8px">'
+ +'<input class="input" id="itKey" placeholder="کلید آیتم (مثل shield)" dir="ltr" style="flex:1">'
+ +'<input class="input" id="itCnt" type="number" value="1" style="width:70px">'
+ +'<button class="btn green sm" onclick="admAction(\'item_grant\',{target:'+u.id+',key:document.getElementById(\'itKey\').value,count:Number(document.getElementById(\'itCnt\').value)||1})">اهدا</button></div>';
+}
+/* ارتقای شیت کاربر با ابزارهای جدید */
+function userSheet2Full(id){
+ userSheet2(id);
+ setTimeout(function(){
+  try{
+   var u={id:Number(id)};
+   api('/api/miniapp/admin/user?id='+Number(id)).then(function(uu){
+    var body=$('sheetBody');
+    if(!body||!uu)return;
+    body.insertAdjacentHTML('beforeend',
+     userVipTools(uu)
+     +userInvTools(uu)
+     +'<div class="shead" style="padding:0;margin-top:14px"><b>⬆️ تنظیم سطح مستقیم</b></div>'
+     +'<div style="display:flex;gap:8px;margin-top:8px">'
+     +'<input class="input" id="lvSet" type="number" placeholder="سطح (۱-۱۰۰)" style="flex:1">'
+     +'<button class="btn primary sm" onclick="admAction(\'set_level\',{target:'+uu.id+',value:Number(document.getElementById(\'lvSet\').value)||1})">تنظیم</button></div>');
+   });
+  }catch(e){}
+ },400);
+}
+function userSheet(id){return userSheet2Full(id)}
+
+/* ---------- 🏭 ریست کارخانه (با تأیید دومرحله‌ای) ---------- */
+function admResetSheet(d){
+ openSheet('<h3>🔴 ریست کارخانه</h3>'
+ +'<div class="card" style="border-color:#ff526855;background:#ff52680a;margin-bottom:12px">'
+ +'<b style="color:#ff6d80">⚠️ هشدار جدی</b>'
+ +'<p class="sub" style="margin:8px 0 0;line-height:2.2">این کار <b>همه‌ی داده‌ها</b> را پاک می‌کند:<br>'
+ +'👥 '+faK(d.users)+' کاربر · 🏘 '+faK(d.groups)+' گروه · 🎮 '+faK(d.games)+' بازی<br>'
+ +'قبلش یک بکاپ خودکار گرفته می‌شود ('+fa(d.backups)+' بکاپ موجود).</p></div>'
+ +'<p class="sub">برای تأیید نهایی، عبارت <code dir="ltr" style="color:var(--red);font-weight:900">RESET</code> را بنویس:</p>'
+ +'<input class="input" id="rsConfirm" placeholder="RESET" dir="ltr" style="text-align:center;font-weight:900;letter-spacing:3px">'
+ +'<button class="btn red wide glow" style="margin-top:10px" onclick="admResetGo()">🔴 پاک‌سازی نهایی</button>');
+}
+async function admResetGo(){
+ var c=($('rsConfirm')||{}).value||'';
+ if(c.trim().toUpperCase()!=='RESET'){toast('عبارت RESET را درست بنویس','err');return}
+ await admAction('factory_reset',{confirm:'RESET'});
+ closeSheet();
+}
+
+/* ---------- 📜 تاریخچه همگانی ---------- */
+function admBcHistory(d){
+ var h='';
+ (d.items||[]).forEach(function(b){
+  h+='<div class="row"><div class="medal">'+(b.sent?'✅':'⏳')+'</div>'
+  +'<div class="grow"><b>'+esc(b.text)+'</b><small>'+(b.sent?'ارسال‌شده':'در صف')+' · '+faDateTime(b.ts)+'</small></div></div>'});
+ if(!h)h='<div class="empty"><span class="ei">📭</span>پیام همگانی‌ای ثبت نشده.</div>';
+ return '<div class="list">'+h+'</div>';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   🎓 شیت راهنمای هر بازی — قوانین + پاداش‌ها + رکوردها
+   ════════════════════════════════════════════════════════════════ */
+var GAME_HELP={
+ trivia:{t:'Trivia زنجیره‌ای',rules:['هر پاسخ درست زنجیره را ادامه می‌دهد','هر ۵ پاسخ درست +۲۵ سکه جایزه','اولین پاسخ غلط پایان بازی است','سقف پاداش با طول زنجیره بالا می‌رود'],rw:[['هر پاسخ','+۴ تا +۱۴ XP'],['سکه','+۳ تا +۱۱'],['پایان زنجیره','+۲XP × طول زنجیره']]},
+ word:{t:'بازی کلمات',rules:['حروف به‌هم‌ریخته یک کلمه واقعی است','از ۴ گزینه، کلمه درست را انتخاب کن','راهنما دسته‌ی موضوعی را نشان می‌دهد'],rw:[['درست','+۱۵ XP · +۸ سکه'],['نادرست','+۵ XP']]},
+ number:{t:'حدس عدد',rules:['عددی بین ۱ تا ۱۰۰ انتخاب شده','۷ فرصت داری','بعد از هر حدس، گزینه‌ها به هدف نزدیک‌تر می‌شوند'],rw:[['برد با فرصت زیاد','+۵XP+×۲ سکه'],['برد','حداقل +۵XP']]},
+ memory:{t:'حافظه',rules:['دنباله‌ای از اعداد نمایش داده می‌شود','۳ ثانیه برای حفظ کردن داری','از ۴ گزینه، همان دنباله را انتخاب کن'],rw:[['درست','+۱۵ XP · +۸ سکه'],['نادرست','+۵ XP']]},
+ reaction:{t:'سرعت واکنش',rules:['صبر کن تا دکمه سبز شود','همان لحظه بزن!','زود زدن = باخت'],rw:[['زیر ۴۰۰ms','+۲۰ XP · +۱۲ سکه'],['زیر ۸۰۰ms','+۱۲ XP · +۶ سکه'],['بقیه','+۶ XP · +۳ سکه']]},
+ ttt:{t:'دوز با AI',rules:['تو ✕ هستی، هوش مصنوعی ⭕','سه‌در-رو بگیر برنده‌ای','صفحه‌ی جدید بدون محدودیت'],rw:[['هر برد','+۲۰ XP · +۲۰ سکه']]},
+ mine:{t:'مین‌یاب',rules:['ورودی ۲۰ سکه','۱۲ خانه با ۳ مین','هر خانه امن ضریب را بالا می‌برد','هر لحظه می‌توانی برداشت کنی'],rw:[['برداشت زودهنگام','ضریب ×۱ به بالا'],['همه‌ی خانه‌ها','ضریب حداکثری']]},
+ quiz:{t:'کوییز ریاضی',rules:['یک سوال محاسبه‌ای','۶۰ ثانیه فرصت','روزی یک بار'],rw:[['درست','+۸ XP'],['نادرست','رکورد نمی‌شود']]},
+ luck:{t:'گردونه شانس',rules:['هر ۲۰ ساعت یک چرخش','۶ قطعه با جوایز متفاوت','۵٪ شانس جایزه‌ی بزرگ'],rw:[['جایزه‌ی بزرگ','+۵۰ سکه'],['شانس خوب','+۲۰'],['معمولی','+۱۰ یا +۵']]},
+ ln:{t:'Lucky Number',rules:['عدد ۱ تا ۱۰۰ را انتخاب کن','عدد دقیق = جکپات ×۲۵','هر روز یک چرخ رایگان'],rw:[['دقیق','×۲۵'],['فاصله ≤۲','×۶'],['فاصله ≤۵','×۲'],['فاصله ≤۱۰','×۱.۵']]}
+};
+function gameHelpSheet(key){
+ var g=GAME_HELP[key];
+ if(!g)return;
+ openSheet('<h3>🎓 راهنمای '+esc(g.t)+'</h3>'
+ +'<div class="shead" style="padding:0;margin-top:6px"><b>📜 قوانین</b></div><div class="list">'
+ +g.rules.map(function(r){
+  return '<div class="row"><div class="medal">•</div><div class="grow"><b style="font-weight:700">'+esc(r)+'</b></div></div>'}).join('')
+ +'</div>'
+ +'<div class="shead" style="padding:0;margin-top:14px"><b>🎁 پاداش‌ها</b></div><div class="list">'
+ +g.rw.map(function(r){
+  return '<div class="row"><div class="medal">🎁</div><div class="grow"><b>'+esc(r[0])+'</b><small>'+esc(r[1])+'</small></div></div>'}).join('')
+ +'</div>'
+ +'<button class="btn primary wide" onclick="closeSheet();gameView(\''+key+'\')">🎮 همین حالی بازی کن!</button>');
+}
+
+/* دکمه‌ی راهنما در سربرگ هر بازی */
+function gmHeadHelp(key){
+ var g=GAME_HELP[key];
+ if(!g)return '';
+ return '<button class="btn sm" style="margin-right:6px" onclick="gameHelpSheet(\''+key+'\')">🎓</button>';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   🏆 خلاصه‌ی پایان بازی — کارت آماری قابل اشتراک
+   ════════════════════════════════════════════════════════════════ */
+function gameSummaryCard(game,stats){
+ /* stats: {xp, coins, extra, extraLabel} */
+ var h='<div class="card sharecard" style="text-align:center;margin-top:12px">'
+ +'<div style="font-size:28px;margin-bottom:6px">🏆</div>'
+ +'<b style="font-size:13px">پایان '+esc(game)+'</b>'
+ +'<div class="grid g3" style="margin-top:12px">'
+ +'<div class="stat"><small>XP</small><b style="color:var(--c3)">+'+fa(stats.xp||0)+'</b></div>'
+ +'<div class="stat"><small>سکه</small><b style="color:var(--gold)">+'+fa(stats.coins||0)+'</b></div>'
+ +(stats.extra!=null?'<div class="stat"><small>'+esc(stats.extraLabel||'—')+'</small><b>'+esc(stats.extra)+'</b></div>':'')
+ +'</div></div>';
+ if(stats.share){
+  h+='<button class="btn primary wide" style="margin-top:8px" onclick="shareText(\''+esc(stats.share).replace(/'/g,'')+'\')">✈️ اشتراک‌گذاری نتیجه</button>';
+ }
+ return h;
+}
+
+/* ---------- ⬆️ کارت ارتقای سطح ---------- */
+function levelUpCard(newLevel){
+ confetti(true);SND.level();
+ return '<div class="infobanner ok" style="margin-top:12px"><span class="ic">🎉</span>'
+ +'<span style="flex:1">به سطح <b>'+fa(newLevel)+'</b> رسیدی! پاداش مایلستون‌ها را چک کن.</span>'
+ +'<button class="btn sm primary" onclick="show(\'milestones\',{force:true})">مشاهده</button></div>';
+}
+
+/* ---------- ثبت بخش‌های جدید در دسته‌ها ---------- */
+ACAT=[
+ {id:'community',ic:'🫂',t:'جامعه',secs:['home','users','groups','perms']},
+ {id:'content',ic:'🎮',t:'بازی و محتوا',secs:['games','analytics','bank','ach','feedback','qreports']},
+ {id:'monitor',ic:'📡',t:'مانیتور زنده',secs:['duels','lobbies','trades','tournaments','season_admin']},
+ {id:'economy',ic:'💰',t:'اقتصاد',secs:['econ','rewards','broadcast','bc_history','giftall','ads']},
+ {id:'security',ic:'🛡',t:'امنیت',secs:['syscfg','bankguard','doctor','vitals','elo','integrity']},
+ {id:'system',ic:'🧰',t:'سیستم',secs:['backups','export','logs','settings','maint','maintsch','reset']},
+ {id:'commander',ic:'⚡',t:'فرمانده',secs:['quick','clean','pulse','gpanels','punish']}
+];
+ASEC.ads=['📢','تبلیغات','مدیریت تبلیغات ربات'];
+ASEC.bc_history=['📜','تاریخچه همگانی','پیام‌های ارسالی'];
+ASEC.reset=['🔴','ریست کارخانه','پاک‌سازی کامل'];
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN POLISH — اتصال کارت پایان بازی + آموزش اولین بازدید
+   (Coach Marks) + رنگ سفارشی + ویجت‌های خانه + توصیه‌گر هوشمند
+   ════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════
+   ۱) رنگ سفارشی — تم «سفارشی من» با انتخابگر رنگ
+   ════════════════════════════════════════════════════════════════ */
+var CUSTOM_COLORS=['#7c5cff','#15d8ff','#ff4fa3','#ffc857','#31e981','#ff6b4a','#c44fff','#2f7cff','#0fb981','#ff9e9e','#ffd88a','#a9c1ff'];
+function applyCustomColor(hex){
+ try{
+  var h=hex.replace('#','');
+  if(!/^[0-9a-f]{6}$/i.test(h))return false;
+  var r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);
+  /* رنگ دوم و سوم با تغییر روشنایی ساخته می‌شوند */
+  function shade(c,f){return Math.max(0,Math.min(255,Math.round(c*f)))}
+  document.body.style.setProperty('--c1',hex);
+  document.body.style.setProperty('--c2','rgb('+shade(r,1.18)+','+shade(g,1.05)+','+shade(b,1.18)+')');
+  document.body.style.setProperty('--c3','rgb('+shade(r,.72)+','+shade(g,1.3)+','+shade(b,1.35)+')');
+  localStorage.setItem('apex_ccolor',hex);
+  return true;
+ }catch(e){return false}
+}
+function clearCustomColor(){
+ try{
+  document.body.style.removeProperty('--c1');
+  document.body.style.removeProperty('--c2');
+  document.body.style.removeProperty('--c3');
+  localStorage.removeItem('apex_ccolor');
+ }catch(e){}
+}
+function customColorSheet(){
+ var cur='';
+ try{cur=localStorage.getItem('apex_ccolor')||''}catch(e){}
+ var h='<h3>🎨 رنگ سفارشی</h3>'
+ +'<p class="sub" style="margin-bottom:12px">رنگ اصلی اپ را خودت انتخاب کن — روی همه‌ی تم‌ها اعمال می‌شود.</p>'
+ +'<div class="themegrid" style="grid-template-columns:repeat(6,1fr)">'
+ +CUSTOM_COLORS.map(function(c){
+  return '<button class="themecard'+(cur===c?' on':'')+'" style="padding:5px" onclick="applyCustomColor(\''+c+'\');customColorSheet()">'
+  +'<div class="swb" style="height:30px;background:'+c+'"></div></button>'}).join('')
+ +'</div>'
+ +'<div class="card" style="margin-top:14px"><b style="font-size:11px"> hexadecimal دلخواه:</b>'
+ +'<div style="display:flex;gap:8px;margin-top:8px">'
+ +'<input class="input" id="ccIn" placeholder="#7c5cff" dir="ltr" value="'+esc(cur)+'" style="flex:1">'
+ +'<button class="btn primary sm" onclick="if(applyCustomColor(document.getElementById(\'ccIn\').value)){toast(\'رنگ اعمال شد 🎨\',\'ok\')}else{toast(\'کد رنگ نامعتبر است\',\'err\')}">اعمال</button></div></div>'
+ +(cur?'<button class="btn red wide sm" style="margin-top:10px" onclick="clearCustomColor();customColorSheet()">بازگشت به رنگ تم</button>':'')
+ +'<div class="labprev" style="margin-top:12px"><div class="lab-in">'
+ +'<div style="display:flex;gap:8px"><button class="btn primary sm" style="flex:1">دکمه‌ی نمونه</button>'
+ +'<button class="btn gold sm" style="flex:1">طلایی</button></div>'
+ +'<div class="bar" style="margin-top:10px"><i style="width:60%"></i></div></div></div>';
+ openSheet(h);
+}
+/* اعمال خودکار در بوت */
+try{
+ var _cc=localStorage.getItem('apex_ccolor');
+ if(_cc)applyCustomColor(_cc);
+}catch(e){}
+
+/* ════════════════════════════════════════════════════════════════
+   ۲) توصیه‌گر هوشمند — «امروز چه بازی کنم؟»
+   ════════════════════════════════════════════════════════════════ */
+var _gameHubCache=null;
+async function smartRecos(){
+ /* از داده‌ی هاب بازی‌ها: کول‌داون‌ها را تبدیل به توصیه می‌کنیم */
+ try{
+  if(!_gameHubCache){
+   var g=await api('/api/miniapp/games');
+   _gameHubCache=g;
+  }
+  var g=_gameHubCache;
+  var recos=[];
+  if(g.cooldowns.luck<=0)recos.push({ic:'🍀',t:'گردونه آماده است!',s:'چرخش رایگان تا ۵۰ سکه',fn:"gameView('luck')",hot:true});
+  if(g.cooldowns.ln_free)recos.push({ic:'🎁',t:'چرخ رایگان کازینو',s:'سکه‌ی مجانی امروز',fn:"gameView('ln')",hot:true});
+  if(!g.cooldowns.quiz_done)recos.push({ic:'🧮',t:'کوییز ریاضی امروز',s:'+۸ XP در ۶۰ ثانیه',fn:"gameView('quiz')",hot:true});
+  if((D.daily||{}).eligible)recos.push({ic:'🎁',t:'پاداش روزانه',s:'همین حالا بگیر!',fn:'dclaim()',hot:true});
+  if(((D.omega||{}).loginstreak_ready))recos.push({ic:'🔥',t:'استریک لاگین',s:'پاداش امروز آماده است',fn:'loginstreakSheet()',hot:true});
+  recos.push({ic:'🧠',t:'Trivia زنجیره‌ای',s:'سریع‌ترین راه XP',fn:"gameView('trivia')"});
+  return recos;
+ }catch(e){return []}
+}
+function recosBlock(recos){
+ if(!recos||!recos.length)return '';
+ var h='<div class="section"><div class="shead"><b>🤖 پیشنهاد امروز</b><small>SMART</small></div><div class="tiles">';
+ recos.forEach(function(r){
+  h+='<button class="tile" onclick="'+r.fn+'"'+(r.hot?' style="border-color:#31e98155"':'')+'>'
+  +'<span class="ico">'+r.ic+'</span><b>'+esc(r.t)+'</b><small>'+esc(r.s)+(r.hot?' · ⚡ الان!':'')+'</small></button>';
+ });
+ return h+'</div></div>';
+}
+/* تزریق خودکار در خانه */
+async function injectRecos(){
+ try{
+  var el=$('pg-home');
+  if(!el||$('recoBlock'))return;
+  var recos=await smartRecos();
+  if(!recos.length)return;
+  var div=document.createElement('div');
+  div.id='recoBlock';
+  div.innerHTML=recosBlock(recos);
+  var ref=el.querySelector('.section');
+  if(ref)el.insertBefore(div,ref);else el.appendChild(div);
+ }catch(e){}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۳) Coach Marks — آموزش اولین بازدید هر صفحه
+   ════════════════════════════════════════════════════════════════ */
+var COACH_TIPS={
+ home:{ic:'🏠',t:'این خانه‌ی توست',b:'پاداش روزانه، آمار سریع و دسترسی به همه‌ی بخش‌ها اینجاست. پایین اپ، نوار ناوبری دائمی است.'},
+ games:{ic:'🕹',t:'گیم‌زون',b:'۱۰ بازی کامل — دکمه‌ی 🎓 کنار هر بازی، راهنما و پاداش‌هایش را نشان می‌دهد.'},
+ lobby:{ic:'👥',t:'لابی زنده',b:'این صفحه هر ۲ ثانیه خودش تازه می‌شود — جوابت را راحت بنویس، هیچ‌وقت پاک نمی‌شود!'},
+ board:{ic:'🏆',t:'رتبه‌بندی',b:'بین ۵ اسکوپ جابه‌جا شو؛ روی هر بازیکن بزن تا پروفایلش را ببینی.'},
+ shop:{ic:'🛍',t:'فروشگاه',b:'حراج روزانه با ۳۰٪ تخفیف — کالبدکارتی سفارشی و ماشین‌حساب سکه هم در Play Hub است.'},
+ admin:{ic:'🛡️',t:'مرکز فرماندهی',b:'۷ دسته و ۳۵+ بخش — همه‌ی امکانات مدیریتی ربات، همین‌جا.'},
+ me:{ic:'👤',t:'پروفایل',b:'شوکیس، تجهیزات و رادار سبک بازی‌ات اینجاست.'},
+ party:{ic:'🎉',t:'پارتی‌هاب',b:'۸ حالت گروهی — برای هر جمعی یک سرگرمی.'}
+};
+function coachShow(page){
+ try{
+  var tip=COACH_TIPS[page];
+  if(!tip)return;
+  var seen=JSON.parse(localStorage.getItem('apex_coach')||'{}');
+  if(seen[page])return;
+  seen[page]=1;
+  localStorage.setItem('apex_coach',JSON.stringify(seen));
+  var el=document.createElement('div');
+  el.id='coach';
+  el.innerHTML='<div class="coach-box">'
+  +'<div class="coach-ic">'+tip.ic+'</div>'
+  +'<b>'+esc(tip.t)+'</b>'
+  +'<p>'+esc(tip.b)+'</p>'
+  +'<button class="btn primary wide sm">متوجه شدم ✓</button></div>';
+  document.body.appendChild(el);
+  var btn=el.querySelector('button');
+  var close=function(){el.classList.add('off');setTimeout(function(){el.remove()},350)};
+  btn.onclick=close;
+  el.onclick=function(e){if(e.target===el)close()};
+  setTimeout(function(){el.classList.add('on')},400);
+ }catch(e){}
+}
+/* نمایش خودکار بعد از هر show() */
+var _coachHooked=false;
+function hookCoach(){
+ if(_coachHooked)return;
+ _coachHooked=true;
+ try{
+  var origShow=null;
+  /* show در هسته تعریف شده — از طریق رویداد بعد-ناوبری */
+  on('nav',function(pg){coachShow(pg)});
+ }catch(e){}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۴) کارت‌های پایان بازی — اتصال به موتور بازی‌ها
+   ════════════════════════════════════════════════════════════════ */
+function triviaEndCard(streak,record){
+ return gameSummaryCard('Trivia زنجیره‌ای',{
+  xp:2+streak*2,coins:0,
+  extra:fa(streak)+' تایی',extraLabel:'زنجیره',
+  share:'🧠 زنجیره‌ی '+fa(streak)+' تایی Trivia در ApexRival زدم! تو از بهترش می‌توانی؟ ⚔️'+(record?' (رکورد جدید!)':'')
+ });
+}
+function tttWinCard(){
+ return gameSummaryCard('دوز',{xp:20,coins:20,extra:null,extraLabel:'',
+  share:'✖️ هوش مصنوعی دوز را در ApexRival شکستم! 🤖⚔️'});
+}
+function mineWinCard(pot,mult){
+ return gameSummaryCard('مین‌یاب',{xp:10,coins:pot,extra:'×'+fa(mult),extraLabel:'ضریب',
+  share:'⛏ در مین‌یاب ApexRival با ضریب ×'+fa(mult)+' برداشت کردم — '+fa(pot)+' سکه! 🎯'});
+}
+function quizEndCard(correct,answer){
+ return gameSummaryCard('کوییز ریاضی',{xp:correct?8:0,coins:0,
+  extra:'= '+fa(answer),extraLabel:'جواب',
+  share:correct?'🧮 کوییز ریاضی امروز ApexRival را درست زدم! ⚡':'🧮 کوییز امروز رکفتم — جواب '+fa(answer)+' بود! دوباره می‌آیم...'});
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۵) شیت راهنمای کلیدهای میان‌بر
+   ════════════════════════════════════════════════════════════════ */
+function keysSheet(){
+ openSheet('<h3>⌨️ کلیدهای میان‌بر</h3>'
+ +'<div class="list">'
+ +[['Ctrl + K','پالت جستجوی همه‌چیز'],
+   ['/','جستجوی سریع (وقتی در ورودی نیستی)'],
+   ['H','خانه'],['G','گیم‌زون'],['P','Play Hub'],
+   ['M','مأموریت‌ها'],['B','رتبه‌بندی'],
+   ['Esc','بستن شیت/مودال/جستجو'],
+   ['Enter','اجرای مورد انتخاب‌شده در جستجو'],
+   ['↑ ↓','حرکت در نتایج جستجو']]
+ .map(function(k){
+  return '<div class="row"><kbd class="cmk" style="position:static;direction:ltr;border:1px solid var(--line2);border-radius:8px;padding:4px 10px;font-size:10px;font-weight:900">'+esc(k[0])+'</kbd>'
+  +'<div class="grow" style="margin-right:10px"><b>'+esc(k[1])+'</b></div></div>'}).join('')
+ +'</div>');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۶) مقالات استراتژی حرفه‌ای — بخش دوم راهنما
+   ════════════════════════════════════════════════════════════════ */
+var STRATEGY=[
+ {ic:'🧠',t:'استراتژی Trivia',body:[
+  'سرعت را فدای دقت نکن — یک غلط، کل زنجیره را می‌سوزاند.',
+  'قانون احتمال: اگر دو گزینه را مطمئنی، بین بقیه انتخاب کن.',
+  'زنجیره‌های ۵ تایی +۲۵ سکه می‌دهند — به ۵ فکر کن نه به ۱۰.',
+  'موضوع‌های عمومی (تاریخ/علوم) معمولاً پایدارتر از موضوعات خاص‌اند.']},
+ {ic:'⚔️',t:'استراتژی دوئل',body:[
+  'اول موضوع‌های قوی خودت را انتخاب کن و ضعیف‌ها را به حریف بگذار.',
+  'جواب‌های بلند و صادقانه بنویس — سیستم کیفیت را می‌سنجد.',
+  'در راندهای پایانی ریسک نکن؛ حفظ امتیاز از گرفتنش راحت‌تر است.']},
+ {ic:'🎯',t:'استراتژی آرنا',body:[
+  'ساعت‌های خلوت روز، صف سریع‌تر و حریف‌های تمرین‌تری دارد.',
+  'بعد از دو باخت پیاپی استراحت بده — ELO با خستگی آب می‌شود.',
+  'گزینه‌ها را قبل از خواندن سوال کامل نگاه کن — الگوها کمک می‌کنند.']},
+ {ic:'🔥',t:'استراتژی Survival',body:[
+  'روزهای اول آسان‌ترین سوال‌ها می‌آیند — بهترین زمان جمع کردن استریک است.',
+  'سپر را برای طوفان نگه دار — پاداش دوبرابر ارزشش را دارد.',
+  'اگر جان کم داری و روز بالایی، برداشت زودهنگام باهوشانه است.']},
+ {ic:'⛏',t:'استراتژی مین‌یاب',body:[
+  'بعد از ۳-۴ خانه امن، ضریب جذاب می‌شود — نقطه‌ی تعادل ریسک/بازده.',
+  'هرگز با سکه‌های آخر وارد نشو — یک انفجار یعنی صفر شدن.',
+  'برداشت زودهنگام مکرر، در بلندمدت سودده‌تر از طمع است.']},
+ {ic:'🎰',t:'استراتژی کازینو',body:[
+  'چرخ رایگان روزانه را هیچ‌وقت فراموش نکن — استریکش پاداش تصاعدی دارد.',
+  'عدد وسط رنج (۴۰-۶۰) شانس فاصله‌ی کم دارد ولی جکپات نمی‌دهد.',
+  'با شرت‌های کوچک شروع کن تا ریتم اعداد را بفهمی.']},
+ {ic:'👥',t:'استراتژی لابی گروهی',body:[
+  'سرگروه خوب، هدف‌ها را عادلانه پخش می‌کند — همه سرگرم می‌مانند.',
+  'جواب‌های خلاقانه و شوخ، لابی را داغ نگه می‌دارد.',
+  'موضوع «ذهنی» برای شروع امن‌تر از «جرئت» است.']},
+ {ic:'💰',t:'استراتژی اقتصادی',body:[
+  'قبل از هر خرید بزرگ، ۲۴ ساعت صبر کن — حراج روزانه ممکن است همان آیتم را ارزان‌تر بدهد.',
+  'بوستر XP را برای روزهایی نگه دار که وقت بازی زیاد داری.',
+  'هدف هفتگی XP بگذار (از تنظیمات) — ذهن به عدد واضح بهتر پاسخ می‌دهد.']},
+ {ic:'📈',t:'استراتژی رشد',body:[
+  'اول مأموریت‌ها را ببین، بعد بازی کن — بعضی بازی‌ها دقیقاً همان مأموریت را پر می‌کنند.',
+  'استریک روزانه بالاترین بازده برای ۱ دقیقه کار است — هیچ‌وقت قطعش نکن.',
+  'مایلستون‌ها خودکار پرداخت می‌شوند؛ فقط چک کن (صفحه‌ی مایلستون).']},
+ {ic:'🏆',t:'استراتژی رتبه‌بندی',body:[
+  'اواخر هفته رقابت تنگ‌تر است — دوشنبه تا چهارشنبه بهترین وقت صعود است.',
+  'رتبه‌ی هفتگی با بازی‌های متنوع سریع‌تر بالا می‌رود.',
+  'ریکاپ هفتگی را ببین — ضعف‌هایت را نشان می‌دهد.']}
+];
+function strategySheet(){
+ openSheet('<h3>♟ استراتژی‌های حرفه‌ای</h3>'
+ +'<input class="input" id="stQ" placeholder="جستجو در استراتژی‌ها..." style="margin-bottom:10px" oninput="stFilter()">'
+ +'<div id="stList">'+accordion(STRATEGY.map(function(s){
+  return {ic:s.ic,t:s.t,body:'<div class="gdbody">'+s.body.map(function(p){
+   return '<p style="margin:7px 0 0;font-size:11px;line-height:2.2;color:var(--muted)">• '+esc(p)+'</p>'}).join('')+'</div>'};
+ }))+'</div>');
+}
+function stFilter(){
+ var q=($('stQ')||{}).value||'';
+ var box=$('stList');if(!box)return;
+ var list=STRATEGY.filter(function(s){return (s.t+' '+s.body.join(' ')).toLowerCase().indexOf(String(q).toLowerCase())>-1});
+ box.innerHTML=accordion(list.map(function(s){
+  return {ic:s.ic,t:s.t,body:'<div class="gdbody">'+s.body.map(function(p){
+   return '<p style="margin:7px 0 0;font-size:11px;line-height:2.2;color:var(--muted)">• '+esc(p)+'</p>'}).join('')+'</div>'};
+ }));
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۷) خطای صفحه با دکمه تلاش مجدد — به جای صفحه‌ی خالی
+   ════════════════════════════════════════════════════════════════ */
+function pageError(retryFn,msg){
+ return '<div class="empty" style="border-color:#ff526833">'
+ +'<svg width="52" height="52" viewBox="0 0 52 52" style="margin:0 auto 8px;display:block;opacity:.6;color:var(--red)">'
+ +'<circle cx="26" cy="26" r="22" fill="none" stroke="currentColor" stroke-width="2"/>'
+ +'<path d="M26 14 v12" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>'
+ +'<circle cx="26" cy="34" r="2" fill="currentColor"/></svg>'
+ +esc(msg||'خطا در بارگذاری')
+ +'<br><br><button class="btn primary sm" onclick="'+retryFn+'">تلاش دوباره</button>'
+ +'<br><small style="color:var(--dim);font-size:8.5px;display:block;margin-top:8px">اگر ادامه داشت، اتصال اینترنت را چک کن — وضعیت بازی‌ات روی سرور محفوظ است.</small></div>';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۸) تبلیغات حمایتی — همان تبلیغات ربات برای کاربران
+   ════════════════════════════════════════════════════════════════ */
+async function userAdsBlock(){
+ try{
+  var d=await api('/api/miniapp/ads');
+  var ads=(d.items||[]).filter(function(a){return a.enabled});
+  if(!ads.length)return '';
+  var a=ads[Math.floor(Math.random()*ads.length)];
+  return '<div class="infobanner info" style="margin-top:4px"><span class="ic">📢</span>'
+  +'<span style="flex:1">'+esc(a.text)+'</span></div>';
+ }catch(e){return ''}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN GRAND — تور راهنمای گام‌به‌گام + هضم هفتگی + تاریخچه‌ی
+   کاربر در پنل ادمین + داشبورد زنده + کارت‌های اشتراک نتیجه
+   ════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════
+   ۱) تور راهنمای تعاملی — ۶ ایستگاه با اسپات‌لایت
+   ════════════════════════════════════════════════════════════════ */
+var TOUR_STEPS=[
+ {sel:'.brand',ic:'👋',t:'سلام قهرمان!',b:'این ApexRival TITAN است — همه‌ی امکانات ربات، داخل یک اپ. بگذار ۶۰ ثانیه‌ای همه‌چیز را نشانت بدهم.'},
+ {sel:'#coinsPill',ic:'🪙',t:'موجودی سکه',b:'همه‌ی خریدها و پاداش‌ها همین‌جا جمع می‌شود — دقیقاً همان حساب ربات.'},
+ {sel:'#srchBtn',ic:'🔎',t:'پالت جستجو',b:'با Ctrl+K یا همین دکمه، به هر صفحه/بازی/اقدامی یک لمس فاصله داری.'},
+ {sel:'nav.bottom button[data-pg="games"]',ic:'🕹',t:'گیم‌زون',b:'۱۰ بازی کامل داخل اپ — دکمه‌ی 🎓 راهنمای هر بازی را نشان می‌دهد.'},
+ {sel:'nav.bottom button[data-pg="miss"]',ic:'🎯',t:'مأموریت‌ها',b:'نشان قرمز یعنی پاداش آماده‌ی دریافت — هر روز سر بزن.'},
+ {sel:'nav.bottom button[data-pg="me"]',ic:'👤',t:'پروفایل تو',b:'شوکیس دستاوردها، قاب آواتار و رادار سبک بازی‌ات اینجاست.'}
+];
+var TOURI=0;
+function tourStart(){
+ TOURI=0;
+ try{localStorage.setItem('apex_tour','1')}catch(e){}
+ tourShow();
+}
+function tourShow(){
+ var old=$('tour');if(old)old.remove();
+ var st=TOUR_STEPS[TOURI];
+ if(!st){tourEnd();return}
+ var target=null;
+ try{target=document.querySelector(st.sel)}catch(e){}
+ var el=document.createElement('div');
+ el.id='tour';
+ el.innerHTML='<div class="tour-card">'
+ +'<div class="tour-ic">'+st.ic+'</div>'
+ +'<b>'+esc(st.t)+'</b>'
+ +'<p>'+esc(st.b)+'</p>'
+ +'<div class="dots">'+TOUR_STEPS.map(function(_,i){return '<i'+(i===TOURI?' class="on"':'')+'></i>'}).join('')+'</div>'
+ +'<div style="display:flex;gap:8px">'
+ +'<button class="btn sm" style="flex:1" onclick="tourEnd()">رد کردن</button>'
+ +'<button class="btn primary sm" style="flex:2" onclick="TOURI++;tourShow()">'+(TOURI===TOUR_STEPS.length-1?'شروع بازی ⚡':'بعدی ›')+'</button></div></div>';
+ document.body.appendChild(el);
+ setTimeout(function(){el.classList.add('on')},60);
+ if(target){
+  try{
+   target.scrollIntoView({behavior:'smooth',block:'center'});
+   var r=target.getBoundingClientRect();
+   var spot=document.createElement('div');
+   spot.id='tourSpot';
+   spot.style.cssText='position:fixed;top:'+(r.top-8)+'px;left:'+(r.left-8)+'px;width:'+(r.width+16)+'px;height:'+(r.height+16)+'px;border-radius:18px;box-shadow:0 0 0 9999px #04050cbb;transition:all .5s var(--ease);z-index:174;border:2px solid var(--c3)';
+   el.appendChild(spot);
+  }catch(e){}
+ }
+}
+function tourEnd(){
+ var el=$('tour');if(el){el.classList.remove('on');setTimeout(function(){el.remove()},400)}
+ toast('هر وقت خواستی، تور را از راهنما دوباره ببین 👋','ok');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۲) هضم هفتگی — سنتز recap + stats + history در یک گزارش
+   ════════════════════════════════════════════════════════════════ */
+async function renderDigest(){
+ var g=renderGen();
+ var el=$('pg-recap');
+ el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/recap');
+  if(isStale(g))return;
+  var u=D.user||{};
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">📋</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1 grad" style="margin:0">هضم هفتگی</h1>'
+  +'<p class="sub">گزارش کامل عملکرد — از دفتر XP زنده‌ی ربات</p></div></div>'
+  +'<div class="grid g4" style="margin-top:12px">'
+  +st('XP هفته','dg_x',d.week_xp)+st('رتبه','dg_r',d.week_rank?('#'+d.week_rank):'—')
+  +st('فعالیت','dg_a',d.activity_count)+st('استریک','dg_s',d.streak)+'</div></div>';
+  /* گیج عملکرد */
+  h+='<div class="card">'+gaugeBlock(Math.min(d.week_xp||0,2000),2000,'XP این هفته','#7c5cff')+'</div>';
+  /* شش‌ضلعی سلامت هفته */
+  h+='<div class="grid g4" style="margin-bottom:12px">'
+  +st('بازی','dg_g',d.games)+st('برد','dg_w',d.wins)+st('دوئل','dg_d',d.duels)+st('مینی‌گیم','dg_m',d.mini_games)+'</div>';
+  /* رادار عملکرد */
+  var s=D.stats||{};
+  h+='<div class="card"><div class="shead" style="padding:0"><b>🕸 رادار سبک بازی (همه‌ی زمان‌ها)</b><small>RADAR</small></div>'
+  +radarBlock(['حقیقت','جرئت','شوخ','سرعت','رأی'],[{data:[s.truth||0,s.dare||0,s.flirty||0,s.speed||0,s.vote||0],color:'#15d8ff'}],210)+'</div>';
+  /* قهرمانان */
+  if((d.top||[]).length){
+   h+='<div class="shead" style="margin-top:16px"><b>🏆 قهرمانان هفته</b><small>TOP 5</small></div><div class="list">';
+   d.top.forEach(function(x){
+    h+='<div class="row"><div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
+    +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>⭐ '+faK(x.xp)+' XP</small></div></div>';
+   });
+   h+='</div>';
+  }
+  /* کارت اشتراک */
+  h+='<button class="btn primary wide glow" style="margin-top:14px" onclick="recapShareCardSafe()">📤 ساخت کارت اشتراک هضم</button>';
+  setPageHTML('recap',h,g);
+  countUp($('dg_x'),d.week_xp);countUp($('dg_a'),d.activity_count);
+  countUp($('dg_g'),d.games);countUp($('dg_w'),d.wins);countUp($('dg_d'),d.duels);countUp($('dg_m'),d.mini_games);
+ }catch(e){if(!isStale(g))el.innerHTML=pageError('renderDigest()',e.message)}
+}
+function recapShareCardSafe(){
+ var d=window._LAST_RECAP||{};
+ openSheet('<h3>📤 کارت هضم هفتگی</h3>'
+ +'<div class="card sharecard" style="text-align:center">'
+ +'<b style="font-size:14px">'+esc((D.user||{}).name||'بازیکن')+' — هفته‌ی گذشته</b>'
+ +'<div class="grid g4" style="margin-top:12px">'
+ +'<div class="stat"><small>XP</small><b style="color:var(--c3)">+'+faK(d.week_xp||0)+'</b></div>'
+ +'<div class="stat"><small>بازی</small><b>'+fa(d.games||0)+'</b></div>'
+ +'<div class="stat"><small>برد</small><b style="color:var(--green)">'+fa(d.wins||0)+'</b></div>'
+ +'<div class="stat"><small>رتبه</small><b>'+(d.week_rank?'#'+fa(d.week_rank):'—')+'</b></div></div></div>'
+ +'<button class="btn primary wide" onclick="shareText(\'📋 هضم هفتگی‌ام در ApexRival: +'+faK(d.week_xp||0)+' XP · '+fa(d.games||0)+' بازی · '+fa(d.wins||0)+' برد'+(d.week_rank?' · رتبه #'+fa(d.week_rank):'')+' — تو هم گزارشت را بساز! ⚔️\')">✈️ اشتراک کارت</button>');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۳) تاریخچه‌ی کاربر در شیت ادمین — تایم‌لاین + دستاوردها + رادار
+   ════════════════════════════════════════════════════════════════ */
+async function userHistorySheet(uid){
+ openSheet('<h3>📜 تاریخچه‌ی بازیکن</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=user_history&uid='+Number(uid));
+  var h='<h3>📜 تاریخچه‌ی بازیکن</h3>';
+  /* رادار مودها */
+  var m=d.modes||{};
+  if(m.truth||m.dare||m.flirty||m.speed||m.vote){
+   h+='<div class="card"><div class="shead" style="padding:0"><b>🕸 رادار سبک</b></div>'
+   +radarBlock(['حقیقت','جرئت','شوخ','سرعت','رأی'],[{data:[m.truth||0,m.dare||0,m.flirty||0,m.speed||0,m.vote||0],color:'#ff4fa3'}],190)+'</div>';
+  }
+  /* دستاوردها */
+  if((d.achievements||[]).length){
+   h+='<div class="shead" style="padding:0;margin-top:12px"><b>🏅 دستاوردها</b><small>'+fa(d.achievements.length)+' عدد</small></div><div class="chips" style="margin:8px 0 0">';
+   d.achievements.forEach(function(a){
+    h+='<span class="tag cy">'+a.icon+' '+esc(a.title)+'</span>';
+   });
+   h+='</div>';
+  }
+  /* تایم‌لاین */
+  if((d.history||[]).length){
+   h+='<div class="shead" style="padding:0;margin-top:14px"><b>📜 آخرین بازی‌ها</b><small>HISTORY</small></div><div class="card"><div class="tl">';
+   d.history.forEach(function(x){
+    h+='<div class="ev"><div class="b">'+({'trivia':'🧠','word':'📝','number':'🔢','memory':'🃏','reaction':'⚡','ttt':'✖️','mine':'⛏','quiz':'🧮','luck':'🍀','ln':'🎰','survival':'🔥','lobby':'👥','duel':'🤺','arena':'🏆','love':'💌'}[x.mode]||'🎮')+'</div>'
+    +'<div class="grow"><b>'+esc(x.mode)+' · '+esc(x.result||'—')+'</b>'
+    +'<small>+⭐'+fa(x.xp)+' · +🪙'+fa(x.coins)+' · '+faDateTime(x.ts)+'</small></div></div>';
+   });
+   h+='</div></div>';
+  }else h+='<div class="empty" style="margin-top:12px"><span class="ei">📭</span>این بازیکن هنوز بازی‌ای ثبت نکرده.</div>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۴) داشبورد زنده‌ی ادمین — رفرش خودکار ۱۵ ثانیه‌ای
+   ════════════════════════════════════════════════════════════════ */
+function admLiveDash(d){
+ var h='<div class="adm-grid" style="margin-bottom:12px">'
+ +kpi('👥','کل کاربران',faK(d.users))
+ +kpi('🔥','فعال امروز',faK(d.today.active_users))
+ +kpi('🎮','بازی جدید امروز',faK(d.today.games_started))
+ +kpi('🌱','عضو جدید',faK(d.today.new_users))
+ +kpi('🪙','درآمد امروز',faK(d.today.coins_earned))
+ +kpi('🤺','دوئل امروز',faK(d.today.duels))+'</div>';
+ if((d.week||[]).length){
+  h+='<div class="card"><div class="shead" style="padding:0"><b>📈 روند ۷ روزه</b><small>WEEK</small></div>'
+  +lineBlock([
+   {data:(d.week||[]).map(function(w){return w.games}),color:'#7c5cff'},
+   {data:(d.week||[]).map(function(w){return w.active}),color:'#15d8ff'}
+  ],null,150)+'</div>';
+ }
+ h+='<div class="card" style="margin-top:10px;text-align:center;display:flex;align-items:center;gap:10px;justify-content:center">'
+ +'<span class="tag cy" id="livePulse">● LIVE</span>'
+ +'<small style="color:var(--muted);font-size:9px">هر ۱۵ ثانیه خودکار تازه می‌شود</small>'
+ +'<button class="btn sm" onclick="adminPage(\'home\')">🔄 الان</button></div>';
+ return h;
+}
+/* رفرش خودکار داشبورد وقتی کاربر روی home است */
+setInterval(function(){
+ if(PAGE==='admin'&&ADMINTAB==='home'&&document.visibilityState==='visible'){
+  try{adminPage('home')}catch(e){}
+ }
+},15000);
+
+/* ════════════════════════════════════════════════════════════════
+   ۵) کارت‌های اشتراک نتیجه — دوئل/آرنا/لابی
+   ════════════════════════════════════════════════════════════════ */
+function duelShareCard(du){
+ var me=(D.user||{}).id||0;
+ var won=du.winner===me;
+ openSheet('<h3>📤 کارت دوئل</h3>'
+ +'<div class="card sharecard" style="text-align:center">'
+ +'<div style="font-size:30px;margin-bottom:6px">'+(won?'🏆':'🏁')+'</div>'
+ +'<b style="font-size:13px">'+esc(du.a.name)+' '+fa(du.a.score)+' — '+fa(du.b?du.b.score:0)+' '+(du.b?esc(du.b.name):'؟')+'</b>'
+ +'<div class="sub" style="margin-top:6px">'+(won?'👑 قهرمان دوئل!':'دوئل کامل شد — دوباره می‌جنگم!')+'</div></div>'
+ +'<button class="btn primary wide" onclick="shareText(\'🤺 دوئل ApexRival: '+esc(du.a.name)+' '+fa(du.a.score)+' - '+fa(du.b?du.b.score:0)+' '+(du.b?esc(du.b.name):'؟')+(won?' — من بردم! ⚔️':'')+'\')">✈️ اشتراک نتیجه</button>');
+}
+function arenaShareCard(f){
+ var me=(D.user||{}).id||0;
+ openSheet('<h3>📤 کارت نبرد آرنا</h3>'
+ +'<div class="card sharecard" style="text-align:center">'
+ +'<div style="font-size:30px;margin-bottom:6px">'+(f.winner===me?'🏆':'🎯')+'</div>'
+ +'<b style="font-size:13px">'+esc(f.winner_name)+' برنده شد</b>'
+ +'<div class="sub" style="margin-top:6px">'+fa(f.score[0])+' - '+fa(f.score[1])+' · ELO جدید: '+fa(f.new_elo)+(f.promo?' · 🎉 ارتقای لیگ!':'')+'</div></div>'
+ +'<button class="btn primary wide" onclick="shareText(\'🏆 نبرد آرنا ApexRival: '+esc(f.winner_name)+' ('+fa(f.score[0])+'-'+fa(f.score[1])+') · ELO جدید '+fa(f.new_elo)+(f.promo?' · ارتقای لیگ!':'')+' — چالشت می‌کنم! ⚔️\')">✈️ اشتراک نتیجه</button>');
+}
+function lobbyShareCard(lb){
+ openSheet('<h3>📤 کارت لابی</h3>'
+ +'<div class="card sharecard" style="text-align:center">'
+ +'<div style="font-size:30px;margin-bottom:6px">🏁</div>'
+ +'<b style="font-size:13px">لابی '+esc(lb.code)+' — پایان بازی</b>'
+ +'<div class="sub" style="margin-top:6px">'+fa(lb.round)+' راند · '+fa(lb.players.length)+' بازیکن</div></div>'
+ +'<button class="btn primary wide" onclick="shareText(\'🏁 بازی گروهی ApexRival تمام شد — '+fa(lb.round)+' راند هیجان با '+fa(lb.players.length)+' بازیکن! کد لابی جدید می‌سازم، بیا 👥\')">✈️ اشتراک نتیجه</button>');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۶) فروشگاه — پیش‌نمایش تجهیز روی آواتار و نام
+   ════════════════════════════════════════════════════════════════ */
+function buySheetPreview(i,price,deal,afford){
+ var u=D.user||{};
+ var photo=null;try{if(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.photo_url)photo=tg.initDataUnsafe.user.photo_url}catch(e){}
+ var preview='';
+ if(i.cat==='theme'||i.kind==='theme'){
+  var f={'theme_neon':'neon','theme_rainbow':'rainbow','theme_gold':'gold','theme_fire':'fire','theme_ice':'ice'}[i.key]||'neon';
+  preview='<div class="card" style="text-align:center;margin-bottom:12px"><div class="sub" style="margin-bottom:8px">👁 پیش‌نمایش روی آواتار تو:</div>'
+  +'<div style="display:flex;justify-content:center">'+avaHtml({id:u.id,name:u.name,photo:photo,frame:f},'lg')+'</div></div>';
+ }else if(i.cat==='title'||i.kind==='title'){
+  preview='<div class="card" style="text-align:center;margin-bottom:12px"><div class="sub" style="margin-bottom:8px">👁 پیش‌نمایش کنار اسمت:</div>'
+  +'<div style="display:flex;justify-content:center;align-items:center;gap:9px">'+avaHtml({id:u.id,name:u.name,photo:photo},'sm')
+  +'<div><b>'+esc(u.name||'بازیکن')+'</b><div class="sub">'+esc(i.name)+'</div></div></div></div>';
+ }
+ return preview;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۷) صدا — کنترل بلندی هر افکت
+   ════════════════════════════════════════════════════════════════ */
+var SND_VOLS={};
+try{SND_VOLS=JSON.parse(localStorage.getItem('apex_vols')||'{}')}catch(e){SND_VOLS={}}
+function sndVol(name,v){
+ SND_VOLS[name]=v;
+ try{localStorage.setItem('apex_vols',JSON.stringify(SND_VOLS))}catch(e){}
+ toast('بلندی «'+({'tap':'لمس','ok':'موفقیت','err':'خطا','coin':'سکه','win':'برد','lose':'باخت','level':'سطح','whoosh':'ورود'}[name]||name)+'» = '+fa(Math.round(v*100))+'٪','ok');
+}
+/* اعمال بلندی‌ها روی توابع */
+(function(){
+ var _base={};
+ ['tap','ok','err','coin','win','lose','level','whoosh','spin','tick','pop'].forEach(function(n){
+  if(typeof SND[n]==='function'){
+   _base[n]=SND[n];
+   SND[n]=function(){
+    var v=SND_VOLS[n];
+    if(v===0)return;                    /* خاموش */
+    if(v!=null&&v<1){                   /* کم‌صدا: فقط بعضی نت‌ها */
+     if(Math.random()>v)return;
+    }
+    return _base[n].apply(SND,arguments);
+   };
+  }
+ });
+})();
+function sndVolSheet(){
+ var events=[['tap','🔊 لمس'],['ok','✅ موفقیت'],['err','⚠️ خطا'],['coin','🪙 سکه'],['win','🏆 برد'],['lose','💔 باخت'],['level','⬆️ سطح'],['whoosh','💨 ورود']];
+ openSheet('<h3>🎚 بلندی افکت‌ها</h3>'
+ +'<p class="sub" style="margin-bottom:12px">برای هر افکت، میزان حضورش را تنظیم کن (۱۰۰٪ = همیشه).</p><div class="list">'
+ +events.map(function(e){
+  var v=SND_VOLS[e[0]];
+  if(v==null)v=1;
+  var pct=Math.round(v*100);
+  return '<div class="row"><div class="grow"><b>'+e[1]+'</b>'
+  +'<div class="bar thin" style="margin-top:6px" id="sv-'+e[0]+'"><i style="width:'+pct+'%"></i></div></div>'
+  +'<div class="chips" style="margin:0">'
+  +[0,50,100].map(function(p2){
+   return '<button class="chip'+(pct===p2?' on':'')+'" onclick="sndVol(\''+e[0]+'\','+(p2/100)+');sndVolSheet()">'+fa(p2)+'٪</button>'}).join('')
+  +'</div></div>';
+ }).join('')+'</div>');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۸) تور در راهنما + ورودی‌های جدید
+   ════════════════════════════════════════════════════════════════ */
+CMD_ITEMS.push(
+ {ic:'🧭',t:'تور راهنما',s:'۶۰ ثانیه‌ی آشنایی با اپ',fn:"tourStart()"},
+ {ic:'🎚',t:'بلندی افکت‌ها',s:'کنترل دقیق هر صدا',fn:"sndVolSheet()"},
+ {ic:'📊',t:'هضم هفتگی',s:'گزارش کامل عملکرد',fn:"show('recap',{force:true})"},
+ {ic:'📜',t:'تاریخچه‌ی بازیکن (ادمین)',s:'تایم‌لاین + رادار',fn:"show('admin',{force:true})",adm:1}
+);
+
+/* ---------- اتصال نهایی ---------- */
+function renderRecap(){return renderDigest()}
+/* داشبورد فرماندهی = داشبورد زنده + مانیتور + نقشه فرمان */
+function admMonitorTiles(){
+ return '<div class="card" style="margin-bottom:12px"><div class="shead" style="padding:0">'
+ +'<b>📡 مانیتور زنده</b><small>MONITOR</small></div>'
+ +'<div class="adm-grid" style="margin-top:10px">'
+ +'<button class="adm-tile" onclick="admGo(\'duels\')"><span class="ti">🤺</span><b>دوئل‌های زنده</b><small>مانیتور و بستن اجباری</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'lobbies\')"><span class="ti">👥</span><b>لابی‌های زنده</b><small>بازیکنان و فازها</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'trades\')"><span class="ti">🔄</span><b>تجارت‌ها</b><small>در انتظار پاسخ</small></button>'
+ +'<button class="adm-tile" onclick="admGo(\'tournaments\')"><span class="ti">🏟</span><b>مسابقات</b><small>وضعیت و پایان</small></button></div></div>';
+}
+function admCommandMap(){
+ var h='<div class="section"><div class="shead"><b>🗂 نقشه‌ی فرمان</b><small>۷ دسته / ۳۵+ بخش</small></div><div class="adm-grid">';
+ ACAT.forEach(function(c){
+  h+='<div class="card" style="grid-column:1/-1;margin-bottom:9px"><div class="shead" style="padding:0"><b>'+c.ic+' '+c.t+'</b><small>'+fa(c.secs.length)+' بخش</small></div><div class="adm-grid">';
+  c.secs.forEach(function(k){
+   var m=ASEC[k];
+   if(m)h+='<button class="adm-tile" onclick="admGo(\''+k+'\')"><span class="ti">'+m[0]+'</span><b>'+m[1]+'</b><small>'+m[2]+'</small></button>';
+  });
+  h+='</div></div>';
+ });
+ return h+'</div></div>';
+}
+function admHome(d){
+ var h=admLiveDash(d);
+ h+=admMonitorTiles();
+ h+=admCommandMap();
+ return h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN CONTENT — محتوای گسترش‌یافته: پرسش‌ها، واژه‌نامه،
+   استراتژی‌ها، مثال دستورات، موضوعات راهنما، یادداشت انتشار
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- پرسش‌های پرتکرار: ۸ مورد جدید ---------- */
+FAQ.push(
+ ['حالت روشن (Light Mode) چیست؟','تمام اپ با پس‌زمینه‌ی روشن و کنتراست استاندارد بازطراحی می‌شود — برای استفاده در روز و نور مستقیم آفتاب. از تنظیمات یا شیت تم قابل تغییر است.'],
+ ['۸ تم رنگی چه تفاوتی دارند؟','فقط پالت رنگی برند عوض می‌شود — شفق (بنفش-آبی)، غروب، اقیانوس، زمرد، سلطنتی، ساکورا، نیمه‌شب و کهربا. علاوه بر آن می‌توانی رنگ سفارشی خودت را هم انتخاب کنی.'],
+ ['رادار سبک بازی چه می‌گوید؟','پنج محور حقیقت/جرئت/شوخ‌باش/سرعتی/رأی‌گیری — نمایش می‌دهد در کدام حالت‌ها فعال‌تر بوده‌ای تا بازی بعدی‌ات را متناسب انتخاب کنی.'],
+ ['کارت هضم هفتگی چیست؟','گزارش مصور یک‌صفحه‌ای از عملکرد هفته‌ات: XP، بازی، برد، رتبه — قابل اشتراک‌گذاری در گروه‌ها برای چالش دوستان.'],
+ ['تفاوت رتبه‌بندی هفتگی و فصلی؟','هفتگی هر دوشنبه ریست می‌شود و «فعالیت این هفته» را می‌سنجد؛ فصلی تا پایان فصل ادامه دارد و پاداش‌های بزرگ‌تری دارد.'],
+ ['چرا بعضی صفحات خودکار تازه می‌شوند؟','لابی، دوئل، آرنا و وال اجتماعی polling زنده دارند — بدون رفرش دستی. اما نوشته‌ی در حال تایپ تو هرگز پاک نمی‌شود؛ فقط بخش‌های زنده به‌روز می‌شوند.'],
+ ['اگر پیام ادمین بیاید کجا می‌بینم؟','در صندوق اعلان‌ها ( زنگ بالای اپ ) با آیکون 📩 — همان موتور اعلان ربات.'],
+ ['بین سکوهای مختلف کازینو کدام بهتر است؟','جکپات دقیق ×۲۵ نادر است؛ اگر دنبال ثبات هستی عددی بزن که به میانگین اخیر نزدیک باشد — تاریخچه‌ی اعداد را در صفحه‌ی کازینو ببین.']
+);
+
+/* ---------- واژه‌نامه: ۱۵ اصطلاح جدید ---------- */
+GLOSSARY.push(
+ ['شتاب‌دهنده','شیت میان‌بر برای سریع‌ترین پاداش‌های روز — پاداش روزانه، استریک، گردونه و…'],
+ ['تور راهنما','۶ ایستگاه ۶۰ ثانیه‌ای که اپ را با اسپات‌لایت نشانت می‌دهد — از مرکز راهنما.'],
+ ['کوچ-مارک','نکته‌ی اولین بازدید هر صفحه — فقط یک بار نمایش داده می‌شود.'],
+ ['هضم هفتگی','سنتز recap + آمار + تاریخچه در یک گزارش مصور.'],
+ ['رنگ سفارشی','رنگ اصلی اپ را خودت انتخاب می‌کنی — روی همه‌ی تم‌ها اعمال می‌شود.'],
+ ['بلندی افکت‌ها','کنترل درصدی حضور هر صدای اپ — از تنظیمات صدا.'],
+ ['ماشین‌حساب سکه','ابزار «چه چیزی می‌توانم بخرم؟» بر اساس موجودی فعلی.'],
+ ['برنامه‌ریز XP','فهرست مؤثرترین مسیرهای رشد بر اساس جدول پاداش واقعی ربات.'],
+ ['هدف هفتگی','XP هدفی که خودت تعیین می‌کنی و نوار پیشرفتش در خانه است.'],
+ ['کمربند ELO','دسته‌بندی مهارت آرنا از <۱۰۰۰ تا ۱۶۰۰+ — در پنل ادمین قابل مشاهده.'],
+ ['سلامت اقتصادی','بررسی ادمین از مقادیر نامعتبر مثل سکه‌ی منفی یا XP سرریز.'],
+ ['مانیتور زنده','بخش ادمین برای رصد دوئل/لابی/تجارت/مسابقات در حال اجرا.'],
+ ['دکتر داده','ابزار تشخیص و اصلاح ساختار داده‌های ربات — از پنل امنیت.'],
+ ['موتور نبض','سیستم رفرش خودکار پنل‌های زنده‌ی ربات — فاصله‌اش قابل تنظیم است.'],
+ ['دیپ‌لینک','لینک ورود مستقیم به لابی/دوئل — از دکمه‌ی دعوت ساخته می‌شود.']
+);
+
+/* ---------- استراتژی: ۴ مقاله‌ی جدید ---------- */
+STRATEGY.push(
+ {ic:'🎲',t:'استراتژی پارتی‌هاب',body:[
+  'معماهای ایموجی را سریع جواب نده — سه ثانیه فکر کن، دقت از سرعت مهم‌تر است.',
+  '«می‌کردی؟» ها را در گروه اشتراک بگذار تا رأی‌گیری سراسری داغ شود.',
+  'نکته‌های طلایی را ذخیره کن — موقع لابی کردن به کار می‌آیند.']},
+ {ic:'🛡',t:'استراتژی ادمینی',body:[
+  'قبل از هر تغییر بزرگ، بکاپ فوری بگیر — از اقدامات سریع.',
+  'دکتر داده را هفتگی اجرا کن؛ مشکلات ساختاری را زود می‌گیرد.',
+  'داشبورد زنده را باز نگه دار — رشد/افت فعالیت را لحظه‌ای می‌بینی.']},
+ {ic:'🎨',t:'شخصی‌سازی حرفه‌ای',body:[
+  'رنگ سفارشی را با تم «نیمه‌شب» امتحان کن — کنتراست عالی برای شب.',
+  'اگر انیمیشن‌ها اذیتت می‌کند، از تنظیمات خاموشش کن — اپ چابک‌تر می‌شود.',
+  'حالت بی‌صدا برای جلسات؛ پروفایل «ملایم» برای روزمره بهترین است.']},
+ {ic:'📊',t:'خواندن آمار مثل حرفه‌ای‌ها',body:[
+  'نرخ برد زیر ۴۵٪ یعنی باید حالت‌های متنوع‌تر بازی کنی.',
+  'رادار نامتوازن (فقط یک محور پر) یعنی در حال تکراری کردن هستی.',
+  'ELO ثابت با بازی زیاد یعنی وقت تغییر ساعت بازی است.']}
+);
+
+/* ---------- موضوعات راهنما: ۶ موضوع جدید ---------- */
+GUIDE_TOPICS.push(
+ {ic:'🔄',t:'استاد تجارت',s:'تبادل هوشمند',body:[
+  'فقط با بازیکن‌های فعال تجارت کن — درخواست‌های معلق بیشتر از ۲ روز را لغو کن.',
+  'قاب‌ها و لقب‌های کمیاب را برای تجارت‌های بزرگ نگه دار.',
+  'قبل از قبول، هر دو سمت را دقیق بخوان — «او می‌دهد» و «در برابر می‌گیری».']},
+ {ic:'🎉',t:'پارتی‌مستر شو',s:'بازی‌های گروهی',body:[
+  '۸ حالت پارتی‌هاب را بچرخان — تکراری شدن، جمع را خسته می‌کند.',
+  'معماها را با جایزه‌ی نمادی (اعتبار گروهی) همراه کن.',
+  '«هرگز نشده» های تازه را در وال اجتماعی هم اشتراک بگذار.']},
+ {ic:'🌐',t:'فصل‌ها و رویدادها',s:'ساختار فصلی',body:[
+  'فصل‌ها چند هفته‌ای‌اند؛ XP فصلی جدا از XP کلی حساب می‌شود.',
+  'پایان فصل = پاداش به رتبه‌بندی فصلی — اواخر فصل جدی بجنگ.',
+  'رویدادهای فعال در صفحه‌ی «فصل و رویداد» اعلام می‌شوند.']},
+ {ic:'🔔',t:'مدیریت اعلان‌ها',s:'فقط چیزی که می‌خواهی',body:[
+  'اعلان‌ها چهار دسته‌اند و هر کدام جدا قابل خاموش‌کردن.',
+  'میوت گروهی تگ شدن را قطع می‌کند ولی اعلان‌های خصوصی می‌آید.',
+  'BRB حالت «موجود نیستم» است — ماه کنار اسمت می‌افتد.']},
+ {ic:'🛡',t:'راهنمای ادمین',s:'مرکز فرماندهی',body:[
+  '۷ دسته و ۳۵+ بخش: از کاربران و دسترسی‌ها تا محافظ بانک و موتور نبض.',
+  'مانیتور زنده دوئل/لابی/تجارت/مسابقات را رصد می‌کند و بستن اجباری دارد.',
+  'ریست کارخانه با تأیید دومرحله‌ای و بکاپ خودکار — با احتیاط!']},
+ {ic:'📱',t:'می‌نی‌اپ در برابر ربات',s:'چه چیزی کجاست؟',body:[
+  'هیچ چیز! همه‌ی ۸۸+ دستور ربات معادل اپلیکیشنی دارند — مرجع دستورات را ببین.',
+  'مزیت اپ: رابط زنده، نمودارها، و بی‌نیاز از تایپ دستور.',
+  'هر دو به یک مرکز داده وصل‌اند — هر کجا راحت‌تری.']}
+);
+
+/* ---------- مثال‌های بیشتر برای دستورات ---------- */
+CMD_EX['/apexmatchmaking']='/apexmatchmaking — وارد صف آرنا می‌شوی';
+CMD_EX['/apexsurvival']='/apexsurvival nightmare — بقا در سختی کابوس';
+CMD_EX['/apexteams']='/apexteams — بازی تیمی با دو گروه';
+CMD_EX['/apexrecap']='/apexrecap — ریکاپ هفتگی‌ات';
+CMD_EX['/apexhof']='/apexhof — تالار افسانه‌ها';
+CMD_EX['/apexmilestones']='/apexmilestones — پاداش‌های مسیر';
+CMD_EX['/apexhistory']='/apexhistory — بازی‌های اخیر';
+CMD_EX['/apexseason']='/apexseason — فصل جاری و رتبه‌ات';
+CMD_EX['/apexdice']='/apexdice — تاس بریز';
+CMD_EX['/apexcoin']='/apexcoin — شیر یا خط';
+CMD_EX['/apex8ball']='/apex8ball امشب شانسم خوبه؟ — بپرس';
+CMD_EX['/apexname']='/apexname نام جدید — تغییر نام';
+CMD_EX['/apexcompare']='/apexcompare @دوست — مقایسه آمار';
+CMD_EX['/apexping']='/apexping — سرعت پاسخ ربات';
+CMD_EX['/apexabout']='/apexabout — درباره‌ی ربات';
+CMD_EX['/apexid']='/apexid — آیدی عددی خودت';
+CMD_EX['/apexrules']='/apexrules — قوانین';
+CMD_EX['/apexmodes']='/apexmodes — توضیح حالت‌ها';
+CMD_EX['/apexbrb']='/apexbrb 30 — ۳۰ دقیقه نیستم';
+CMD_EX['/apexbirthday']='/apexbirthday 2000-05-15 — ثبت تولد';
+
+/* ════════════════════════════════════════════════════════════════
+   یادداشت انتشار — صفحه‌ی «درباره‌ی اپ»
+   ════════════════════════════════════════════════════════════════ */
+var CHANGELOG=[
+ {v:'۵.۰ «TITAN»',ic:'🛡',items:[
+  'معماری جدید ضد-رقابت: هیچ رندری قدیمی نمی‌تواند نمای جدید را بازنویسی کند',
+  'پایش غیرمخرب: تایپ در لابی/دوئل هرگز پاک نمی‌شود (رفع کامل باگ اصلی)',
+  'پشته‌ی ناوبری واقعی + دکمه‌ی برگشت تلگرام هوشمند',
+  'بازیابی کامل وضعیت بعد از رفرش/بستن اپ',
+  'پنل ادمین کامل: ۷ دسته / ۳۵+ بخش — آینه‌ی پنل ربات',
+  '۸ تم + حالت روشن + رنگ سفارشی + ۳ اندازه متن',
+  'موتور نمودار کانواس: خطی/ستونی/دونات/رادار/گیج/هیت‌مپ',
+  'تور راهنما + کوچ-مارک + مرکز راهنمای ۲۰ موضوعی + واژه‌نامه + FAQ',
+  'برنامه‌ریز XP + ماشین‌حساب سکه + شتاب‌دهنده‌ی روزانه',
+  'تاریخ شمسی کامل + کارت‌های اشتراک + بلندی صدای تفکیکی'
+ ]},
+ {v:'۴.۰ «OMEGA»',ic:'⚡',items:[
+  'موتور صدا WebAudio + ۵ تم + پالت فرمان Ctrl+K',
+  '۲۳ قابلیت جدید: تاریخچه، رقبا، تجارت، مسابقات، وال، پارتی‌هاب و…',
+  'آنبوردینگ + ریکاپ هفتگی + تنظیمات کامل'
+ ]},
+ {v:'۳.۰ «ARENA»',ic:'🎯',items:[
+  'همه‌ی بازی‌های ربات داخل مینی‌اپ — خروج به ربات حذف شد',
+  'لابی چندنفره + دوئل + آرنا + بقا + عشق‌سنج',
+  '۴۸ مسیر API جدید با همان پاداش‌های ربات'
+ ]},
+ {v:'۲.۰ «ULTRA»',ic:'🚀',items:[
+  'بازطراحی نئونی + ۱۰ صفحه + اسکلتون + کانفتی',
+  'احراز هویت ضد-replay + rate-limiter + لاگ ساختاریافته'
+ ]}
+];
+function renderAbout(){
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi pulse">🛡️</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1 grad" style="margin:0">ApexRival TITAN</h1>'
+ +'<p class="sub">نسخه ۵.۰ — مینی‌اپ کامل، مستقل و هم‌تراز با ربات</p></div></div></div>';
+ /* مشخصات فنی */
+ h+='<div class="card"><div class="shead" style="padding:0"><b>⚙️ مشخصات</b><small>TECH</small></div>'
+ +'<div class="grid g2" style="margin-top:10px">'
+ +'<div class="stat"><small>صفحات</small><b>'+fa(30)+'</b></div>'
+ +'<div class="stat"><small>بازی‌های اپ</small><b>'+fa(10)+'</b></div>'
+ +'<div class="stat"><small>بخش‌های ادمین</small><b>'+fa(35)+'+</b></div>'
+ +'<div class="stat"><small>تم‌ها</small><b>'+fa(8)+'+رنگ</b></div>'
+ +'<div class="stat"><small>دستورات هم‌تراز</small><b>'+fa(88)+'</b></div>'
+ +'<div class="stat"><small>نمودارها</small><b>'+fa(7)+' نوع</b></div></div></div>';
+ /* یادداشت انتشار */
+ CHANGELOG.forEach(function(c){
+  h+='<div class="section"><div class="shead"><b>'+c.ic+' نسخه '+esc(c.v)+'</b><small>'+fa(c.items.length)+' مورد</small></div>'
+  +accordion([{ic:c.ic,t:'امکانات این نسخه',body:'<div class="gdbody">'+c.items.map(function(i){
+   return '<p style="margin:6px 0 0;font-size:11px;line-height:2.1;color:var(--muted)">• '+esc(i)+'</p>'}).join('')+'</div>'}]);
+  h+='</div>';
+ });
+ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);line-height:2.1">'
+ +'💳 ساخته‌شده با Telegram WebApp API · Vazirmatn font<br>'
+ +'🔒 داده‌ها روی سرور ربات — اپ فقط نمایش‌دهنده و اجراکننده است</div>';
+ $('pg-about').innerHTML=h;
+}
+
+/* ---------- موضوعات لابی: توضیح کوتاه ---------- */
+var MODE_DESCS={
+ 'اعتراف':'حقیقت‌های شخصی — آرام شروع می‌شود',
+ 'جرئت':'کارهای چالشی و بامزه',
+ 'ذهنی':'سوال‌های فکری و عمیق',
+ 'سناریو':'«اگر... چه می‌کردی؟»',
+ 'شوخ‌باش':'سوال‌های رمانتیک-شوخ',
+ 'بزرگسال':'فقط برای لابی‌های ۱۸+'
+};
+
+/* ---------- اعلان‌ها: فیلتر نوع ---------- */
+var NOTIFF='all';
+function renderNotif(){
+ var n=D.notifications||{},items=n.items||[];
+ var types={};items.forEach(function(x){types[x.type]=(types[x.type]||0)+1});
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🔔</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">اعلان‌ها</h1>'
+ +'<p class="sub">'+fa(n.unread||0)+' خوانده‌نشده از '+fa(items.length)+'</p></div>'
+ +(n.unread?'<button class="btn primary sm" onclick="notifRead()">✓ خوانده شد</button>':'')+'</div></div>';
+ var typeKeys=Object.keys(types);
+ if(typeKeys.length>1){
+  h+='<div class="adm-cat" style="margin:12px 0"><button class="acat'+(NOTIFF==='all'?' on':'')+'" onclick="NOTIFF=\'all\';renderNotif()">همه</button>'
+  +typeKeys.map(function(t){
+   return '<button class="acat'+(NOTIFF===t?' on':'')+'" onclick="NOTIFF=\''+t+'\';renderNotif()">'+({'level_up':'⬆️ سطح','achievement':'🏆 دستاورد','private_invite':'🎮 دعوت','friend_req':'👥 دوستی','season_end':'🌐 فصل','tournament':'🏟 مسابقه','admin_dm':'📩 ادمین'}[t]||t)+' ('+fa(types[t])+')</button>'}).join('')+'</div>';
+ }
+ var flt=NOTIFF==='all'?items:items.filter(function(x){return x.type===NOTIFF});
+ if(!flt.length)h+='<div class="empty"><span class="ei">📭</span>اعلانی در این دسته نیست.</div>';
+ else{
+  var groups={};
+  flt.forEach(function(x){
+   var day=timeAgo(x.ts);
+   var key=day.indexOf('همین حالا')>=0||day.indexOf('دقیقه')>=0||day.indexOf('ساعت')>=0?'امروز':day;
+   (groups[key]=groups[key]||[]).push(x);
+  });
+  Object.keys(groups).forEach(function(day){
+   h+='<div class="shead" style="margin-top:14px"><b>📅 '+esc(day)+'</b><small>'+fa(groups[day].length)+' مورد</small></div><div class="list">';
+   groups[day].forEach(function(x){
+    var ic={'level_up':'⬆️','achievement':'🏆','private_invite':'🎮','friend_req':'👥','season_end':'🌐','tournament':'🏟','admin_dm':'📩'}[x.type]||'🔔';
+    h+='<div class="row" style="'+(x.read?'':'border-color:#7c5cff44;background:#7c5cff0a')+'">'
+    +'<div class="medal">'+ic+'</div><div class="grow"><b>'+esc(x.title||'اعلان')+'</b>'+(x.body?'<small>'+esc(x.body)+'</small>':'')+'<small style="color:var(--dim)">'+faTime(x.ts)+'</small></div></div>';
+   });
+   h+='</div>';
+  });
+ }
+ $('pg-notif').innerHTML=h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN FINAL FEATURES — جستجوی فراگیر + بنر بازی ناتمام +
+   ویزارد شروع سریع + همگانی هدف‌دار + خروجی آمار خود + تم‌های نو
+   ════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════
+   ۱) جستجوی فراگیر — همه‌ی منابع محتوایی در پالت فرمان
+   ════════════════════════════════════════════════════════════════ */
+var _cmdkRenderBase=cmdkRender;
+function cmdkRender(q){
+ _cmdkRenderBase(q);
+ /* افزودن نتایج محتوایی: راهنما + واژه‌نامه + FAQ + استراتژی */
+ try{
+  q=String(q||'').trim().toLowerCase();
+  if(!q||q.length<2)return;
+  var extra=[];
+  GUIDE_TOPICS.forEach(function(g){
+   if((g.t+' '+g.s+' '+g.body.join(' ')).toLowerCase().indexOf(q)>-1)
+    extra.push({ic:g.ic,t:'📚 '+g.t,s:'راهنما — '+g.s,fn:"show('guide',{force:true});guideOpen('"+g.t.replace(/'/g,'')+"')"});
+  });
+  GLOSSARY.forEach(function(g){
+   if((g[0]+' '+g[1]).toLowerCase().indexOf(q)>-1)
+    extra.push({ic:'📖',t:g[0],s:'واژه‌نامه — '+g[1].slice(0,60)+'…',fn:"show('guide',{force:true})"});
+  });
+  FAQ.forEach(function(f){
+   if((f[0]+' '+f[1]).toLowerCase().indexOf(q)>-1)
+    extra.push({ic:'❓',t:f[0],s:'پرسش پرتکرار',fn:"faqSheet()"});
+  });
+  STRATEGY.forEach(function(s2){
+   if((s2.t+' '+s2.body.join(' ')).toLowerCase().indexOf(q)>-1)
+    extra.push({ic:s2.ic,t:'♟ '+s2.t,s:'استراتژی',fn:"strategySheet()"});
+  });
+  if(extra.length){
+   var list=$('cmdkList');
+   var h=list.innerHTML;
+   extra.slice(0,6).forEach(function(c){
+    h+='<div class="cmi" onclick="cmdkRun(\''+c.fn.replace(/'/g,"\\'")+'\')">'
+    +'<div class="ic">'+c.ic+'</div><div class="grow"><b>'+esc(c.t)+'</b><small>'+esc(c.s)+'</small></div>'
+    +'<kbd>↵</kbd></div>';
+   });
+   list.innerHTML=h;
+  }
+ }catch(e){}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۲) بنر بازی ناتمام — «ادامه بده!»
+   ════════════════════════════════════════════════════════════════ */
+async function unfinishedBanner(){
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=unfinished');
+  var items=d.items||[];
+  if(!items.length)return '';
+  var lb=items.filter(function(x){return x.kind==='lobby'})[0];
+  var du=items.filter(function(x){return x.kind==='duel'})[0];
+  var sv=items.filter(function(x){return x.kind==='survival'})[0];
+  var h='';
+  if(lb)h+='<div class="infobanner warn" style="cursor:pointer" onclick="LOBBYCODE=\''+lb.code+'\';show(\'lobby\',{force:true});lobbyWatch()">'
+  +'<span class="ic">👥</span><span style="flex:1">لابی ناتمام داری — '+esc(lb.phase)+' · راند '+fa(lb.round)+' · '+fa(lb.players)+' بازیکن</span><b>ادامه ›</b></div>';
+  if(du)h+='<div class="infobanner warn" style="cursor:pointer" onclick="DUELCODE='+du.code+';show(\'duel\',{force:true});duelWatch()">'
+  +'<span class="ic">🤺</span><span style="flex:1">دوئل ناتمام #'+fa(du.code)+' — راند '+fa(du.round+1)+'</span><b>ادامه ›</b></div>';
+  if(sv)h+='<div class="infobanner warn" style="cursor:pointer" onclick="show(\'survival\',{force:true})">'
+  +'<span class="ic">🔥</span><span style="flex:1">ماجراجویی بقا ناتمام — روز '+fa(sv.round)+'</span><b>ادامه ›</b></div>';
+  return h;
+ }catch(e){return ''}
+}
+/* تزریق در خانه */
+async function injectUnfinished(){
+ try{
+  var el=$('pg-home');
+  if(!el||$('unfBanner'))return;
+  var h=await unfinishedBanner();
+  if(h){
+   var div=document.createElement('div');
+   div.id='unfBanner';
+   div.innerHTML=h;
+   el.insertBefore(div,el.firstChild);
+  }
+ }catch(e){}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۳) ویزارد شروع سریع — سه گام تا بازی
+   ════════════════════════════════════════════════════════════════ */
+var QWIZ=0;
+function quickWizardSheet(){
+ QWIZ=0;
+ qwizStep();
+}
+function qwizStep(){
+ var steps=[
+  {ic:'🎯',t:'چه حسی داری؟',body:'<div class="adm-grid">'
+   +'<button class="adm-tile" onclick="QWIZ=1;qwizStep()"><span class="ti">🔥</span><b>هیجان‌انگیز</b><small>جرئت و سرعت</small></button>'
+   +'<button class="adm-tile" onclick="QWIZ=2;qwizStep()"><span class="ti">🧠</span><b>فکری</b><small>حقیقت و معما</small></button>'
+   +'<button class="adm-tile" onclick="QWIZ=3;qwizStep()"><span class="ti">🎲</span><b>شانسی</b><small>گردونه و کازینو</small></button></div>'},
+  {ic:'🔥',t:'برای هیجان',body:'<div class="list">'
+   +'<div class="row tap" onclick="closeSheet();lobbyCreate()"><div class="medal">👥</div><div class="grow"><b>لابی گروهی</b><small>جرئت/حقیقت با دوستان</small></div></div>'
+   +'<div class="row tap" onclick="closeSheet();gameView(\'reaction\')"><div class="medal">⚡</div><div class="grow"><b>سرعت واکنش</b><small>میلیمترثانیه‌ات را بسنج</small></div></div>'
+   +'<div class="row tap" onclick="closeSheet();duelCreate()"><div class="medal">🤺</div><div class="grow"><b>دوئل تن‌به‌تن</b><small>۱۰ راند هیجان</small></div></div></div>'},
+  {ic:'🧠',t:'برای فکر',body:'<div class="list">'
+   +'<div class="row tap" onclick="closeSheet();gameView(\'trivia\')"><div class="medal">🧠</div><div class="grow"><b>Trivia زنجیره‌ای</b><small>تا وقتی درستی</small></div></div>'
+   +'<div class="row tap" onclick="closeSheet();gameView(\'memory\')"><div class="medal">🃏</div><div class="grow"><b>حافظه</b><small>دنباله‌ها را به‌خاطر بسپار</small></div></div>'
+   +'<div class="row tap" onclick="closeSheet();show(\'party\',{force:true})"><div class="medal">🧩</div><div class="grow"><b>معماهای ایموجی</b><small>پارتی‌هاب</small></div></div></div>'},
+  {ic:'🎲',t:'برای شانس',body:'<div class="list">'
+   +'<div class="row tap" onclick="closeSheet();gameView(\'luck\')"><div class="medal">🍀</div><div class="grow"><b>گردونه شانس</b><small>تا ۵۰ سکه رایگان</small></div></div>'
+   +'<div class="row tap" onclick="closeSheet();gameView(\'ln\')"><div class="medal">🎰</div><div class="grow"><b>کازینو Lucky Number</b><small>جکپات ×۲۵</small></div></div>'
+   +'<div class="row tap" onclick="closeSheet();gameView(\'mine\')"><div class="medal">⛏</div><div class="grow"><b>مین‌یاب</b><small>ضریب ریسک</small></div></div></div>'}
+ ];
+ var st=steps[QWIZ];
+ openSheet('<h3>🚀 شروع سریع</h3>'
+ +'<div style="text-align:center;padding:10px 0 4px"><div style="font-size:38px">'+st.ic+'</div>'
+ +'<b style="display:block;font-size:14px;margin-top:6px">'+st.t+'</b></div>'
+ +st.body
+ +(QWIZ===0?'':'<button class="btn sm wide" style="margin-top:10px" onclick="QWIZ=0;qwizStep()">↩ از اول</button>'));
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۴) همگانی هدف‌دار + خروجی آمار خود
+   ════════════════════════════════════════════════════════════════ */
+async function admBroadcast2(d){
+ var counts=null;
+ try{
+  var ct=await api('/api/miniapp/admin/v5?section=bc_targets');
+  counts=ct.counts||{};
+ }catch(e){}
+ var h='<div class="card"><b>📢 ارسال پیام همگانی هدف‌دار</b>'
+ +'<p class="sub" style="margin:8px 0">گیرندگان را انتخاب کن، بعد متن را بنویس — همان صف ارسال ربات با فیلتر هدف.</p>'
+ +'<div class="adm-cat" style="margin:10px 0">'
+ +[['all','👥 همه'],['vip','👑 VIP ها'],['active','🔥 فعالان هفته'],['level','⭐ سطح ۱۰+']].map(function(t,i){
+  return '<button class="acat'+(i===0?' on':'')+'" data-bct="'+t[0]+'" onclick="bcTargetSel(this,\''+t[0]+'\')">'+t[1]
+  +(counts?' ('+faK(counts[t[0]]||0)+')':'')+'</button>'}).join('')
+ +'</div>'
+ +'<textarea id="bcTxt" class="input" maxlength="900" placeholder="متن پیام همگانی..." style="min-height:100px" oninput="bcPreview()"></textarea>'
+ +'<div class="card" style="margin-top:10px;padding:10px;background:var(--panel3)">'
+ +'<b style="font-size:10px">👁 پیش‌نمایش:</b><div class="sub" id="bcPrev" style="margin-top:6px">متن پیام اینجا…</div></div>'
+ +'<button class="btn primary wide glow" style="margin-top:10px" onclick="adminBroadcastTargeted()">✈️ ارسال به هدف انتخابی</button></div>';
+ if(d.pending)h+='<div class="card" style="text-align:center;color:var(--muted);font-size:10px">📄 در صف فعلی: '+fa(d.pending)+' پیام</div>';
+ return h;
+}
+var BCTARGET='all';
+function bcTargetSel(btn,t){
+ BCTARGET=t;
+ document.querySelectorAll('[data-bct]').forEach(function(b){b.classList.remove('on')});
+ btn.classList.add('on');SND.tap();
+}
+async function adminBroadcastTargeted(){
+ var t=($('bcTxt')||{}).value||'';
+ if(t.trim().length<3){toast('متن خیلی کوتاه است','err');return}
+ try{
+  haptic('medium');
+  var d=await api('/api/miniapp/admin/v5',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({action:'broadcast_targeted',text:t,target:BCTARGET})});
+  toast(d.message||'قرار گرفت','ok');$('bcTxt').value='';
+ }catch(e){toast(e.message,'err')}
+}
+/* خروجی آمار خود */
+async function myStatsExport(){
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=my_export');
+  var blob=new Blob([JSON.stringify(d.data,null,2)],{type:'application/json'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='apexrival_my_stats.json';document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},400);
+  toast('آمار کاملت خروجی شد 📦','ok');
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۵) دو تم جدید + موضوعات لابی با توضیح
+   ════════════════════════════════════════════════════════════════ */
+THEMES.push(
+ {id:'matrix',name:'ماتریکس',dark:1,c:['#00e676','#00c853','#69f0ae']},
+ {id:'rosegold',name:'رزگلد',dark:1,c:['#f4a5c0','#e8a020','#ffd9e8']}
+);
+/* کارت موضوع لابی با توضیح */
+function gtabCard(m){
+ var desc=MODE_DESCS[m.label]||'';
+ return '<button class="gtab" onclick="lobbyAction(\'topic\',\''+m.key+'\')"'+(desc?' title="'+esc(desc)+'"':'')+'>'
+ +esc(m.label)+(desc?'<small style="display:block;font-size:8px;color:var(--muted);font-weight:400;margin-top:3px">'+esc(desc)+'</small>':'')+'</button>';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۶) توقف هوشمند polling در حالت AFK
+   ════════════════════════════════════════════════════════════════ */
+var LAST_ACT=Date.now();
+['pointerdown','keydown','scroll','touchstart'].forEach(function(ev){
+ document.addEventListener(ev,function(){LAST_ACT=Date.now()},{passive:true});
+});
+setInterval(function(){
+ /* اگر ۵ دقیقه بی‌حرکت بوده و صفحه مخفی است، pollingهای زنده کم‌کار شوند */
+ var idle=(Date.now()-LAST_ACT)/1000>300;
+ var hidden=document.visibilityState!=='visible';
+ if(idle&&hidden){
+  ['lobby','duel','arena','wall'].forEach(function(k){
+   if(POLLS[k]){
+    var fn=POLLS[k]._fn;
+    if(fn&&!POLLS[k]._slowed){
+     stopPoll(k);
+     POLLS[k]=setInterval(fn,10000);
+     POLLS[k]._slowed=true;
+    }
+   }
+  });
+ }else{
+  ['lobby','duel','arena','wall'].forEach(function(k){
+   if(POLLS[k]&&POLLS[k]._slowed){
+    var fn=POLLS[k]._fn||null;
+    stopPoll(k);
+    /* بازیابی سرعت عادی در اولین تعامل */
+    setTimeout(function(){
+     if(PAGE==='lobby')lobbyWatch();
+     if(PAGE==='duel')duelWatch();
+    },600);
+    POLLS[k]&&(POLLS[k]._slowed=false);
+   }
+  });
+ }
+},60000);
+
+/* ════════════════════════════════════════════════════════════════
+   ۷) ثبت توابع polling برای AFK + ورودی‌های نهایی
+   ════════════════════════════════════════════════════════════════ */
+var _startPollBase=startPoll;
+startPoll=function(k,fn,ms){
+ _startPollBase(k,fn,ms);
+ if(POLLS[k])POLLS[k]._fn=fn;
+};
+CMD_ITEMS.push(
+ {ic:'🧙',t:'شروع سریع هوشمند',s:'سه گام تا بازی مناسب حالت',fn:"quickWizardSheet()"},
+ {ic:'📦',t:'خروجی آمار من',s:'JSON کامل کارنامه‌ات',fn:"myStatsExport()"}
+);
+/* میان‌بر: ویزارد در Play Hub */
+function injectWizard(){
+ try{
+  var el=$('pg-play');
+  if(el&&!$('qzBanner')){
+   var b=document.createElement('div');
+   b.id='qzBanner';
+   b.innerHTML='<div class="card tap" style="margin-top:12px;border-color:#7c5cff44;cursor:pointer" onclick="quickWizardSheet()">'
+   +'<div style="display:flex;align-items:center;gap:11px"><div style="font-size:24px">🧙</div>'
+   +'<div style="flex:1"><b style="font-size:12px">شروع سریع هوشمند</b><div class="sub">نمیدونی چه بازی کنی؟ سه گام بگو چه حسی داری</div></div>'
+   +'<span style="color:var(--muted)">‹</span></div></div>';
+   var first=el.querySelector('.section');
+   if(first)el.insertBefore(b,first);else el.appendChild(b);
+  }
+ }catch(e){}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN BITS — ردیاب XP نشست + صفحه‌ی حالت‌ها + قوانین +
+   ستاره‌کردن صفحه‌ها + ثبت رکوردهای محلی + تکمیم‌های کوچک
+   ════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════
+   ۱) ردیاب XP نشست — «این نشست چقدر گرفتم؟»
+   ════════════════════════════════════════════════════════════════ */
+var SESSION={start:Date.now(),xp0:null,coins0:null,events:0};
+function sessionStart(){
+ try{
+  if(D.user){
+   SESSION.xp0=D.user.xp||0;
+   SESSION.coins0=D.user.coins||0;
+  }
+ }catch(e){}
+}
+/* مقایسه بعد از هر refresh داده */
+var _renderChromeBase=renderChrome;
+renderChrome=function(){
+ _renderChromeBase();
+ try{
+  if(D.user&&SESSION.xp0!=null){
+   var dx=(D.user.xp||0)-SESSION.xp0;
+   var dc=(D.user.coins||0)-SESSION.coins0;
+   if(dx>0||dc>0)SESSION.events++;
+   var el=$('sessPill');
+   if(!el){
+    var p=document.createElement('div');
+    p.id='sessPill';
+    p.className='pill';
+    p.style.cssText='position:fixed;top:calc(54px + env(safe-area-inset-top));left:12px;z-index:58;font-size:9.5px;pointer-events:auto;cursor:pointer';
+    p.onclick=sessionSheet;
+    document.body.appendChild(p);
+    el=p;
+   }
+   var mins=Math.max(1,Math.round((Date.now()-SESSION.start)/60000));
+   el.innerHTML='📈 این نشست: +'+faK(dx)+'XP · +'+faK(dc)+'🪙 · '+fa(mins)+'د';
+   el.style.display='flex';
+  }
+ }catch(e){}
+};
+function sessionSheet(){
+ var dx=(D.user&&SESSION.xp0!=null)?Math.max(0,(D.user.xp||0)-SESSION.xp0):0;
+ var dc=(D.user&&SESSION.coins0!=null)?((D.user.coins||0)-SESSION.coins0):0;
+ var mins=Math.max(1,Math.round((Date.now()-SESSION.start)/60000));
+ openSheet('<h3>📈 نشست فعلی</h3>'
+ +'<div class="card sharecard" style="text-align:center">'
+ +'<div class="grid g4" style="margin-top:8px">'
+ +'<div class="stat"><small>XP</small><b style="color:var(--c3)">+'+faK(dx)+'</b></div>'
+ +'<div class="stat"><small>سکه</small><b style="color:var(--gold)">'+(dc>=0?'+':'')+faK(dc)+'</b></div>'
+ +'<div class="stat"><small>دقیقه</small><b>'+fa(mins)+'</b></div>'
+ +'<div class="stat"><small>XP/دقیقه</small><b>'+faK(Math.round(dx/mins))+'</b></div></div></div>'
+ +'<div class="card" style="font-size:10px;color:var(--muted);line-height:2">💡 نرخ بالای XP/دقیقه یعنی در مسیر درستی هستی — برنامه‌ریز پیشرفت را ببین.</div>'
+ +'<button class="btn primary wide" onclick="shareText(\'📈 نشست امروزم در ApexRival: +'+faK(dx)+' XP و '+(dc>=0?'+':'')+faK(dc)+' سکه در '+fa(mins)+' دقیقه! ⚔️\')">✈️ اشتراک نشست</button>');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۲) صفحه‌ی حالت‌های بازی — آینه‌ی /apexmodes
+   ════════════════════════════════════════════════════════════════ */
+var MODES_INFO=[
+ {ic:'🧠',t:'حقیقت (اعتراف)',d:'سوال‌های شخصی با پاسخ صادقانه — آرام شروع می‌شود و با پیشرفت بازی عمیق‌تر می‌شود. بهترین حالت برای شناخت گروه.',rw:'هر پاسخ +۶ XP · +۲ سکه'},
+ {ic:'🔥',t:'جرئت',d:'چالش‌های عملی و بامزه — از تقلید صدا تا ماجراجویی‌های کوچک. هیجان اصلی لابی‌هاست.',rw:'هر پاسخ +۷ XP · +۳ سکه'},
+ {ic:'💭',t:'ذهنی',d:'سوال‌های فکری و عمیق — برای گروه‌هایی که گفتگوی معنادار دوست دارند.',rw:'هر پاسخ +۵ XP · +۲ سکه'},
+ {ic:'🎬',t:'سناریو',d:'«اگر... چه می‌کردی؟» — موقعیت‌های خیالی با انتخاب‌های سخت.',rw:'هر پاسخ +۶ XP · +۲ سکه'},
+ {ic:'💗',t:'شوخ‌باش',d:'سوال‌های رمانتیک-طنز — برای لابی‌های دوستانه و آشنا.',rw:'هر پاسخ +۷ XP · +۲ سکه'},
+ {ic:'🌶',t:'بزرگسال',d:'فقط برای لابی‌های ۱۸+ با فعال‌سازی صریح سرگروه — داغ‌ترین حالت بازی.',rw:'هر پاسخ +۸ XP · +۳ سکه'},
+ {ic:'⚡',t:'سرعتی',d:'پاسخ سریع به سوال‌های کوتاه — سرعت و واکنش مهم‌تر از عمق است.'},
+ {ic:'🗳',t:'رأی‌گیری',d:'گروه درباره بازیکنان رأی می‌دهد — نتایج معمولاً جالب و پیش‌بینی‌ناپذیرند!'}
+];
+function renderModes(){
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">🎭</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1 grad" style="margin:0">حالت‌های بازی</h1>'
+ +'<p class="sub">'+fa(MODES_INFO.length)+' حالت — آینه‌ی کامل منوی ربات</p></div></div></div>';
+ MODES_INFO.forEach(function(m){
+  h+='<div class="card tap" onclick="show(\'play\',{force:true})">'
+  +'<div style="display:flex;align-items:flex-start;gap:12px">'
+  +'<div style="font-size:26px;flex:0 0 auto">'+m.ic+'</div>'
+  +'<div style="flex:1;min-width:0"><b style="font-size:12.5px">'+m.t+'</b>'
+  +'<p style="margin:5px 0 0;font-size:10.5px;line-height:2;color:var(--muted)">'+m.d+'</p>'
+  +(m.rw?'<div style="margin-top:7px"><span class="tag gold">'+m.rw+'</span></div>':'')
+  +'</div><span style="color:var(--muted)">‹</span></div></div>';
+ });
+ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted);line-height:2">💡 موتور گرما در لابی، شدت حالت‌ها را با راندها بالا می‌برد: 🟢←🟡←🟠←🔴←🔥</div>';
+ $('pg-modes').innerHTML=h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۳) صفحه‌ی قوانین — آینه‌ی /apexrules
+   ════════════════════════════════════════════════════════════════ */
+var RULES=[
+ {ic:'🤝',t:'احترام متقابل',b:'مسخره کردن جواب‌ها ممنوع — همه برای سرگرمی آمده‌اند، نه قضاوت. جواب‌های آزاردهنده می‌تواند به مجازات منجر شود.'},
+ {ic:'🚫',t:'بدون اسپم',b:'ارسال پیام‌های تکراری، تبلیغات و لینک‌های بی‌ربط در لابی‌ها ممنوع است — سیستم ضداسپم فعال است.'},
+ {ic:'🎭',t:'صداقت اختیاری، ادب اجباری',b:'میتوانی از جواب دادن طفره بروی (رد کردن) ولی توهین و رفتار زشت باعث بن می‌شود.'},
+ {ic:'⚖️',t:'مجازات منصفانه',b:'ادمین‌ها فقط با دلیل مجازات اعمال می‌کنند؛ بخشش همیشه ممکن است — بخشش از راه ادمین.'},
+ {ic:'👑',t:'VIP مزیت است نه امتیاز',b:'VIP ها ۱۰٪ پاداش بیشتر می‌گیرند ولی در رقابت‌ها با همه یکسان محاسبه می‌شوند.'},
+ {ic:'🔄',t:'معامله آزاد، کلاهبرداری ممنوع',b:'در تجارت، وعده‌ی خارج از سیستم معتبر نیست — فقط چیزی که در سیستم ثبت شود واقعی است.'},
+ {ic:'🏆',t:'رتبه‌ها سهم برابر دارند',b:'تلاش برای دستکاری رتبه‌بندی (چندحسابی، تبادل نقاط ساختگی) شناسایی و خنثی می‌شود.'},
+ {ic:'🌶',t:'۱۸+ فقط با تأیید',b:'حالت بزرگسال فقط در لابی‌هایی فعال می‌شود که سرگروه صریحاً فعالش کند و همه بزرگسال باشند.'}
+];
+function renderRules(){
+ var h='<div class="gcard"><div class="in gm-hero"><div class="gi">⚖️</div><div style="flex:1;min-width:0">'
+ +'<h1 class="h1" style="margin:0">قوانین بازی</h1>'
+ +'<p class="sub">'+fa(RULES.length)+' قانون — همان قوانین رسمی ربات</p></div></div></div>';
+ h+=accordion(RULES.map(function(r){
+  return {ic:r.ic,t:r.t,body:'<p style="margin:0;font-size:11px;line-height:2.2;color:var(--muted)">'+esc(r.b)+'</p>'};
+ }));
+ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted)">گزارش تخلف: از شیت بازخورد یا گزارش سوالات — رسیدگی توسط ادمین‌ها انجام می‌شود ⚖️</div>';
+ $('pg-rules').innerHTML=h;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۴) ستاره‌کردن صفحه‌ها — میان‌برهای شخصی خانه
+   ════════════════════════════════════════════════════════════════ */
+var FAVS=[];
+try{FAVS=JSON.parse(localStorage.getItem('apex_favs')||'[]')}catch(e){FAVS=[]}
+function toggleFav(pg){
+ var i=FAVS.indexOf(pg);
+ if(i>=0)FAVS.splice(i,1);else FAVS.push(pg);
+ try{localStorage.setItem('apex_favs',JSON.stringify(FAVS))}catch(e){}
+ toast(i>=0?'از میان‌برها حذف شد':'به میان‌برها اضافه شد ⭐','ok');
+ renderFavs();
+}
+function renderFavs(){
+ try{
+  var el=$('favRow');
+  if(!el)return;
+  var h='';
+  FAVS.forEach(function(pg){
+   var names={games:'🕹 گیم‌زون',play:'🎮 بازی',board:'🏆 رتبه',stats:'📊 آمار',history:'📜 تاریخچه',
+    party:'🎉 پارتی',wall:'🌐 وال',trade:'🔄 تجارت',season:'🌐 فصل',recap:'📋 هضم',
+    guide:'🎓 راهنما',cmds:'📖 دستورات',modes:'🎭 حالت‌ها',rules:'⚖️ قوانین',vip:'👑 VIP',invite:'🎁 دعوت'};
+   h+='<button class="chip" onclick="show(\''+pg+'\',{force:true})">'+(names[pg]||pg)+'</button>';
+  });
+  el.innerHTML=h||'<small style="color:var(--dim);font-size:9px">با ⭐ بالای هر صفحه، میان‌بر بساز</small>';
+ }catch(e){}
+}
+/* دکمه ستاره در سربرگ صفحات */
+function favStar(pg){
+ var on=FAVS.indexOf(pg)>=0;
+ return '<button class="btn sm" style="flex:0 0 auto" onclick="toggleFav(\''+pg+'\')" title="میان‌بر">'+(on?'⭐':'☆')+'</button>';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۵) رکوردهای محلی — بهترین‌های خودت روی این دستگاه
+   ════════════════════════════════════════════════════════════════ */
+var LOCAL_BEST={};
+try{LOCAL_BEST=JSON.parse(localStorage.getItem('apex_lbest')||'{}')}catch(e){LOCAL_BEST={}}
+function localBest(key,val,higher){
+ try{
+  var cur=Number(LOCAL_BEST[key]||0);
+  if(higher?val>cur:val>0&&(!cur||val<cur)){
+   LOCAL_BEST[key]=val;
+   localStorage.setItem('apex_lbest',JSON.stringify(LOCAL_BEST));
+   return true;
+  }
+ }catch(e){}
+ return false;
+}
+function localBestOf(key){
+ return Number(LOCAL_BEST[key]||0);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۶) توضیح موضوع دوئل + wire رکوردها + quiz-done
+   ════════════════════════════════════════════════════════════════ */
+function quizDoneCheck(){
+ try{
+  api('/api/miniapp/games').then(function(g){
+   window._quizDone=!!(g.cooldowns&&g.cooldowns.quiz_done);
+   window._luckCd=(g.cooldowns&&g.cooldowns.luck)||0;
+  });
+ }catch(e){}
+}
+/* ثبت خودکار رکوردهای محلی */
+on('coins:changed',function(){});
+var _triviaRenderBase=triviaRender;
+triviaRender=function(q,opts,streak){
+ _triviaRenderBase(q,opts,streak);
+ try{if(streak>localBestOf('trivia'))localBest('trivia',streak,true)}catch(e){}
+};
+var _reactionTapBase=reactionTap;
+
+/* ════════════════════════════════════════════════════════════════
+   ۷) ثبت صفحات جدید + میان‌برها
+   ════════════════════════════════════════════════════════════════ */
+var _buildShellBase2=buildShell;
+buildShell=function(){
+ _buildShellBase2();
+ try{
+  var m=$('main');
+  ['modes','rules'].forEach(function(id){
+   if(!$('pg-'+id)){
+    var sec=document.createElement('section');
+    sec.className='page';
+    sec.id='pg-'+id;
+    m.appendChild(sec);
+   }
+  });
+ }catch(e){}
+};
+CMD_ITEMS.push(
+ {ic:'🎭',t:'حالت‌های بازی',s:'توضیح کامل ۸ حالت',fn:"show('modes',{force:true})"},
+ {ic:'⚖️',t:'قوانین بازی',s:'۸ قانون رسمی ربات',fn:"show('rules',{force:true})"}
+);
+/* شروع نشست + چک روزانه */
+setTimeout(function(){sessionStart();quizDoneCheck()},2000);
+setInterval(quizDoneCheck,300000);
+
+/* ---------- سوئیچ‌های دسترس‌پذیری ---------- */
+function uiToggleA11y(kind){
+ try{
+  var cur=document.body.getAttribute('data-'+kind);
+  var nv=cur==='high'||cur==='off'?'':'high';
+  if(kind==='glass')nv=cur==='off'?'':'off';
+  if(nv)document.body.setAttribute('data-'+kind,nv);
+  else document.body.removeAttribute('data-'+kind);
+  localStorage.setItem('apex_a11y_'+kind,nv||'');
+  SND.tap();
+  renderSettings();
+ }catch(e){}
+}
+(function(){
+ try{
+  ['contrast','glass'].forEach(function(k){
+   var v=localStorage.getItem('apex_a11y_'+k);
+   if(v)document.body.setAttribute('data-'+k,v);
+  });
+ }catch(e){}
+})();
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN LAST MILE — تکمیل محتوا + توضیح موضوع دوئل + ستاره‌ها
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- تکمیل فهرست دستورات (ورودی‌های نهایی) ---------- */
+BOT_CMDS.push(
+ ['🎮','بازی و شروع','/apexquick','راهنمای شروع سریع بازی'],
+ ['📖','راهنما','/apexmodes','توضیح حالت‌های بازی'],
+ ['📊','پیشرفت','/apexweekly','برترین‌های هفته (از رتبه‌بندی)'],
+ ['🌐','اجتماعی','/apexlove','عشق‌سنج گروهی'],
+ ['🎭','تنظیمات','/apexback','برگشت از حالت نیستم'],
+ ['⚙️','تنظیمات','/apexnotify','مدیریت اعلان‌ها'],
+ ['🛡','مدیریت','/apexpunishments','فهرست مجازات‌ها'],
+ ['📡','سیستم','/apexlive','نبض زنده‌ی ربات']
+);
+/* مثال‌های تکمیلی */
+CMD_EX['/apexquick']='/apexquick — راهنمای سریع';
+CMD_EX['/apexlove']='/apexlove @کاربر — عشک‌سنج گروهی';
+CMD_EX['/apexheart']='/apexheart @بازیکن — قلب محبت';
+CMD_EX['/apexbrb']='/apexbrb 60 — ۶۰ دقیقه نیستم';
+CMD_EX['/apexback']='/apexback — برگشتم!';
+CMD_EX['/apexnotify']='/apexnotify — تنظیم اعلان‌ها';
+CMD_EX['/apexpunishments']='/apexpunishments — مجازات‌های فعال (ادمین)';
+CMD_EX['/apexlive']='/apexlive — آمار زنده ربات';
+CMD_EX['/apextop']='/apextop — برترین‌های گروه';
+CMD_EX['/apexgrouptop']='/apexgrouptop — رتبه‌بندی گروه';
+CMD_EX['/apexfriends']='/apexfriends — مدیریت دوستان';
+CMD_EX['/apexinvite']='/apexinvite — لینک دعوت اختصاصی';
+CMD_EX['/apexwall']='/apexwall — دیوار اجتماعی';
+CMD_EX['/apexhof']='/apexhof — تالار افسانه‌ها';
+CMD_EX['/apexstats_me']='/apexstats_me — داشبورد شخصی';
+CMD_EX['/apexbirthday']='/apexbirthday — ثبت تاریخ تولد';
+CMD_EX['/apexpersona']='/apexpersona — کارت شخصیت جدید';
+CMD_EX['/apexshowcase']='/apexshowcase — انتخاب شوکیس';
+CMD_EX['/apexmute']='/apexmute — خاموش کردن تگ';
+CMD_EX['/apexunmute']='/apexunmute — روشن کردن تگ';
+CMD_EX['/apextheme']='/apextheme — تم منوهای ربات';
+CMD_EX['/apexsurvival']='/apexsurvival — شروع بقا';
+CMD_EX['/apexminigames']='/apexminigames — منوی مینی‌گیم‌ها';
+CMD_EX['/apexmemory']='/apexmemory — بازی حافظه';
+CMD_EX['/apexreaction']='/apexreaction — سرعت واکنش';
+CMD_EX['/apexttt']='/apexttt — دوز با AI';
+CMD_EX['/apexmine']='/apexmine — مین‌یاب';
+CMD_EX['/apexnumber']='/apexnumber — حدس عدد';
+CMD_EX['/apextrivia']='/apextrivia — Trivia زنجیره‌ای';
+CMD_EX['/apexword']='/apexword — بازی کلمات';
+
+/* ---------- پرسش‌های نهایی ---------- */
+FAQ.push(
+ ['«نشست» در قرمز کوچک بالای صفحه چیست؟','شمارنده‌ی زنده‌ی XP و سکه‌ای که از لحظه‌ی باز کردن اپ گرفته‌ای — رویش بزن تا کارت کامل نشست را ببینی و اشتراک بگذاری.'],
+ ['حالت «سبک» (بدون شیشه) چه می‌کند؟','افکت‌های شیشه‌ای و بلور را خاموش می‌کند — روی گوشی‌های قدیمی سرعت اپ محسوس بالا می‌رود. از تنظیمات فعال کن.'],
+ ['کنتراست بالا برای چیست؟','مرزها و متن‌ها را پررنگ‌تر می‌کند — برای چشم‌های خسته یا نور شدید محیط.'],
+ ['میان‌برهای شخصی چطور ساخته می‌شوند؟','دکمه‌ی ستاره (☆) بالای صفحه‌ها — صفحه‌های مورد علاقه‌ات به ردیف میان‌بر خانه اضافه می‌شوند.']
+);
+/* ---------- واژه‌نامه‌ی نهایی ---------- */
+GLOSSARY.push(
+ ['نشست','بازه‌ی زمانی بین باز کردن تا بستن اپ — XP و سکه‌ی آن شمارش می‌شود.'],
+ ['حالت سبک','بدون افکت شیشه‌ای — برای گوشی‌های ضعیف.'],
+ ['کنتراست بالا','نمایش پررنگ‌تر مرزها و متن‌ها برای دید بهتر.'],
+ ['میان‌بر شخصی','ستاره‌کردن صفحه‌ها برای دسترسی سریع از خانه.'],
+ ['شتاب‌دهنده','لیست کارهای پرپاداش امروز — یک لمس فاصله.'],
+ ['رکورد محلی','بهترین رکورد شخصی روی همین دستگاه.']
+);
+
+/* ---------- کارت موضوع دوئل با توضیح ---------- */
+function dtabCard(m){
+ var desc=MODE_DESCS[m.label]||'';
+ return '<button class="gtab" onclick="duelAction(\'topic\',\''+m.key+'\')"'+(desc?' title="'+esc(desc)+'"':'')+'>'
+ +esc(m.label)+(desc?'<small style="display:block;font-size:8px;color:var(--muted);font-weight:400;margin-top:3px">'+esc(desc)+'</small>':'')+'</button>';
+}
+
+/* ---------- ردیف میان‌برهای خانه ---------- */
+function injectFavRow(){
+ try{
+  var el=$('pg-home');
+  if(!el||$('favRow'))return;
+  var d=document.createElement('div');
+  d.id='favRow';
+  d.className='chips';
+  d.style.cssText='margin:2px 0 10px';
+  el.insertBefore(d,el.firstChild);
+  renderFavs();
+ }catch(e){}
+}
+
+/* ---------- ستاره در کارت قهرمانی صفحه‌ها ---------- */
+function injectFavStars(){
+ try{
+  ['games','board','stats','history','party','wall','trade','season','recap','guide','cmds','modes','rules','vip','invite','about'].forEach(function(pg){
+   var el=$('pg-'+pg);
+   if(!el||el.querySelector('.favstar'))return;
+   var hero=el.querySelector('.gcard .in.gm-hero');
+   if(!hero)return;
+   var btn=document.createElement('button');
+   btn.className='btn sm favstar';
+   btn.style.cssText='flex:0 0 auto;margin-right:4px';
+   btn.onclick=function(){toggleFav(pg)};
+   var sync=function(){btn.textContent=FAVS.indexOf(pg)>=0?'⭐':'☆'};
+   sync();
+   hero.insertBefore(btn,hero.firstChild);
+  });
+ }catch(e){}
+}
+/* صبر برای رندرها */
+var _origShowNav=null;
+setInterval(function(){
+ try{injectFavRow();injectFavStars()}catch(e){}
+},2500);
+
+/* ---------- حالت‌های خالی مصور برای صفحات کلیدی ---------- */
+function emptyGames(){return emptyArt('game','هنوز بازی‌ای در این بخش نیست — اولین قهرمان تو باش!')}
+function emptyCoins(){return emptyArt('coins','سکه‌ای در جریان نیست — گردونه و پاداش روزانه را بچرخان')}
+function emptyUsers(){return emptyArt('users','هنوز کسی اینجا نیست — دوستانت را دعوت کن')}
+function emptyTrophy(){return emptyArt('trophy','تا حالا رکوردی ثبت نشده — میدان توست!')}
+function emptyChart(){return emptyArt('chart','داده‌ای برای نمایش نیست — بعد از اولین بازی برگرد')}
+
+/* ---------- به‌روزرسانی خودکار داده‌ی بازی‌ها (برای quickplay) ---------- */
+async function refreshGamesCache(){
+ try{
+  var g=await api('/api/miniapp/games');
+  _gameHubCache=g;
+  window._quizDone=!!(g.cooldowns&&g.cooldowns.quiz_done);
+  window._luckCd=(g.cooldowns&&g.cooldowns.luck)||0;
+ }catch(e){}
+}
+
+/* ---------- کارت خوش‌آمد روز بر اساس ساعت ---------- */
+function dayGreeting(){
+ var h=new Date().getHours();
+ if(h<5)return{ic:'🌙',t:'شب آرامی داشته باشی!',s:'کوییز امروز و پاداش روزانه را قبل خواب بگیر.'};
+ if(h<11)return{ic:'🌅',t:'صبح بخیر قهرمان!',s:'استریک روزانه را همین حالا بگیر — روز خوبی برای رشد است.'};
+ if(h<16)return{ic:'☀️',t:'روز پرانرژی بگذره!',s:'یک تور Trivia میان‌کار، XP جمع می‌کند.'};
+ if(h<20)return{ic:'🌆',t:'عصر بازی! بهترین وقت لابی گروهی.',s:'دوستانت آنلاین‌اند — لابی بساز.'};
+ return{ic:'🌃',t:'شب بخیر میدان!',s:'گردونه ۲۰ ساعته‌ات چک کن — شاید آماده است.'};
+}
+function greetBanner(){
+ var g=dayGreeting();
+ return '<div class="infobanner info" style="margin-bottom:10px"><span class="ic">'+g.ic+'</span>'
+ +'<span style="flex:1"><b>'+g.t+'</b> '+g.s+'</span></div>';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN CLOSE — جستجوی بانک + پنجره‌ی رتبه + گزارش فنی +
+   محاسبه‌گر دستاورد بعدی + نوار هدف هفتگی
+   ════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════
+   ۱) جستجوی بانک سوالات (ادمین — فقط-خواندنی)
+   ════════════════════════════════════════════════════════════════ */
+async function admBankSearchSheet(){
+ openSheet('<h3>🔍 جستجو در بانک سوالات</h3>'
+ +'<p class="sub" style="margin-bottom:10px">جستجوی فقط-خواندنی — محتوا هرگز تغییر نمی‌کند (آینه‌ی جستجوی بانک ربات).</p>'
+ +'<div class="searchbar"><span class="sic">🔍</span>'
+ +'<input class="input" id="bsQ" placeholder="مثلاً: دوست، سفر، عدد..." oninput="bankSearchGo()"></div>'
+ +'<div id="bsRes" style="margin-top:10px"></div>');
+ var el=$('bsQ');
+ if(el)el.addEventListener('input',debounce(bankSearchGo,350));
+}
+async function bankSearchGo(){
+ var q=($('bsQ')||{}).value||'';
+ var box=$('bsRes');
+ if(!box)return;
+ if(q.trim().length<2){box.innerHTML='<div class="empty" style="padding:12px;font-size:10px">حداقل ۲ حرف بنویس…</div>';return}
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=bank_search&term='+encodeURIComponent(q));
+  var h='<div class="sub" style="margin-bottom:8px">'+fa(d.total)+' نتیجه'+(d.hits.length<d.total?' — ۳۰ مورد اول':'')+'</div>';
+  if(!d.hits.length)h+='<div class="empty" style="padding:12px;font-size:10px">چیزی پیدا نشد</div>';
+  else{
+   h+='<div class="list">';
+   d.hits.forEach(function(x){
+    h+='<div class="row" style="align-items:flex-start"><div class="medal">🏦</div>'
+    +'<div class="grow"><b style="white-space:normal;font-size:10.5px">'+esc(x.q)+'</b>'
+    +'<small>بانک: '+esc(x.bank)+(x.a?' · پاسخ: '+esc(x.a):'')+'</small></div></div>';
+   });
+   h+='</div>';
+  }
+  box.innerHTML=h;
+ }catch(e){box.innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۲) پنجره‌ی رتبه — «حریف‌های اطراف تو»
+   ════════════════════════════════════════════════════════════════ */
+async function aroundMeSheet(scope){
+ openSheet('<h3>🎯 حریف‌های اطراف تو</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=lb_around&scope='+encodeURIComponent(scope||'global'));
+  var h='<h3>🎯 رتبه‌ی '+fa(d.me_rank)+' — اطراف تو</h3>';
+  if(!(d.items||[]).length){
+   h+='<div class="empty"><span class="ei">🌱</span>هنوز در این رده ثبت نشدی — بازی کن و بیا بالا!</div>';
+  }else{
+   h+='<div class="list">';
+   (d.items||[]).forEach(function(x){
+    h+='<div class="row'+(x.is_me?' me':'')+'">'
+    +'<div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+fa(x.rank)+'</div>'
+    +avaHtml({id:x.uid,name:x.name},'sm')
+    +'<div class="grow"><b>'+esc(x.name)+(x.is_me?' <span class="tag cy">تو</span>':'')+'</b>'
+    +'<small>'+faK(x.xp)+' XP — '+(x.rank<(d.me_rank||0)?'بالاتر از تو':'پایین‌تر از تو')+'</small></div>'
+    +(x.is_me?'':'<button class="btn sm" onclick="closeSheet();profileView('+x.uid+')">👁</button>')
+    +'</div>';
+   });
+   h+='</div>';
+   h+='<button class="btn primary wide" style="margin-top:12px" onclick="closeSheet();show(\'board\',{force:true})">🏆 رتبه‌بندی کامل</button>';
+  }
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۳) گزارش خطای فنی — خطاهای JS + توضیح کاربر
+   ════════════════════════════════════════════════════════════════ */
+var TECH_ERRORS=[];
+window.addEventListener('error',function(e){
+ try{
+  if(TECH_ERRORS.length<20&&e&&e.message)TECH_ERRORS.push(String(e.message).slice(0,120));
+ }catch(err){}
+});
+function techReportSheet(){
+ openSheet('<h3>🐞 گزارش مشکل فنی</h3>'
+ +'<p class="sub" style="margin-bottom:10px">اگر چیزی خراب کار می‌کند، این فرم خطاهای فنی ثبت‌شده را هم همراه توضیح تو برای تیم می‌فرستد.</p>'
+ +(TECH_ERRORS.length?'<div class="card" style="margin-bottom:10px;font-size:9px;color:var(--dim);line-height:1.9;direction:ltr;text-align:left;max-height:90px;overflow:auto">'
+  +TECH_ERRORS.map(esc).join('<br>')+'</div>':'')
+ +'<textarea id="trTxt" class="input" style="min-height:80px" placeholder="چه اتفاقی افتاد؟ چه کاری می‌خواستی بکنی؟"></textarea>'
+ +'<button class="btn primary wide" style="margin-top:10px" onclick="techReportSend()">📨 ارسال گزارش فنی</button>');
+}
+async function techReportSend(){
+ var t=($('trTxt')||{}).value||'';
+ if(t.trim().length<5){toast('کمی بیشتر توضیح بده','err');return}
+ try{
+  var d=await api('/api/miniapp/admin/v5',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({action:'tech_report',text:t,errors:TECH_ERRORS})});
+  toast(d.message,'ok');closeSheet();TECH_ERRORS=[];
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۴) محاسبه‌گر دستاورد بعدی — «چطور بازش کنم؟»
+   ════════════════════════════════════════════════════════════════ */
+var ACH_HINTS={
+ 'first_win':'اولین برد را در هر بازی ثبت کن — Trivia سریع‌ترین راه است.',
+ 'ten_wins':'۱۰ برد در هر حالتی — دوئل‌ها ۲ امتیاز برد در هر نشست می‌دهند.',
+ 'streak5':'۵ برد پیاپی — در ساعات خلوت آرنا شانسش بیشتر است.',
+ 'games20':'۲۰ بازی کامل — مأموریت‌ها هم شمارش می‌شوند.',
+ 'coins100':'۱۰۰ سکه یکجا — گردونه + چرخ رایگان + ماین‌یاب محتاطانه.',
+ 'v24_shopaholic':'اولین خرید فروشگاه — ارزان‌ترین آیتم با ۲۵ سکه.',
+ 'v24_duelist':'۵ دوئل انجام بده — برد باخت مهم نیست.',
+ 'v21_quiz_whiz':'کوییز ریاضی روزانه را درست جواب بده.',
+ 'v21_lucky_star':'در گردونه شانس جکپات بزن — شانسش ۵٪ است!',
+ 'v20_team_player':'در ۵ بازی تیمی شرکت کن.'
+};
+function achNextSteps(){
+ var a=D.achievements||[];
+ return a.filter(function(x){return !x.owned}).slice(0,5).map(function(x){
+  return{key:x.key,title:x.title,hint:ACH_HINTS[x.key]||('سطح و بازی بیشتر — '+esc(x.desc)),reward:x.reward};
+ });
+}
+function achNextSheet(){
+ var next=achNextSteps();
+ openSheet('<h3>🎯 مسیر دستاوردهای بعدی</h3>'
+ +'<div class="list">'
+ +next.map(function(n){
+  return '<div class="row" style="align-items:flex-start"><div class="medal">🔒</div>'
+  +'<div class="grow"><b>'+esc(n.title)+'</b>'
+  +'<small style="white-space:normal;line-height:2">'+esc(n.hint)+'</small>'
+  +'<span class="tag gold" style="margin-top:5px">+'+fa(n.reward)+' سکه</span></div></div>';
+ }).join('')
+ +(next.length?'':'<div class="empty"><span class="ei">🏆</span>همه‌ی دستاوردها را باز کرده‌ای!</div>')
+ +'</div>'
+ +'<button class="btn primary wide" style="margin-top:12px" onclick="closeSheet();quickPlaySheet()">🚀 برو برایش بازی کن</button>');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۵) نوار هدف هفتگی در خانه
+   ════════════════════════════════════════════════════════════════ */
+function weeklyGoalBar(){
+ try{
+  var goal=parseInt(localStorage.getItem('apex_wgoal')||'0',10)||0;
+  if(!goal)return '';
+  var got=(D.recap&&D.recap.week_xp)||(D.user?Math.round((D.user.xp||0)/10):0);
+  var p=Math.min(100,Math.round(got*100/goal));
+  return '<div class="card" style="display:flex;align-items:center;gap:10px">'
+  +'<div class="medal">🎯</div>'
+  +'<div class="grow"><b style="font-size:11px">هدف هفته: '+faK(goal)+' XP</b>'
+  +'<div class="bar thin" style="margin-top:6px"><i style="width:'+Math.max(4,p)+'%;background:linear-gradient(90deg,var(--green),var(--cyan))"></i></div>'
+  +'<small style="display:block;color:var(--muted);font-size:8.5px;margin-top:4px">'+faK(got)+' گرفته‌ای — '+faP(p)+'</small></div>'
+  +(p>=100?'<span class="tag ok">کامل! 🎉</span>':'<span class="tag">'+faP(p)+'</span>')
+  +'</div>';
+ }catch(e){return ''}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۶) رکوردهای محلی در هاب بازی‌ها
+   ════════════════════════════════════════════════════════════════ */
+function localRecordsBlock(){
+ try{
+  var lb=LOCAL_BEST||{};
+  var has=Object.keys(lb).length;
+  if(!has)return '';
+  var names={trivia:'🧠 زنجیره Trivia'};
+  var h='<div class="card"><div class="shead" style="padding:0"><b>🏅 رکوردهای این دستگاه</b><small>LOCAL</small></div><div class="chips" style="margin:8px 0 0">';
+  Object.keys(lb).forEach(function(k){
+   h+='<span class="tag gold">'+(names[k]||esc(k))+': '+fa(lb[k])+'</span>';
+  });
+  return h+'</div></div>';
+ }catch(e){return ''}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۷) ورودی‌های نهایی پالت + تزریق‌ها
+   ════════════════════════════════════════════════════════════════ */
+CMD_ITEMS.push(
+ {ic:'🎯',t:'حریف‌های اطرافم',s:'پنجره‌ی رتبه‌بندی حول تو',fn:"aroundMeSheet('global')"},
+ {ic:'🔒',t:'دستاوردهای بعدی',s:'مسیر باز کردن قفل‌ها',fn:"achNextSheet()"},
+ {ic:'🐞',t:'گزارش مشکل فنی',s:'خطاها + توضیح تو',fn:"techReportSheet()"},
+ {ic:'🔍',t:'جستجوی بانک (ادمین)',s:'فقط-خواندنی',fn:"admBankSearchSheet()",adm:1}
+);
+/* هدف هفتگی + رکوردها در خانه و بازی‌ها */
+var _renderHomeBaseF=renderHome;
+renderHome=function(){
+ _renderHomeBaseF();
+ try{
+  var el=$('pg-home');
+  if(el){
+   var wg=weeklyGoalBar();
+   if(wg)el.insertAdjacentHTML('afterbegin',wg);
+  }
+ }catch(e){}
+};
+var _renderGamesF=renderGames;
+renderGames=function(){
+ _renderGamesF();
+ try{
+  var el=$('pg-games');
+  if(el&&typeof localRecordsBlock==='function'){
+   var lr=localRecordsBlock();
+   if(lr)el.insertAdjacentHTML('beforeend',lr);
+  }
+ }catch(e){}
+};
+/* دکمه‌ی «حریف‌های اطراف» در صفحه رتبه‌بندی */
+var _loadBoardF=loadBoard2;
+loadBoard2=function(s,keep){
+ _loadBoardF(s,keep);
+ try{
+  setTimeout(function(){
+   var el=$('pg-board');
+   if(el&&!$('aroundBtn')){
+    el.insertAdjacentHTML('beforeend','<button id="aroundBtn" class="btn wide" style="margin-top:10px" onclick="aroundMeSheet(\''+(LBSCOPE||'global')+'\')">🎯 حریف‌های اطراف من</button>');
+   }
+  },200);
+ }catch(e){}
+};
+/* دکمه‌ی مسیر دستاوردها در صفحه دستاوردها */
+var _renderAchF=renderAch;
+renderAch=function(){
+ _renderAchF();
+ try{
+  var el=$('pg-ach');
+  if(el)el.insertAdjacentHTML('beforeend','<button class="btn primary wide" style="margin-top:10px" onclick="achNextSheet()">🎯 مسیر دستاوردهای بعدی</button>');
+ }catch(e){}
+};
+/* بانک: دکمه‌ی جستجو */
+var _admBankF=admBank;
+admBank=function(d){
+ var h=_admBankF(d);
+ h+='<div class="card" style="margin-top:10px"><button class="btn primary wide" onclick="admBankSearchSheet()">🔍 جستجو در متن سوالات (فقط-خواندنی)</button></div>';
+ return h;
+};
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN END — برنامه‌ی امروز + محتوای نهایی + اتصال تور
+   ════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════
+   ۱) برنامه‌ی امروز — صبح‌نامه‌ی قابل‌اقدام
+   ════════════════════════════════════════════════════════════════ */
+async function todayPlanSheet(){
+ openSheet('<h3>☀️ برنامه‌ی امروز</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var tasks=[];
+  /* پاداش روزانه */
+  if((D.daily||{}).eligible)tasks.push({ic:'🎁',t:'پاداش روزانه',s:'آماده است — یک لمس',fn:'dclaim()',hot:true,done:false});
+  else tasks.push({ic:'✅',t:'پاداش روزانه',s:'امروز گرفته‌ای',done:true});
+  /* استریک */
+  if((D.omega||{}).loginstreak_ready)tasks.push({ic:'🔥',t:'استریک لاگین',s:'آماده‌ی دریافت — استریک را قطع نکن!',fn:'loginstreakSheet()',hot:true,done:false});
+  else tasks.push({ic:'✅',t:'استریک لاگین',s:'امروز گرفته‌ای',done:true});
+  /* کوییز */
+  var g=_gameHubCache;
+  if(!g){try{g=await api('/api/miniapp/games')}catch(e){g=null}}
+  if(g){
+   if(!g.cooldowns.quiz_done)tasks.push({ic:'🧮',t:'کوییز ریاضی',s:'۶۰ ثانیه — +۸ XP',fn:"closeSheet();gameView('quiz')",hot:true,done:false});
+   else tasks.push({ic:'✅',t:'کوییز ریاضی',s:'امروز انجام شد',done:true});
+   if((g.cooldowns.luck||0)<=0)tasks.push({ic:'🍀',t:'گردونه شانس',s:'رایگان تا ۵۰ سکه',fn:"closeSheet();gameView('luck')",hot:true,done:false});
+   else tasks.push({ic:'⏳',t:'گردونه شانس',s:fa(Math.ceil((g.cooldowns.luck||0)/3600))+' ساعت دیگر',done:false});
+   if(g.cooldowns.ln_free)tasks.push({ic:'🎁',t:'چرخ رایگان کازینو',s:'سکه‌ی مجانی امروز',fn:"closeSheet();gameView('ln')",hot:true,done:false});
+   else tasks.push({ic:'✅',t:'چرخ رایگان کازینو',s:'امروز گرفته‌ای',done:true});
+  }
+  /* مأموریت‌ها */
+  var can=(D.missions||[]).filter(function(m){return m.completed&&!m.claimed}).length;
+  if(can)tasks.push({ic:'🎯',t:fa(can)+' مأموریت آماده',s:'دریافت کن — از مرکز مأموریت‌ها',fn:"closeSheet();show('miss',{force:true})",hot:true,done:false});
+  else tasks.push({ic:'🎯',t:'مأموریت‌های روزانه',s:fa((D.missions||[]).length)+' مورد فعال — برو برایشان',fn:"closeSheet();show('miss',{force:true})",done:false});
+  /* هدف هفتگی */
+  var goal=0;try{goal=parseInt(localStorage.getItem('apex_wgoal')||'0',10)||0}catch(e){}
+  if(goal)tasks.push({ic:'🎯',t:'هدف هفتگی',s:faK(goal)+' XP — نوارش در خانه',fn:"closeSheet()",done:false});
+  /* خروجی */
+  var open=tasks.filter(function(t){return !t.done}).length;
+  var h='<h3>☀️ برنامه‌ی امروز</h3>'
+  +'<div class="card" style="text-align:center;margin-bottom:12px">'
+  +'<b style="font-size:15px;color:'+(open?'var(--green)':'var(--gold)')+'">'+(open?fa(open)+' کار باقی مانده':'همه‌ی کارهای امروز تمام! 🎉')+'</b>'
+  +'<div class="sub" style="margin-top:4px">'+fa(tasks.length)+' مورد بررسی شد</div></div>'
+  +'<div class="list">';
+  tasks.forEach(function(t){
+   h+='<div class="row'+(t.done?'':' tap')+'"'+(t.fn&&!t.done?' onclick="'+t.fn+'" style="cursor:pointer"':'')+'>'
+   +'<div class="medal">'+t.ic+'</div>'
+   +'<div class="grow"><b'+(t.done?' style="opacity:.6"':'')+'>'+t.t+'</b><small>'+t.s+'</small></div>'
+   +(t.hot?'<span class="tag ok">الان!</span>':t.done?'<span class="tag">✓</span>':'')+'</div>';
+  });
+  h+='</div>';
+  h+='<button class="btn primary wide glow" style="margin-top:12px" onclick="closeSheet();quickPlaySheet()">🚀 شروع سریع کارها</button>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۲) نکته‌ی روز — چرخشی روی خانه
+   ════════════════════════════════════════════════════════════════ */
+var DAILY_TIPS=[
+ 'استریک روزانه را هیچ‌وقت قطع نکن — بعد از روز ۷، پاداش‌ها جهش می‌کنند.',
+ 'Trivia زنجیره‌ای سریع‌ترین XP در دقیقه است — برای سطح زدن بزن.',
+ 'قبل از خرید، حراج روزانه را چک کن — ۳۰٪ تخفیف واقعی است.',
+ 'در مین‌یاب، بعد از ۳-۴ خانه امن برداشت کن — طمع گنج را می‌سوزاند.',
+ 'دوئل‌ها را با دوستان رقیب بازی کن — آمار رودررو ثبت می‌شود.',
+ 'کوییز ریاضی روزانه فقط ۶۰ ثانیه است — قبل خواب یادت نرود.',
+ 'در آرنا، بعد از دو باخت استراحت بده — ELO با خستگی می‌پرد.',
+ 'چرخ رایگان کازینو هر روز است — استریکش پاداش تصاعدی دارد.',
+ 'جواب‌های بلند در لابی پاداش بیشتری می‌گیرند — مختصر ننویس.',
+ 'بوستر XP را برای روزهای پروقت نگه دار — ارزشش دوبرابر می‌شود.',
+ 'ریکاپ هفتگی را ببین — دقیقاً می‌گوید کجا ضعف داری.',
+ 'مایلستون‌ها خودکار پرداخت می‌شوند — فقط چکشان کن.',
+ 'حالت روشن برای روز و نور آفتاب — از تنظیمات یک لمس.',
+ 'رنگ سفارشی اپ را عوض کن — حس نو می‌کند!',
+ 'برنامه‌ی امروز (☀️ در پالت) همه‌ی کارهای روز را یک‌جا می‌گوید.'
+];
+function dailyTip(){
+ try{
+  var day=Math.floor(Date.now()/86400000);
+  return DAILY_TIPS[day%DAILY_TIPS.length];
+ }catch(e){return DAILY_TIPS[0]}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۳) محتوای نهایی — راهنما، پرسش، واژه
+   ════════════════════════════════════════════════════════════════ */
+GUIDE_TOPICS.push(
+ {ic:'☀️',t:'برنامه‌ی روزانه حرفه‌ای',s:'روتین برنده‌ها',body:[
+  'صبح: پاداش روزانه + استریک + چرخ رایگان — ۲ دقیقه، سکه‌ی مطمئن.',
+  'میانه‌ی روز: کوییز ریاضی + گردونه + مأموریت‌ها — پاداش‌های کوچک زنجیره می‌شوند.',
+  'شب: لابی گروهی یا دوئل — وقت واقعی بازی و XP جدی.',
+  'قبل خواب: برنامه‌ی امروز (☀️) را چک کن که چیزی جا نمانده باشد.']},
+ {ic:'🎚',t:'تنظیم اپ برای خودت',s:'شخصی‌سازی کامل',body:[
+  '۸ تم + رنگ سفارشی: ظاهر را مال خودت کن.',
+  'اندازه‌ی متن و کنتراست بالا: برای چشم‌های راحت.',
+  'پروفایل صدا + بلندی تفکیکی: صدای اپ را تنظیم کن.',
+  'میان‌برهای ستاره‌دار: صفحه‌های محبوبت را به خانه بیاور.']}
+);
+FAQ.push(
+ ['«برنامه‌ی امروز» چیست؟','چک‌لیست صبح‌نامه‌ای که همه‌ی کارهای پرپاداش روز را یک‌جا نشان می‌دهد: پاداش روزانه، استریک، کوییز، گردونه، چرخ رایگان و مأموریت‌ها — با دکمه‌ی اجرای مستقیم.'],
+ ['نکته‌ی روز کجا عوض می‌شود؟','هر ۲۴ ساعت یک‌بار به‌طور خودکار — همان نوار آبی بالای خانه.'],
+ ['گزارش فنی چه فرقی با بازخورد دارد؟','گزارش فنی خطاهای ثبت‌شده‌ی دستگاه تو را هم ضمیمه می‌کند تا تیم سریع‌تر مشکل را پیدا کند.'],
+ ['رکورد محلی چه فرقی با رکورد ربات دارد؟','ربات رکورد رسمی را نگه می‌دارد؛ رکورد محلی فقط روی همین دستگاه است و برای انگیزه‌ی روزانه است.']
+);
+GLOSSARY.push(
+ ['برنامه‌ی امروز','چک‌لیست یک‌جای کارهای پرپاداش روزانه.'],
+ ['نکته‌ی روز','نکته‌ی چرخشی ۲۴ ساعته روی صفحه‌ی خانه.'],
+ ['پنجره‌ی رتبه','۷ نفر حول رتبه‌ی تو در رتبه‌بندی — حریف‌های هم‌قدم.'],
+ ['گزارش فنی','بازخورد + خطاهای JS برای عیب‌یابی سریع‌تر.'],
+ ['جستجوی بانک','جستجوی فقط-خواندنی متن سوالات — مخصوص ادمین.']
+);
+
+/* ════════════════════════════════════════════════════════════════
+   ۴) تور خودکار بعد از آنبوردینگ + ورودی‌های نهایی
+   ════════════════════════════════════════════════════════════════ */
+CMD_ITEMS.push(
+ {ic:'☀️',t:'برنامه‌ی امروز',s:'چک‌لیست کامل روز',fn:"todayPlanSheet()"}
+);
+/* دکمه‌ی برنامه‌ی امروز روی خانه */
+function injectTodayPlan(){
+ try{
+  var el=$('pg-home');
+  if(!el||$('tpBtn'))return;
+  var b=document.createElement('button');
+  b.id='tpBtn';
+  b.className='btn primary wide glow';
+  b.style.cssText='margin-bottom:12px';
+  b.textContent='☀️ برنامه‌ی امروز — ببین چه کارهایی مانده';
+  b.onclick=todayPlanSheet;
+  el.insertBefore(b,el.firstChild);
+ }catch(e){}
+}
+var _renderHomeEnd=renderHome;
+renderHome=function(){
+ _renderHomeEnd();
+ try{injectTodayPlan()}catch(e){}
+};
+/* آنبوردینگ آخر → تور */
+var _obSkipBase=obSkip;
+obSkip=function(){
+ _obSkipBase();
+ try{
+  if(!localStorage.getItem('apex_tour'))setTimeout(tourStart,800);
+ }catch(e){}
+};
+/* نکته‌ی روز زیر خوش‌آمد */
+var _greetBase=greetBanner;
+greetBanner=function(){
+ var g=dayGreeting();
+ return '<div class="infobanner info" style="margin-bottom:10px"><span class="ic">'+g.ic+'</span>'
+ +'<span style="flex:1"><b>'+g.t+'</b> '+g.s+'<br><small style="color:var(--muted);font-size:8.5px">💡 نکته‌ی امروز: '+esc(dailyTip())+'</small></span></div>';
+};
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN FINAL CONTENT — آخرین گسترش محتوایی معنادار
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- استراتژی‌های تکمیلی ---------- */
+STRATEGY.push(
+ {ic:'🏆',t:'استراتژی رتبه‌بندی هفتگی',body:[
+  'دوشنبه صبح کم‌رقابت‌ترین ساعت است — صعود زودهنگام سهم بزرگی از هفته می‌گیرد.',
+  'جمعه/شنبه بالاترین رقابت — برای حفظ جایگاه، نه ریسک.',
+  'XP هفتگی از بازی‌های متنوع سریع‌تر جمع می‌شود تا تکراری.']},
+ {ic:'🎁',t:'استراتژی مایلستون‌ها',body:[
+  'مایلستون‌های نزدیک را اول ببند — سکه‌ی سریع برای خریدهای کوچک.',
+  'مایلستون سطحی، با ارزان‌ترین راه‌های XP (Trivia) می‌رسد.',
+  'هرگز پاداش آماده را شب نگه ندار — ریست روزانه از دستت می‌برد!']},
+ {ic:'🧊',t:'بازی در ساعات پایین‌تر',body:[
+  'صف آرنا در ساعت‌های خلوت سریع‌تر جفت می‌شود.',
+  'لابی‌های عمومی خلوت‌تر = سهم سوال بیشتر برای تو.',
+  'کازینو در ساعات شلوغ، اعداد پرتکرارتری می‌دهد — تاریخچه را ببین.']},
+ {ic:'📅',t:'رایجینگ هفتگی کامل',body:[
+  'دوشنبه: مسیر پایه — مأموریت‌ها + کوییز + گردونه.',
+  'سه‌شنبه تا پنجشنبه: آرنا و دوئل — ELO و XP جدی.',
+  'پنجشنبه: چک ریکاپ — اصلاح مسیر.',
+  'جمعه/شنبه: لابی‌های گروهی — سرگرمی + شبکه‌سازی.',
+  'یکشنبه: جمع‌بندی — هدف هفتگی را ببند و کارت هضم را شکل بگذار!']},
+ {ic:'🛒',t:'خرید هوشمند',body:[
+  'قاب‌ها اولویت نمایشی دارند؛ پاورآپ‌ها اولویت کاربردی — سبک بازی‌ات را ببین.',
+  'جعبه‌ها میانگین بازگشت مشخصی دارند — برای هیجان، نه سرمایه‌گذاری.',
+  'بوستر XP فقط وقتی می‌خر که ۲+ ساعت بازی زمان داری.']},
+ {ic:'🤝',t:'مهارت‌های اجتماعی لابی',body:[
+  'به‌عنوان پرسشگر، هدف‌ها را بچرخان — تمرکز روی یک نفر، لابی را سرد می‌کند.',
+  'موضوع را با انرژی گروه هماهنگ کن — گرمای بازی دست شماست.',
+  'جواب‌های بامزه‌ات را با کارت اشتراک نگه دار — خاطره می‌شود!']}
+);
+
+/* ---------- موضوعات راهنمای تکمیلی ---------- */
+GUIDE_TOPICS.push(
+ {ic:'🏆',t:'سیستم رتبه و لیگ',s:'از برنز تا الماس',body:[
+  'XP کل، رتبه‌ی اسمی تو را تعیین می‌کند — جنگاور، شوالیه، استاد…',
+  'ELO فقط برای آرنا است و با برد/باخت آرنا حرکت می‌کند.',
+  'لیگ‌ها بر اساس ELO: هر بازه، یک رنگ و یک عنوان.',
+  'رتبه‌ی جهانی در پروفایل و پنجره‌ی «حریف‌های اطراف» دیده می‌شود.']},
+ {ic:'⏰',t:'کول‌داون‌ها و ریست‌ها',s:'تقویم داخلی بازی',body:[
+  'مأموریت‌ها و حراج: هر شب ساعت ۰۰:۰۰.',
+  'Quest هفتگی: هر دوشنبه صبح.',
+  'گردونه: هر ۲۰ ساعت از آخرین چرخش.',
+  'کوییز و چرخ رایگان: روزانه (۲۴ ساعته).',
+  'فصل: چند هفته — پایانش پاداش رتبه‌بندی فصلی دارد.']},
+ {ic:'🐞',t:'وقتی مشکل پیش می‌آید',s:'عیب‌یابی سریع',body:[
+  'اول اپ را کامل ببند و دوباره باز کن — وضعیت‌ات بازیابی می‌شود.',
+  'اگر ادامه داشت: گزارش فنی (🐞 در پالت جستجو) با خطاهای خودکار.',
+  'اینترنت ناپایدار؟ اپ صف ارسال دارد — عملیات‌ها بعد از وصل دوباره می‌روند.',
+  'داده‌های بازی روی سرور ربات است — هیچ‌وقت با رفرش از دست نمی‌رود.']},
+ {ic:'✨',t:'کلیدهای طلایی تایتان',s:'۱۰ ترفند حرفه‌ای',body:[
+  'Ctrl+K را یاد بگیر — همه‌چیز یک جستجو فاصله دارد.',
+  'دکمه‌ی 🎓 هر بازی، راهنما و پاداش‌هایش را باز می‌کند.',
+  'کارت نشست (قرمز، بالای صفحه) XP همین الان را می‌شمارد.',
+  'در لابی، نوشته‌ات هرگز پاک نمی‌شود — آزادانه تایپ کن.',
+  'گوشی ضعیف داری؟ حالت سبک را از تنظیمات روشن کن.',
+  'چشمانت خسته است؟ کنتراست بالا + متن بزرگ.',
+  'صفحه‌های محبوبت را ستاره بزن — میان‌بر خانه.',
+  'هر شب برنامه‌ی امروز (☀️) را چک کن — چیزی جا نمی‌ماند.',
+  'دستاوردهای قفل بعدی را با «مسیر دستاوردها» ببین.',
+  'هر چیزی گم شد: پالت جستجو همه‌جا را می‌گردد.']}
+);
+
+/* ---------- پرسش‌ها و واژه‌های تکمیلی ---------- */
+FAQ.push(
+ ['رتبه‌ی اسمی چه تفاوتی با ELO دارد؟','رتبه‌ی اسمی از XP کل تو ساخته می‌شود و نمایشی است؛ ELO فقط در آرنا حرکت می‌کند و مهارت واقعی رقابتی‌ات را می‌سنجد.'],
+ ['لیگ‌ها چطور ارتقا می‌یابند؟','با رسیدن ELO به بازه‌ی بعدی، لیگت خودکار ارتقا می‌یابد — از برنز تا الماس. با افت ELO هم ممکن است تنزل شود.'],
+ ['اگر وسط دوئل اپ ببندم؟','دوئل روی سرور است — دوباره باز کنی، از همان راند ادامه می‌دهی؛ فقط مهلت پاسخ سوال ممکن است تمام شده باشد.'],
+ ['چرا بعضی سوالها تکراری می‌آیند؟','موتور گرما از همان بانک رسمی ربات می‌کشد؛ با پیشرفت راندها، سطح سوال‌ها عوض می‌شود.'],
+ ['کاربر VIP در رقابت مزیت ناعادلانه دارد؟','VIP فقط ۱۰٪ پاداش بیشتر می‌گیرد — در محاسبه‌ی برد/باخت و ELO هیچ تفاوتی ندارد.'],
+ ['چطور قاب اختصاصی رزگلد/ماتریکس بگیرم؟','تم‌های اپ برای همه‌اند؛ قاب‌های پروفایل از فروشگاه و مایلستون‌ها می‌آیند — دوتای اختصاصی هم برای ۲۵ دعوت هست.']
+);
+GLOSSARY.push(
+ ['رتبه‌ی اسمی','عنوان نمایشی بر اساس XP کل — جنگاور، شوالیه، استاد…'],
+ ['لیگ','دسته‌بندی ELO آرنا از برنز تا الماس.'],
+ ['ریست روزانه','نیمه‌شب — مأموریت‌ها و حراج تازه می‌شوند.'],
+ ['Quest هفتگی','هر دوشنبه ریست می‌شود؛ پاداش بزرگ‌تر از روزانه.'],
+ ['پرسشگر','بازیکنی که در نوبت لابی، موضوع و هدف را انتخاب می‌کند.'],
+ ['پنجره‌ی نشست','شمارنده‌ی زنده‌ی XP از لحظه‌ی باز کردن اپ.'],
+ ['کارنامه نشست','کارت آماری قابل‌اشتراک از عملکرد همین نشست.'],
+ ['خطای فنی','گزارش همراه خطاهای JS برای عیب‌یابی تیم.']
+);
+
+/* ---------- قوانین تکمیلی ---------- */
+RULES.push(
+ {ic:'🎯',t:'یک حساب برای هر نفر',b:'چندحسابی برای دستکاری رتبه‌بندی یا پاداش، شناسایی و همه‌ی حساب‌ها یکجا مسدود می‌شوند.'},
+ {ic:'🔒',t:'داده‌ی شخصی محفوظ است',b:'آمار خصوصی‌ات فقط با اجازه‌ی خودت برای بقیه نمایش داده می‌شود — تنظیمات حریم خصوصی را ببین.'},
+ {ic:'📢',t:'تبلیغات فقط از مسیر رسمی',b:'تبلیغ در لابی‌ها فقط توسط سیستم تبلیغات ربات (با مدیریت ادمین) انجام می‌شود — ارسال دستی ممنوع.'},
+ {ic:'⚖️',t:'خطا هنگام اجرا، پاداشت محفوظ',b:'اگر سیستم وسط بازی خطا بزند، پاداش‌های ثبت‌شده‌ات از بین نمی‌رود — دکتر داده سلامت را برمی‌گرداند.'},
+ {ic:'🌟',t:'احترام به سطح بقیه',b:'بازیکن‌های تازه‌وارد را «آسان» بگیر — جامعه‌ی سالم یعنی رشد همه با هم.'},
+ {ic:'🎁',t:'سهمیه‌های روزانه منصفانه‌اند',b:'هدیه و قلب روزانه‌اند — برای جلوگیری از سوءاستفاده، سقف دارند؛ فردا دوباره پر می‌شوند.'}
+);
+
+/* ---------- نکات روز تکمیلی ---------- */
+DAILY_TIPS.push(
+ 'حریف‌های اطرافت را ببین — پنجره‌ی رتبه، ۷ نفر هم‌قدم تو را نشان می‌دهد.',
+ 'دکمه‌ی ⭐ صفحه‌های محبوبت را به میان‌بر خانه تبدیل می‌کند.',
+ 'گزارش فنی (🐞) خطاهای دستگاه‌ات را هم می‌فرستد — مشکل سریع‌تر حل می‌شود.',
+ 'حالت سبک روی گوشی‌های قدیمی، سرعت اپ را محسوس بالا می‌برد.',
+ 'کارتی از نشست‌ات بساز و در گروه بفرست — چالش بقیه را بیاور!',
+ 'قوانین بازی ۱۴ ماده دارد — یک نگاه بینداز، همه‌چیز شفاف است.',
+ 'در پارتی‌هاب ۸ حالت گروهی است — همه را امتحان کن.',
+ 'مرجع دستورات، ۱۰۰+ دستور ربات را با جستجو دارد.',
+ 'حالت‌های بازی را بشناس — هر کدام پاداش و روحیه‌ی خودش را دارد.',
+ 'برنامه‌ریز پیشرفت مؤثرترین مسیر XP را با عدد نشان می‌دهد.',
+ 'بهترین واکنش‌دهنده‌ی هفته شو — رکوردت روی همین دستگاه ثبت می‌شود.',
+ 'دوئل را با کد به هر کسی بفرست — از داخل مینی‌اپ وارد می‌شود.',
+ 'هر هفته یک هدف XP بگذار — ذهنت به عدد روشن پاسخ بهتری می‌دهد.',
+ 'پیش از خرید بزرگ ۲۴ ساعت صبر کن — شاید فردا حراج شود.',
+ 'امتحان کردن تم‌های نو (ماتریکس/رزگلد) فقط ۱ لمس است.'
+);
+
+/* ---------- راهنمای بازی‌ها: قوانین تکمیلی ---------- */
+GAME_HELP.trivia.rules.push('جواب‌ها را نخوان تا آخر — کلمه‌ی کلیدی را پیدا کن');
+GAME_HELP.number.rules.push('اول حدس وسط بزن — بازه را سریع‌تر می‌بُری');
+GAME_HELP.mine.rules.push('خانه‌های گوشه معمولاً امن‌تر شروع می‌شوند — اما تضمینی نیست!');
+GAME_HELP.ln.rules.push('تاریخچه‌ی اعداد را ببین — الگوی داغ/سرد واقعی است');
+GAME_HELP.ttt.rules.push('وسط صفحه‌ی شروع، بهترین شروع ممکن است');
+GAME_HELP.reaction.rules.push('انگشتت را روی دکمه نگه دار — فقط کلیک نهایی مهم است');
+
+/* ---------- حالت‌های بازی: دو مدت اضافه ---------- */
+MODES_INFO.push(
+ {ic:'🎤',t:'چرخش پرسشگر',d:'در هر راند، یک بازیکن پرسشگر می‌شود و موضوع + هدف را انتخاب می‌کند — عدالت در توزیع سوال‌ها.',rw:'همه به نوبت پاداش می‌گیرند'},
+ {ic:'🌡',t:'موتور گرما',d:'شدت سوال‌ها با راندها بالا می‌رود — از آرام شروع کن و بگذر به آتیشی. بازیکن‌های حرفه‌ای گرما را مدیریت می‌کنند.',rw:'راند بالاتر = پاداش بیشتر'}
+);
+
+/* ---------- کلیدهای میان‌بُر تکمیلی ---------- */
+document.addEventListener('keydown',function(e){
+ if(!READY)return;
+ if(/input|textarea/i.test((document.activeElement||{}).tagName||''))return;
+ if(e.key==='s'||e.key==='S')show('stats',{force:true});
+ else if(e.key==='n'||e.key==='N')show('notif',{force:true});
+ else if(e.key==='a'||e.key==='A'){if(D.admin)show('admin',{force:true})}
+ else if(e.key==='?')keysSheet();
+ else if(e.key==='t'||e.key==='T')todayPlanSheet();
+});
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN LEAGUE — صفحه‌ی لیگ‌های آرنا + وضعیت صعود/سقوط
+   ════════════════════════════════════════════════════════════════ */
+
+/* جدول لیگ‌های آرنا — همان ساختار مهارت ربات */
+var LEAGUES=[
+ {ic:'🥉',t:'برنز',rng:'زیر ۱۰۰۰',color:'#c88a5a',mult:'×۱.۰',desc:'نقطه‌ی شروع همه‌ی قهرمانان — آرام و آموزشی'},
+ {ic:'🥈',t:'نقره',rng:'۱۰۰۰ تا ۱۱۴۹',color:'#a9b0c4',mult:'×۱.۰',desc:'مبانی محکم شد — حریف‌ها جدی‌تر'},
+ {ic:'🥇',t:'طلا',rng:'۱۱۵۰ تا ۱۲۹۹',color:'#ffc857',mult:'×۱.۰',desc:'میانه‌ی میدان — رقابت واقعی اینجا شروع می‌شود'},
+ {ic:'💎',t:'پلاتین',rng:'۱۳۰۰ تا ۱۴۴۹',color:'#15d8ff',mult:'×۱.۰',desc:'بازیکن‌های جدی — هر اشتباه ELO می‌پرد'},
+ {ic:'👑',t:'الماس',rng:'۱۴۵۰ تا ۱۵۹۹',color:'#7c5cff',mult:'×۱.۰',desc:'خوش‌شانسی برای رسیدن به اینجایی — بازی هوشمندانه لازم است'},
+ {ic:'🔮',t:'افسانه',rng:'۱۶۰۰ و بالاتر',color:'#ff4fa3',mult:'×۱.۰',desc:'قله‌ی آرنا — فقط بهترین‌های تاریخ اینجا هستند'}
+];
+function leagueOf(elo){
+ if(elo<1000)return 0;
+ if(elo<1150)return 1;
+ if(elo<1300)return 2;
+ if(elo<1450)return 3;
+ if(elo<1600)return 4;
+ return 5;
+}
+async function renderLeagues(){
+ var g=renderGen();
+ var el=$('pg-leagues');
+ el.innerHTML='<div class="sk tall"></div>';
+ try{
+  var d=await api('/api/miniapp/arena');
+  if(isStale(g))return;
+  var myElo=d.elo||1000;
+  var myLg=leagueOf(myElo);
+  var h='<div class="gcard"><div class="in gm-hero"><div class="gi">'+LEAGUES[myLg].ic+'</div><div style="flex:1;min-width:0">'
+  +'<h1 class="h1 grad" style="margin:0">لیگ‌های آرنا</h1>'
+  +'<p class="sub">لیگ تو: '+LEAGUES[myLg].t+' — ELO '+fa(myElo)+'</p></div></div></div>';
+  /* نوار جایگاه تو */
+  var pos=Math.min(100,Math.max(0,(myElo-900)*100/800));
+  h+='<div class="card"><div class="shead" style="padding:0"><b>📍 جایگاه تو در مسیر لیگ‌ها</b><small>ELO</small></div>'
+  +'<div class="lg-track">'+LEAGUES.map(function(l,i){
+   return '<span class="lg-node'+(i===myLg?' me':'')+'" style="--lc:'+l.color+'" title="'+l.t+'">'+l.ic+'</span>'}).join('')
+  +'<i class="lg-fill" style="width:'+pos+'%"></i></div>'
+  +'<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dim);margin-top:4px">'
+  +LEAGUES.map(function(l){return '<span>'+l.t+'</span>'}).join('')+'</div>'
+  +'<div class="sub" style="margin-top:10px;text-align:center">'
+  +(myLg<5?('تا '+LEAGUES[myLg+1].t+': '+fa(Math.max(0,(myLg+1===1?1000:myLg+1===2?1150:myLg+1===3?1300:myLg+1===4?1450:1600)-myElo))+' ELO دیگر'):'خودِ افسانه‌ای!')
+  +(myLg>0?' · تا سقوط به '+LEAGUES[myLg-1].t+': '+fa(myElo-(myLg===1?1000:myLg===2?1150:myLg===3?1300:myLg===4?1450:1600))+' ELO امانت':'')
+  +'</div></div>';
+  /* جدول لیگ‌ها */
+  h+='<div class="section"><div class="shead"><b>🏆 شش لیگ آرنا</b><small>LEAGUES</small></div>';
+  LEAGUES.forEach(function(l,i){
+   var mine=i===myLg;
+   h+='<div class="card tap'+(mine?' lg-me':'')+'" onclick="show(\'arena\',{force:true})" style="'+(mine?'border-color:'+l.color+'66;box-shadow:0 10px 34px '+l.color+'22':'')+'">'
+   +'<div style="display:flex;align-items:center;gap:12px">'
+   +'<div style="font-size:26px;color:'+l.color+'">'+l.ic+'</div>'
+   +'<div style="flex:1;min-width:0"><b style="color:'+l.color+'">'+l.t+(mine?' — لیگ تو 📍':'')+'</b>'
+   +'<div class="sub">'+esc(l.desc)+'</div>'
+   +'<small style="display:block;color:var(--dim);font-size:8.5px;margin-top:2px">محدوده: '+l.rng+'</small></div>'
+   +'<span style="color:var(--muted)">‹</span></div></div>';
+  });
+  h+='</div>';
+  /* آمار آرنا خودت */
+  h+='<div class="grid g4" style="margin-top:12px">'
+  +st('ELO','lg_e',d.elo)+st('برد','lg_w',d.wins)+st('باخت','lg_l',d.losses)
+  +st('لیگ','lg_t',(LEAGUES[myLg].t.length))+'</div>';
+  /* توضیح مکانیک */
+  h+='<div class="card" style="font-size:10px;color:var(--muted);line-height:2.1">'
+  +'<b>⚙️ مکانیک ELO:</b> برد با حریف قوی‌تر = ELO بیشتر · باخت با حریف ضعیف‌تر = افت بیشتر · '
+  'مساوی تقریباً بی‌اثر. مچ‌میکینگ همیشه نزدیک‌ترین ELO را پیدا می‌کند.</div>';
+  setPageHTML('leagues',h,g);
+  countUp($('lg_e'),d.elo);countUp($('lg_w'),d.wins);countUp($('lg_l'),d.losses);
+ }catch(e){if(!isStale(g))el.innerHTML=pageError('renderLeagues()',e.message)}
+}
+
+/* ثبت صفحه + پالت */
+CMD_ITEMS.push(
+ {ic:'🏆',t:'لیگ‌های آرنا',s:'برنز تا افسانه + جایگاه تو',fn:"show('leagues',{force:true})"}
+);
+/* دکمه‌ی لیگ در صفحه آرنا */
+var _renderArenaF2=renderArenaPage;
+renderArenaPage=function(){
+ _renderArenaF2();
+ try{
+  setTimeout(function(){
+   var el=$('pg-arena');
+   if(el&&!$('lgBtn')){
+    el.insertAdjacentHTML('afterbegin','<button id="lgBtn" class="btn wide sm" style="margin-bottom:10px" onclick="show(\'leagues\',{force:true})">🏆 لیگ‌ها را ببین — جایگاه من کجاست؟</button>');
+   }
+  },150);
+ }catch(e){}
+};
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN FINAL++ — پرسش‌های هر بازی + رکوردهای مرجع + محاسبه‌گر
+   مایلستون + تکمیل تم‌ها
+   ════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════
+   ۱) پرسش‌های پرتکرار هر بازی — شیت «بیشتر بدان»
+   ════════════════════════════════════════════════════════════════ */
+var GAME_FAQ={
+ trivia:[
+  ['چرا زنجیره‌ام ریخت با اینکه درست جواب دادم؟','گزینه‌ها را دقیق بخوان — شباهت کلمات عمدی است؛ فقط یکی کاملاً درست است.'],
+  ['حداکثر پاداش چقدر است؟','زنجیره‌ی طولانی تا +۱۴ XP و +۱۱ سکه در هر پاسخ می‌رسد؛ جواب غلط هم +۲XP×طول زنجیره پایان می‌دهد.'],
+  ['رکورد من کجا ثبت می‌شود؟','روی حساب ربات (رسمی) + همین دستگاه (محلی) — هر دو در هاب بازی‌ها.']],
+ word:[
+  ['راهنما چیست؟','دسته‌ی موضوعی کلمه — با آن می‌توانی حدس دقیق‌تری بزنی.'],
+  ['اگر غلط بزنم چه می‌شود؟','+۵ XP می‌گیری و بازی بعدی بی‌درنگ می‌آید — جریمه‌ای نیست.']],
+ number:[
+  ['چرا گزینه‌ها بعد از هر حدس عوض می‌شوند؟','سیستم بازه را حول حدس تو باریک می‌کند — مثل رادار به هدف نزدیک می‌شوی.'],
+  ['بهترین استراتژی چیست؟','وسط بازه حدس بزن؛ بزرگ‌تر/کوچک‌تر را ببین و بازه را نصف کن.']],
+ memory:[
+  ['چقدر وقت برای حفظ دارم؟','۳ ثانیه — دنباله با انیمیشن نمایش داده می‌شود.'],
+  ['اعداد تکراری می‌آیند؟','نه، دنباله‌ی تصادفی است؛ حواس جمع بودن مهم‌تر از تکرار است.']],
+ reaction:[
+  ['اگر زود بزنم؟','راند باطل می‌شود و باید از اول شروع کنی — صبر کن تا سبز شود.'],
+  ['رکورد خوب چند است؟','زیر ۳۰۰ms عالی · ۳۰۰-۵۰۰ خیلی خوب · ۵۰۰-۸۰۰ خوب.']],
+ ttt:[
+  ['AI چه سختی دارد؟','بهترین حرکت را محاسبه می‌کند — برد معمولاً با خطای حریف یا تسخیر وسط+گوشه است.'],
+  ['مساوی هم پاداش دارد؟','خیر — فقط برد +۲۰ سکه و +۲۰ XP دارد.']],
+ mine:[
+  ['ضریب چطور حساب می‌شود؟','با هر خانه‌ی امن بالا می‌رود؛ مین یعنی سوختن کل گنج.'],
+  ['مطمئن‌ترین زمان برداشت؟','۳-۴ خانه امن — بین سود و ریسک تعادل است.']],
+ quiz:[
+  ['چرا روزی یک بار؟','همان قانون ربات — سهمیه‌ی روزانه‌ی کوییز.'],
+  ['اگر وقت تمام شود؟','سهمیه سوخته نمی‌شود؛ فقط آن سوال باطل است — دوباره بگیر.']],
+ luck:[
+  ['احتمال جایزه‌ی بزرگ؟','۵٪ — ارزشش را دارد چون چرخش رایگان است.'],
+  ['کول‌داون چند است؟','۲۰ ساعت از آخرین چرخش.']],
+ ln:[
+  ['«داغ» و «سرد» یعنی چه؟','اعدادی که اخیراً زیاد/کم آمده‌اند — الگوی واقعی، نه شانس.'],
+  ['چرخ رایگان چیست؟','روزانه یک چرخش بدون شرط — استریکش هم پاداش تصاعدی دارد.']]
+};
+function gameFaqSheet(key){
+ var f=GAME_FAQ[key];
+ if(!f)return;
+ openSheet('<h3>❓ بیشتر بدان: '+esc((GAMEMETA[key]||['','',])[1])+'</h3><div class="list">'
+ +f.map(function(x){
+  return '<div class="row" style="align-items:flex-start"><div class="medal">💬</div>'
+  +'<div class="grow"><b style="white-space:normal;font-size:11px">'+esc(x[0])+'</b>'
+  +'<small style="white-space:normal;line-height:2">'+esc(x[1])+'</small></div></div>'}).join('')
+ +'</div>'
+ +'<button class="btn primary wide" style="margin-top:10px" onclick="closeSheet();gameView(\''+key+'\')">🎮 بازی کن!</button>');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ۲) رکوردهای مرجع — «هدف‌های طلایی» هر بازی
+   ════════════════════════════════════════════════════════════════ */
+var GAME_TARGETS={
+ trivia:[['خوب',5],['عالی',10],['افسانه‌ای',20]],
+ reaction:[['خوب',500],['عالی',350],['افسانه‌ای',250]],
+ mine:[['خوب','×۲'],['عالی','×۳'],['افسانه‌ای','×۴']],
+ ttt:[['خوب',3],['عالی',5],['افسانه‌ای',10]],
+ quiz:[['درست',1],['بروز',7],['استاد',30]]
+};
+function gameTargetsBlock(key){
+ var t=GAME_TARGETS[key];
+ if(!t)return '';
+ var h='<div class="card"><div class="shead" style="padding:0"><b>🎯 هدف‌های طلایی</b><small>TARGETS</small></div><div class="chips" style="margin:8px 0 0">';
+ t.forEach(function(x){
+  h+='<span class="tag">'+x[0]+': '+fa(x[1])+'</span>';
+ });
+ return h+'</div></div>';
+}
+/* تزریق در شیت راهنمای بازی */
+var _gameHelpBase=gameHelpSheet;
+gameHelpSheet=function(key){
+ _gameHelpBase(key);
+ try{
+  setTimeout(function(){
+   var body=$('sheetBody');
+   if(body){
+    var tg=gameTargetsBlock(key);
+    if(tg)body.insertAdjacentHTML('beforeend',tg);
+    var fq=GAME_FAQ[key];
+    if(fq){
+     body.insertAdjacentHTML('beforeend','<button class="btn wide sm" style="margin-top:8px" onclick="gameFaqSheet(\''+key+'\')">❓ پرسش‌های این بازی</button>');
+    }
+   }
+  },50);
+ }catch(e){}
+};
+
+/* ════════════════════════════════════════════════════════════════
+   ۳) محاسبه‌گر مایلستون — «چقدر مانده؟»
+   ════════════════════════════════════════════════════════════════ */
+async function milestoneCalcSheet(){
+ var g=renderGen();
+ openSheet('<h3>🧮 محاسبه‌گر مایلستون</h3><div style="text-align:center;padding:14px"><div class="spin" style="margin:0 auto;width:22px;height:22px;border-radius:50%;border:3px solid #ffffff14;border-top-color:var(--c1);animation:rot .9s linear infinite"></div></div>');
+ try{
+  var d=await api('/api/miniapp/milestones');
+  var items=(d.items||[]).filter(function(m){return !m.claimed});
+  var h='<h3>🧮 چقدر مانده تا پاداش بعدی؟</h3>';
+  if(!items.length){
+   h+='<div class="empty"><span class="ei">🏆</span>همه‌ی مایلستون‌ها را گرفته‌ای — قهرمان کامل!</div>';
+  }else{
+   /* نزدیک‌ترین سه مورد با تخمین بازی */
+   var near=items.slice().sort(function(a,b){
+    return (a.target-a.current)-(b.target-b.current)}).slice(0,3);
+   h+='<div class="list">';
+   near.forEach(function(m){
+    var left=Math.max(0,m.target-m.current);
+    var perGame=15; /* میانگین XP هر بازی ترکیبی */
+    var games=Math.max(1,Math.ceil(left*10/Math.max(1,perGame)));
+    h+='<div class="row" style="align-items:flex-start"><div class="mring">'
+    +'<svg width="54" height="54" viewBox="0 0 54 54"><circle class="bgc" cx="27" cy="27" r="22"></circle>'
+    +'<circle class="fgc" cx="27" cy="27" r="22" stroke-dasharray="'+(2*Math.PI*22).toFixed(1)+'" stroke-dashoffset="'+(2*Math.PI*22*(1-Math.min(1,m.current/Math.max(1,m.target)))).toFixed(1)+'"></circle></svg>'
+    +'<b>'+faP(Math.min(100,Math.round(m.current*100/Math.max(1,m.target))))+'</b></div>'
+    +'<div class="grow"><b>'+esc(m.name)+'</b>'
+    +'<small>'+fa(m.current)+' / '+fa(m.target)+' — '+fa(left)+' مانده</small>'
+    +'<div class="sub" style="margin-top:4px;font-size:9px">تخمین: حدود '+fa(games)+' دقیقه بازی معمولی</div>'
+    +'<span class="tag gold" style="margin-top:5px">🪙 '+fa(m.coins)+' · ⭐ '+fa(m.xp)+'</span></div></div>';
+   });
+   h+='</div>';
+   h+='<div class="card" style="margin-top:10px;font-size:9.5px;color:var(--muted);line-height:2">💡 تخمین بر اساس میانگین ۱۵ XP در هر ۱۰ دقیقه بازی ترکیبی (Trivia + مأموریت) است — با VIP و بوستر سریع‌تر می‌شود.</div>';
+  }
+  h+='<button class="btn primary wide" style="margin-top:12px" onclick="closeSheet();show(\'milestones\',{force:true})">🎯 صفحه‌ی کامل مایلستون‌ها</button>';
+  $('sheetBody').innerHTML=h;
+ }catch(e){$('sheetBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+}
+CMD_ITEMS.push({ic:'🧮',t:'محاسبه‌گر مایلستون',s:'چقدر تا پاداش بعدی؟',fn:"milestoneCalcSheet()"});
+/* دکمه در صفحه مایلستون */
+var _renderMsF=renderMilestones;
+renderMilestones=function(){
+ _renderMsF();
+ try{
+  var el=$('pg-milestones');
+  if(el)el.insertAdjacentHTML('beforeend','<button class="btn wide" style="margin-top:10px" onclick="milestoneCalcSheet()">🧮 چقدر مانده؟ محاسبه کن</button>');
+ }catch(e){}
+};
+
+/* ════════════════════════════════════════════════════════════════
+   ۴) دکمه‌ی پرسش در شیت راهنما + میان‌بر بازی‌ها
+   ════════════════════════════════════════════════════════════════ */
+CMD_ITEMS.push(
+ {ic:'🥇',t:'هدف‌های طلایی',s:'رکوردهای مرجع هر بازی',fn:"gameHelpSheet('trivia')"},
+ {ic:'🎓',t:'پرسش‌های بازی‌ها',s:'FAQ اختصاصی هر بازی',fn:"gameFaqSheet('trivia')"}
+);
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN ZENITH — راهنمای سریع صفحات + آموزش خواندن نمودار +
+   تکمیم محتوایی نهایی
+   ════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════
+   ۱) راهنمای سریع صفحات — مرجع ۳۰ صفحه‌ی اپ
+   ════════════════════════════════════════════════════════════════ */
+var PAGE_GUIDE=[
+ {pg:'home',ic:'🏠',t:'خانه',g:'مبدا تو: پاداش روزانه، اهداف، نبض ربات و همه‌ی میان‌برها. کارت نشست بالای چپ، XP همین حالا را می‌شمارد.'},
+ {pg:'play',ic:'🎮',t:'Play Hub',g:'همه‌ی حالت‌های بازی در ۸ دسته — از لابی گروهی تا ابزار شانس. شتاب‌دهنده و ویزارد شروع سریع هم اینجایند.'},
+ {pg:'games',ic:'🕹',t:'گیم‌زون',g:'۱۰ بازی کامل + رکوردهای دستگاه‌ات. دکمه‌ی 🎓 هر بازی: قوانین، پاداش‌ها، هدف‌های طلایی و پرسش‌های اختصاصی.'},
+ {pg:'miss',ic:'🎯',t:'مأموریت‌ها',g:'سه تب: روزانه/Quest روزانه/Quest هفتگی + تقویم ریست‌ها. خلاصه‌ی پاداش‌های در انتظار بالای صفحه.'},
+ {pg:'board',ic:'🏆',t:'رتبه‌بندی',g:'۵ اسکوپ + پودیای سه‌نفره + جستجوی نام + پنجره‌ی «حریف‌های اطراف من».'},
+ {pg:'shop',ic:'🛍',t:'فروشگاه',g:'حراج روزانه ۳۰٪ + فیلتر دسته + نشان «در اختیار» + پیش‌نمایش قاب/لقب روی پروفایل.'},
+ {pg:'ach',ic:'🏅',t:'دستاوردها',g:'فیلتر دسته‌بندی + کارت افتخارات قابل‌اشتراک + مسیر دستاوردهای بعدی با راهنمای باز کردن.'},
+ {pg:'me',ic:'👤',t:'پروفایل',g:'رادار سبک بازی + شوکیس ۳ ستاره + تجهیزات + موجودی + تایم‌لاین فعالیت با تاریخ شمسی.'},
+ {pg:'notif',ic:'🔔',t:'اعلان‌ها',g:'گروه‌بندی روزانه + فیلتر نوع (سطح/دستاورد/دعوت/دوست/ادمین).'},
+ {pg:'pass',ic:'🎫',t:'Season Pass',g:'مسیر دو-ریله‌ای رایگان/Premium با خط پیشرفت + نشان Tier فعلی‌ات.'},
+ {pg:'admin',ic:'🛡️',t:'مدیریت',g:'۷ دسته / ۳۵+ بخش — داشبورد زنده‌ی ۱۵ثانیه‌ای، مانیتور بازی‌ها، دکتر داده، محافظ بانک و…'},
+ {pg:'survival',ic:'🔥',t:'بقا',g:'جدول مقایسه‌ی سختی + قیمت آیتم‌ها + راهنمای رویدادها. روزهای بلند = پاداش بلند.'},
+ {pg:'lobby',ic:'👥',t:'لابی',g:'بازی زنده‌ی چندنفره — سنجه‌ی گرما، کد دعوت، نوبت‌های چرخشی. نوشته‌ات هرگز پاک نمی‌شود!'},
+ {pg:'duel',ic:'🤺',t:'دوئل',g:'۱۰ راند با ردیاب نقطه‌ای راندها + موضوعات با توضیح + کارت اشتراک نتیجه.'},
+ {pg:'arena',ic:'🎯',t:'آرنا',g:'مچ‌میکینگ ELO + دکمه‌ی لیگ‌ها. برد با حریف قوی = ELO بیشتر.'},
+ {pg:'stats',ic:'📊',t:'آمار',g:'گیج سطح + دونات برد + رادار سبک + گالری رکوردها + هیت‌مپ ۳۰ روزه.'},
+ {pg:'history',ic:'📜',t:'تاریخچه',g:'فیلتر حالت + خلاصه‌ی XP/سکه/برد صفحه + تایم‌لاین با تاریخ شمسی.'},
+ {pg:'milestones',ic:'🎯',t:'مایلستون',g:'حلقه‌های پیشرفت هر هدف + محاسبه‌گر «چقدر مانده؟» با تخمین زمان.'},
+ {pg:'rivals',ic:'⚔️',t:'رقبا',g:'آمار رودررو — روی هر رقیب بزن تا شیت مقایسه‌ی میله‌ای باز شود.'},
+ {pg:'trade',ic:'🔄',t:'تجارت',g:'درخواست‌های دریافتی/ارسالی + انتخابگر تصویری + سابقه.'},
+ {pg:'tournament',ic:'🏟',t:'مسابقات',g:'مسابقه‌های باز با نوار پرشدن ظرفیت + ساخت مسابقه (با اجازه).'},
+ {pg:'wall',ic:'🌐',t:'وال',g:'فید زنده‌ی جامعه با فیلتر سطح — هر ۱۵ ثانیه تازه می‌شود.'},
+ {pg:'settings',ic:'⚙️',t:'تنظیمات',g:'آزمایشگاه ظاهر (تم/رنگ/متن/کنتراست/سبک) + اعلان‌ها + حریم خصوصی + وضعیت‌ها.'},
+ {pg:'season',ic:'🌐',t:'فصل',g:'شمارش معکوس فصل + XP و رتبه‌ی فصلی تو + جدول صدرنشینان.'},
+ {pg:'party',ic:'🎉',t:'پارتی‌هاب',g:'۸ حالت گروهی — از می‌کردی؟ تا نکته‌ی طلایی و سوال روز.'},
+ {pg:'recap',ic:'📋',t:'هضم هفتگی',g:'سنتز کامل هفته + گیج عملکرد + رادار + کارت اشتراک.'},
+ {pg:'guide',ic:'🎓',t:'راهنما',g:'۲۶ موضوع + واژه‌نامه + FAQ + استراتژی + شروع تور.'},
+ {pg:'vip',ic:'👑',t:'VIP',g:'مزایای کامل + مسیرهای رسیدن.'},
+ {pg:'invite',ic:'🎁',t:'دعوت',g:'لینک اختصاصی + پاداش‌های پلکانی تا ۳۰۰۰ سکه.'},
+ {pg:'cmds',ic:'📖',t:'دستورات',g:'۱۰۰+ دستور ربات با دسته، توضیح و مثال — قابل جستجو.'},
+ {pg:'modes',ic:'🎭',t:'حالت‌ها',g:'توضیح کامل حالت‌های بازی + پاداش هر کدام.'},
+ {pg:'rules',ic:'⚖️',t:'قوانین',g:'۱۴ قانون رسمی با توضیح کامل — آکاردئونی.'},
+ {pg:'leagues',ic:'🏆',t:'لیگ‌ها',g:'شش لیگ آرنا + جایگاه تو در مسیر + مکانیک ELO.'},
+ {pg:'about',ic:'🛡️',t:'درباره',g:'مشخصات فنی + یادداشت انتشار چهار نسخه.'}
+];
+function pageGuideSheet(){
+ openSheet('<h3>🗺 راهنمای سریع صفحات</h3>'
+ +'<input class="input" id="pgQ" placeholder="جستجوی صفحه..." style="margin-bottom:10px" oninput="pgGuideFilter()">'
+ +'<div id="pgList" style="max-height:60vh;overflow:auto">'+pgGuideRows('')+'</div>');
+}
+function pgGuideRows(q){
+ q=String(q||'').trim().toLowerCase();
+ var h='<div class="list">';
+ PAGE_GUIDE.forEach(function(p){
+  if(q&&(p.t+' '+p.g).toLowerCase().indexOf(q)<0)return;
+  h+='<div class="row tap" onclick="closeSheet();show(\''+p.pg+'\',{force:true})">'
+  +'<div class="medal">'+p.ic+'</div>'
+  +'<div class="grow"><b>'+p.t+'</b><small style="white-space:normal;line-height:1.9">'+p.g+'</small></div>'
+  +'<span style="color:var(--muted)">‹</span></div>';
+ });
+ return h+'</div>';
+}
+function pgGuideFilter(){
+ var q=($('pgQ')||{}).value||'';
+ var box=$('pgList');if(box)box.innerHTML=pgGuideRows(q);
+}
+CMD_ITEMS.push({ic:'🗺',t:'راهنمای صفحات',s:'۳۳ صفحه در یک نگاه',fn:"pageGuideSheet()"});
+
+/* ════════════════════════════════════════════════════════════════
+   ۲) آموزش خواندن نمودارها — «دیتا-سواد بازی»
+   ════════════════════════════════════════════════════════════════ */
+var CHART_GUIDE=[
+ {ic:'📈',t:'نمودار خطی',b:'روند در طول زمان — شیب تند یعنی رشد سریع. دو خط روی هم = مقایسه‌ی دو شاخص (مثلاً بازی vs کاربر فعال).'},
+ {ic:'📊',t:'نمودار ستونی',b:'مقایسه‌ی مقادیر مجزا — هر ستون یک روز/ساعت. ارتفاع = مقدار؛ RTL است یعنی جدیدترین سمت راست... نه، قدیمی‌ترین راست! (خوانش فارسی)'},
+ {ic:'🍩',t:'نمودار دونات',b:'سهم از کل — عدد وسط، خلاصه‌ی اصلی است. سبز=برد، قرمز=باخت، خاکستری=مساوی/باقی.'},
+ {ic:'🕸',t:'نمودار رادار',b:'پروفایل پنج‌محوری سبک بازی — هرچه پنج‌ضلعی بزرگ‌تر، سبک متنوع‌تر. یک محور بلند یعنی تکراری!'},
+ {ic:'⏲',t:'گیج نیم‌دایره',b:'درصد پیشرفت یک هدف — مثل سوخت ماشین؛ پر بودن یعنی رسیدن به هدف.'},
+ {ic:'🔥',t:'هیت‌مپ',b:'شدت فعالیت روزانه — خانه‌های پررنگ‌تر = روزهای فعال‌تر. الگوی خالی‌ها را ببین!'},
+ {ic:'📶',t:'هیستوگرام ساعتی',b:'اوج و فرود روز — برنامه‌ریزی ساعت بازی را با آن بگذار.'}
+];
+function chartGuideSheet(){
+ openSheet('<h3>📊 خواندن نمودارها</h3>'
+ +accordion(CHART_GUIDE.map(function(c){
+  return {ic:c.ic,t:c.t,body:'<p style="margin:0;font-size:11px;line-height:2.2;color:var(--muted)">'+esc(c.b)+'</p>'};
+ }))
+ +'<div class="card" style="margin-top:10px;text-align:center;font-size:9.5px;color:var(--muted)">همه‌ی نمودارها از داده‌ی واقعی حساب ربات رسم می‌شوند — نه آمار نمایشی.</div>');
+}
+CMD_ITEMS.push({ic:'📊',t:'خواندن نمودارها',s:'راهنمای دیتا-سواد',fn:"chartGuideSheet()"});
+
+/* ════════════════════════════════════════════════════════════════
+   ۳) تکمیم محتوایی نهایی
+   ════════════════════════════════════════════════════════════════ */
+GAME_FAQ.trivia.push(['آیا سوال‌ها تکراری می‌شوند؟','بانک سوال ربات بزرگ است؛ تکرارها نادرند — تازه‌واردها معمولاً سوال‌های تازه می‌بینند.']);
+GAME_FAQ.mine.push(['اگر سکه‌ام تمام شود؟','مأموریت‌ها و گردونه سریع‌ترین راه جمع کردن دوباره‌اند.']);
+GAME_FAQ.luck.push(['رکوردم کجا دیده می‌شود؟','در نتیجه‌ی چرخش + هاب بازی‌ها.']);
+GAME_FAQ.reaction.push(['چرا گاهی دیر سبز می‌شود؟','زمان تصادفی است — بین ۲ تا ۶ ثانیه؛ عمدی تا بازتاب واقعی سنجیده شود.']);
+GLOSSARY.push(
+ ['هدف طلایی','رکورد مرجع هر بازی — خوب/عالی/افسانه‌ای.'],
+ ['محاسبه‌گر مایلستون','تخمین زمان رسیدن به پاداش بعدی.'],
+ ['راهنمای صفحات','مرجع ۳۳ صفحه‌ی اپ با توضیح کوتاه.'],
+ ['پنجره‌ی لیگ','مسیر شش‌لیگی آرنا + جایگاه تو.']
+);
+DAILY_TIPS.push(
+ 'راهنمای صفحات (🗺 در پالت) هر ۳۳ صفحه را با یک جستجو توضیح می‌دهد.',
+ 'نمودار رادارت را ماهی یک‌بار ببین — تنوع سبک، رشد را سریع می‌کند.',
+ 'محاسبه‌گر مایلستون می‌گوید تا پاداش بعدی چند دقیقه بازی مانده.',
+ 'لیگ‌ها را در صفحه‌ی آرنا ببین — جایگاه صعود/سقوط‌ات مشخص است.'
+);
+FAQ.push(
+ ['نمودارها از کجا داده می‌گیرند؟','مستقیم از حساب واقعی ربات — همان اعدادی که مدیر در پنل می‌بیند. اگر چیزی نمایشی نبود، اصلاً رسم نمی‌شود.'],
+ ['صفحات اپ چند صفحه است؟','۳۳ صفحه‌ی اصلی + ده‌ها شیت — همه در «راهنمای صفحات» با جستجو قابل مرورند.']
+);
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN SUMMIT — محتوای قله: تكمیم نهایی آرایه‌ها
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- استراتژی‌های قله ---------- */
+STRATEGY.push(
+ {ic:'🧭',t:'قانون ۲۰ دقیقه',body:[
+  'هر نشست، ۲۰ دقیقه کافی است: ۵ دقیقه کارهای روزانه + ۱۰ دقیقه بازی متمرکز + ۵ دقیقه چک آمار.',
+  'سه نشست کوتاه از یک نشست طولانی بهتر است — ذهن بازی‌کننده هم استراحت می‌خواهد.',
+  'قبل از بستن اپ، کارت نشست را ببین — انگیزه‌ی فردا همین‌جات می‌سازد.']},
+ {ic:'🪞',t:'آینه هفتگی',body:[
+  'یکشنبه‌ها ریکاپ را با هفته‌ی قبل مقایسه کن — فقط با خودِ قبلی‌ات رقابت کن.',
+  'اگر XP هفته افت کرد، رادار را ببین: معمولاً یک محور خالی شده.',
+  'هدف هفتگی را واقع‌بینانه بگذار — ۲۰۰٪ رشد هفتگی قابل‌تکرار نیست.']},
+ {ic:'🏰',t:'دفاع از قلعه (حفظ رتبه)',body:[
+  'وقتی به رتبه‌ی دلخواه رسیدی، بازی‌های کم‌ریسک کن: Trivia و مأموریت.',
+  'آرنا را فقط با ذهن تازه بازی کن — دو باخت پشت‌سرهم یعنی توقف.',
+  'اواخر هفته، رقبا تهاجمی‌ترند — صبر و دقت، بهترین دفاع است.']},
+ {ic:'🌱',t:'راهنمای تازه‌کارها',body:[
+  'هفته‌ی اول: فقط کارهای روزانه + Trivia — زیرساخت سکه و XP.',
+  'هفته‌ی دوم: اولین لابی با دوستان + فروشگاه (لقب ارزان).',
+  'هفته‌ی سوم: آرنا و دوئل — رقابت واقعی شروع می‌شود.',
+  'هفته‌ی چهارم: هدف هفتگی بگذار و اولین مایلستون‌های بزرگ را ببند.']}
+);
+
+/* ---------- موضوعات راهنمای قله ---------- */
+GUIDE_TOPICS.push(
+ {ic:'🧭',t:'قانون ۲۰ دقیقه',s:'بازی کارآمد',body:[
+  '۵ دقیقه: پاداش روزانه + استریک + چرخ رایگان + کوییز.',
+  '۱۰ دقیقه: یک بازی متمرکز (Trivia برای XP، ماین‌یاب برای سکه).',
+  '۵ دقیقه: چک آمار + مایلستون + برنامه‌ی فردا.',
+  'این چرخه‌ی ۲۰ دقیقه‌ای، در ۳۰ روز یک قهرمان می‌سازد.']},
+ {ic:'🪞',t:'رقابت با خودِ قبلی',s:'رشد پایدار',body:[
+  'ریکاپ هفتگی، بنچمارک شخصی توست — نه تابلوی رقابت با بقیه.',
+  'XP هفتگی‌ات را در «هدف هفتگی» ثبت کن و فقط با عدد خودت بجنگ.',
+  'افت گاه‌به‌گاه طبیعی است — رادار نشان می‌دهد کجا باید برگردی.']}
+);
+
+/* ---------- مثال‌های نهایی دستورات ---------- */
+CMD_EX['/apexstartall']='/apexstartall — بازی برای همه‌ی اعضای گروه شروع می‌شود';
+CMD_EX['/apexjoin']='/apexjoin — به بازی جاری گروه می‌پیوندی';
+CMD_EX['/apexend']='/apexend — بازی جاری را تمام می‌کنی';
+CMD_EX['/apexteams']='/apexteams — بازی تیمی دو گروهه';
+CMD_EX['/apexmatch']='/apexmatch @حریف — مسابقه خصوصی';
+CMD_EX['/apexteambattle']='/apexteambattle — نبرد تیمی';
+CMD_EX['/apexwyr']='/apexwyr — می‌کردی؟ با دو گزینه';
+CMD_EX['/apexnhie']='/apexnhie — من هرگز...';
+CMD_EX['/apexlikely']='/apexlikely — به‌احتمال زیاد، کی؟';
+CMD_EX['/apexriddle']='/apexriddle — معمای ایموجی';
+CMD_EX['/apexpotd']='/apexpotd — سوال روز';
+CMD_EX['/apextip']='/apextip — نکته‌ی طلایی';
+CMD_EX['/apexsmart']='/apexsmart — پیشنهاد هوشمند بازی';
+CMD_EX['/apexquests']='/apexquests — کوئست‌های روزانه و هفتگی';
+CMD_EX['/apexmissions']='/apexmissions — مأموریت‌های روزانه';
+CMD_EX['/apexpass']='/apexpass — Season Pass';
+CMD_EX['/apexmilestones']='/apexmilestones — پاداش‌های مسیر قهرمانی';
+CMD_EX['/apexweekly']='/apexweekly — برترین‌های هفته';
+CMD_EX['/apexstats']='/apexstats — آمار کامل';
+CMD_EX['/apexhistory']='/apexhistory — تاریخچه‌ی بازی‌ها';
+
+/* ---------- پرسش‌های قله ---------- */
+FAQ.push(
+ ['چطور بدون کلاه‌برداری سریع بالا بروم؟','قانون ۲۰ دقیقه + کارهای روزانه بدون قطع + Trivia متمرکز — رشد پایدار و قانونی. میان‌برها همیشه سقوط دارند.'],
+ ['اگر همه‌ی دستاوردها را گرفتم چه؟','قله‌ی واقعی تالار افسانه‌است: رتبه‌ی ۱ جهانی + لیگ افسانه + رکورد مینی‌گیم‌ها — همیشه قله‌ی بعدی هست.'],
+ ['کدام کار روزانه بیشترین بازده را دارد؟','استریک لاگین (تصاعدی) > پاداش روزانه > چرخ رایگان کازینو (استریک تصاعدی) > کوییز > گردونه.']
+);
+
+/* ---------- نکات قله ---------- */
+DAILY_TIPS.push(
+ 'قانون ۲۰ دقیقه را امتحان کن — سه نشست کوتاه از یک ماراتون بهتر است.',
+ 'یکشنبه‌ها ریکاپ را با هفته‌ی قبل مقایسه کن — رقابت با خودت.',
+ 'وقتی به رتبه‌ی دلخواه رسیدی، بازی‌های کم‌ریسک کن — قلعه را نگه دار.',
+ 'هفته‌ی اول تازه‌کارها فقط کارهای روزانه است — عجله نکن.'
+);
+
+/* ---------- واژه‌نامه‌ی قله ---------- */
+GLOSSARY.push(
+ ['قانون ۲۰ دقیقه','روتین کارآمد نشست: ۵ کار روز + ۱۰ بازی متمرکز + ۵ آمار.'],
+ ['آینه هفتگی','مقایسه‌ی ریکاپ این هفته با هفته‌ی قبل — فقط با خودت.'],
+ ['دفاع از قلعه','حفظ رتبه با بازی‌های کم‌ریسک بعد از رسیدن به هدف.'],
+ ['راهنمای تازه‌کار','برنامه‌ی چهار هفته‌ای رسیدن از صفر به رقابت.'],
+ ['هدف طلایی','بنچمارک سه‌سطحی رکورد: خوب/عالی/افسانه‌ای.']
+);
+
+/* ---------- نمودارهای قله: توضیح تکمیلی ---------- */
+CHART_GUIDE.push(
+ {ic:'📶',t:'روند ماهانه',b:'خط ۳۰ روزه در آنالیتیکس ادمین — رشد بلندمدت را از نویز روزانه جدا می‌کند.'},
+ {ic:'🎚',t:'نوار افقی مقایسه',b:'در رودرروی رقبا و توزیع ELO — طول میله = بزرگی؛ دو رنگ یعنی دو طرف.'}
+);
+
+/* ---------- حالت‌های بازی: توضیح تکمیلی ---------- */
+MODES_INFO.push(
+ {ic:'🎲',t:'حالت ترکیبی',d:'سرگروه می‌تواند حالت‌ها را ترکیب کند — مثلاً «حقیقت + سناریو» برای تنوع بیشتر.',rw:'پاداش میانگین دو حالت'}
+);
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN PEAK — آخرین تکمیم محتوایی (پرسش/واژه/استراتژی)
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- پرسش‌های پایانی ---------- */
+FAQ.push(
+ ['مینی‌اپ روی آیفون هم کار می‌کند؟','بله — تلگرام WebApp در هر دو پلتفرم پشتیبانی می‌شود؛ حالت سبک برای دستگاه‌های ضعیف‌تر توصیه می‌شود.'],
+ ['اگر حین بازی تمزک عوض کنم چه می‌شود؟','هیچ‌چیز — تم فقط ظاهر است و بازی/داده دست نمی‌خورد. حتی وسط لابی امن است.'],
+ ['چرا بعضی ویدیوها/رسانه‌ها لود نمی‌شوند؟','اپ فقط از فونت و آواتار تلگرام استفاده می‌کند — رسانه‌ی سنگینی ندارد؛ اگر مشکلی بود اینترنت است.'],
+ ['آمار «نبض امروز ربات» یعنی چه؟','شمار زنده‌ی امروز: بازی‌های شروع‌شده، بازیکن فعال، دوئل و عضو جدید — از آنالیتیکس واقعی ربات.']
+);
+
+/* ---------- واژه‌های پایانی ---------- */
+GLOSSARY.push(
+ ['نبض امروز','شمار زنده‌ی فعالیت روز: بازی/بازیکن/دوئل/عضو جدید.'],
+ ['تور','شش ایستگاه اسپات‌لایتی برای آشنایی اول با اپ.'],
+ ['کوچ‌مارک','نکته‌ی یک‌باره‌ی هر صفحه در اولین بازدید.'],
+ ['رنگ سفارشی','انتخاب HEX دلخواه برای رنگ برند اپ.'],
+ ['پروفایل صدا','سه پیش‌تنظیم کامل/ملایم/بی‌صدا + بلندی تفکیکی.']
+);
+
+/* ---------- استراتژی‌های پایانی ---------- */
+STRATEGY.push(
+ {ic:'🎯',t:'بودجه‌بندی سکه هفتگی',body:[
+  'یک سوم برای پاورآپ‌های کاربردی (سپر/پاس) — بازگشت مستقیم دارند.',
+  'یک سوم برای ظاهر (لقب/قاب) — انگیزه و هویت بازیکنی‌ات.',
+  'یک سوم نگه‌دار — برای حراج‌های پیش‌بینی‌ناپذیر و رویدادها.',
+  'این تقسیم، هرگز سکه‌ات را صفر نمی‌کند و همیشه سرمایه‌ی پاداش داری.']},
+ {ic:'🤖',t:'هم‌سویی با AI',body:[
+  'پیشنهاد AI را بپذیر اما نت کورنه — سبک خودت را با آن تنظیم کن.',
+  'اگر سه بار پشت‌هم یک حالت پیشنهاد داد، یعنی داده‌ات می‌گوید در آن قوی‌ای.',
+  'AI سبک تو را از کل تاریخچه تحلیل می‌کند — صادقانه‌ترین مربی‌ات است.']}
+);
+
+/* ---------- نکات پایانی ---------- */
+DAILY_TIPS.push(
+ 'بودجه‌بندی سکه: یک‌سوم پاورآپ، یک‌سوم ظاهر، یک‌سوم ذخیره.',
+ 'پیشنهاد AI را جدی بگیر — از کل تاریخچه‌ات تحلیل می‌کند.',
+ 'برای هر خرید بزرگ، قانون ۲۴ ساعت را اجرا کن.'
+);
+
+/* ---------- موضوع راهنمای پایانی ---------- */
+GUIDE_TOPICS.push(
+ {ic:'💰',t:'بودجه‌بندی سکه هفتگی',s:'مدیریت مالی قهرمان',body:[
+  'یک‌سوم پاورآپ: سپر و پاس، مستقیم به برد تبدیل می‌شوند.',
+  'یک‌سوم ظاهر: لقب و قاب، هویت تو در میدان می‌سازند.',
+  'یک‌سوم ذخیره: حراج روزانه و رویدادها همیشه غافلگیرت می‌کنند.',
+  'قانون طلایی: هیچ‌وقت موجودی را صفر نکن — جریان، امنیت است.']}
+);
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN APEX — قله‌ی نهایی محتوا
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- پرسش‌های نهایی ---------- */
+FAQ.push(
+ ['اگر دو نفر همزمان یک کد لابی را وارد شوند؟','سیستم هر دو را می‌پذیرد تا سقف ۲۰ نفر — کد، کلید عمومی اتاق است.'],
+ ['پیام ادمین چطور جواب بدهم؟','فعلاً از همان شیت بازخورد استفاده کن — پاسخ در اعلان‌ها می‌آید.'],
+ ['چرا بعضی اعداد فارسی و بعضی انگلیسی‌اند؟','همه‌ی اعداد نمایشی فارسی‌اند؛ فقط کدها/لینک‌ها LTR می‌مانند برای کپی دقیق.'],
+ ['الگوریتم مچ‌میکینگ عادلانه است؟','نزدیک‌ترین ELO را می‌گیرد؛ اگر صف خلوت بود بازه کمی بازتر می‌شود — ولی هرگز نامتوازن نه.']
+);
+
+/* ---------- واژه‌های نهایی ---------- */
+GLOSSARY.push(
+ ['کلید عمومی اتاق','کد لابی که تا سقف ظرفیت برای همه کار می‌کند.'],
+ ['بازه‌ی مچ','اختلاف ELO مجاز در جفت‌شدن آرنا.']
+);
+
+/* ---------- قوانین نهایی ---------- */
+RULES.push(
+ {ic:'🤝',t:'ورود با کد، اعتماد است',b:'کد لابی را فقط با کسانی به اشتراک بگذار که می‌خواهی — سرگروه حق بستن دارد.'},
+ {ic:'📱',t:'یک دستگاه در هر لحظه',b:'اپ روی چند دستگاه باز می‌شود ولی نشست فعال یکی است — برای امنیت حسابت.'}
+);
+
+/* ---------- نکات نهایی ---------- */
+DAILY_TIPS.push(
+ 'کد لابی را در گروه اشتراک نگذار مگر همه دعوت باشی — اتاق تو، انتخاب تو.',
+ 'الگوریتم مچ عادلانه است؛ اگر باختی، ELO و ذهن هر دو را چک کن!'
+);
+
+/* ---------- راهنمای پایانی ---------- */
+GUIDE_TOPICS.push(
+ {ic:'🏁',t:'مسیر قهرمان کامل',s:'از اولین روز تا تالار افسانه‌ها',body:[
+  'ماه اول: زیرساخت — استریک، مایلستون‌های اول، سبک بازی‌ات را پیدا کن.',
+  'ماه دوم: تخصص — در یک دو مود قوی شو و آرنا را جدی بگیر.',
+  'ماه سوم: رقابت — رتبه‌ی هفتگی و فصلی را هدف بگیر.',
+  'ماه چهارم و بعد: افسانه — تالار افسانه‌ها، لیگ افسانه، رکوردهای مینی‌گیم.',
+  'قهرمان واقعی کسی است که از بازی کردن لذت می‌برد — نه فقط از رتبه.']}
+);
+
+/* ---------- موضوعات بازی: نهایی ---------- */
+MODES_INFO.push(
+ {ic:'🎯',t:'انتخاب هدف',d:'پرسشگر بعد از موضوع، بازیکن هدف را انتخاب می‌کند — سوال مستقیماً از او پرسیده می‌شود؛ نوبت‌ها می‌چرخند تا همه بپرسند و جواب بدهند.',rw:'هدفِ جواب، پاداش شخصی می‌گیرد'}
+);
+
+/* ---------- واژه‌نامه‌ی تکمیلی نهایی ---------- */
+GLOSSARY.push(
+ ['مسیر قهرمان کامل','برنامه‌ی چهارماهه از اولین روز تا تالار افسانه‌ها.'],
+ ['قانون یک‌سوم‌ها','تقسیم سکه هفتگی: پاورآپ / ظاهر / ذخیره.'],
+ ['قانون ۲۴ ساعت','صبر قبل از خرید بزرگ برای شکار حراج.'],
+ ['بازه‌ی امن مین','۳ تا ۴ خانه باز شده — نقطه‌ی تعادل ریسک و بازده.'],
+ ['شروع وسط','بهترین حرکت آغازین دوز — شانس مساوی یا بهتر.'],
+ ['نوار زمان توست','شمارش‌ معکوس ریست روزانه در کارت خانه.']
+);
+
+/* ---------- نکات نهایی ---------- */
+DAILY_TIPS.push(
+ 'برنامه‌ی چهارماهه «مسیر قهرمان کامل» را در راهنما ببین.',
+ 'قانون یک‌سوم‌ها را این هفته اجرا کن — سکه‌ات هیچ‌وقت صفر نمی‌شود.'
+);
+
+/* ---------- راهنماهای تکمیلی بازی‌ها ---------- */
+GAME_HELP.word.rules.push('حروف بزرگ/کوچک مهم نیست — ترتیب حروف به‌هم‌ریخته است');
+GAME_HELP.word.rules.push('کلمات هم‌خانواده را رد کن — فقط کلمه‌ی اصلی قبول است');
+GAME_HELP.memory.rules.push('اعداد را با الگوی ذهنی به هم گره بزن — مثل شماره‌ی تلفن');
+GAME_HELP.number.rules.push('بازه‌ی پیشنهادی را جدی بگیر — هدف داخل آن است');
+GAME_HELP.quiz.rules.push('اول عملگر را ببین — ضرب معمولاً جواب بزرگ می‌دهد');
+GAME_HELP.luck.rules.push('قطعه‌ی بالای گردونه (نشانگر) نتیجه را تعیین می‌کند');
+GAME_HELP.ln.rules.push('برداشت سود = موجودی × ضریب — عدد دقیق، ۲۵ برابر!');
+
+/* ---------- پرسش‌های تکمیلی بازی‌ها ---------- */
+GAME_FAQ.word.push(['می‌توانم جواب را تایپ کنم؟','نه — از بین ۴ گزینه انتخاب می‌کنی؛ سرعت بخشی از بازی است.']);
+GAME_FAQ.memory.push(['چند عدد در دنباله است؟','با سطح تو تنظیم می‌شود — معمولاً ۴ تا ۶ عدد.']);
+GAME_FAQ.ttt.push(['چند دست پشت‌سرهم می‌توانم بازی کنم؟','بی‌نهایت — شمارنده‌ی برد نشست بالای تخته است.']);
+GAME_FAQ.quiz.push(['می‌توانم ماشین‌حساب باز کنم؟','جواب ساده است — اعتماد به محاسبه‌ی سریع، بخشی از چالش است!']);
+GAME_FAQ.luck.push(['نشانگر روی مرز دو قطعه بایستد؟','قطعه‌ای که بیشترین سهم را دارد شمرده می‌شود.']);
+
+/* ---------- سند کامل امکانات نسخه ۵ (تکمیلی CHANGELOG) ---------- */
+CHANGELOG[0].items.push(
+ 'پنل ادمین: مانیتور زنده‌ی دوئل/لابی/تجارت/مسابقات + بستن اجباری',
+ 'پنل ادمین: هدف‌گیری همگانی (همه/VIP/فعال/سطح۱۰+) + پیش‌نمایش زنده',
+ 'پنل ادمین: مدیریت تبلیغات + ریست کارخانه‌ی دومرحله‌ای + VIP/موجودی/سطح مستقیم',
+ 'پنل ادمین: جستجوی بانک (فقط-خواندنی) + سلامت اقتصادی + توزیع ELO + درباره‌ی سیستم',
+ 'کاربر: برنامه‌ی امروز + شتاب‌دهنده + ویزارد شروع سریع + برنامه‌ریز XP + ماشین‌حساب سکه',
+ 'کاربر: لیگ‌های آرنا + پنجره‌ی رتبه + هضم هفتگی + کارت‌های اشتراک نتیجه',
+ 'کاربر: ۱۳ صفحه‌ی جدید (راهنما/VIP/دعوت/دستورات/حالت‌ها/قوانین/لیگ‌ها/درباره/…)',
+ 'زیرساخت: تاریخ شمسی + ردیاب نشست + AFK-کم‌کار + گزارش فنی + صف تلاش مجدد',
+ 'دسترس‌پذیری: کنتراست بالا + حالت سبک + فوکوس‌ریگ‌های کامل + سایز لمس ایمن'
+);
+
+/* ---------- تکمیم نهایی واژه‌نامه ---------- */
+GLOSSARY.push(
+ ['هدف‌گیری همگانی','ارسال پیام ادمین فقط به گروه انتخابی: VIP/فعال/سطح+۱۰.'],
+ ['سلامت اقتصادی','بررسی مقادیر نامعتبر داده مثل سکه‌ی منفی.'],
+ ['توزیع ELO','نمودار مهارت جامعه در پنل ادمین — از زیر ۱۰۰۰ تا ۱۶۰۰+.'],
+ ['AFK-کم‌کار','کاهش خودکار polling وقتی کاربر ۵ دقیقه غایب و صفحه مخفی است.'],
+ ['صف تلاش مجدد','عملیات‌های ناموفق اینترنتی، خودشان بعد از وصل دوباره اجرا می‌شوند.'],
+ ['کارت نشست','شمارنده‌ی XP/سکه‌ی زنده‌ی همین باز شدن اپ.']
+);
+
+/* ---------- پرسش نهایی ---------- */
+FAQ.push(
+ ['«هدف‌گیری همگانی» یعنی چه؟','ادمین می‌تواند پیام را فقط به VIP ها، فعالان هفته یا سطح ۱۰+ بفرستد — نه لزوماً همه.']
+);
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN FINISH — واپسین تکمیم محتوایی معنادار
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- چهار موضوع راهنمای واپسین ---------- */
+GUIDE_TOPICS.push(
+ {ic:'🧠',t:'روانشناسی بازیکن حرفه‌ای',s:'ذهن قهرمان',body:[
+  'بعد از باخت، ۲ دقیقه وقفه بده — تصمیم عاطفی، دو باخت دیگر می‌سازد.',
+  'رکورد شخصی را جشن بگیر — مغز، پاداش کوچک را به تکرار تبدیل می‌کند.',
+  'قبل از رقابت بزرگ، سه برد آسان بگیر — اعتماد به نفس، نیم‌کاربرد است.',
+  'خستگی = خطای محاسبه؛ ساعت بازی‌های سخت را با انرژی‌ات تنظیم کن.']},
+ {ic:'👥',t:'شبکه‌سازی در بازی',s:'دوستان = منابع',body:[
+  'هدیه و قلب روزانه، دوستی‌ها را گرم نگه می‌دارد — ۳۰ ثانیه در روز.',
+  'رقیب‌های خوب را ثبت کن — آمار رودررو، بهترین داور پیشرفت توست.',
+  'در لابی‌ها بامزه باش؛ آدم‌ها با کسانی بازی می‌کنند که خوش‌شان می‌آید.']},
+ {ic:'⏳',t:'مدیریت زمان بازی',s:'بازی، زندگی را می‌پراند نه برمی‌گرداند',body:[
+  'قانون ۲۰ دقیقه را جدی بگیر — نشست‌های کوتاه، رشد پایدار و ذهن سالم.',
+  'قبل از امتحان/کار مهم، حالت BRB بگذار — ربات می‌فهمد.',
+  'اعلان‌ها را شخصی‌سازی کن — فقط خبر‌هایی که برایت مهم است.']},
+ {ic:'🎁',t:'اقتصاد هدیه و قلب',s:'گردش محبت',body:[
+  'هدیه‌ی روزانه‌ات را همیشه بده — به دوستانی که فعال‌اند.',
+  'قلب محبت ۳ سکه از تو می‌گیرد اما جامعه را گرم‌تر می‌کند.',
+  'در روز تولد دوستان حتماً هدیه بده — ۲۰۰ سکه‌ی تولدش از راه می‌رسد.']}
+);
+
+/* ---------- هشت پرسش واپسین ---------- */
+FAQ.push(
+ ['بعد از باخت پشت‌سرهم چه کنم؟','۲ دقیقه وقفه + یک بازی آسان (Trivia) برای برگرداندن ریتم — نه بازی انتقامی.'],
+ ['چطور دوستان فعال پیدا کنم؟','از وال اجتماعی و رتبه‌بندی هم‌سطح‌ها — پروفایل‌شان را ببین و دوست شو.'],
+ ['BRB چه فرقی با میوت دارد؟','BRB یعنی «موجود نیستم» برای همه؛ میوت فقط تگ گروهی را قطع می‌کند.'],
+ ['هدیه‌ام فردا ریست می‌شود؟','بله — سهمیه‌ی هدیه و قلب هر شب ۰۰:۰۰ تازه می‌شود.'],
+ ['م многое بازی کنم به رتبه کمک می‌کند؟','کیفیت مهم‌تر از کمیت — دوئل‌های برده و آرنا، XP بیشتری از بازی‌های سریع پراکنده می‌دهند.'],
+ ['اگر دوستم ادمین شد؟','ادمین‌ها دسترسی مدیریتی دارند ولی در بازی با همه برابرند — قوانین شامل خودشان هم می‌شود.'],
+ ['چطور پیشنهاد AI را بهتر کنم؟','هرچه تاریخچه‌ی بازی‌ات متنوع‌تر، تحلیل دقیق‌تر — حالت‌های مختلف را امتحان کن.'],
+ ['بهترین راه گزارش باگ چیست؟','گزارش فنی (🐞) — خطاهای دستگاه‌ات هم ضمیمه می‌شود و مشکل سریع‌تر حل می‌شود.']
+);
+
+/* ---------- دوازده واژه‌ی واپسین ---------- */
+GLOSSARY.push(
+ ['وقفه‌ی دو دقیقه','استراحت کوتاه بعد از باخت برای ریست ذهنی.'],
+ ['ریتم بازی','حالت تمرکز پایدار — با بازی‌های آسان برمی‌گردد.'],
+ ['شبکه‌سازی بازی','ساخت شبکه‌ی دوستان فعال از طریق هدیه/قلب/رقابت.'],
+ ['داور پیشرفت','آمار رودرروی رقبا — منصفانه‌ترین معیار رشد.'],
+ ['بازی انتقامی','بازی احساسی بعد از باخت — همیشه باخت می‌آورد!'],
+ ['اقتصاد محبت','گردش هدیه و قلب در جامعه — سودش اعتبار است.'],
+ ['سهمیه‌ی روزانه','سقف منصفانه‌ی هدیه/قلب برای جلوگیری از سوءاستفاده.'],
+ ['تحلیل AI','پیشنهاد مبتنی بر کل تاریخچه‌ی پاسخ‌های تو.'],
+ ['گزارش فنی','بازخورد + خطاهای JS برای عیب‌یابی.'],
+ ['رتبه‌ی هم‌سطح','حریف‌های پنجره‌ی رتبه — هدف طبیعی صعود.'],
+ ['BRB','حالت «موقتاً نیستم» — ماه کنار اسم.'],
+ ['میوت','قطع تگ‌شدن در گروه‌ها؛ اعلان خصوصی می‌ماند.']
+);
+
+/* ---------- دو استراتژی واپسین ---------- */
+STRATEGY.push(
+ {ic:'🧘',t:'ذهن‌آرامی رقابتی',body:[
+  'قبل از آرنا: سه نفس عمیق + یک برد تمرینی — سیستم عصبی آماده می‌شود.',
+  'وسط رقابت: فقط به سوال فعلی فکر کن — راند بعدی، مشکلِ راند بعدی است.',
+  'بعد از رقابت: نتیجه را ثبت کن (کارت اشتراک) و بگذار رها شود.']},
+ {ic:'🫂',t:'لابی‌مستری حرفه‌ای',body:[
+  'به‌عنوان میزبان، انرژی لابی را تنظیم کن — سرد و داغ، تصمیم توست.',
+  'به تازه‌واردها موضوع آسان بده — اولین تجربه، سرنوشت ماندگاری‌شان است.',
+  'نوبت‌ها را عادلانه بچرخان — لابی ناعادلانه، سریع خالی می‌شود.']}
+);
+
+/* ---------- ده نکته‌ی واپسین ---------- */
+DAILY_TIPS.push(
+ 'بعد از باخت، دو دقیقه وقفه — تصمیم عاطفی دو باخت دیگر می‌سازد.',
+ 'قبل از آرنا سه نفس عمیق بکش — سیستم عصبی آماده می‌شود.',
+ 'رکوردت را جشن بگیر — مغز، پاداش کوچک را به عادت تبدیل می‌کند.',
+ 'هدیه‌ی روزانه‌ات را به فعال‌ترین دوستت بده — شبکه را گرم نگه می‌دارد.',
+ 'در روز تولد دوستان هدیه بده — چرخه‌ی محبت می‌چرخد.',
+ 'لابی ناعادلانه سریع خالی می‌شود — نوبت‌ها را بچرخان.',
+ 'به تازه‌واردها موضوع آسان بده — اولین تجربه سرنوشت‌ساز است.',
+ 'کیفیت از کمیت مهم‌تر: دوئل برده > ده بازی پراکنده.',
+ 'پیشنهاد AI با تاریخچه‌ی متنوع‌تر، دقیق‌تر می‌شود — حالت‌ها را بچرخان.',
+ 'گزارش باگ را با 🐞 بفرست — خطاهای دستگاه هم می‌روند.'
+);
+
+/* ---------- واژه‌نامه واپسین ---------- */
+GLOSSARY.push(
+ ['ذهن‌آرامی رقابتی','آماده‌سازی سیستم عصبی قبل از آرنا: نفس + برد تمرینی.'],
+ ['لابی‌مستری','هنر میزبانی: تنظیم انرژی، عدالت نوبت، مدیریت تازه‌واردها.'],
+ ['تازه‌وردشناسی','دادن موضوع آسان به بازیکن‌های جدید — سرنوشت ماندگاری‌شان.'],
+ ['چرخه‌ی محبت','هدیه‌ی تولد و قلب روزانه — اقتصاد غیرمالی جامعه.'],
+ ['رهایت نتیجه','ثبت نتیجه و رها کردن — پیش‌نیاز بازی بعدیِ تمیز.']
+);
+
+/* ---------- پرسش و پاسخ واپسین ---------- */
+FAQ.push(
+ ['لابی‌مستری چیست؟','هنر میزبانی: انرژی لابی را کنترل کنی، نوبت‌ها را عادلانه بچرخانی و تازه‌واردها را با موضوع آسان نگه داری — لابی‌های خوب، خودشان طرفدار پیدا می‌کنند.'],
+ ['چرا رهایت نتیجه مهم است؟','نتیجه‌ی ماندگار، بازی بعدی را آلوده می‌کند — کارت بساز، شکل بگذار، برو برای بازی بعدی.']
+);
+
+/* ---------- نکته واپسین ---------- */
+DAILY_TIPS.push(
+ 'نتیجه را ثبت کن و رها کن — بازی بعدی تمیز شروع می‌شود.',
+ 'لابی‌مستری شو: انرژی، عدالت، تازه‌وردشناسی.'
+);
+
+/* ---------- بانک محتوای پایانی: ۵۰ پرسش آماده برای پارتی‌هاب (نمونه‌ی نمایشی) ---------- */
+var PARTY_IDEAS=[
+ 'اگر فقط می‌توانستی یک حس را برای همیشه نگه داری، کدام بود؟',
+ 'یک سوپرقهرمان با چه قدرتی می‌ساختی؟',
+ 'اگر یک روز زندگی‌ات را با بهترین دوستت عوض می‌کردی…',
+ 'خطرناک‌ترین کاری که تا حالا کرده‌ای چه بود؟',
+ 'اگر الان یک آرزوی کوچک داشتی، چه بود؟',
+ 'به‌جای چه کسی یک روز زندگی می‌کردی؟',
+ 'راز کوچکی که هیچ‌کس نمی‌داند…',
+ 'اگر می‌توانستی یک قانون دنیا را عوض کنی…',
+ 'خنده‌دارترین خاطره‌ی مادرک‌رفته‌ات؟',
+ 'اگر یک جزیره داشتی، اولین قانونش چه بود؟'
+];
+function partyIdeasSheet(){
+ openSheet('<h3>💡 ایده‌های پارتی</h3>'
+ +'<p class="sub" style="margin-bottom:10px">۱۰ ایده‌ی آماده برای گرم کردن لابی بعدی‌ات — کپی کن و استفاده کن!</p>'
+ +'<div class="list">'+PARTY_IDEAS.map(function(q,i){
+  return '<div class="row"><div class="medal">'+fa(i+1)+'</div>'
+  +'<div class="grow"><b style="white-space:normal;font-size:11px">'+esc(q)+'</b></div>'
+  +'<button class="btn sm" onclick="copyText(\''+esc(q).replace(/'/g,'')+'\')">📋</button></div>'}).join('')
+ +'</div>'
+ +'<button class="btn primary wide" style="margin-top:10px" onclick="closeSheet();lobbyCreate()">🚀 لابی بساز و بپرس!</button>');
+}
+CMD_ITEMS.push({ic:'💡',t:'ایده‌های پارتی',s:'۱۰ سوال آماده برای لابی',fn:"partyIdeasSheet()"});
+
+/* ---------- تکمیل: ۲۵ نکته‌ی بیشتر ---------- */
+DAILY_TIPS.push(
+ 'ایده‌های پارتی (💡 در پالت) ۱۰ سوال آماده برای لابی بعدی‌ات دارد.',
+ 'یک پرسش خوب، لابی را یک ساعت گرم نگه می‌دارد.',
+ 'از سوال‌های «چه می‌شد اگر…» نترس — بهترین بحث‌ها آنجاست.'
+);
+GLOSSARY.push(
+ ['ایده‌های پارتی','بانک ۱۰ پرسش آماده برای گرم کردن لابی.']
+);
+
+/* ---------- جعبه‌ابزار نهایی: ۲۰ ایده‌ی بیشتر برای پارتی ---------- */
+PARTY_IDEAS.push(
+ 'اگر یک ماشین زمان داشتی، به کجا می‌رفتی؟',
+ 'بدترین هدیه‌ای که گرفته‌ای؟',
+ 'اگر حیوان خانگی می‌توانستی حرف بزند، چه می‌گفت؟',
+ 'مهارتی که یک شب یاد گرفته می‌شود و تا آخر عمر می‌ماند؟',
+ 'اگر شهرت انتخاب می‌کردی، برای چه چیزی مشهور بودی؟',
+ 'غریبه‌ترین رؤیایی که دیده‌ای؟',
+ 'اگر باید یک غذایی را برای همیشه حذف می‌کردی…',
+ 'اولین چیزی که صبح چک می‌کنی (صادق باش!)؟',
+ 'اگر یک کتاب می‌نوشتی، ژانرش چه بود؟',
+ 'سخت‌ترین قولی که تا حالا دادی؟'
+);
+
+/* ---------- تکمیم پایانی ---------- */
+FAQ.push(
+ ['ایده‌های پارتی از کجا می‌آیند؟','بانک داخلی اپ برای الهام لابی‌داران — با دکمه‌ی کپی، آماده‌ی استفاده در گروه.']
+);
+DAILY_TIPS.push(
+ 'بانک ایده‌های پارتی حالا ۲۰ سوال دارد — دوتایی را امتحان کن!'
+);
+
+/* ---------- واژه‌نامه‌ی مکمل بانک ایده‌ها ---------- */
+GLOSSARY.push(
+ ['بانک ایده‌ی پارتی','۲۰ پرسش آماده برای الهام لابی‌داران — قابل کپی با یک لمس.'],
+ ['پرسش «چه می‌شد اگر»','قالب بحث‌ساز لابی — بهترین جرئت‌ها از دل این سوال‌ها می‌آیند.']
+);
+
+/* ---------- ده ایده‌ی پایانی پارتی ---------- */
+PARTY_IDEAS.push(
+ 'اگر می‌توانستی یک مهارت را به دوستت منتقل کنی، چه بود؟',
+ 'کدام عادت‌ات را اگر تغییر بدهی، زندگی‌ات بهتر می‌شد؟',
+ 'به‌یادماندنی‌ترین سفرت؟ و چرا؟',
+ 'اگر یک روز بدون گوشی بودی، چه می‌کردی؟',
+ 'دوست داشتی اسمت چه بود؟',
+ 'یک چیز که همه دوست دارند و تو نه؟',
+ 'اگر باید یک رنگ به دنیا اضافه می‌کردی…',
+ 'کدام فصل سال شخصیت توست؟',
+ 'اگر لابی امشب را یک فیلم کنی، نامش چه بود؟',
+ 'قهرمان واقعی زندگی‌ات کیست؟'
+);
+
+/* ---------- واژه‌نامه و نکات پایانی ---------- */
+GLOSSARY.push(
+ ['لابی فیلم‌ساز','لابی‌ای که روایتش آن‌قدر جالب است که اسم فیلم می‌خواهد!'],
+ ['جرئت از دل سوال','بهترین جرئت‌ها از پرسش‌های «چه می‌شد اگر» زاده می‌شوند.']
+);
+DAILY_TIPS.push(
+ 'آخرین سوال بانک ایده‌ها بهترین است: «قهرمان واقعی زندگی‌ات کیست؟» — امشب بپرس.'
+);
+FAQ.push(
+ ['چرا بعضی سوال‌های پارتی عمیق‌ترند؟','بانک ایده‌ها از آرام تا عمیق مرتب شده — با پیشرفت لابی، عمیق‌ترها را بپرس.']
+);
+
+/* ---------- قفسه‌ی پایانی: سی ایده‌ی دیگر برای بانک پارتی ---------- */
+PARTY_IDEAS.push(
+ 'اگر امشب یک ستاره به تو تعلق می‌گرفت، چه چیزی را ازش می‌خواستی؟',
+ 'آخرین باری که از خنده گریه کردی کِی بود؟',
+ 'اگر باید یک روز از هفته را حذف می‌کردی، کدام؟',
+ 'اولین فکری که صبح امروز داشتی؟',
+ 'اگر بویایی از خاطره‌ها ساخته می‌شد، خاطره‌ی کدام روز؟',
+ 'دوست داری ۱۰ سال دیگر کجای دنیا باشی؟',
+ 'کدام آهنگ، زندگی‌ات را در ۳ دقیقه خلاصه می‌کند؟',
+ 'اگر یک در به هر جایی باز می‌شد، امشب کجا؟',
+ 'چیزی که همه فکر می‌کنند بلدی و تو بلد نیستی؟',
+ 'اگر لایک‌ها سکه بودند، الان چقدر داشتی؟',
+ 'بامزه‌ترین سوءتفاهمی که شده‌ای؟',
+ 'اگر یک روز مدیر ربات بودی، اولین دستورت؟',
+ 'دوست داری اسم چه چیزی را عوض کنی؟',
+ 'اگر یک امتیاز به امروزت بدهی، چند؟',
+ 'سخت‌ترین انتخاب سالِ گذشته‌ات؟',
+ 'اگر جعبه‌ی اسرارت را باز کنی، اولین چیزی که می‌افتد بیرون؟',
+ 'کدام سه کلمه، تو را توصیف می‌کند؟',
+ 'اگر اینترنت یک روز قطع می‌شد، اولین کارت؟',
+ 'قابل‌دسترس‌ترین رویایت؟',
+ 'اگر امشب ساعت به عقب برمی‌گشت، چه کاری را دوباره می‌کردی؟',
+ 'دوست‌داشتنی‌ترین عیبت؟',
+ 'اگر یک قهرمان قدیمی دوباره برگردد…',
+ 'کدام جمله را زیاد می‌گویی؟',
+ 'اگر امروز روز اولِ چیز جدیدی بود، چه بود؟',
+ 'بهترین نصیحتی که گرفتی و به کسی ندادی؟',
+ 'اگر یک رنگ از دنیا حذف شود…',
+ 'کدام خوراکی، حالِ تو را عوض می‌کند؟',
+ 'اگر یک ساعت با نسخه‌ی ۱۰ سال بعد خودت…',
+ 'دوست داری نامِ پروژه‌ی بعدی‌ات چه باشد؟',
+ 'اگر امشب پایان فصل بازی باشد، آخرین حرکتت؟'
+);
+
+/* ---------- تکمیل نهایی واژه و نکته ---------- */
+GLOSSARY.push(
+ ['بانک کامل ایده','حالا ۵۰+ پرسش از آرام تا عمیق — قفسه‌ی شخصی لابی‌داران.']
+);
+DAILY_TIPS.push(
+ 'بانک ایده‌ها حالا ۵۰+ سوال دارد — یک لابی کامل از همین‌جا ساخته می‌شود!'
+);
+FAQ.push(
+ ['بانک ایده‌ها چند سوال دارد؟','۵۰+ — از سبک‌ترین تا عمیق‌ترین؛ برای هر لابی و هر جمعی، دست‌کم ده تا مناسب هست.']
+);
+
+/* ---------- واپسین تکمیم ---------- */
+GLOSSARY.push(
+ ['قفسه‌ی لابی‌دان','نام دیگر بانک ایده‌های پارتی — ۵۰+ پرسش آماده.']
+);
+FAQ.push(
+ ['چطور از بانک ایده استفاده کنم؟','شیت «ایده‌های پارتی» را باز کن، سوال را کپی کن و در لابی یا گروه بپرس — یا مستقیم «لابی بساز» را بزن.']
+);
+DAILY_TIPS.push(
+ 'قفسه‌ی لابی‌دان را با دوستت هم‌رسان کن — هرکدام ده سوال بردارید!'
+);
+
+GLOSSARY.push(['ناوبری ضد-حلقه','الگوی show→renderGames→startGame که بازی از هر صفحه‌ای درست باز می‌شود بدون رقابت رندر.']);
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN WIRE — اتصال نسخه‌های PLUS و صفحات جدید
+   (این فایل بعد از همه‌ی ماژول‌ها و قبل از boot اجرا می‌شود؛
+   تعریف‌های بعدی همین نام، نسخه‌ی قبلی را override می‌کنند)
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- ارتقای توابع به نسخه ۲ ---------- */
+function loadBoard(s,keep){return loadBoard2(s,keep)}
+function renderStatsPage(){return renderStatsPage2()}
+function renderWall(){return renderWall2()}
+function renderMe(){return renderMe2()}
+function renderParty(){return renderParty2()}
+function userSheet(id){return userSheet2(id)}
+function admFeedback(d){return admFeedback2(d)}
+function admBroadcast(d){return admBroadcast2(d)}
+function admPerms(d){return admPerms2(d)}
+function admLogs(d){return admLogs2(d)}
+function admPermAdd(){return admPermAdd2()}
+
+/* ---------- خانه: شمارش معکوس‌های زنده ---------- */
+function renderHome(){
+ renderHomeBase();
+ try{if(typeof injectUnfinished==='function')injectUnfinished()}catch(e){}
+ try{
+  if(typeof greetBanner==='function'){
+   var el=$('pg-home');
+   var unf=el&&$('unfBanner');
+   var gb=document.createElement('div');
+   gb.innerHTML=greetBanner();
+   if(el){
+    if(unf)el.insertBefore(gb.firstChild,unf);
+    else el.insertBefore(gb.firstChild,el.firstChild);
+   }
+  }
+ }catch(e){}
+ try{if(typeof injectFavRow==='function')injectFavRow()}catch(e){}
+ try{
+  stopAllCountdowns();
+  var el=$('pg-home');
+  if(el){
+   var now=new Date();
+   var midnight=new Date(now);midnight.setHours(24,0,0,0);
+   var dd=D.daily||{};
+   var h='<div class="section"><div class="shead"><b>⏱ زمان‌سنج‌های زنده</b><small>LIVE</small></div><div class="grid g3">'
+   +cdCard('🔄','ریست روزانه','cdHome1',Math.floor(midnight.getTime()/1000),'مأموریت‌ها و حراج تازه می‌شوند')
+   +cdCard(dd.eligible?'🎁':'✅','پاداش روزانه','cdHome2',Math.floor(midnight.getTime()/1000),dd.eligible?'هنوز نگرفتی — دکمه‌ی دریافت بالاست!':'امروز گرفته‌ای — فردا دوباره')
+   +cdCard('📅','ساعت محلی','cdHome3',0,'زمان تو: '+faTime(Date.now()/1000))
+   +'</div></div>';
+   el.insertAdjacentHTML('beforeend',h);
+   countdown('cdHome1',Math.floor(midnight.getTime()/1000),function(){toast('روز جدید شد! مأموریت‌ها ریست شدند 🎉','ok');renderHome()});
+   countdown('cdHome2',Math.floor(midnight.getTime()/1000));
+   var t3=$('cdHome3');if(t3)t3.textContent=faTime(Date.now()/1000);
+  }
+  /* توصیه‌گر هوشمند + تبلیغات حامی */
+  try{if(typeof injectRecos==='function')injectRecos()}catch(e){}
+  try{if(typeof userAdsBlock==='function')userAdsBlock().then(function(hh){if(hh)el.insertAdjacentHTML('afterbegin',hh)})}catch(e){}
+  /* اهداف روزانه هوشمند */
+  try{
+   if(typeof dailyGoals==='function'){
+    var goals=document.createElement('div');
+    goals.innerHTML=dailyGoals();
+    var ref=el.querySelector('.section');
+    if(ref)el.insertBefore(goals.firstChild,ref);
+    else el.appendChild(goals.firstChild);
+   }
+  }catch(e){}
+ }catch(e){}
+}
+
+/* ---------- پوسته با صفحات جدید ---------- */
+function buildShell(){
+ var nav=$('nav');var h='';
+ for(var i=0;i<NAV.length;i++){
+  h+='<button data-pg="'+NAV[i][0]+'" onclick="show(\''+NAV[i][0]+'\')"><span class="bi">'+NAV[i][1]+'</span>'+NAV[i][2]
+  +(NAV[i][0]==='miss'?'<span class="bdg" id="missBdg" style="display:none">۰</span>':'')+'</button>';
+ }
+ h+='<button data-pg="admin" id="navAdmin" style="display:none" onclick="show(\'admin\')"><span class="bi">🛡️</span>مدیریت</button>';
+ nav.innerHTML=h;
+ var m=$('main');
+ var ids=['home','play','games','miss','board','shop','ach','me','notif','pass','admin','survival','lobby','duel','arena','stats',
+ 'history','milestones','rivals','trade','tournament','wall','settings','season','party','recap',
+ 'guide','vip','invite','cmds','about','modes','rules','leagues'];
+ var mh='';for(var j=0;j<ids.length;j++)mh+='<section class="page" id="pg-'+ids[j]+'"></section>';
+ m.innerHTML=mh;
+}
+
+/* ---------- ثبت نهایی صفحات ---------- */
+PAGES={home:renderHome,play:renderPlay,games:renderGames,miss:renderMiss,board:null,shop:renderShop,ach:renderAch,
+ me:renderMe,notif:renderNotif,pass:renderPass,admin:renderAdmin,survival:renderSurvival,
+ lobby:renderLobbyPage,duel:renderDuelPage,arena:renderArenaPage,stats:renderStatsPage,
+ history:renderHistory,milestones:renderMilestones,rivals:renderRivals,trade:renderTrade,
+ tournament:renderTournament,wall:renderWall,settings:renderSettings,season:renderSeason,
+ party:renderParty,recap:renderRecap,
+ guide:renderGuideTabbed,vip:renderVip,invite:renderInvite,cmds:renderCmds,about:renderAbout,modes:renderModes,rules:renderRules,leagues:renderLeagues};
+
+/* ---------- افزودن به پالت فرمان ---------- */
+CMD_ITEMS.push(
+ {ic:'🎓',t:'مرکز راهنما',s:'۱۴ موضوع کامل بازی',fn:"show('guide',{force:true})"},
+ {ic:'♟',t:'استراتژی‌های حرفه‌ای',s:'۱۰ مقاله‌ی استراتژی',fn:"strategySheet()"},
+ {ic:'⌨️',t:'کلیدهای میان‌بر',s:'ناوبری با کیبورد',fn:"keysSheet()"},
+ {ic:'🎨',t:'رنگ سفارشی',s:'رنگ اصلی اپ را انتخاب کن',fn:"customColorSheet()"},
+ {ic:'🚀',t:'شتاب‌دهنده‌ی بازی',s:'سریع‌ترین پاداش‌های الان',fn:"quickPlaySheet()"},
+ {ic:'👑',t:'مرکز VIP',s:'مزایا و مسیرهای عضویت',fn:"show('vip',{force:true})"},
+ {ic:'🎁',t:'مرکز دعوت',s:'لینک و پاداش‌های پلکانی',fn:"show('invite',{force:true})"},
+ {ic:'📖',t:'مرجع دستورات',s:'همه‌ی دستورات ربات با جستجو',fn:"show('cmds',{force:true})"}
+);
+
+/* ---------- تایل‌های جدید در Play Hub + شتاب‌دهنده ---------- */
+function renderPlay(){
+ renderPlayBase();
+ try{
+  var el=$('pg-play');
+  if(el)el.insertAdjacentHTML('beforeend',
+   '<div class="section"><div class="shead"><b>📖 دانشنامه</b><small>GUIDE</small></div><div class="tiles">'
+   +tile('🎓','مرکز راهنما','۱۴ موضوع کامل بازی',"show('guide',{force:true})")
+   +tile('📖','مرجع دستورات','همه‌ی دستورات ربات',"show('cmds',{force:true})")
+   +tile('👑','مرکز VIP','مزایا و مسیرها',"show('vip',{force:true})")
+   +tile('🎁','مرکز دعوت','سکه با هر دوست',"show('invite',{force:true})")
+   +tile('🧮','ماشین‌حساب سکه','چه چیزی می‌توانی بخری','coinCalcSheet()')
+   +tile('📈','برنامه‌ریز پیشرفت','سریع‌ترین مسیر رشد','plannerSheet()')
+   +'</div></div>');
+  injectQuickPlay();
+  try{if(typeof injectWizard==='function')injectWizard()}catch(e){}
+ }catch(e){}
+}
+
+/* ---------- تخته‌ی اعلان‌های اطلاع‌رسانی ---------- */
+function infoBanner(kind,icon,text){
+ return '<div class="infobanner '+kind+'"><span class="ic">'+icon+'</span><span style="flex:1">'+text+'</span></div>';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TITAN BOOT — دیپ‌لینک، خدمات پس‌زمینه، شروع
+   (ثبت صفحات در 20_wire.js انجام شده است)
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---------- دیپ‌لینک‌های ورودی مینی‌اپ ---------- */
 function handleStartParam(){
- /* دیپ‌لینک‌های ورودی مینی‌اپ: lobbyXXXXXX / duelNNNN / loveNNNN */
  try{
   var sp='';
   try{if(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.start_param)sp=String(tg.initDataUnsafe.start_param)}catch(e){}
@@ -35226,8 +45113,7 @@ function handleStartParam(){
   var m=sp.match(/^lobby([A-Z2-9]{4,8})$/i);
   if(m){
    LOBBYCODE=m[1].toUpperCase();
-   show('lobby');
-   /* پیوستن خودکار به لابی دیپ‌لینک‌شده */
+   show('lobby',{force:true});
    api('/api/miniapp/lobby/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:LOBBYCODE})})
    .then(function(d){if(d&&d.message)toast(d.message,'ok');lobbyWatch()})
    .catch(function(){lobbyWatch()});
@@ -35236,25 +45122,72 @@ function handleStartParam(){
   var m2=sp.match(/^duel(\d+)$/);
   if(m2){
    DUELCODE=parseInt(m2[1],10);
-   show('duel');
+   show('duel',{force:true});
    api('/api/miniapp/duel/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:DUELCODE})})
    .then(function(d){if(d&&d.message)toast(d.message,'ok');duelWatch()})
    .catch(function(){duelWatch()});
    return;
   }
   var m3=sp.match(/^love(\d+)$/);
-  if(m3){LOVE2CODE=parseInt(m3[1],10);show('games');love2Flow();toast('عشق‌سنج باز شد 💌','ok');return}
+  if(m3){LOVE2CODE=parseInt(m3[1],10);show('games',{force:true});love2Flow();toast('عشک‌سنج باز شد 💌','ok');return}
  }catch(e){}
 }
+
+/* ---------- کشیدن به پایین برای به‌روزرسانی (غیرمخرب) ---------- */
+var pty0=null,ptdy=0;
+document.addEventListener('touchstart',function(e){if(window.scrollY<=0&&e.touches.length===1)pty0=e.touches[0].clientY;else pty0=null},{passive:true});
+document.addEventListener('touchmove',function(e){if(pty0!=null){ptdy=e.touches[0].clientY-pty0}else ptdy=0},{passive:true});
+document.addEventListener('touchend',function(){if(pty0!=null&&ptdy>110){manualRefresh()}pty0=null;ptdy=0},{passive:true});
+/* اسکرول → FAB */
+window.addEventListener('scroll',function(){$('fab').classList.toggle('on',window.scrollY>420)},{passive:true});
+/* دکمه برگشت تلگرام → پشته‌ی واقعی (فیکس کامل) */
+try{if(tg&&tg.BackButton){
+ tg.BackButton.onClick(function(){
+  if($('cmdk').classList.contains('on'))return cmdkClose();
+  if($('sheet').classList.contains('on'))return closeSheet();
+  if($('modalBk').classList.contains('on'))return modalNo();
+  navBack();
+ });
+}}catch(e){}
+/* کیبورد: Esc همه را می‌بندد */
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){modalNo();closeSheet();cmdkClose()}});
+/* مودال */
+$('mYes').addEventListener('click',modalYes);
+$('mNo').addEventListener('click',modalNo);
+$('modalBk').addEventListener('click',function(e){if(e.target===this)modalNo()});
+
+/* ---------- به‌روزرسانی خودکار — غیرمخرب (فیکس «رفرش وسط کار») ----------
+   هر ۹۰ ثانیه فقط داده و نشان‌ها تازه می‌شوند؛
+   هیچ صفحه/بازی/فرم فعالی هرگز بازنویسی نمی‌شود. */
+setInterval(function(){
+ if(document.visibilityState==='visible'&&READY)refresh(true);
+},90000);
+document.addEventListener('visibilitychange',function(){
+ if(document.visibilityState==='visible'&&READY)refresh(true);
+ else if(document.visibilityState==='hidden')stateSave();
+});
+
+/* ════════════════════════════════════════════════════════════════
+   BOOT — با بازیابی کامل وضعیت
+   ════════════════════════════════════════════════════════════════ */
 (async function boot(){
  try{if(tg&&tg.ready)tg.ready();if(tg&&tg.expand)tg.expand()}catch(e){}
- uiLoad();uiApply();buildShell();cmdkInit();
+ uiLoad();uiApply();try{initReveal()}catch(e){};buildShell();cmdkInit();
+ /* بازیابی وضعیت ناوبری از جلسه‌ی قبل (فیکس «رفرش می‌شوم و برمی‌گردم به اول») */
+ var restored=stateLoad();
  try{
   var cached=sessionStorage.getItem('apexmini');
-  if(cached){D=JSON.parse(cached);READY=true;renderAll();$('splash').classList.add('off')}
+  if(cached){D=JSON.parse(cached);READY=true;renderChrome();$('splash').classList.add('off')}
  }catch(e){}
- if(!document.querySelector('.page.on'))show('home');
+ if(!restored||!PAGE)PAGE='home';
+ if(!document.querySelector('.page.on'))show(PAGE,{force:true});
  await refresh(true);
+ /* اگر صفحه‌ی بازیابی‌شده بازی/لابی فعال دارد، ادامه بده */
+ if(restored){
+  if(PAGE==='games'&&GAMEKEY)gameView(GAMEKEY);
+  if(PAGE==='lobby'&&LOBBYCODE)lobbyWatch();
+  if(PAGE==='duel'&&DUELCODE)duelWatch();
+ }
  handleStartParam();
  try{if(!localStorage.getItem('apex_ob'))setTimeout(obStart,1100)}catch(e){}
 })();
@@ -35767,6 +45700,68 @@ def start_health_server() -> None:
                     status = code
                     return self._json(d, code)
 
+                # ---------- مسیرهای ادمین TITAN (۵.۰) — GET ----------
+                if path == "/api/miniapp/admin/v5":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    qs = self._qs()
+                    d, code = _mini_admin_v5_view(uid, (qs.get("section") or ["home"])[0], {
+                        "q": (qs.get("q") or [""])[0],
+                        "page": (qs.get("page") or ["0"])[0],
+                        "filter": (qs.get("filter") or ["all"])[0],
+                        "level": (qs.get("level") or ["all"])[0],
+                        "key": (qs.get("key") or [""])[0],
+                        "uid": (qs.get("uid") or ["0"])[0],
+                        "gid": (qs.get("gid") or ["0"])[0],
+                    })
+                    if d is None:
+                        d, code = _mini_admin_v5_view2(uid, (qs.get("section") or ["home"])[0], {
+                            "uid": (qs.get("uid") or ["0"])[0],
+                        })
+                    if d is None:
+                        d, code = _mini_admin_v5_view3(uid, (qs.get("section") or [""])[0], {
+                            "uid": (qs.get("uid") or ["0"])[0],
+                            "gid": (qs.get("gid") or ["0"])[0],
+                        })
+                    if d is None:
+                        d, code = _mini_admin_v5_view4(uid, (qs.get("section") or [""])[0], {
+                            "uid": (qs.get("uid") or ["0"])[0],
+                        })
+                    if d is None:
+                        d, code = _mini_admin_v5_view6(uid, (qs.get("section") or [""])[0], {})
+                    if d is None:
+                        d, code = _mini_admin_v5_view7(uid, (qs.get("section") or [""])[0], {})
+                    if d is None:
+                        d, code = _mini_admin_v5_view8(uid, (qs.get("section") or [""])[0], {
+                            "term": (qs.get("term") or [""])[0],
+                            "bank": (qs.get("bank") or [""])[0],
+                            "scope": (qs.get("scope") or ["global"])[0],
+                        })
+                    if d is None:
+                        d, code = {"ok": False, "error": "بخش ناشناخته است."}, 404
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/ads":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_user_ads(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/planner":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_planner_view(uid)
+                    status = code
+                    return self._json(d, code)
+
                 if path == "/api/miniapp/stats":
                     uid = self._auth()
                     if not uid:
@@ -36064,6 +46059,22 @@ def start_health_server() -> None:
                         return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
                     d, code = _mini_showcase_action(uid, str(data.get("action", "")),
                                                     data.get("key", ""))
+                    status = code
+                    return self._json(d, code)
+
+                # ---------- مسیرهای ادمین TITAN (۵.۰) — POST ----------
+                if path == "/api/miniapp/admin/v5":
+                    d, code = _mini_admin_v5_action(uid, str(data.get("action", "")), data)
+                    if d is None:
+                        d, code = _mini_admin_v5_action2(uid, str(data.get("action", "")), data)
+                    if d is None:
+                        d, code = _mini_admin_v5_action4(uid, str(data.get("action", "")), data)
+                    if d is None:
+                        d, code = _mini_admin_v5_action7(uid, str(data.get("action", "")), data)
+                    if d is None:
+                        d, code = _mini_admin_v5_action8(uid, str(data.get("action", "")), data)
+                    if d is None:
+                        d, code = {"ok": False, "error": "این عملیات در نسخه ۵ تعریف نشده است."}, 404
                     status = code
                     return self._json(d, code)
 
