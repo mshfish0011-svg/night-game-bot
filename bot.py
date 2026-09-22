@@ -27738,7 +27738,7 @@ async def backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 #    + عشق‌سنج + Survival + آمار کامل + مقایسه + AI + ابزار پروفایل
 #  • همه‌ی عملیات نوشتنی دقیقاً از همان توابع اصلی ربات عبور می‌کنند
 # ================================================================
-MINIAPP_VERSION = "3.0-arena"
+MINIAPP_VERSION = "4.0-omega"
 _MINI_AUTH_TTL = 86400  # حداکثر عمر امضای initData: ۲۴ ساعت
 _MINI_DEBUG = os.getenv("MINIAPP_DEBUG", "").strip() not in ("", "0")
 
@@ -28203,6 +28203,7 @@ def _mini_data(uid):
             for a in (u.get("activity_log") or [])[:10] if isinstance(a, dict)
         ],
         "history": [h for h in (u.get("game_history") or [])[:10] if isinstance(h, dict)],
+        "omega": _mini_omega_flags(uid),
         "cosmetics": _mini_cosmetics(u),
         "today": {
             "new_users": int(daily.get("new_users", 0) or 0),
@@ -28569,6 +28570,10 @@ def _mini_admin_action(uid, action, data):
         save_data(force=True)
         audit("admin_note", int(uid), target, "updated")
         return True, "یادداشت ذخیره شد."
+    # ---- اکشن‌های اومگا (۴.۰) ----
+    ok2, msg2 = _mini_admin_omega_action(uid, action, data)
+    if ok2 is not None:
+        return ok2, msg2
     return False, "این عملیات در پنل وب تعریف نشده است."
 
 
@@ -30573,13 +30578,970 @@ def _mini_broadcast(admin_uid, text):
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
+# ================================================================
+#  🌟 OMEGA COVERAGE — پوشش ۱۰۰٪ قابلیت‌های ربات (نسخه ۴.۰)
+#  هدیه · قلب · تجارت · تورنمنت · مایلستون · رقبا · HOF · تاریخچه
+#  وال اجتماعی · تنظیمات شخصی · تولد · BRB · پرسونا · بازی‌های پارتی
+#  استریک صعودی · شوکیس · فصل · تله‌متری · ریکاپ شخصی · ادمین کامل
+#  هیچ تابع/جدولی از ربات تغییر نمی‌کند؛ فقط فراخوانی می‌شوند و
+#  پاداش‌ها دقیقاً با همان توابع و جدول‌های ربات پرداخت می‌شوند.
+# ================================================================
+
+
+def _mini_omega_flags(uid):
+    """پرچم‌های زنده‌ی اومگا برای هوم/نوارها — همه از داده‌ی واقعی ربات."""
+    out = {}
+    try:
+        u = get_user(int(uid))
+        try:
+            out["gifts_left"] = 0 if v21_store()["gift_day"].get(day_key(), {}).get(user_key(uid)) else 1
+        except Exception:
+            out["gifts_left"] = 1
+        try:
+            out["hearts_left"] = max(0, 6 - hearts_today(uid))
+        except Exception:
+            out["hearts_left"] = 6
+        try:
+            out["trade_pending"] = sum(1 for t in DATA.get("trades_log", [])
+                                       if isinstance(t, dict) and int(t.get("to", 0) or 0) == int(uid)
+                                       and str(t.get("status")) == "pending")
+            out["trade_cooldown"] = max(0, int(u.get("trade_cooldown_until", 0) or 0) - now_ts())
+        except Exception:
+            out["trade_pending"] = 0
+            out["trade_cooldown"] = 0
+        try:
+            claimed = set(str(x) for x in (u.get("milestones_claimed") or []))
+            cur = {"games": int(u.get("games", 0) or 0), "wins": int(u.get("wins", 0) or 0),
+                   "xp": int(u.get("xp", 0) or 0), "daily_streak": int(u.get("daily_streak", 0) or 0),
+                   "duels": int(u.get("duels", 0) or 0), "private_games": int(u.get("private_games", 0) or 0)}
+            out["milestones_ready"] = sum(1 for m in MILESTONES
+                                          if m["key"] not in claimed and cur.get(m["type"], 0) >= int(m["target"]))
+            out["milestones_total"] = len(MILESTONES)
+            out["milestones_claimed"] = len(claimed)
+        except Exception:
+            out["milestones_ready"] = 0
+            out["milestones_total"] = 13
+            out["milestones_claimed"] = 0
+        try:
+            streak = int(u.get("daily_streak", 0) or 0)
+            claim_key = today_key() + "_" + str(streak)
+            claimed_ls = u.get("login_streak_reward_claimed", []) or []
+            out["loginstreak_ready"] = bool(streak >= 1 and claim_key not in claimed_ls)
+        except Exception:
+            out["loginstreak_ready"] = False
+        try:
+            out["showcase"] = [str(x) for x in (u.get("showcase_achievements") or [])][:3]
+        except Exception:
+            out["showcase"] = []
+        try:
+            out["rivals_count"] = len(u.get("rivals") or [])
+        except Exception:
+            out["rivals_count"] = 0
+        try:
+            out["brb"] = bool(v20_store()["brb"].get(user_key(uid)))
+        except Exception:
+            out["brb"] = False
+        try:
+            out["mute"] = bool(v19_prefs(int(uid)).get("mute", False))
+        except Exception:
+            out["mute"] = False
+        try:
+            out["birthday"] = str(u.get("birthday", "") or "")
+        except Exception:
+            out["birthday"] = ""
+        try:
+            out["tournaments_open"] = sum(1 for t in DATA.get("tournaments", {}).values()
+                                          if isinstance(t, dict) and str(t.get("status")) in ("open", "started"))
+        except Exception:
+            out["tournaments_open"] = 0
+    except Exception:
+        pass
+    return out
+
+
+# ---------------- 🎁 هدیه‌ی سکه (apexgift) ----------------
+def _mini_gift(uid, target, amount):
+    """هدیه‌ی سکه به بازیکن دیگر — دقیقاً منطق /apexgift ربات."""
+    try:
+        uid, target = int(uid), int(target)
+        try:
+            amount = int(amount)
+        except Exception:
+            amount = 5
+        if amount < 1 or amount > 50:
+            return {"ok": False, "error": "مقدار هدیه باید بین ۱ تا ۵۰ سکه باشد."}, 400
+        if target == uid:
+            return {"ok": False, "error": "به خودت هم می‌شود هدیه دادی، ولی جایی نمی‌رود!"}, 400
+        if user_key(target) not in DATA.get("users", {}):
+            return {"ok": False, "error": "این بازیکن پیدا نشد."}, 404
+        st = v21_store()
+        day = day_key()
+        if st["gift_day"].get(day, {}).get(user_key(uid)):
+            return {"ok": False, "error": "🎁 سهمیه‌ی هدیه‌ی امروزت پر شده! فردا دوباره 💚"}, 429
+        if not spend_coins(uid, amount):
+            return {"ok": False, "error": "🪙 سکه‌ی کافی نداری! موجودی: " + fmt_num(int(get_user(uid).get("coins", 0)))}, 400
+        add_coins(target, amount, name_of(target))
+        st = v21_store()
+        st["gift_day"].setdefault(day, {})[user_key(uid)] = True
+        st["stats"]["gifts"] = int(st["stats"].get("gifts", 0)) + 1
+        st["stats"]["gift_coins"] = int(st["stats"].get("gift_coins", 0)) + amount
+        award_achievement(uid, "v21_generous")
+        save_data(force=True)
+        try:
+            push_notification(target, "friend_req", "🎁 هدیه دریافت شد!",
+                              name_of(uid) + " به تو " + fmt_num(amount) + " سکه هدیه داد! چه دلگرمی‌ای 💚",
+                              action_data="P|PROFILE")
+        except Exception:
+            pass
+        log_user_activity(uid, "mini_gift_sent", "to=" + str(target) + " amount=" + str(amount))
+        _mlog("info", f"gift uid={uid} -> target={target} amount={amount}")
+        return {"ok": True, "coins": int(get_user(uid).get("coins", 0)),
+                "message": "🎁 به " + name_of(target) + " " + fmt_num(amount) + " سکه هدیه دادی! چه دلگرمی‌ای 💚"}, 200
+    except Exception as exc:
+        _mlog("error", f"gift failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- ❤️ قلب محبت (apexheart) ----------------
+def _mini_heart(uid, target):
+    """قلب محبت — روزی ۶ بار، +۳ سکه به طرف مقابل (مطابق /apexheart)."""
+    try:
+        uid, target = int(uid), int(target)
+        if target == uid:
+            return {"ok": False, "error": "❤️ قلب محبت برای خودت معنا ندارد!"}, 400
+        if user_key(target) not in DATA.get("users", {}):
+            return {"ok": False, "error": "این بازیکن پیدا نشد."}, 404
+        if hearts_today(uid) >= 6:
+            return {"ok": False, "error": "💘 سهمیه‌ی قلب امروزت پر شد (۶ قلب). فردا می‌بینمت!"}, 429
+        hearts_inc(uid)
+        add_coins(target, 3, name_of(target))
+        award_achievement(uid, "v20_heart_giver")
+        save_data(force=True)
+        try:
+            push_notification(target, "friend_req", "❤️ قلب محبت!",
+                              name_of(uid) + " به تو قلب محبت فرستاد! 🎁 +۳ سکه گرفتی.",
+                              action_data="P|PROFILE")
+        except Exception:
+            pass
+        return {"ok": True, "hearts_left": max(0, 6 - hearts_today(uid)),
+                "message": "❤️ به " + name_of(target) + " قلب فرستادی! +۳ سکه برای او 🎁"}, 200
+    except Exception as exc:
+        _mlog("error", f"heart failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🔄 مرکز تجارت (apextrade) ----------------
+def _mini_trade_view(uid):
+    """نمای مرکز تجارت — دریافتی/ارسالی + موجودی قابل‌معامله."""
+    try:
+        u = get_user(int(uid))
+        trades = [t for t in DATA.get("trades_log", []) if isinstance(t, dict)]
+
+        def _tv(t):
+            offer, req = t.get("offer", {}) or {}, t.get("request", {}) or {}
+            return {"id": int(t.get("id", 0)), "from": int(t.get("from", 0)),
+                    "from_name": name_of(int(t.get("from", 0))),
+                    "to": int(t.get("to", 0)), "to_name": name_of(int(t.get("to", 0))),
+                    "offer": offer, "request": req,
+                    "ts": int(t.get("ts", 0) or 0), "status": str(t.get("status", ""))}
+
+        received = [_tv(t) for t in reversed(trades) if int(t.get("to", 0) or 0) == int(uid)][:10]
+        sent = [_tv(t) for t in reversed(trades) if int(t.get("from", 0) or 0) == int(uid)][:10]
+        titles = [{"key": k, "name": (TITLES_SHOP.get(k, {}) or {}).get("name", k)}
+                  for k in (u.get("titles_owned") or [])]
+        frames = [{"key": k, "name": (FRAMES_SHOP.get(k, {}) or {}).get("name", k)}
+                  for k in (u.get("frames_owned") or [])]
+        badges = [{"key": k, "name": (BADGES_SHOP.get(k, {}) or {}).get("name", k)}
+                  for k in (u.get("badges_owned") or [])]
+        cd = int(u.get("trade_cooldown_until", 0) or 0) - now_ts()
+        friends = [int(x) for x in (u.get("friends") or [])]
+        return {"ok": True, "received": received, "sent": sent,
+                "completed": int(u.get("trades_completed", 0) or 0),
+                "cooldown": max(0, cd),
+                "inventory": {"titles": titles, "frames": frames, "badges": badges,
+                              "coins": int(u.get("coins", 0) or 0)},
+                "friends": [{"id": f, "name": name_of(f)} for f in friends[:20]]}, 200
+    except Exception as exc:
+        _mlog("error", f"trade_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_trade_create(uid, to, offer, request):
+    """ساخت درخواست تجارت — با همان trade_create ربات."""
+    try:
+        uid, to = int(uid), int(to)
+        if to == uid:
+            return {"ok": False, "error": "با خودت تجارت نمی‌شود!"}, 400
+        if user_key(to) not in DATA.get("users", {}):
+            return {"ok": False, "error": "این بازیکن پیدا نشد."}, 404
+        u = get_user(uid)
+        if int(u.get("trade_cooldown_until", 0) or 0) > now_ts():
+            remain = int((int(u.get("trade_cooldown_until", 0)) - now_ts()) // 60) + 1
+            return {"ok": False, "error": "⏳ کول‌داون تجارت: " + fmt_num(remain) + " دقیقه دیگر."}, 429
+
+        def _norm(side):
+            side = side or {}
+            typ = str(side.get("type", ""))
+            if typ not in ("coins", "title", "frame", "badge"):
+                return None
+            out = {"type": typ}
+            if typ == "coins":
+                try:
+                    amt = int(side.get("amount", 0))
+                except Exception:
+                    amt = 0
+                if amt < 1 or amt > 10000:
+                    return None
+                out["amount"] = amt
+            else:
+                key = str(side.get("key", ""))
+                owned = {"title": (u.get("titles_owned") or []), "frame": (u.get("frames_owned") or []),
+                         "badge": (u.get("badges_owned") or [])}[typ]
+                if key not in owned:
+                    return None
+                out["key"] = key
+            return out
+
+        o, r = _norm(offer), _norm(request)
+        if not o or not r:
+            return {"ok": False, "error": "پیشنهاد یا درخواست نامعتبر است."}, 400
+        if o.get("type") == "coins" and int(o.get("amount", 0)) > int(u.get("coins", 0) or 0):
+            return {"ok": False, "error": "سکه‌ی کافی برای این پیشنهاد نداری."}, 400
+        t = trade_create(uid, to, o, r)
+        if not t:
+            return {"ok": False, "error": "ساخت درخواست تجارت ممکن نشد (کول‌داون/محدودیت)."}, 400
+        save_data(force=True)
+        _mlog("info", f"trade #{t.get('id')} uid={uid} -> {to}")
+        return {"ok": True, "id": int(t.get("id", 0)), "message": "🔄 درخواست تجارت ارسال شد!"}, 200
+    except Exception as exc:
+        _mlog("error", f"trade_create failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_trade_action(uid, tid, action):
+    """قبول/رد/لغو تجارت — با همان trade_accept/trade_reject ربات."""
+    try:
+        uid, tid = int(uid), int(tid)
+        t = next((x for x in DATA.get("trades_log", [])
+                  if isinstance(x, dict) and int(x.get("id", 0)) == tid), None)
+        if not t:
+            return {"ok": False, "error": "این تجارت پیدا نشد."}, 404
+        if action == "accept":
+            if int(t.get("to", 0)) != uid:
+                return {"ok": False, "error": "این تجارت برای تو نیست."}, 403
+            ok = trade_accept(tid, uid)
+            if ok:
+                save_data(force=True)
+                return {"ok": True, "message": "✅ تجارت انجام شد! (کول‌داون ۱ ساعت)"}, 200
+            return {"ok": False, "error": "قبول ممکن نشد — وضعیت تغییر کرده."}, 400
+        if action == "reject":
+            if int(t.get("to", 0)) != uid:
+                return {"ok": False, "error": "این تجارت برای تو نیست."}, 403
+            ok = trade_reject(tid, uid)
+            if ok:
+                save_data(force=True)
+                return {"ok": True, "message": "❌ تجارت رد شد."}, 200
+            return {"ok": False, "error": "رد ممکن نشد."}, 400
+        if action == "cancel":
+            if int(t.get("from", 0)) != uid:
+                return {"ok": False, "error": "فقط فرستنده می‌تواند لغو کند."}, 403
+            if str(t.get("status")) != "pending":
+                return {"ok": False, "error": "این تجارت تمام شده است."}, 400
+            t["status"] = "cancelled"
+            save_data(force=True)
+            return {"ok": True, "message": "درخواست تجارت لغو شد."}, 200
+        return {"ok": False, "error": "عملیات نامعتبر."}, 400
+    except Exception as exc:
+        _mlog("error", f"trade_action failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🏆 مسابقات (apextournament) ----------------
+def _mini_tournament_view(uid):
+    try:
+        uid = int(uid)
+        out = []
+        for tid, t in DATA.get("tournaments", {}).items():
+            if not isinstance(t, dict):
+                continue
+            if str(t.get("status")) not in ("open", "started"):
+                continue
+            players = [int(x) for x in (t.get("players") or [])]
+            out.append({"id": int(t.get("id", 0) or tid), "title": str(t.get("title", "")),
+                        "host": int(t.get("host", 0)), "host_name": name_of(int(t.get("host", 0))),
+                        "prize": int(t.get("prize", 0) or 0), "max_players": int(t.get("max_players", 16) or 16),
+                        "players": [{"id": p, "name": name_of(p)} for p in players[:20]],
+                        "joined": uid in players, "status": str(t.get("status", "")),
+                        "created": int(t.get("created_at", 0) or t.get("ts", 0) or 0)})
+        out.sort(key=lambda x: -x["created"])
+        is_mod = bool(has_permission(uid, "mod"))
+        return {"ok": True, "items": out[:20], "is_mod": is_mod, "can_create": is_mod}, 200
+    except Exception as exc:
+        _mlog("error", f"tournament_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_tournament_create(uid, title, prize, max_players):
+    try:
+        uid = int(uid)
+        if not has_permission(uid, "mod"):
+            return {"ok": False, "error": "فقط مدیر/ناظر می‌تواند مسابقه بسازد."}, 403
+        if not anti_spam_check(uid, "tournament"):
+            return {"ok": False, "error": "🐢 سقف ساخت مسابقه‌ی امروزت پر شده."}, 429
+        title = str(title or "").strip()[:60] or ("مسابقه #" + fmt_num(next_id("tournament")))
+        try:
+            prize = max(0, min(100000, int(prize)))
+        except Exception:
+            prize = 500
+        try:
+            max_players = max(2, min(64, int(max_players)))
+        except Exception:
+            max_players = 16
+        t = tournament_create(title, uid, prize=prize, max_players=max_players)
+        if not t:
+            return {"ok": False, "error": "ساخت مسابقه ممکن نشد."}, 500
+        u = get_user(uid)
+        u["tournaments_joined"] = int(u.get("tournaments_joined", 0) or 0) + 1
+        try:
+            award_achievement_v11(uid, "v11_first_tournament")
+        except Exception:
+            pass
+        save_data(force=True)
+        _mlog("info", f"tournament #{t.get('id')} created by uid={uid}")
+        return {"ok": True, "id": int(t.get("id", 0)), "message": "🏆 مسابقه ساخته شد!"}, 200
+    except Exception as exc:
+        _mlog("error", f"tournament_create failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_tournament_join(uid, tid):
+    try:
+        uid, tid = int(uid), int(tid)
+        t = tournament_get(tid)
+        if not t or str(t.get("status")) != "open":
+            return {"ok": False, "error": "❌ مسابقه بسته است."}, 400
+        players = [int(x) for x in (t.get("players") or [])]
+        if uid in players:
+            return {"ok": False, "error": "ℹ️ قبلاً عضو شدی."}, 400
+        if len(players) >= int(t.get("max_players", 16) or 16):
+            return {"ok": False, "error": "❌ ظرفیت پر است."}, 400
+        t["players"].append(uid)
+        u = get_user(uid)
+        u["tournaments_joined"] = int(u.get("tournaments_joined", 0) or 0) + 1
+        try:
+            award_achievement_v11(uid, "v11_first_tournament")
+        except Exception:
+            pass
+        save_data(force=True)
+        _mlog("info", f"tournament #{tid} joined by uid={uid}")
+        return {"ok": True, "message": "✅ به مسابقه #" + fmt_num(tid) + " اضافه شدی!"}, 200
+    except Exception as exc:
+        _mlog("error", f"tournament_join failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🎯 مایلستون‌ها (apexmilestones) ----------------
+def _mini_milestones_view(uid):
+    try:
+        new = check_milestones(int(uid))
+        save_data()
+        u = get_user(int(uid))
+        claimed = set(str(x) for x in (u.get("milestones_claimed") or []))
+        cur = {"games": int(u.get("games", 0) or 0), "wins": int(u.get("wins", 0) or 0),
+               "xp": int(u.get("xp", 0) or 0), "daily_streak": int(u.get("daily_streak", 0) or 0),
+               "duels": int(u.get("duels", 0) or 0), "private_games": int(u.get("private_games", 0) or 0)}
+        items = []
+        for m in MILESTONES:
+            c = cur.get(m["type"], 0)
+            items.append({"key": m["key"], "name": m["name"], "type": m["type"],
+                          "target": int(m["target"]), "coins": int(m["coins"]), "xp": int(m["xp"]),
+                          "title": m.get("title"), "current": c,
+                          "claimed": m["key"] in claimed, "ready": c >= int(m["target"])})
+        return {"ok": True, "items": items, "claimed_count": len(claimed),
+                "total": len(MILESTONES), "auto_granted": len(new)}, 200
+    except Exception as exc:
+        _mlog("error", f"milestones_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_milestones_claim(uid):
+    """دریافت مایلستون‌های آماده — همان check_milestones ربات (خودکار)."""
+    try:
+        new = check_milestones(int(uid))
+        save_data(force=True)
+        if new:
+            names = "، ".join(str(m.get("name", "")) for m in new[:3])
+            return {"ok": True, "granted": len(new),
+                    "message": "🎯 " + fmt_num(len(new)) + " مایلستون دریافت شد! " + names}, 200
+        return {"ok": True, "granted": 0, "message": "فعلاً مایلستون آماده‌ای نداری — ادامه بده! 💪"}, 200
+    except Exception as exc:
+        _mlog("error", f"milestones_claim failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- ⚔️ رقبا (apexrivals) ----------------
+def _mini_rivals_view(uid):
+    try:
+        u = get_user(int(uid))
+        rivals = [int(x) for x in (u.get("rivals") or [])][:15]
+        items = []
+        for rid in rivals:
+            try:
+                rec = rival_record(uid, rid)
+                a_id = int(rec.get("a", 0))
+                my_wins = int(rec.get("a_wins" if a_id == int(uid) else "b_wins", 0))
+                opp_wins = int(rec.get("b_wins" if a_id == int(uid) else "a_wins", 0))
+                items.append({"id": rid, "name": name_of(rid), "my_wins": my_wins,
+                              "opp_wins": opp_wins, "games": int(rec.get("games", 0))})
+            except Exception:
+                items.append({"id": rid, "name": name_of(rid), "my_wins": 0, "opp_wins": 0, "games": 0})
+        friends = [int(x) for x in (u.get("friends") or [])]
+        return {"ok": True, "items": items,
+                "friends": [{"id": f, "name": name_of(f)} for f in friends[:20]]}, 200
+    except Exception as exc:
+        _mlog("error", f"rivals_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_rival_action(uid, action, target):
+    try:
+        uid, target = int(uid), int(target)
+        u = get_user(uid)
+        rivals = [int(x) for x in (u.get("rivals") or [])]
+        if action == "add":
+            if target == uid:
+                return {"ok": False, "error": "خودت رقیب خودت نیستی!"}, 400
+            if user_key(target) not in DATA.get("users", {}):
+                return {"ok": False, "error": "این بازیکن پیدا نشد."}, 404
+            if target in rivals:
+                return {"ok": False, "error": "قبلاً رقیبت است!"}, 400
+            if len(rivals) >= 10:
+                return {"ok": False, "error": "حداکثر ۱۰ رقیب می‌توانی داشته باشی!"}, 400
+            rivals.append(target)
+            u["rivals"] = rivals
+            save_data(force=True)
+            log_user_activity(uid, "rival_add", "id=" + str(target) + " src=miniapp")
+            return {"ok": True, "message": "⚔️ " + name_of(target) + " رقیب تو شد!"}, 200
+        if action == "remove":
+            if target not in rivals:
+                return {"ok": False, "error": "در لیست رقبایت نیست."}, 400
+            u["rivals"] = [x for x in rivals if x != target]
+            save_data(force=True)
+            return {"ok": True, "message": "❌ رقیب حذف شد."}, 200
+        return {"ok": False, "error": "عملیات نامعتبر."}, 400
+    except Exception as exc:
+        _mlog("error", f"rival_action failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 👑 HOF + 📜 تاریخچه + 🌐 وال اجتماعی ----------------
+def _mini_hof_view(uid):
+    try:
+        hall_of_fame_update()
+        save_data()
+        hof = DATA.get("hall_of_fame", [])[:20]
+        items = [{"uid": int(e.get("uid", 0)), "name": str(e.get("name", "")),
+                  "xp": int(e.get("xp", 0)), "wins": int(e.get("wins", 0)),
+                  "rank": int(e.get("rank", 0)),
+                  "inducted_at": int(e.get("inducted_at", 0) or 0)}
+                 for e in hof if isinstance(e, dict)]
+        return {"ok": True, "items": items}, 200
+    except Exception as exc:
+        _mlog("error", f"hof_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_history_view(uid):
+    try:
+        u = get_user(int(uid))
+        hist = [h for h in (u.get("game_history") or []) if isinstance(h, dict)][:20]
+        items = [{"ts": int(h.get("ts", 0) or 0), "mode": str(h.get("mode", "")),
+                  "result": str(h.get("result", "")), "xp": int(h.get("xp", 0)),
+                  "coins": int(h.get("coins", 0)), "players": int(h.get("players", 0)),
+                  "chat_id": int(h.get("chat_id", 0) or 0)} for h in hist]
+        return {"ok": True, "items": items, "count": len(items)}, 200
+    except Exception as exc:
+        _mlog("error", f"history_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_wall_view(uid):
+    try:
+        feed = social_wall_feed(30)
+        items = []
+        for e in feed:
+            if not isinstance(e, dict):
+                continue
+            actor = int(e.get("actor", 0) or 0)
+            items.append({"ts": int(e.get("ts", 0) or 0),
+                          "message": str(e.get("message", ""))[:120],
+                          "actor": actor,
+                          "actor_name": (name_of(actor) if actor else "سیستم"),
+                          "level": str(e.get("level", "")),
+                          "category": str(e.get("category", ""))})
+        return {"ok": True, "items": items}, 200
+    except Exception as exc:
+        _mlog("error", f"wall_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# === OMEGA-PART-2 ===
+
+
+# ---------------- ⚙️ تنظیمات شخصی (apexsettings_me) ----------------
+def _mini_settings_view(uid):
+    try:
+        u = get_user(int(uid))
+        prefs = u.get("notifications") or {}
+        priv = u.get("privacy") or {}
+        brb_ts = float(v20_store()["brb"].get(user_key(uid), 0) or 0)
+        return {"ok": True,
+                "notifications": {"level_up": bool(prefs.get("level_up", True)),
+                                  "achievement": bool(prefs.get("achievement", True)),
+                                  "private_invite": bool(prefs.get("private_invite", True)),
+                                  "friend_req": bool(prefs.get("friend_req", True))},
+                "privacy": {"show_stats": bool(priv.get("show_stats", True)),
+                            "show_friends": bool(priv.get("show_friends", True)),
+                            "show_achievements": bool(priv.get("show_achievements", True)),
+                            "allow_challenges": bool(priv.get("allow_challenges", True))},
+                "display_mode": str(u.get("display_mode", "auto") or "auto"),
+                "mute": bool(v19_prefs(int(uid)).get("mute", False)),
+                "brb": brb_ts > 0, "brb_since": int(brb_ts),
+                "birthday": str(u.get("birthday", "") or "")}, 200
+    except Exception as exc:
+        _mlog("error", f"settings_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_settings_set(uid, key, value):
+    try:
+        uid = int(uid)
+        u = get_user(uid)
+        key = str(key)
+        if key.startswith("notif."):
+            sub = key.split(".", 1)[1]
+            if sub in ("level_up", "achievement", "private_invite", "friend_req"):
+                prefs = u.setdefault("notifications", {})
+                prefs[sub] = bool(value)
+            else:
+                return {"ok": False, "error": "کلید نامعتبر."}, 400
+        elif key.startswith("priv."):
+            sub = key.split(".", 1)[1]
+            if sub in ("show_stats", "show_friends", "show_achievements", "allow_challenges"):
+                priv = u.setdefault("privacy", {})
+                priv[sub] = bool(value)
+            else:
+                return {"ok": False, "error": "کلید نامعتبر."}, 400
+        elif key == "display_mode":
+            if str(value) in ("auto", "mobile", "desktop"):
+                u["display_mode"] = str(value)
+            else:
+                return {"ok": False, "error": "حالت نامعتبر."}, 400
+        elif key == "mute":
+            v19_prefs(uid)["mute"] = bool(value)
+        elif key == "brb":
+            if bool(value):
+                v20_store()["brb"][user_key(uid)] = now_ts()
+            else:
+                v20_store()["brb"].pop(user_key(uid), None)
+        else:
+            return {"ok": False, "error": "کلید نامعتبر."}, 400
+        save_data(force=True)
+        log_user_activity(uid, "mini_setting", key + "=" + str(bool(value)))
+        return {"ok": True, "message": "✅ ذخیره شد."}, 200
+    except Exception as exc:
+        _mlog("error", f"settings_set failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🎂 تولد (apexbirthday) ----------------
+def _mini_birthday_set(uid, bday):
+    try:
+        bday = str(bday or "").strip()
+        ok = set_birthday(int(uid), bday)
+        if ok:
+            try:
+                check_birthday_reward(int(uid))
+            except Exception:
+                pass
+            save_data(force=True)
+            return {"ok": True, "birthday": bday,
+                    "message": "✅ تولدت ثبت شد: " + bday + " — هر سال ۲۰۰ سکه + ۱۰۰ XP هدیه می‌گیری!"}, 200
+        return {"ok": False, "error": "❌ فرمت اشتباه! مثال: 2000-05-15"}, 400
+    except Exception as exc:
+        _mlog("error", f"birthday_set failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🎭 کارت شخصیت (apexpersona) ----------------
+def _mini_persona(uid):
+    try:
+        you = str(get_user(int(uid)).get("name") or "بازیکن")
+        p = {"name": random.choice(PERSONA_NAMES), "trait": random.choice(PERSONA_TRAITS),
+             "power": random.choice(PERSONA_POWERS), "weak": random.choice(PERSONA_WEAK),
+             "hp": random.randint(50, 99), "pwr": random.randint(50, 99)}
+        add_xp(int(uid), 2)
+        save_data(force=True)
+        return {"ok": True, "you": you, "persona": p}, 200
+    except Exception as exc:
+        _mlog("error", f"persona failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🎉 پارتی‌هاب — محتوای همان بانک‌های ربات ----------------
+def _mini_party(kind, uid):
+    """بازی‌های پارتی تک‌نفره — محتوا از همان بانک/جدول‌های ربات."""
+    try:
+        kind = str(kind)
+        if kind == "wyr":
+            q = pick_question({"v7_used_prompts_global": [], "v7_used_penalties": [], "round": 0},
+                              "wouldyou", None)
+            if " یا " in q:
+                left, right = q.split(" یا ", 1)
+            else:
+                left, right = q, "همه‌چیز را رها کنی و بروی!"
+            tally = (DATA.setdefault("_mini_wyr_votes", {})
+                     .get(hashlib.md5(q.encode("utf-8")).hexdigest(), {"a": 0, "b": 0}))
+            v24_store()["stats"]["party_games"] = int(v24_store()["stats"].get("party_games", 0)) + 1
+            save_data()
+            return {"ok": True, "kind": "wyr", "question": q,
+                    "left": left.strip(), "right": right.strip(),
+                    "votes": {"a": int(tally.get("a", 0)), "b": int(tally.get("b", 0))}}, 200
+        if kind == "nhie":
+            q = pick_question({"v7_used_prompts_global": [], "v7_used_penalties": [], "round": 0},
+                              "secret", None)
+            v24_store()["stats"]["party_games"] = int(v24_store()["stats"].get("party_games", 0)) + 1
+            save_data()
+            return {"ok": True, "kind": "nhie", "prompt": q}, 200
+        if kind == "likely":
+            q = random.choice(QUESTIONS_GROUP)
+            v24_store()["stats"]["party_games"] = int(v24_store()["stats"].get("party_games", 0)) + 1
+            save_data()
+            return {"ok": True, "kind": "likely", "question": q}, 200
+        if kind == "riddle":
+            emoji, answer, opts = random.choice(EMOJI_RIDDLES)
+            return {"ok": True, "kind": "riddle", "emoji": emoji, "answer": answer,
+                    "options": list(opts)}, 200
+        if kind == "tip":
+            return {"ok": True, "kind": "tip", "text": random.choice(TIPS)}, 200
+        if kind == "smart":
+            s1 = smart_suggestion_by_time(int(uid))
+            ai = ai_game_master_suggest(int(uid)) or {}
+            mode = str(ai.get("mode", "truth"))
+            return {"ok": True, "kind": "smart", "by_time": s1,
+                    "reason": str(ai.get("reason", "")), "mode": mode,
+                    "mode_label": MODE_LABELS.get(mode, "اعتراف")}, 200
+        if kind == "potd":
+            potd = player_of_the_day()
+            if potd:
+                p_uid, p_name, p_xp = potd
+                return {"ok": True, "kind": "potd", "uid": int(p_uid), "name": str(p_name),
+                        "xp": int(p_xp)}, 200
+            return {"ok": True, "kind": "potd", "uid": 0, "name": "", "xp": 0}, 200
+        return {"ok": False, "error": "نوع نامعتبر."}, 400
+    except Exception as exc:
+        _mlog("error", f"party failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_wyr_vote(uid, question, choice):
+    """رأی سراسری «می‌کردی؟» — شمارش تجمعی مینی‌اپ (داده‌ی جدید، بدون دست‌زدن به ربات)."""
+    try:
+        q = str(question or "")[:300]
+        ch = "a" if str(choice) == "a" else "b"
+        if " یا " not in q:
+            return {"ok": False, "error": "سوال نامعتبر."}, 400
+        k = hashlib.md5(q.encode("utf-8")).hexdigest()
+        votes = DATA.setdefault("_mini_wyr_votes", {})
+        tally = votes.setdefault(k, {"a": 0, "b": 0})
+        voters = tally.setdefault("voters", {})
+        if len(voters) > 2000:
+            voters = {}
+            tally["voters"] = voters
+        if user_key(int(uid)) in voters:
+            return {"ok": False, "error": "رأی‌ات را قبلاً دادی! 🗳"}, 429
+        voters[user_key(int(uid))] = ch
+        tally[ch] = int(tally.get(ch, 0)) + 1
+        save_data()
+        a, b = int(tally.get("a", 0)), int(tally.get("b", 0))
+        total = max(1, a + b)
+        return {"ok": True, "a": a, "b": b,
+                "pa": int(a * 100 // total), "pb": 100 - int(a * 100 // total),
+                "message": "🗳 رأی ثبت شد!"}, 200
+    except Exception as exc:
+        _mlog("error", f"wyr_vote failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🔥 پاداش استریک صعودی (Login Streak) ----------------
+def _mini_loginstreak_view(uid):
+    try:
+        u = get_user(int(uid))
+        streak = int(u.get("daily_streak", 0) or 0)
+        claim_key = today_key() + "_" + str(streak)
+        claimed = u.get("login_streak_reward_claimed", []) or []
+        reward = None
+        for s, r in sorted(LOGIN_STREAK_REWARDS.items(), reverse=True):
+            if streak >= s:
+                reward = {"streak": int(s), "coins": int(r.get("coins", 0)),
+                          "xp": int(r.get("xp", 0)), "item": r.get("item"), "title": r.get("title")}
+                break
+        table = [{"streak": int(s), "coins": int(r.get("coins", 0)), "xp": int(r.get("xp", 0)),
+                  "item": r.get("item"), "title": r.get("title")}
+                 for s, r in sorted(LOGIN_STREAK_REWARDS.items())]
+        return {"ok": True, "streak": streak, "claimed_today": claim_key in claimed,
+                "reward": reward, "table": table}, 200
+    except Exception as exc:
+        _mlog("error", f"loginstreak_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_loginstreak_claim(uid):
+    try:
+        res = login_streak_claim(int(uid))
+        if res.get("ok"):
+            save_data(force=True)
+            u = get_user(int(uid))
+            return {"ok": True, "coins": int(u.get("coins", 0)),
+                    "message": "🔥 پاداش استریک لاگین دریافت شد!"}, 200
+        reason = str(res.get("reason", ""))
+        msg = {"already_claimed": "امروز پاداش استریکت را گرفته‌ای!",
+               "no_reward": "هنوز به استریک لازم نرسیده‌ای!"}.get(reason, "دریافت ممکن نشد.")
+        return {"ok": False, "error": msg}, 400
+    except Exception as exc:
+        _mlog("error", f"loginstreak_claim failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🏅 شوکیس دستاوردها (Showcase) ----------------
+def _mini_showcase_action(uid, action, key):
+    try:
+        key = str(key or "")
+        if action == "add":
+            ok = showcase_add(int(uid), key)
+            if ok:
+                save_data(force=True)
+                return {"ok": True, "message": "🏅 دستاورد به شوکیس پروفایلت اضافه شد!"}, 200
+            return {"ok": False, "error": "این دستاورد را نداری، تکراری است یا شوکیس پر است (۳)."}, 400
+        if action == "remove":
+            ok = showcase_remove(int(uid), key)
+            if ok:
+                save_data(force=True)
+                return {"ok": True, "message": "از شوکیس حذف شد."}, 200
+            return {"ok": False, "error": "در شوکیس نیست."}, 400
+        return {"ok": False, "error": "عملیات نامعتبر."}, 400
+    except Exception as exc:
+        _mlog("error", f"showcase_action failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🌐 فصل و رویداد (apexseason) ----------------
+def _mini_season_view(uid):
+    try:
+        sid = current_season_id()
+        s = DATA.get("seasons", {}).get(sid, {}) if sid else {}
+        end = int(s.get("end", 0) or 0)
+        now = now_ts()
+        days_left = max(0, (end - now) // 86400) if end else 0
+        u = get_user(int(uid))
+        lb = season_leaderboard(10)
+        season_rank = None
+        for i, row in enumerate(lb, start=1):
+            if int(row[0]) == int(uid):
+                season_rank = i
+                break
+        items = [{"rank": i, "uid": int(r[0]), "name": name_of(int(r[0])),
+                  "xp": int(r[1]) if len(r) > 1 else 0,
+                  "wins": int(r[2]) if len(r) > 2 else 0} for i, r in enumerate(lb, 1)]
+        events = [{"id": str(eid), "title": str(ev.get("title", "")), "type": str(ev.get("type", ""))}
+                  for eid, ev in (active_events() or [])]
+        return {"ok": True, "season_id": str(sid or ""), "days_left": int(days_left),
+                "season_xp": int(u.get("season_xp", 0) or 0), "season_rank": season_rank,
+                "leaderboard": items, "events": events}, 200
+    except Exception as exc:
+        _mlog("error", f"season_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 📡 تله‌متری زنده (apexlive) ----------------
+def _mini_live_view(uid):
+    try:
+        users = len(DATA.get("users", {}))
+        groups = len(DATA.get("groups", {}))
+        games = DATA.get("games", {})
+        active = sum(1 for g in games.values()
+                     if isinstance(g, dict) and str(g.get("status")) == "active")
+        size = 0
+        try:
+            size = Path(DATA_FILE).stat().st_size if Path(DATA_FILE).exists() else 0
+        except Exception:
+            pass
+        out = {"ok": True, "users": users, "groups": groups, "active_games": int(active),
+               "games_total": int(len(games)),
+               "data_size": int(size), "banks_total": int(BANKS_TOTAL),
+               "is_admin": int(uid) == int(ADMIN_ID)}
+        if int(uid) == int(ADMIN_ID):
+            try:
+                out["uptime"] = uptime_text()
+            except Exception:
+                out["uptime"] = "—"
+            try:
+                out["memory_mb"] = round(float(rss_mb()), 1)
+            except Exception:
+                out["memory_mb"] = 0
+            try:
+                out["version"] = str(VERSION)
+            except Exception:
+                out["version"] = ""
+            try:
+                out["queue_matchmaking"] = len(DATA.get("matchmaking_queue", []) or [])
+            except Exception:
+                out["queue_matchmaking"] = 0
+            try:
+                out["queue_size_mini"] = len(DATA.get("matchmaking_queue", []) or [])
+            except Exception:
+                pass
+        return out, 200
+    except Exception as exc:
+        _mlog("error", f"live_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 📋 ریکاپ شخصی هفتگی ----------------
+def _mini_recap_view(uid):
+    try:
+        u = get_user(int(uid))
+        week = week_key()
+        weekly = (DATA.get("v19", {}) or {}).get("weekly", {})
+        book = weekly.get(week) if isinstance(weekly, dict) else None
+        my_week_xp = 0
+        if isinstance(book, dict):
+            my_week_xp = int(book.get(user_key(uid), 0) or 0)
+        board = weekly_board(5)
+        my_rank = None
+        for i, pair in enumerate(board, 1):
+            if int(pair[0]) == int(uid):
+                my_rank = i
+                break
+        act_week = 0
+        try:
+            wk_start = now_ts() - 7 * 86400
+            act_week = sum(1 for a in (u.get("activity_log") or [])
+                           if isinstance(a, dict) and int(a.get("ts", 0) or 0) >= wk_start)
+        except Exception:
+            pass
+        top = [{"rank": i, "uid": int(x[0]), "name": name_of(int(x[0])), "xp": int(x[1])}
+               for i, x in enumerate(board, 1)]
+        return {"ok": True, "week_xp": my_week_xp, "week_rank": my_rank,
+                "activity_count": int(act_week),
+                "games": int(u.get("games", 0) or 0), "wins": int(u.get("wins", 0) or 0),
+                "losses": int(u.get("losses", 0) or 0), "duels": int(u.get("duels", 0) or 0),
+                "mini_games": int(u.get("mini_games_played", 0) or 0),
+                "coins": int(u.get("coins", 0) or 0), "xp": int(u.get("xp", 0) or 0),
+                "streak": int(u.get("daily_streak", 0) or 0),
+                "survival_best": int(u.get("survival_best", 0) or 0),
+                "top": top}, 200
+    except Exception as exc:
+        _mlog("error", f"recap_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 🛡 اکشن‌های ادمین اومگا ----------------
+def _mini_admin_punishments(admin_uid):
+    """مجازات‌های در جریان — مطابق /apexpunishments."""
+    try:
+        if int(admin_uid) != int(ADMIN_ID):
+            return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+        rows = []
+        for pid, p in ((v24_store().get("punish", {}) or {}).items()):
+            if not isinstance(p, dict) or p.get("done") or p.get("expired") or p.get("forgiven"):
+                continue
+            if (time.time() - float(p.get("ts", 0) or 0)) > 24 * 3600:
+                continue
+            rows.append({"pid": str(pid), "uid": int(p.get("uid", 0)),
+                         "name": name_of(int(p.get("uid", 0))),
+                         "by": int(p.get("by", 0)), "by_name": name_of(int(p.get("by", 0))),
+                         "text": str(p.get("text", ""))[:80],
+                         "ts": int(float(p.get("ts", 0) or 0))})
+        rows.sort(key=lambda x: -x["ts"])
+        return {"ok": True, "items": rows}, 200
+    except Exception as exc:
+        _mlog("error", f"admin_punishments failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_admin_csv(admin_uid):
+    """خروجی CSV کاربران — فقط ادمین."""
+    try:
+        if int(admin_uid) != int(ADMIN_ID):
+            return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
+        rows = ["id,name,xp,level,coins,games,wins,losses,banned,verified,created_at"]
+        for k, u in DATA.get("users", {}).items():
+            if not isinstance(u, dict):
+                continue
+            name = str(u.get("name", "")).replace(",", " ").replace("\n", " ")
+            rows.append(",".join(str(x) for x in (
+                k, name, int(u.get("xp", 0) or 0), int(u.get("level", 1) or 1),
+                int(u.get("coins", 0) or 0), int(u.get("games", 0) or 0),
+                int(u.get("wins", 0) or 0), int(u.get("losses", 0) or 0),
+                bool(u.get("banned", False)), bool(u.get("verified", False)),
+                int(u.get("created_at", 0) or 0))))
+        return {"ok": True, "csv": "\n".join(rows), "count": len(rows) - 1}, 200
+    except Exception as exc:
+        _mlog("error", f"admin_csv failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_admin_omega_action(uid, action, data):
+    """اکشن‌های مدیریتی اومگا — در همان چارچوب _mini_admin_action."""
+    try:
+        if int(uid) != int(ADMIN_ID):
+            return False, "دسترسی مدیر نیست."
+        action = str(action)
+        target = int(data.get("target", 0) or 0)
+        if action == "verify_toggle":
+            u = get_user(target)
+            if not u:
+                return False, "کاربر پیدا نشد."
+            if bool(u.get("verified", False)):
+                unverify_user(target)
+                save_data(force=True)
+                audit("admin_verify_off", int(uid), target, "unverify")
+                return True, "تأیید هویت لغو شد."
+            verify_user(target, int(uid))
+            save_data(force=True)
+            audit("admin_verify_on", int(uid), target, "verify")
+            return True, "کاربر تأیید شد ✅ (بج تأیید گرفت)"
+        if action == "mute_toggle":
+            if not target:
+                return False, "هدف مشخص نیست."
+            prefs = v19_prefs(target)
+            prefs["mute"] = not bool(prefs.get("mute", False))
+            save_data(force=True)
+            audit("admin_mute_toggle", int(uid), target, str(prefs["mute"]))
+            return True, ("میوت تگ فعال شد 🔇" if prefs["mute"] else "میوت تگ خاموش شد 🔔")
+        if action == "punish_forgive":
+            pid = str(data.get("pid", ""))
+            p = (v24_store().get("punish", {}) or {}).get(pid)
+            if isinstance(p, dict) and not p.get("done"):
+                p["forgiven"] = True
+                save_data(force=True)
+                audit("admin_punish_forgive", int(uid), int(p.get("uid", 0)), pid)
+                return True, "محکوم بخشیده شد 🕊"
+            return False, "این حکم پیدا نشد یا تمام شده است."
+        return None, ""  # اکشن در این بخش تعریف نشده
+    except Exception as exc:
+        _mlog("error", f"admin_omega_action failed: {exc!r}")
+        return False, "خطای داخلی."
+
+
 _MINIAPP_HTML_SRC = r"""<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#05060b">
-<title>ApexRival Arena</title>
+<title>ApexRival OMEGA</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vazirmatn@33.3.0/Vazirmatn-font-face.css">
 <style>
@@ -31023,6 +31985,149 @@ textarea.input{min-height:96px;resize:vertical;line-height:1.9}
 .seqdots{display:flex;gap:9px;justify-content:center;font-size:23px;font-weight:900;letter-spacing:3px;margin:12px 0;
   font-variant-numeric:tabular-nums}
 .seqdots span{animation:pop .4s cubic-bezier(.2,2,.4,1) backwards}
+/* ================= 🎨 OMEGA THEME SYSTEM (4.0) ================= */
+body[data-theme="sunset"]{--violet:#ff6b4a;--violet2:#ff9e4f;--cyan:#ffd166;--pink:#ff4f7b;--grad:linear-gradient(135deg,#ff6b4a,#ff9e4f 55%,#ffd166)}
+body[data-theme="ocean"]{--violet:#2f7cff;--violet2:#15b8ff;--cyan:#41f0d1;--pink:#4f9bff;--grad:linear-gradient(135deg,#2f7cff,#15b8ff 55%,#41f0d1)}
+body[data-theme="emerald"]{--violet:#0fb981;--violet2:#31e981;--cyan:#b4f461;--pink:#ffd166;--grad:linear-gradient(135deg,#0fb981,#31e981 55%,#b4f461)}
+body[data-theme="royal"]{--violet:#c44fff;--violet2:#ff4fa3;--cyan:#ffc857;--grad:linear-gradient(135deg,#c44fff,#ff4fa3 55%,#ffc857)}
+body[data-mode="light"]{--bg:#f2f4fb;--panel:rgba(255,255,255,.9);--panel2:#ffffff;--panel3:#f6f8fd;
+  --line:rgba(20,30,60,.1);--line2:rgba(20,30,60,.18);--txt:#1c2340;--muted:#5a6580;--dim:#8a93ab;--shadow:0 20px 50px rgba(40,60,120,.12)}
+body[data-mode="light"] #aurora i{opacity:.28}
+body[data-mode="light"] .gcard>.in{background:linear-gradient(160deg,#fffffff8,#eef1faf5)}
+body[data-mode="light"] .tile{background:linear-gradient(150deg,#ffffff,#eef2fb);border-color:rgba(20,30,60,.12)}
+body[data-mode="light"] nav.bottom{background:#fffffff5;border-color:rgba(20,30,60,.14)}
+body[data-mode="light"] #sheet{background:#ffffff;color:var(--txt)}
+body[data-mode="light"] #toast{background:#ffffff;color:#1c2340;box-shadow:0 18px 50px rgba(40,60,120,.25)}
+body[data-mode="light"] .chip.on{background:#7c5cff1a;border-color:#7c5cff55;color:#3d2f8f}
+body[data-mode="light"] .pill{background:#ffffff}
+body[data-mode="light"] .bell{background:#ffffff}
+body[data-mode="light"] .ava .on{border-color:#fff}
+body[data-mode="light"] .row{background:#ffffff}
+body[data-mode="light"] .item,body[data-mode="light"] .ach{background:#ffffff}
+body[data-mode="light"] .mrow{background:#ffffff}
+body[data-mode="light"] .stat{background:#f6f8fd}
+body[data-mode="light"] .btn{background:#f2f4fb}
+body[data-mode="light"] .medal{background:#f2f4fb}
+body[data-mode="light"] .empty{background:#ffffff}
+body[data-mode="light"] #splash{background:var(--bg)}
+body[data-fs="s"]{font-size:12px}
+body[data-fs="l"]{font-size:14.5px}
+body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="off"] *::after{
+  animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}
+/* ---------- switch ---------- */
+.sw{position:relative;width:46px;height:26px;border-radius:99px;background:#ffffff14;border:1px solid var(--line2);
+  flex:0 0 auto;transition:.25s;display:inline-block}
+.sw::after{content:"";position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;
+  background:#8b93ad;transition:.25s cubic-bezier(.2,.9,.3,1.2)}
+.sw.on{background:#31e98133;border-color:#31e98188}
+.sw.on::after{background:var(--green);transform:translateX(-19px)}
+.srow{display:flex;align-items:center;gap:12px;padding:13px 4px;border-bottom:1px solid var(--line)}
+.srow:last-child{border-bottom:0}
+.srow .ic{width:38px;height:38px;border-radius:13px;background:#7c5cff14;border:1px solid #7c5cff2e;
+  display:grid;place-items:center;font-size:16px;flex:0 0 auto}
+.srow .grow{flex:1;min-width:0}
+.srow .grow b{display:block;font-size:11.5px}
+.srow .grow small{display:block;color:var(--muted);font-size:9px;margin-top:2px;line-height:1.7}
+/* ---------- theme picker ---------- */
+.themegrid{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin:10px 0}
+.themecard{border:2px solid var(--line);border-radius:16px;padding:10px 4px;text-align:center;cursor:pointer;
+  transition:transform .15s,border-color .2s;background:#ffffff06}
+.themecard:active{transform:scale(.93)}
+.themecard.on{border-color:var(--cyan)}
+.themecard .swb{height:26px;border-radius:9px;margin-bottom:6px}
+.themecard small{font-size:8px;color:var(--muted);font-weight:700}
+/* ---------- command palette ---------- */
+#cmdk{position:fixed;inset:0;z-index:150;background:#04050cd0;backdrop-filter:blur(8px);
+  opacity:0;pointer-events:none;transition:.2s;display:flex;justify-content:center;align-items:flex-start;padding:12vh 14px 0}
+#cmdk.on{opacity:1;pointer-events:auto}
+#cmdkBox{width:min(520px,100%);background:#0e1119f5;border:1px solid var(--line2);border-radius:22px;
+  box-shadow:0 30px 90px #000c;overflow:hidden;transform:translateY(-14px) scale(.98);transition:.25s cubic-bezier(.2,.9,.3,1.2)}
+#cmdk.on #cmdkBox{transform:none}
+#cmdkIn{width:100%;border:0;background:transparent;padding:16px 18px;font-size:14px;color:var(--txt);outline:0;
+  border-bottom:1px solid var(--line)}
+#cmdkList{max-height:52vh;overflow-y:auto;padding:8px}
+.cmi{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:14px;cursor:pointer;transition:.12s}
+.cmi:hover,.cmi.sel{background:#7c5cff1c}
+.cmi .ic{width:36px;height:36px;border-radius:12px;background:#ffffff0a;border:1px solid var(--line2);
+  display:grid;place-items:center;font-size:16px;flex:0 0 auto}
+.cmi .grow{flex:1;min-width:0}
+.cmi .grow b{display:block;font-size:11.5px}
+.cmi .grow small{display:block;color:var(--muted);font-size:8.5px;margin-top:1px}
+.cmi kbd{font-size:8px;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+body[data-mode="light"] #cmdk{background:#f2f4fbd0}
+body[data-mode="light"] #cmdkBox{background:#fffffff5;border-color:rgba(20,30,60,.16)}
+body[data-mode="light"] #cmdkIn{border-color:rgba(20,30,60,.1)}
+body[data-mode="light"] .cmi:hover,body[data-mode="light"] .cmi.sel{background:#7c5cff14}
+/* ---------- onboarding ---------- */
+#ob{position:fixed;inset:0;z-index:170;background:#04050ce6;backdrop-filter:blur(7px);
+  display:none;justify-content:center;align-items:center;padding:22px}
+#ob.on{display:flex;animation:pagein .3s}
+#obBox{width:min(430px,100%);text-align:center}
+#ob .obIc{width:86px;height:86px;margin:0 auto 18px;border-radius:28px;background:var(--grad);
+  background-size:200% 200%;animation:gradshift 5s ease infinite;display:grid;place-items:center;font-size:34px;
+  box-shadow:0 18px 60px #7c5cff66}
+#ob h2{margin:0 0 8px;font-size:17px}
+#ob p{color:var(--muted);font-size:11px;line-height:2.1;margin:0 0 22px}
+#ob .dots{display:flex;gap:7px;justify-content:center;margin-bottom:18px}
+#ob .dots i{width:7px;height:7px;border-radius:50%;background:#ffffff20;transition:.25s}
+#ob .dots i.on{background:var(--cyan);width:22px;border-radius:99px}
+/* ---------- search input ---------- */
+.input.search{position:relative}
+/* ---------- wyr / party ---------- */
+.wyr{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:stretch;margin:12px 0}
+.wyr .wcard{border:2px solid var(--line);border-radius:20px;padding:16px 12px;text-align:center;cursor:pointer;
+  background:var(--panel);transition:transform .15s,border-color .25s,background .25s;position:relative;overflow:hidden}
+.wyr .wcard:active{transform:scale(.96)}
+.wyr .wcard.a:hover,.wyr .wcard.a.pick{border-color:#15d8ff88;background:#15d8ff0d}
+.wyr .wcard.b:hover,.wyr .wcard.b.pick{border-color:#ff4fa388;background:#ff4fa30d}
+.wyr .wcard b{display:block;font-size:12px;line-height:1.9}
+.wyr .wcard .pct{display:block;font-size:22px;font-weight:900;margin-top:9px;color:var(--cyan)}
+.wyr .wcard.b .pct{color:var(--pink)}
+.wyr .vs{display:grid;place-items:center;font-weight:900;color:var(--dim);font-size:12px}
+.riddle{font-size:38px;text-align:center;padding:22px 8px;letter-spacing:6px;direction:ltr}
+.ropt{display:block;width:100%;margin:7px 0}
+.partybox{border:1px dashed var(--line2);border-radius:18px;padding:16px;text-align:center;margin-top:12px}
+.persona{border:1px solid #ffc85744;background:linear-gradient(155deg,#191308,#0d0a16);border-radius:20px;padding:16px;margin-top:12px}
+.persona .ph{display:flex;gap:11px;align-items:center;margin-bottom:12px}
+.persona .pv{display:flex;justify-content:space-between;margin:8px 0;font-size:10.5px;color:var(--muted)}
+.persona .pv b{color:var(--txt)}
+/* ---------- milestone ring ---------- */
+.mring{position:relative;width:54px;height:54px;flex:0 0 auto}
+.mring svg{transform:rotate(-90deg)}
+.mring circle{fill:none;stroke-width:5}
+.mring .bgc{stroke:#ffffff10}
+.mring .fgc{stroke:var(--cyan);stroke-linecap:round;transition:stroke-dashoffset .8s}
+.mring.done .fgc{stroke:var(--green)}
+.mring b{position:absolute;inset:0;display:grid;place-items:center;font-size:9.5px;font-weight:800}
+/* ---------- trade cards ---------- */
+.trrow{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:13px;margin-bottom:9px}
+.trrow .ex{display:grid;grid-template-columns:1fr 26px 1fr;gap:8px;align-items:center;margin-top:10px}
+.trrow .side{border:1px solid var(--line2);border-radius:14px;padding:9px 10px;font-size:10px;text-align:center;min-height:48px;
+  display:flex;flex-direction:column;justify-content:center;gap:3px}
+.trrow .side.o{background:#15d8ff0a;border-color:#15d8ff33}
+.trrow .side.r{background:#ff4fa30a;border-color:#ff4fa333}
+.trrow .side b{font-size:10.5px}
+.trrow .arr{text-align:center;color:var(--dim);font-size:14px}
+/* ---------- wall feed ---------- */
+.wfeed{display:flex;flex-direction:column;gap:8px}
+.wf{border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:11px 13px;
+  display:flex;gap:11px;animation:pagein .3s}
+.wf .lvl{width:8px;border-radius:99px;flex:0 0 auto;background:var(--dim)}
+.wf .lvl.info{background:var(--cyan)}
+.wf .lvl.warn{background:var(--orange)}
+.wf .lvl.error{background:var(--red)}
+.wf .grow{flex:1;min-width:0}
+.wf .grow b{font-size:11px;display:block}
+.wf .grow small{color:var(--muted);font-size:9.5px;display:block;margin-top:2px;line-height:1.8}
+.wf time{color:var(--dim);font-size:8.5px;white-space:nowrap}
+/* ---------- season banner ---------- */
+.seasonhero{position:relative;overflow:hidden}
+.seasonhero .cal{position:absolute;left:-20px;top:-30px;font-size:120px;opacity:.07;transform:rotate(-12deg)}
+/* ---------- misc new ---------- */
+.chipv{display:inline-flex;align-items:center;gap:5px}
+.hbar{height:5px;border-radius:99px;background:#ffffff0e;overflow:hidden;flex:1}
+.hbar i{display:block;height:100%;background:linear-gradient(90deg,var(--pink),var(--red));border-radius:99px}
+kbd.cmk{position:absolute;left:12px;bottom:9px;font-family:inherit}
 </style>
 </head>
 <body>
@@ -31035,15 +32140,16 @@ textarea.input{min-height:96px;resize:vertical;line-height:1.9}
 </defs></svg>
 
 <div id="splash"><div style="text-align:center"><div class="slogo">AR</div>
-<p>APEXRIVAL ARENA</p><div class="spin"></div></div></div>
+<p>APEXRIVAL OMEGA</p><div class="spin"></div></div></div>
 
 <div class="app">
   <div class="top">
     <div class="brand">
       <div class="logo">AR</div>
-      <div style="min-width:0"><b>ApexRival</b><small>ARENA · ULTRA</small></div>
+      <div style="min-width:0"><b>ApexRival</b><small>OMEGA · v4.0</small></div>
     </div>
     <div class="pill coin" id="coinsPill">🪙 <span id="coins">—</span></div>
+    <button class="bell" id="srchBtn" onclick="cmdkOpen()" title="جستجو (Ctrl+K)"><span>🔎</span></button>
     <button class="bell" id="bellBtn" onclick="show('notif')"><span>🔔</span><span class="dot" id="bellDot" style="display:none">۰</span></button>
   </div>
   <div id="errbar"><span>⚠️</span><span id="errTxt" style="flex:1">خطا</span><button class="btn" onclick="refresh()">تلاش دوباره</button></div>
@@ -31055,6 +32161,13 @@ textarea.input{min-height:96px;resize:vertical;line-height:1.9}
 
 <nav class="bottom" id="nav"></nav>
 <div id="toast"></div>
+<div id="cmdk" onclick="if(event.target===this)cmdkClose()"><div id="cmdkBox">
+<input id="cmdkIn" placeholder="جستجوی همه‌چیز… (صفحه‌ها، بازی‌ها، اقدامات)">
+<div id="cmdkList"></div></div></div>
+<div id="ob"><div id="obBox"><div class="obIc" id="obIc">🎮</div><h2 id="obT"></h2><p id="obP"></p>
+<div class="dots" id="obDots"></div>
+<div style="display:flex;gap:10px"><button class="btn" style="flex:1" onclick="obSkip()">رد کن</button>
+<button class="btn primary" style="flex:2" id="obNext" onclick="obNext()">شروع ⚡</button></div></div></div>
 <div id="sheetBk" onclick="closeSheet()"></div>
 <div id="sheet"><div class="grab"></div><div id="sheetBody"></div></div>
 
@@ -31081,31 +32194,150 @@ function confetti(){var cs='🎉🎊✨⭐🪙';for(var i=0;i<14;i++){var s=docu
  s.style.setProperty('--d',(1.6+Math.random()*1.4)+'s');s.style.left=(4+Math.random()*92)+'vw';
  s.style.background='none';s.style.fontSize=(9+Math.random()*9)+'px';document.body.appendChild(s);setTimeout(function(el){return function(){el.remove()}}(s),3400)}}
 async function api(path,opt){opt=opt||{};opt.headers=Object.assign({'X-Telegram-Init-Data':(tg&&tg.initData)||''},opt.headers||{});
- try{var r=await fetch(path,opt);var d=null;try{d=await r.json()}catch(e){throw new Error('پاسخ سرور نامعتبر است')}
- if(!r.ok||d.ok===false)throw new Error(d.error||d.message||'خطای درخواست');return d}
- catch(e){if(e.name==='TypeError')throw new Error('اتصال برقرار نشد — اینترنت را بررسی کن');throw e}}
+ /* تلاش هوشمند: خطای شبکه تا ۲ بار با فاصله‌ی صعودی تکرار می‌شود */
+ var tries=0;
+ for(;;){
+  try{var r=await fetch(path,opt);var d=null;try{d=await r.json()}catch(e){throw new Error('پاسخ سرور نامعتبر است')}
+   if(!r.ok||d.ok===false)throw new Error(d.error||d.message||'خطای درخواست');return d}
+  catch(e){
+   if(e.name==='TypeError'&&tries<2){tries++;await new Promise(function(res){setTimeout(res,450*tries)});continue}
+   if(e.name==='TypeError')throw new Error('اتصال برقرار نشد — اینترنت را بررسی کن');
+   throw e}
+ }}
 function setErr(on,msg){$('errbar').classList.toggle('on',!!on);if(msg)$('errTxt').textContent=msg}
 function setCoins(c){$('coins').textContent=faK(c);if(D.user&&c!==D.user.coins){var p=$('coinsPill');p.style.transform='scale(1.12)';setTimeout(function(){p.style.transform=''},240)}}
 function setBell(n){var d=$('bellDot');if(n>0){d.style.display='grid';d.textContent=fa(n>99?'99+':n)}else d.style.display='none'}
 function countUp(el,val,suf){var t0=performance.now(),dur=700,from=0;function fr(t){var p=Math.min(1,(t-t0)/dur);
  el.textContent=faK(Math.round(from+(val-from)*(1-Math.pow(1-p,3))))+(suf||'');if(p<1)requestAnimationFrame(fr)}requestAnimationFrame(fr)}
 
+/* ================= 🔊 OMEGA SOUND ENGINE (WebAudio — بدون فایل صوتی) ================= */
+var SND={ctx:null,on:(function(){try{return localStorage.getItem('apex_snd')!=='0'}catch(e){return true}})(),
+ init:function(){if(!this.ctx){try{this.ctx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}
+  if(this.ctx&&this.ctx.state==='suspended'){try{this.ctx.resume()}catch(e){}}return this.ctx},
+ tone:function(f,dur,type,vol,delay){if(!this.on)return;var c=this.init();if(!c)return;
+  try{var t=c.currentTime+(delay||0);var o=c.createOscillator(),g=c.createGain();
+  o.type=type||'sine';o.frequency.setValueAtTime(f,t);
+  g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(vol||.08,t+.012);
+  g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+  o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+dur+.05)}catch(e){}},
+ tap:function(){this.tone(340,.06,'sine',.05)},
+ ok:function(){this.tone(523,.09,'sine',.07);this.tone(784,.12,'sine',.06,.07)},
+ err:function(){this.tone(196,.16,'sawtooth',.05);this.tone(147,.2,'sawtooth',.04,.09)},
+ coin:function(){this.tone(988,.07,'triangle',.07);this.tone(1319,.16,'triangle',.06,.06)},
+ win:function(){this.tone(523,.1,'triangle',.08);this.tone(659,.1,'triangle',.08,.09);this.tone(784,.1,'triangle',.08,.18);this.tone(1047,.24,'triangle',.09,.27)},
+ lose:function(){this.tone(392,.13,'triangle',.07);this.tone(311,.2,'triangle',.06,.11)},
+ level:function(){this.tone(659,.09,'square',.05);this.tone(880,.09,'square',.05,.08);this.tone(1109,.2,'square',.06,.16)},
+ tick:function(){this.tone(880,.03,'square',.03)},
+ spin:function(){for(var i=0;i<8;i++)this.tone(500+i*70,.05,'sine',.04,i*.07)},
+ whoosh:function(){if(!this.on)return;var c=this.init();if(!c)return;
+  try{var t=c.currentTime;var o=c.createOscillator(),g=c.createGain();
+  o.type='sine';o.frequency.setValueAtTime(180,t);o.frequency.exponentialRampToValueAtTime(900,t+.22);
+  g.gain.setValueAtTime(.06,t);g.gain.exponentialRampToValueAtTime(.0001,t+.25);
+  o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+.3)}catch(e){}},
+ toggle:function(){this.on=!this.on;try{localStorage.setItem('apex_snd',this.on?'1':'0')}catch(e){}
+  if(this.on){this.ok()}return this.on}};
+/* هوک صدا روی تعامل‌های پایه */
+(function(){var _h=haptic;haptic=function(k){_h(k);
+ if(k==='ok')SND.ok();else if(k==='error')SND.err();else if(k==='medium'||k==='light')SND.tap()}})();
+
+/* ================= 🎨 OMEGA THEME ENGINE ================= */
+var THEMES=[
+ {id:'aurora',name:'شفق',dark:1,c:['#7c5cff','#15d8ff','#ff4fa3']},
+ {id:'sunset',name:'غروب',dark:1,c:['#ff6b4a','#ff9e4f','#ffd166']},
+ {id:'ocean',name:'اقیانوس',dark:1,c:['#2f7cff','#15b8ff','#41f0d1']},
+ {id:'emerald',name:'زمرد',dark:1,c:['#0fb981','#31e981','#b4f461']},
+ {id:'royal',name:'سلطنتی',dark:1,c:['#c44fff','#ff4fa3','#ffc857']}];
+var UI={theme:'aurora',mode:'dark',fs:'m',motion:'on'};
+function uiLoad(){try{var s=localStorage.getItem('apex_ui');if(s){var o=JSON.parse(s);
+ UI.theme=o.theme||'aurora';UI.mode=o.mode||'dark';UI.fs=o.fs||'m';UI.motion=(o.motion==null?'on':o.motion)}}catch(e){}}
+function uiSave(){try{localStorage.setItem('apex_ui',JSON.stringify(UI))}catch(e){}}
+function uiApply(){var b=document.body;
+ b.setAttribute('data-theme',UI.theme);b.setAttribute('data-mode',UI.mode);
+ b.setAttribute('data-fs',UI.fs);b.setAttribute('data-motion',UI.motion);
+ try{var mc=document.querySelector('meta[name=theme-color]');if(mc)mc.setAttribute('content',UI.mode==='light'?'#f2f4fb':'#05060b')}catch(e){}}
+function uiSet(k,v){UI[k]=v;uiSave();uiApply();if(k==='theme'||k==='mode')SND.whoosh()}
+
+/* ================= ⌘ پالت فرمان سراسری ================= */
+var CMD_ITEMS=[
+ {ic:'🏠',t:'خانه',s:'داشبورد اصلی',fn:"show('home')"},
+ {ic:'🎮',t:'Play Hub',s:'همه‌ی حالت‌های بازی',fn:"show('play')"},
+ {ic:'🕹',t:'گیم‌زون',s:'۱۳ بازی کامل',fn:"show('games')"},
+ {ic:'👥',t:'ساخت لابی',s:'بازی گروهی جرئت/حقیقت',fn:"lobbyCreate()"},
+ {ic:'➕',t:'پیوستن به لابی',s:'با کد ۶ حرفی',fn:"lobbyJoinSheet()"},
+ {ic:'🤺',t:'دوئل جدید',s:'نبرد تن‌به‌تن ۱۰ راند',fn:"duelCreate()"},
+ {ic:'🏆',t:'آرنا رنک‌دار',s:'حریف هم‌سطح با ELO',fn:"show('arena')"},
+ {ic:'🔥',t:'Survival',s:'حالت بقا',fn:"show('survival')"},
+ {ic:'🎯',t:'مأموریت‌ها',s:'روزانه و هفتگی',fn:"show('miss')"},
+ {ic:'🔥',t:'پاداش استریک',s:'لاگین پیاپی صعودی',fn:"loginstreakSheet()"},
+ {ic:'🎯',t:'مایلستون‌ها',s:'پاداش‌های مسیر قهرمانی',fn:"show('milestones')"},
+ {ic:'🏆',t:'رتبه‌بندی',s:'۴ اسکوپ + تالار افسانه‌ها',fn:"show('board')"},
+ {ic:'👑',t:'تالار افسانه‌ها',s:'HOF — بهترین‌های تاریخ',fn:"loadBoard('hof')"},
+ {ic:'🛍',t:'فروشگاه',s:'لقب، قاب، پاورآپ',fn:"show('shop')"},
+ {ic:'🎫',t:'Season Pass',s:'مسیر پاداش فصل',fn:"show('pass')"},
+ {ic:'🌐',t:'فصل و رویداد',s:'شمارش معکوس فصل',fn:"show('season')"},
+ {ic:'🏅',t:'دستاوردها',s:'تالار افتخارات + شوکیس',fn:"show('ach')"},
+ {ic:'📜',t:'تاریخچه بازی',s:'۲۰ بازی آخر',fn:"show('history')"},
+ {ic:'📊',t:'آمار کامل',s:'داشبورد شخصی',fn:"show('stats')"},
+ {ic:'📋',t:'ریکاپ هفتگی',s:'خلاصه‌ی هفته‌ی تو',fn:"show('recap')"},
+ {ic:'⚔️',t:'رقبا',s:'مدیریت رقبا و چالش',fn:"show('rivals')"},
+ {ic:'🔄',t:'مرکز تجارت',s:'تبادل سکه و آیتم',fn:"show('trade')"},
+ {ic:'🏆',t:'مسابقات',s:'تورنمنت‌های باز',fn:"show('tournament')"},
+ {ic:'🎁',t:'هدیه به دوست',s:'سکه هدیه بده',fn:"giftSheet()"},
+ {ic:'❤️',t:'قلب محبت',s:'+۳ سکه برای طرف مقابل',fn:"heartSheet()"},
+ {ic:'👥',t:'دوستان',s:'مدیریت لیست دوستی',fn:"friendsSheet()"},
+ {ic:'🌐',t:'وال اجتماعی',s:'نبض جامعه‌ی ربات',fn:"show('wall')"},
+ {ic:'🎉',t:'پارتی‌هاب',s:'می‌کردی؟ هرگز نشده و…',fn:"show('party')"},
+ {ic:'🎭',t:'کارت شخصیت',s:'شخصیت مخفی‌ات را ببین',fn:"personaSheet()"},
+ {ic:'🔔',t:'اعلان‌ها',s:'صندوق پیام‌ها',fn:"show('notif')"},
+ {ic:'👤',t:'پروفایل من',s:'کارنامه کامل',fn:"show('me')"},
+ {ic:'⚙️',t:'تنظیمات',s:'حریم خصوصی، اعلان، تم',fn:"show('settings')"},
+ {ic:'🎨',t:'انتخاب تم',s:'۵ تم + روشن/تاریک',fn:"themeSheet()"},
+ {ic:'🔊',t:'صدا روشن/خاموش',s:'افکت‌های صوتی اپ',fn:"SND.toggle();toast(SND.on?\'صدا روشن شد 🔊\':\'صدا خاموش شد 🔇\',\'ok\')"},
+ {ic:'🎓',t:'راهنمای بازی',s:'آموزش کامل',fn:"guideSheet()"},
+ {ic:'👑',t:'VIP',s:'مزایای عضویت ویژه',fn:"vipSheet()"},
+ {ic:'🎁',t:'دعوت دوستان',s:'+۵۰ سکه به ازای هر دعوت',fn:"inviteSheet()"},
+ {ic:'⏰',t:'یادآور شخصی',s:'ثبت یادآور',fn:"reminderSheet()"},
+ {ic:'📝',t:'بازخورد',s:'نظرت را بگو',fn:"fbSheet()"},
+ {ic:'🛡️',t:'پنل مدیریت',s:'فقط ادمین',fn:"show('admin')",adm:1}
+];
+var CMDS=[]
+function cmdkOpen(){SND.whoosh();haptic('medium');var o=$('cmdk');o.classList.add('on');
+ var i=$('cmdkIn');i.value='';cmdkRender('');setTimeout(function(){try{i.focus()}catch(e){}},80)}
+function cmdkClose(){ $('cmdk').classList.remove('on')}
+function cmdkRun(fn){cmdkClose();haptic('medium');try{(new Function(fn))()}catch(e){}}
+function cmdkRender(q){
+ q=String(q||'').trim().toLowerCase();var list=CMD_ITEMS.filter(function(c){
+  if(c.adm&&!D.admin)return false;
+  if(!q)return true;
+  return (c.t+' '+c.s).toLowerCase().indexOf(q)>-1});
+ CMDS=list.slice(0,14);
+ var el=$('cmdkList');var h='';
+ if(!list.length)h='<div class="empty" style="padding:18px"><span class="ei">🔍</span>چیزی پیدا نشد</div>';
+ list.slice(0,14).forEach(function(c,i){
+  h+='<div class="cmi'+(i===0?' sel':'')+'" onclick="cmdkRun(\''+c.fn.replace(/'/g,"\\'")+'\')">'
+  +'<div class="ic">'+c.ic+'</div><div class="grow"><b>'+esc(c.t)+'</b><small>'+esc(c.s)+'</small></div>'
+  +'<kbd>↵</kbd></div>'});
+ el.innerHTML=h}
+function cmdkNav(dir){var s=$('cmdkList').querySelector('.sel');if(!s)return;
+ var n=dir>0?s.nextElementSibling:s.previousElementSibling;if(n){s.classList.remove('sel');n.classList.add('sel');SND.tick()}}
+
 /* ================= nav + router ================= */
 const NAV=[['home','⌂','خانه'],['play','🎮','بازی'],['games','🕹','گیم‌ها'],['miss','🎯','مأموریت'],['board','🏆','رتبه'],['shop','🛍','فروشگاه'],['me','👤','پروفایل']];
-const PAGES={home:renderHome,play:renderPlay,games:renderGames,miss:renderMiss,board:null,shop:renderShop,ach:renderAch,me:renderMe,notif:renderNotif,pass:renderPass,admin:renderAdmin,survival:renderSurvival,lobby:renderLobbyPage,duel:renderDuelPage,arena:renderArenaPage,stats:renderStatsPage};
+const PAGES={home:renderHome,play:renderPlay,games:renderGames,miss:renderMiss,board:null,shop:renderShop,ach:renderAch,me:renderMe,notif:renderNotif,pass:renderPass,admin:renderAdmin,survival:renderSurvival,lobby:renderLobbyPage,duel:renderDuelPage,arena:renderArenaPage,stats:renderStatsPage,
+history:renderHistory,milestones:renderMilestones,rivals:renderRivals,trade:renderTrade,tournament:renderTournament,wall:renderWall,settings:renderSettings,season:renderSeason,party:renderParty,recap:renderRecap};
 function buildShell(){
  var nav=$('nav');var h='';
  for(var i=0;i<NAV.length;i++)h+='<button data-pg="'+NAV[i][0]+'" onclick="show(\''+NAV[i][0]+'\')"><span class="bi">'+NAV[i][1]+'</span>'+NAV[i][2]+(NAV[i][0]==='miss'?'<span class="bdg" id="missBdg" style="display:none">۰</span>':'')+'</button>';
  h+='<button data-pg="admin" id="navAdmin" style="display:none" onclick="show(\'admin\')"><span class="bi">🛡️</span>مدیریت</button>';
  nav.innerHTML=h;
- var m=$('main');var pages=[['home',''],['play',''],['games',''],['miss',''],['board',''],['shop',''],['ach',''],['me',''],['notif',''],['pass',''],['admin',''],['survival',''],['lobby',''],['duel',''],['arena',''],['stats','']];
+ var m=$('main');var pages=[['home',''],['play',''],['games',''],['miss',''],['board',''],['shop',''],['ach',''],['me',''],['notif',''],['pass',''],['admin',''],['survival',''],['lobby',''],['duel',''],['arena',''],['stats',''],['history',''],['milestones',''],['rivals',''],['trade',''],['tournament',''],['wall',''],['settings',''],['season',''],['party',''],['recap','']];
  var mh='';for(var j=0;j<pages.length;j++)mh+='<section class="page" id="pg-'+pages[j][0]+'"></section>';
  m.innerHTML=mh;
 }
 function show(id){
  if(PAGE&&SCROLL[PAGE]!=null)try{SCROLL[PAGE]=window.scrollY}catch(e){}
  /* توقف polling صفحه‌های زنده هنگام ترک */
- if(PAGE!==id){if(PAGE==='lobby'&&id!=='lobby')stopPoll('lobby');if(PAGE==='duel'&&id!=='duel')stopPoll('duel');if(PAGE==='arena'&&id!=='arena')stopPoll('arena')}
+ if(PAGE!==id){if(PAGE==='lobby'&&id!=='lobby')stopPoll('lobby');if(PAGE==='duel'&&id!=='duel')stopPoll('duel');if(PAGE==='arena'&&id!=='arena')stopPoll('arena');if(PAGE==='wall'&&id!=='wall')stopPoll('wall')}
  PAGE=id;haptic();
  for(var i=0;i<NAV.length+1;i++){var s=document.querySelectorAll('nav.bottom button')[i];if(s)s.classList.remove('on')}
  var btn=document.querySelector('nav.bottom button[data-pg="'+id+'"]');if(btn)btn.classList.add('on');
@@ -31185,6 +32417,12 @@ function renderHome(){
  });
  if(!(D.board||[]).length)h+='<div class="empty"><span class="ei">📊</span>هنوز امتیازی ثبت نشده — اولین بازی را شروع کن!</div>';
  h+='</div></div>';
+ /* omega quick actions */
+ var om=D.omega||{};
+ h+='<div class="grid g2" style="margin-bottom:14px">';
+ h+='<div class="card" onclick="loginstreakSheet()" style="cursor:pointer;'+(om.loginstreak_ready?'border-color:#ff9e4f66;box-shadow:0 12px 40px #ff9e4f18':'')+'"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🔥</div><div style="flex:1"><b style="font-size:12px">پاداش استریک لاگین</b><div class="sub">'+(om.loginstreak_ready?'<b style="color:var(--orange)">آماده دریافت!</b> — استریک '+fa(D.user&&D.user.daily_streak||0)+' روز':'امروز گرفته‌ای ✓')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='<div class="card" onclick="show(\'milestones\')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎯</div><div style="flex:1"><b style="font-size:12px">Milestone Rewards</b><div class="sub">'+fa(om.milestones_claimed||0)+'/'+fa(om.milestones_total||13)+' دریافت‌شده'+(om.milestones_ready?' · <b style="color:var(--green)">'+fa(om.milestones_ready)+' آماده!</b>':'')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='</div>';
  /* live pulse */
  var t=D.today||{};
  h+='<div class="section"><div class="shead"><b>📡 نبض امروز ربات</b><small>LIVE</small></div><div class="grid g4">'
@@ -31194,6 +32432,8 @@ function renderHome(){
  +tile('🕹','گیم‌زون','۱۳ بازی داخل اپ','games')+tile('🤺','دوئل','رقابت دونفره','duel_page')
  +tile('🔥','بقا','Survival','survival')+tile('🏆','آرنا','رنک‌دار ELO','arena_page')
  +tile('👥','لابی','بازی گروهی','lobby_page')+tile('📊','آمار من','داشبورد کامل','stats_page')
+ +tile('🌐','وال اجتماعی','نبض زنده جامعه','wall_page')+tile('🔄','تجارت','تبادل سکه و آیتم','trade_page')
+ +tile('🎉','پارتی‌هاب','می‌کردی؟ و بیشتر','party_page')+tile('📜','تاریخچه','بازی‌های اخیر','history_page')
  +'</div></div>';
  $('pg-home').innerHTML=h;
  countUp($('gms'),u.games);countUp($('wns'),u.wins);countUp($('stk'),u.streak);countUp($('elo'),u.elo);
@@ -31202,7 +32442,7 @@ function renderHome(){
 function st(lbl,id,val){return '<div class="stat"><small>'+lbl+'</small><b id="'+id+'">—</b></div>'}
 function tile(ic,nm,ds,cmd){
  /* همه‌ی دکمه‌ها داخل مینی‌اپ کار می‌کنند — هیچ خروجی به ربات وجود ندارد */
- var pg={games:'games',duel_page:'duel',survival:'survival',arena_page:'arena',lobby_page:'lobby',stats_page:'stats'}[cmd];
+ var pg={games:'games',duel_page:'duel',survival:'survival',arena_page:'arena',lobby_page:'lobby',stats_page:'stats',wall_page:'wall',trade_page:'trade',party_page:'party',history_page:'history'}[cmd];
  if(pg)return '<button class="tile" onclick="show(\''+pg+'\')"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>';
  return '<button class="tile" onclick="show(\'play\')"><span class="ico">'+ic+'</span><b>'+nm+'</b><small>'+ds+'</small></button>';
 }
@@ -31217,6 +32457,22 @@ function renderPlay(){
    navTile('🤺','دوئل','نبرد تن‌به‌تن — ۱۰ راند','duelCreate()'),
    navTile('💌','عشق‌سنج','سنجش سازگاری دو نفره','love2Sheet()'),
    navTile('⚖️','مقایسه','آمار تو در برابر رقیب','compareSheet()')]],
+  ['🌐 اجتماعی',[
+   navTile('🎁','هدیه سکه','روزانه به دوستت بده','giftSheet()'),
+   navTile('❤️','قلب محبت','+۳ سکه برای طرف مقابل','heartSheet()'),
+   navTile('🔄','مرکز تجارت','تبادل سکه، لقب و آیتم','show(\'trade\')'),
+   navTile('⚔️','رقبا','آمار رودررو با دشمنانت','show(\'rivals\')'),
+   navTile('👥','دوستان','مدیریت لیست دوستی','friendsSheet()'),
+   navTile('🌐','وال اجتماعی','نبض زنده‌ی جامعه','show(\'wall\')')]],
+  ['🏆 رقابت‌های بزرگ',[
+   navTile('🏆','مسابقات','تورنمنت‌های باز','show(\'tournament\')'),
+   navTile('🌐','فصل و رویداد','شمارش معکوس فصل','show(\'season\')'),
+   navTile('👑','تالار افسانه‌ها','HOF — بهترین‌های تاریخ','loadBoard(\'hof\')'),
+   navTile('📋','ریکاپ هفتگی','خلاصه‌ی هفته‌ی تو','show(\'recap\')')]],
+  ['🎉 پارتی و سرگرمی',[
+   navTile('🎉','پارتی‌هاب','می‌کردی؟ هرگز نشده و…','show(\'party\')'),
+   navTile('🎭','کارت شخصیت','شخصیت مخفی‌ات را ببین','personaSheet()'),
+   navTile('🎲','ابزار شانس','تاس · سکه · هشت‌تو','funSheet()')]],
   ['🏆 رقابتی',[
    navTile('🎯','آرنا رنک‌دار','رقیب هم‌سطح با ELO','show(\'arena\')'),
    navTile('🔥','Survival','حالت بقا با سختی فزاینده','show(\'survival\')'),
@@ -31234,8 +32490,11 @@ function renderPlay(){
   ['🎖 پیشرفت',[
    navTile('🎫','Season Pass','مسیر پاداش ۵۰ مرحله‌ای','show(\'pass\')'),
    navTile('🎯','Quest Center','کوئست روزانه و هفتگی','show(\'miss\')'),
+   navTile('🔥','پاداش استریک','لاگین پیاپی صعودی','loginstreakSheet()'),
+   navTile('🎯','Milestone ها','پاداش‌های مسیر قهرمانی','show(\'milestones\')'),
    navTile('🏅','دستاوردها','تالار افتخاراتت','show(\'ach\')'),
    navTile('📊','آمار کامل','داشبورد شخصی','show(\'stats\')'),
+   navTile('📜','تاریخچه بازی','۲۰ بازی آخرت','show(\'history\')'),
    navTile('📜','تالار افسانه‌ها','رتبه‌بندی جهانی','show(\'board\')')]],
   ['🧰 ابزارها',[
    navTile('👥','دوستان','مدیریت لیست دوستی','friendsSheet()'),
@@ -31243,6 +32502,7 @@ function renderPlay(){
    navTile('⏰','یادآور','یادآور شخصی','reminderSheet()'),
    navTile('🎁','دعوت دوستان','سکه با هر دعوت','inviteSheet()'),
    navTile('👑','VIP','مزایای عضویت ویژه','vipSheet()'),
+   navTile('⚙️','تنظیمات','حریم خصوصی · اعلان · تم','show(\'settings\')'),
    navTile('🎓','راهنما','آموزش گام‌به‌گام','guideSheet()')]]
  ];
  var h='<div class="gcard hero"><div class="in"><h1 class="h1">🎮 Play Hub</h1><p class="sub">همه‌ی حالت‌های بازی ApexRival — کامل داخل همین مینی‌اپ، بدون خروج به تلگرام.</p></div></div>';
@@ -31258,6 +32518,11 @@ function renderPlay(){
 function renderMiss(){
  var ms=D.missions||[],qd=(D.quests&&D.quests.daily)||[],qw=(D.quests&&D.quests.weekly)||[];
  var h='<div class="gcard hero"><div class="in"><h1 class="h1">🎯 مرکز مأموریت‌ها</h1><p class="sub">مأموریت‌هایت را کامل کن، پاداش بگیر و استریکت را حفظ کن.</p></div></div>';
+ var om=D.omega||{};
+ h+='<div class="grid g2" style="margin-bottom:14px">';
+ h+='<div class="card" onclick="loginstreakSheet()" style="cursor:pointer;'+(om.loginstreak_ready?'border-color:#ff9e4f66;box-shadow:0 12px 40px #ff9e4f18':'')+'"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🔥</div><div style="flex:1"><b style="font-size:12px">پاداش استریک</b><div class="sub">'+(om.loginstreak_ready?'<b style="color:var(--orange)">آماده دریافت!</b>':'امروز گرفته‌ای ✓')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='<div class="card" onclick="show(\'milestones\')" style="cursor:pointer"><div style="display:flex;align-items:center;gap:9px"><div style="font-size:22px">🎯</div><div style="flex:1"><b style="font-size:12px">Milestone ها</b><div class="sub">'+fa(om.milestones_claimed||0)+'/'+fa(om.milestones_total||13)+(om.milestones_ready?' · <b style="color:var(--green)">'+fa(om.milestones_ready)+' آماده!</b>':'')+'</div></div><span style="color:var(--muted)">‹</span></div></div>';
+ h+='</div>';
  h+='<div class="chips" style="justify-content:center">'
  +['مأموریت روزانه','Quest روزانه','Quest هفتگی'].map(function(c,i){return '<button class="chip'+(QTAB===i?' on':'')+'" onclick="QTAB='+i+';renderMiss()">'+c+'</button>'}).join('')+'</div>';
  var list=QTAB===0?ms:QTAB===1?qd:qw;
@@ -31292,11 +32557,17 @@ async function loadBoard(scope,keep){
  var box=$('boardList');
  if(box)box.innerHTML='<div class="sk row-sk"></div><div class="sk row-sk"></div><div class="sk row-sk"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
  try{
-  var d=await api('/api/miniapp/leaderboard?scope='+LBSCOPE);
+  var d;
+  if(LBSCOPE==='hof'){
+   var hd=await api('/api/miniapp/hof');
+   d={scope:'hof',items:(hd.items||[]).map(function(x,i){return{rank:i+1,uid:x.uid,name:x.name,xp:x.xp,wins:x.wins}}),me:null};
+  }else{
+   d=await api('/api/miniapp/leaderboard?scope='+LBSCOPE);
+  }
   var items=d.items||[];
-  var h='<div class="gcard hero"><div class="in"><h1 class="h1">🏆 رتبه‌بندی</h1><p class="sub">'+({'weekly':'امتیازهای این هفته','monthly':'XP فصل جاری (ماهانه)','global':'همه‌ی زمان‌ها','season':'فصل فعال'}[d.scope]||'')+'</p>'
+  var h='<div class="gcard hero"><div class="in"><h1 class="h1">'+(LBSCOPE==='hof'?'👑 تالار افسانه‌ها':'🏆 رتبه‌بندی')+'</h1><p class="sub">'+({'weekly':'امتیازهای این هفته','monthly':'XP فصل جاری (ماهانه)','global':'همه‌ی زمان‌ها','season':'فصل فعال','hof':'بهترین‌های تاریخ — جاودانه'}[LBSCOPE]||'')+'</p>'
   +'<div class="chips" style="margin:12px 0 0">'
-  +[['weekly','هفتگی'],['monthly','ماهانه'],['global','کلی'],['season','فصلی']].map(function(s){return '<button class="chip'+(LBSCOPE===s[0]?' on':'')+'" data-sc="'+s[0]+'" onclick="loadBoard(\''+s[0]+'\')">'+s[1]+'</button>'}).join('')
+  +[['weekly','هفتگی'],['monthly','ماهانه'],['global','کلی'],['season','فصلی'],['hof','تالار افسانه‌ها']].map(function(s){return '<button class="chip'+(LBSCOPE===s[0]?' on':'')+'" data-sc="'+s[0]+'" onclick="loadBoard(\''+s[0]+'\')">'+s[1]+'</button>'}).join('')
   +'</div></div></div>';
   /* podium */
   if(items.length>=3){
@@ -31386,7 +32657,8 @@ function renderAch(){
  +'<div style="display:flex;align-items:center;gap:14px;margin-top:8px">'
  +'<div class="ring" style="width:72px;height:72px"><svg viewBox="0 0 72 72"><circle class="tr" cx="36" cy="36" r="31"></circle><circle class="vl" cx="36" cy="36" r="31" stroke-dasharray="'+(2*Math.PI*31).toFixed(1)+'" stroke-dashoffset="'+(2*Math.PI*31*(1-pct/100)).toFixed(1)+'"></circle></svg>'
  +'<div style="text-align:center"><b style="font-size:15px">'+fa(pct)+'٪</b></div></div>'
- +'<div><b style="font-size:14px">'+fa(got)+' از '+fa(a.length)+' باز شده</b><div class="sub">هر دستاورد سکه و XP جایزه دارد</div></div></div></div></div>';
+ +'<div><b style="font-size:14px">'+fa(got)+' از '+fa(a.length)+' باز شده</b><div class="sub">هر دستاورد سکه و XP جایزه دارد</div></div></div>'
+ +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary" style="flex:1" onclick="showcaseSheet()">🏅 شوکیس پروفایل (۳ ستاره)</button></div></div></div>';
  h+='<div class="chips">'+[['all','همه'],['got','باز شده'],['lock','قفل']].map(function(c){return '<button class="chip'+(ACHF===c[0]?' on':'')+'" onclick="ACHF=\''+c[0]+'\';renderAch()">'+c[1]+'</button>'}).join('')+'</div>';
  var list=a.filter(function(x){return ACHF==='all'||(ACHF==='got'?x.owned:!x.owned)});
  h+='<div class="achg">';
@@ -31412,8 +32684,19 @@ function renderMe(){
  +(u.title?'<span class="tag">🏷 '+esc(u.title)+'</span>':'')
  +(u.badge?'<span class="tag">🎖 '+esc(u.badge)+'</span>':'')
  +(u.vip?'<span class="tag vip">👑 VIP'+(u.vip_days?' · '+fa(u.vip_days)+' روز مانده':'')+'</span>':'<span class="tag">عضویت عادی</span>')
+ +((D.omega||{}).brb?'<span class="tag">🌙 موقتاً نیستم</span>':'')
+ +((D.omega||{}).mute?'<span class="tag">🔇 تگ خاموش</span>':'')
+ +((D.omega||{}).birthday?'<span class="tag">🎂 '+esc((D.omega||{}).birthday)+'</span>':'')
  +'</div>';
+ var sc=(D.omega||{}).showcase||[];
+ if(sc.length){
+  var aMap={};(D.achievements||[]).forEach(function(x){aMap[x.key]=x});
+  h+='<div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-top:10px">'
+  +sc.map(function(k){var a=aMap[k];return a?'<span class="tag cy">🏅 '+esc(a.title)+'</span>':''}).join('')+'</div>';
+ }
  h+='<div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" style="flex:1" onclick="equipSheet()">✨ تجهیز لقب و قاب</button>'
+ +'<button class="btn" style="flex:1" onclick="showcaseSheet()">🏅 شوکیس</button></div>'
+ +'<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" style="flex:1" onclick="show(\'settings\')">⚙️ تنظیمات</button>'
  +'<button class="btn" style="flex:1" onclick="fbSheet()">📝 بازخورد</button></div>';
  h+='</div></div>';
  /* big stats */
@@ -31628,7 +32911,7 @@ function renderAdmin(){
  +'<div class="stat"><small>GROUPS</small><b id="a_groups">—</b></div>'
  +'<div class="stat"><small>GAMES</small><b id="a_games">—</b></div>'
  +'<div class="stat"><small>ACTIVE</small><b id="a_active">—</b></div></div></div></div>';
- var tabs=[['dashboard','📊 داشبورد'],['users','👥 کاربران'],['games','🎮 بازی‌ها'],['groups','🏘 گروه‌ها'],['backups','💾 بکاپ‌ها'],['logs','🧾 لاگ‌ها'],['broadcast','📢 همگانی'],['settings','⚙️ تنظیمات'],['economy','💰 اقتصاد']];
+ var tabs=[['dashboard','📊 داشبورد'],['users','👥 کاربران'],['games','🎮 بازی‌ها'],['groups','🏘 گروه‌ها'],['live','📡 زنده'],['punish','⚖️ مجازات‌ها'],['backups','💾 بکاپ‌ها'],['logs','🧾 لاگ‌ها'],['broadcast','📢 همگانی'],['settings','⚙️ تنظیمات'],['economy','💰 اقتصاد']];
  h+='<div class="chips">'+tabs.map(function(t){return '<button class="chip'+(ADMINTAB===t[0]?' on':'')+'" onclick="ADMINTAB=\''+t[0]+'\';renderAdmin();adminPage(\''+t[0]+'\')">'+t[1]+'</button>'}).join('')+'</div>';
  h+='<div id="adminBody"></div>';
  $('pg-admin').innerHTML=h;
@@ -31662,7 +32945,8 @@ async function adminPage(kind){
   }
   else if(kind==='users'){
    h+='<div class="card" style="margin-bottom:12px"><input class="input" id="uq" placeholder="🔍 جستجوی نام، یوزرنیم یا ID…" onkeydown="if(event.key===\'Enter\')loadUsers(0)">'
-   +'<button class="btn primary wide" style="margin-top:10px" onclick="loadUsers(0)">🔎 جستجو</button></div><div class="list" id="usersList"></div>';
+   +'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary" style="flex:1" onclick="loadUsers(0)">🔎 جستجو</button>'
+   +'<button class="btn gold" style="flex:1" onclick="adminCsv()">📄 خروجی CSV</button></div></div><div class="list" id="usersList"></div>';
   }
   else if(kind==='games'){
    h+='<div class="list">'+(d.items||[]).map(function(x){
@@ -31697,8 +32981,44 @@ async function adminPage(kind){
    h+='<div class="grid g4">'
    +adm('آیتم فروشگاه',d.shop_items)+adm('کاربران',d.users)+adm('سکه در گردش',d.coins)+adm('کاربران VIP',d.vip)+'</div>';
   }
+  else if(kind==='live'){
+   try{
+    var lv=await api('/api/miniapp/live');
+    h+='<div class="grid g4" style="margin-bottom:12px">'
+    +adm('کاربران',lv.users)+adm('گروه‌ها',lv.groups)+adm('بازی فعال',lv.active_games)+adm('بانک سوال',lv.banks_total)+'</div>'
+    +'<div class="card"><div class="shead" style="padding:0"><b>📡 تله‌متری زنده‌ی ربات</b><small>LIVE</small></div>'
+    +'<div style="margin-top:10px;font-size:11px;line-height:2.3;color:var(--muted)">'
+    +'⏱ آپ‌تایم: <b style="color:var(--txt)">'+esc(lv.uptime||'—')+'</b><br>'
+    +'🧠 حافظه: <b style="color:var(--txt)">'+fa(lv.memory_mb||0)+' MB</b><br>'
+    +'📦 نسخه: <b style="color:var(--txt)">'+esc(lv.version||'—')+'</b><br>'
+    +'💾 حجم داده: <b style="color:var(--txt)">'+fmtSize(lv.data_size||0)+'</b><br>'
+    +'🎯 در صف مچ‌میکینگ: <b style="color:var(--txt)">'+fa(lv.queue_matchmaking||0)+'</b></div>'
+    +'<button class="btn primary wide" style="margin-top:12px" onclick="adminPage(\'live\')">🔄 به‌روزرسانی</button></div>';
+   }catch(e){h+='<div class="empty">'+esc(e.message)+'</div>'}
+  }
+  else if(kind==='punish'){
+   try{
+    var pu=await api('/api/miniapp/admin/punishments');
+    h+='<div class="list">'+(pu.items||[]).map(function(p){
+     return '<div class="row"><div class="medal">⚖️</div><div class="grow"><b>'+esc(p.name)+' — محکوم</b>'
+     +'<small>قاضی: '+esc(p.by_name)+' · «'+esc(p.text)+'»</small></div>'
+     +'<button class="btn green" onclick="adminAction(\'punish_forgive\',0,0,\''+esc(p.pid)+'\')">🤝 بخشش</button></div>'}).join('')
+     ||'<div class="empty"><span class="ei">🕊</span>هیچ مجازاتی در جریان نیست — صلح و صفایی!</div>'+'</div>';
+   }catch(e){h+='<div class="empty">'+esc(e.message)+'</div>'}
+  }
   b.innerHTML=h||b.innerHTML;
   if(kind==='dashboard'){countUp($('a_users'),d.users);countUp($('a_groups'),d.groups);countUp($('a_games'),d.games);countUp($('a_active'),d.active_games)}
+  else{
+   /* آمار بالای پنل همیشه زنده پر می‌شود (فیکس ۴.۰) */
+   try{
+    api('/api/miniapp/live').then(function(lv){
+     if($('a_users'))countUp($('a_users'),lv.users||0);
+     if($('a_groups'))countUp($('a_groups'),lv.groups||0);
+     if($('a_games'))countUp($('a_games'),lv.games_total||0);
+     if($('a_active'))countUp($('a_active'),lv.active_games||0);
+    }).catch(function(){});
+   }catch(e){}
+  }
   if(kind==='users')loadUsers(0);
  }catch(e){b.innerHTML='<div class="empty"><span class="ei">⚠️</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="adminPage(\''+kind+'\')">تلاش دوباره</button></div>'}
 }
@@ -31742,7 +33062,10 @@ async function userSheet(id){
   +'<button class="btn gold" onclick="adminAction(\'add_coins\','+u.id+',1000)">+۱۰۰۰ 🪙</button>'
   +'<button class="btn primary" onclick="adminAction(\'add_xp\','+u.id+',500)">+۵۰۰ XP</button>'
   +'<button class="btn red" onclick="adminAction(\'sub_coins\','+u.id+',100)">−۱۰۰ 🪙</button>'
-  +'<button class="btn '+(u.banned?'green':'red')+'" onclick="adminAction(\'ban_toggle\','+u.id+',0)">'+(u.banned?'رفع بن':'بن کردن')+'</button></div>';
+  +'<button class="btn '+(u.banned?'green':'red')+'" onclick="adminAction(\'ban_toggle\','+u.id+',0)">'+(u.banned?'رفع بن':'بن کردن')+'</button></div>'
+  +'<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px">'
+  +'<button class="btn '+(u.verified?'':'green')+'" onclick="adminAction(\'verify_toggle\','+u.id+',0)">'+(u.verified?'لغو تأیید ✖':'تأیید هویت ✅')+'</button>'
+  +'<button class="btn" onclick="adminAction(\'mute_toggle\','+u.id+',0)">🔇 تگ روشن/خاموش</button></div>';
   h+='<div class="shead" style="padding:0;margin-top:14px"><b>✏️ مقدار دلخواه</b></div>'
   +'<div style="display:flex;gap:8px;margin:8px 0"><input class="input" id="uval" type="number" placeholder="مقدار…" style="flex:1">'
   +'<button class="btn green" onclick="adminAction(\'add_coins\','+u.id+',Number(document.getElementById(\'uval\').value)||0)">+ سکه</button>'
@@ -31761,10 +33084,19 @@ async function adminBroadcast(){
   toast(d.message||'قرار گرفت','ok');$('bcTxt').value='';
  }catch(e){toast(e.message,'err')}
 }
-async function adminAction(action,target,value){
+async function adminCsv(){
+ try{
+  var d=await api('/api/miniapp/admin/csv');
+  var blob=new Blob(["\ufeff"+d.csv],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='apexrival_users.csv';document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},400);
+  toast('خروجی CSV با '+fa(d.count)+' کاربر ساخته شد 📄','ok');
+ }catch(e){toast(e.message,'err')}}
+async function adminAction(action,target,value,pid){
  try{
   haptic('medium');
-  var body={action:action,target:Number(target)||0,value:Number(value)||0,note:($('note')&&$('note').value)||''};
+  var body={action:action,target:Number(target)||0,value:Number(value)||0,note:($('note')&&$('note').value)||'',pid:pid||''};
   var d=await api('/api/miniapp/admin/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   toast(d.message,'ok');
   if(action==='backup_now'||action==='maintenance_toggle')adminPage('dashboard');
@@ -33038,7 +34370,9 @@ function friendsSheet(){
   h+='<div class="list">';
   fr.forEach(function(f){
    h+='<div class="row">'+avaHtml({id:f.id,name:f.name},'sm')+'<div class="grow"><b>'+esc(f.name)+'</b><small>LV '+fa(f.level)+'</small></div>'
-   +'<button class="btn red" onclick="friendRemove('+f.id+')">✕</button></div>';
+   +'<button class="btn gold" style="padding:7px 10px" onclick="giftSheet('+f.id+')" title="هدیه سکه">🎁</button>'
+   +'<button class="btn" style="padding:7px 10px" onclick="heartSheet('+f.id+')" title="قلب محبت">❤️</button>'
+   +'<button class="btn red" style="padding:7px 10px" onclick="friendRemove('+f.id+')">✕</button></div>';
   });
   h+='</div>';
  }else h+='<div class="empty" style="padding:16px"><span class="ei">👋</span>هنوز دوستی نداری!</div>';
@@ -33143,6 +34477,702 @@ function guideSheet(){
  openSheet(h);
 }
 
+/* ================= 📜 HISTORY (تاریخچه بازی) ================= */
+var HISTV=false;
+async function renderHistory(){
+ var el=$('pg-history');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/history');
+  var items=d.items||[];
+  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
+  +'<div style="font-size:30px">📜</div><div style="flex:1"><h1 class="h1" style="margin:0">تاریخچه بازی‌ها</h1>'
+  +'<p class="sub">'+fa(d.count||items.length)+' بازی آخر — همان تاریخچه‌ی ربات، زنده</p></div></div></div>';
+  if(!items.length)h+='<div class="empty"><span class="ei">🕹</span>هنوز بازی‌ای ثبت نشده — یکی شروع کن!</div>';
+  else{
+   h+='<div class="card"><div class="tl">';
+   items.forEach(function(x){
+    var ic={'trivia':'🧠','word':'📝','number':'🔢','memory':'🃏','reaction':'⚡','ttt':'✖️','mine':'⛏','quiz':'🧮','luck':'🍀','ln':'🎰','survival':'🔥','lobby':'👥','duel':'🤺','arena':'🏆','love':'💌'}[x.mode]||'🎮';
+    var win=String(x.result).indexOf('برد')>-1||String(x.result).indexOf('win')>-1;
+    var draw=String(x.result).indexOf('مساوی')>-1;
+    h+='<div class="ev"><div class="b">'+ic+'</div><div class="grow"><b>'+esc(x.mode||'بازی')+' · '
+    +(win?'<span style="color:var(--green)">برد</span>':draw?'مساوی':'<span style="color:var(--red)">باخت</span>')+'</b>'
+    +'<small>+⭐'+fa(x.xp||0)+' · +🪙'+fa(x.coins||0)+(x.players?' · 👥'+fa(x.players):'')+'</small></div>'
+    +'<time>'+timeAgo(x.ts)+'</time></div>';
+   });
+   h+='</div></div>';
+  }
+  el.innerHTML=h;
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderHistory()">تلاش دوباره</button></div>'}
+}
+
+/* ================= 🎯 MILESTONES (پاداش‌های مسیر) ================= */
+async function renderMilestones(){
+ var el=$('pg-milestones');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/milestones');
+  var items=d.items||[],om=D.omega||{};
+  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
+  +'<div style="font-size:30px">🎯</div><div style="flex:1"><h1 class="h1" style="margin:0">Milestone Rewards</h1>'
+  +'<p class="sub">'+fa(d.claimed_count||0)+' از '+fa(d.total||13)+' دریافت‌شده — پاداش‌ها خودکار وصل می‌شوند</p></div>';
+  if(d.auto_granted)h+='<span class="tag ok">+'+fa(d.auto_granted)+' تازه!</span>';
+  h+='</div></div>';
+  h+='<div class="grid g2" style="margin-top:14px">'
+  +'<div class="card" style="text-align:center"><b style="color:var(--green);font-size:18px">'+fa(items.filter(function(x){return x.claimed}).length)+'</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:3px">گرفته‌شده ✅</small></div>'
+  +'<div class="card" style="text-align:center"><b style="color:var(--orange);font-size:18px">'+fa(items.filter(function(x){return x.ready&&!x.claimed}).length)+'</b><small style="display:block;color:var(--muted);font-size:9px;margin-top:3px">در آستانه 🎯</small></div></div>';
+  h+='<div class="shead" style="margin-top:16px"><b>مسیر قهرمانی</b><small>MILESTONES</small></div><div class="list">';
+  items.forEach(function(m){
+   var pct=Math.min(100,Math.round(m.current*100/m.target));
+   var ring=2*Math.PI*22;
+   h+='<div class="row" style="align-items:flex-start"><div class="mring'+(m.claimed?' done':'')+'">'
+   +'<svg width="54" height="54" viewBox="0 0 54 54"><circle class="bgc" cx="27" cy="27" r="22"></circle>'
+   +'<circle class="fgc" cx="27" cy="27" r="22" stroke-dasharray="'+ring.toFixed(1)+'" stroke-dashoffset="'+(ring*(1-pct/100)).toFixed(1)+'"></circle></svg>'
+   +'<b>'+(m.claimed?'✓':fa(pct)+'٪')+'</b></div>'
+   +'<div class="grow"><b>'+esc(m.name)+'</b>'
+   +'<small>'+fa(m.current)+' / '+fa(m.target)+(m.title?' · 🏷 جایزه: عنوان ویژه':'')+'</small>'
+   +'<div class="bar" style="margin-top:8px;height:7px"><i style="width:'+Math.max(3,pct)+'%'+(m.claimed?';background:linear-gradient(90deg,var(--green),var(--cyan))':'')+'"></i></div>'
+   +'<div class="sub" style="margin-top:7px;font-size:9px">🪙 '+fa(m.coins)+' سکه · ⭐ '+fa(m.xp)+' XP</div></div>'
+   +(m.ready&&!m.claimed?'<span class="tag ok">آماده!</span>':m.claimed?'<span class="tag">گرفته ✓</span>':'')
+   +'</div>';
+  });
+  h+='</div>';
+  h+='<button class="btn primary wide glow" style="margin-top:14px" onclick="milestonesClaim()">🎯 بررسی و دریافت پاداش‌های آماده</button>';
+  el.innerHTML=h;
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderMilestones()">تلاش دوباره</button></div>'}
+}
+async function milestonesClaim(){try{haptic('medium');
+ var d=await api('/api/miniapp/milestones/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+ toast(d.message,'ok');if(d.granted>0){confetti();SND.win()}await refresh(true);renderMilestones()}catch(e){toast(e.message,'err')}}
+
+/* ================= ⚔️ RIVALS (رقبا) ================= */
+async function renderRivals(){
+ var el=$('pg-rivals');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/rivals');
+  var items=d.items||[];
+  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
+  +'<div style="font-size:30px">⚔️</div><div style="flex:1"><h1 class="h1" style="margin:0">رقبای من</h1>'
+  +'<p class="sub">دشمنانِ شایسته‌ی یک قهرمان — آمار رودررو</p></div>'
+  +'<button class="btn primary" onclick="rivalAddSheet()">➕</button></div></div>';
+  if(!items.length)h+='<div class="empty"><span class="ei">🥷</span>هنوز رقیبی ثبت نکردی — دوستت را رقیب کن تا آمار مسابقات‌تان ثبت شود!</div>';
+  else{
+   h+='<div class="list">';
+   items.forEach(function(x){
+    var lead=x.my_wins>x.opp_wins,eq=x.my_wins===x.opp_wins;
+    h+='<div class="row">'+avaHtml({id:x.id,name:x.name},'sm')
+    +'<div class="grow"><b>'+esc(x.name)+'</b>'
+    +'<small>'+(fa(x.my_wins)+'–'+fa(x.opp_wins))+' در '+fa(x.games)+' نبرد</small>'
+    +'<div style="display:flex;align-items:center;gap:7px;margin-top:7px"><span style="font-size:8.5px;color:var(--cyan)">تو</span>'
+    +'<div class="hbar" style="width:70px"><i style="width:'+(x.games?Math.round(x.my_wins*100/Math.max(1,x.games)):50)+'%"></i></div>'
+    +'<span style="font-size:8.5px;color:var(--pink)">او</span>'
+    +(lead?'<span class="tag ok">پیشتی!</span>':eq?'<span class="tag">برابر</span>':'<span class="tag bad">عقب هستی</span>')+'</div></div>'
+    +'<div style="display:flex;flex-direction:column;gap:5px">'
+    +'<button class="btn primary" style="padding:7px 11px" onclick="duelCreate()">🤺 دوئل</button>'
+    +'<button class="btn red" style="padding:5px 11px;font-size:9px" onclick="rivalAction(\'remove\','+x.id+')">✕ حذف</button></div></div>';
+   });
+   h+='</div>';
+  }
+  el.innerHTML=h;
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderRivals()">تلاش دوباره</button></div>'}
+}
+function rivalAddSheet(){
+ var fr=(D.friends||[]);
+ var h='<h3>⚔️ افزودن رقیب</h3>';
+ if(fr.length){
+  h+='<div class="shead" style="padding:0"><b>از دوستانت</b></div><div class="list">';
+  fr.slice(0,8).forEach(function(f){h+='<div class="row" onclick="rivalAction(\'add\','+f.id+')" style="cursor:pointer">'
+  +avaHtml({id:f.id,name:f.name},'sm')+'<div class="grow"><b>'+esc(f.name)+'</b><small>LV '+fa(f.level)+'</small></div><span class="tag">⚔️ رقیب کن</span></div>'});
+  h+='</div>';
+ }
+ h+='<div class="shead" style="padding:0;margin-top:14px"><b>با آیدی عددی</b></div>'
+ +'<input class="input" id="rvId" type="number" placeholder="آیدی عددی بازیکن...">'
+ +'<button class="btn primary wide" style="margin-top:8px" onclick="rivalAction(\'add\',parseInt(document.getElementById(\'rvId\').value||0,10))">⚔️ ثبت رقیب</button>';
+ openSheet(h);
+}
+async function rivalAction(action,id){
+ if(action==='add'&&!id){toast('آیدی معتبر وارد کن','err');return}
+ try{
+  var d=await api('/api/miniapp/rivals/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,target:id})});
+  toast(d.message,'ok');closeSheet();await refresh(true);renderRivals();
+ }catch(e){toast(e.message,'err')}
+}
+
+/* ================= 🔄 TRADE CENTER (مرکز تجارت) ================= */
+var TRSEL={to:0,o:{type:'coins',amount:100},r:{type:'coins',amount:100}};
+async function renderTrade(){
+ var el=$('pg-trade');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/trade');
+  var om=D.omega||{};
+  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
+  +'<div style="font-size:30px">🔄</div><div style="flex:1"><h1 class="h1" style="margin:0">Trade Center</h1>'
+  +'<p class="sub">'+fa(d.completed||0)+' تجارت کامل‌شده'+(d.cooldown>0?' · ⏳ '+fa(Math.ceil(d.cooldown/60))+' دقیقه کول‌داون':'')+'</p></div>'
+  +'<button class="btn primary" '+(d.cooldown>0?'disabled':'')+' onclick="tradeCreateSheet()">➕</button></div></div>';
+  var rec=d.received||[];
+  if(rec.filter(function(t){return t.status==='pending'}).length){
+   h+='<div class="shead" style="margin-top:16px"><b>📨 درخواست‌های دریافتی</b><small class="chipv">🆕 جدید</small></div>';
+   rec.forEach(function(t){
+    if(t.status!=='pending')return;
+    h+=tradeCard(t,true);
+   });
+  }
+  var sent=d.sent||[];
+  if(sent.filter(function(t){return t.status==='pending'}).length){
+   h+='<div class="shead" style="margin-top:16px"><b>📤 درخواست‌های ارسالی</b><small>در انتظار پاسخ</small></div>';
+   sent.forEach(function(t){
+    if(t.status!=='pending')return;
+    h+=tradeCard(t,false);
+   });
+  }
+  var done=rec.concat(sent).filter(function(t){return t.status!=='pending'});
+  if(done.length){
+   h+='<div class="shead" style="margin-top:16px"><b>🗂 اخیر</b><small>'+fa(done.length)+' مورد</small></div><div class="list">';
+   done.slice(0,5).forEach(function(t){
+    h+='<div class="row"><div class="medal">'+({'accepted':'✅','rejected':'❌','cancelled':'🚫'}[t.status]||'•')+'</div>'
+    +'<div class="grow"><b>'+esc(t.status==='accepted'?'تجارت انجام شد':'تجارت '+({'rejected':'رد شد','cancelled':'لغو شد'}[t.status]||t.status))+'</b>'
+    +'<small>'+(t.from===(D.user||{}).id?'به '+esc(t.to_name):'از '+esc(t.from_name))+'</small></div><time>'+timeAgo(t.ts)+'</time></div>';
+   });
+   h+='</div>';
+  }
+  if(!rec.length&&!sent.length)h+='<div class="empty" style="margin-top:14px"><span class="ei">🔄</span>هنوز تجارتی نداری — با دوستانت سکه و آیتم مبادله کن!</div>';
+  el.innerHTML=h;
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderTrade()">تلاش دوباره</button></div>'}
+}
+function tradeLabel(side){
+ if(side.type==='coins')return '🪙 '+fa(side.amount)+' سکه';
+ return ({title:'🏷',frame:'🖼',badge:'🎖'}[side.type]||'•')+' '+esc(side.name||side.key||'');
+}
+function tradeCard(t,incoming){
+ var h='<div class="trrow"><div style="display:flex;align-items:center;gap:10px">'
+ +avaHtml({id:t.from,name:t.from_name},'sm')
+ +'<div class="grow"><b>'+(incoming?'از '+esc(t.from_name):'به '+esc(t.to_name))+'</b><small>'+timeAgo(t.ts)+'</small></div>'
+ +(incoming?'<span class="tag cy">دریافتی</span>':'<span class="tag">ارسالی</span>')+'</div>'
+ +'<div class="ex"><div class="side o"><small style="color:var(--muted)">او می‌دهد</small><b>'+tradeLabel(t.offer)+'</b></div>'
+ +'<div class="arr">⇄</div>'
+ +'<div class="side r"><small style="color:var(--muted)">در برابر</small><b>'+tradeLabel(t.request)+'</b></div></div>';
+ if(t.status==='pending'){
+  h+='<div style="display:flex;gap:8px;margin-top:11px">';
+  if(incoming)h+='<button class="btn green" style="flex:1" onclick="tradeAction('+t.id+',\'accept\')">✅ قبول</button>'
+  +'<button class="btn red" style="flex:1" onclick="tradeAction('+t.id+',\'reject\')">❌ رد</button>';
+  else h+='<button class="btn red" style="flex:1" onclick="tradeAction('+t.id+',\'cancel\')">🚫 لغو درخواست</button>';
+  h+='</div>';
+ }
+ return h+'</div>';
+}
+function tradeCreateSheet(){
+ var inv=null;
+ api('/api/miniapp/trade').then(function(d){
+  var friends=(d.friends||[]);
+  TRSEL={to:(friends[0]||{}).id||0,o:{type:'coins',amount:100},r:{type:'coins',amount:100}};
+  var h='<h3>🔄 ساخت تجارت</h3>'
+  +'<div class="shead" style="padding:0"><b>🎯 با چه کسی؟</b></div>'
+  +'<div class="chips" style="margin:0 0 10px">';
+  friends.forEach(function(f,i){h+='<button class="chip'+(i===0?' on':'')+'" data-tid="'+f.id+'" onclick="tradeSelTo(this,'+f.id+')">'+esc(f.name)+'</button>'});
+  if(!friends.length)h+='<small style="color:var(--muted)">اول دوست اضافه کن</small>';
+  h+='</div>'
+  +'<input class="input" id="trId" type="number" placeholder="یا آیدی عددی..." style="margin-bottom:12px">'
+  +'<div class="shead" style="padding:0"><b>📤 تو می‌دهی</b></div>'
+  +'<div class="chips" style="margin:0 0 8px">'
+  +[['coins','🪙 سکه'],['title','🏷 لقب'],['frame','🖼 قاب'],['badge','🎖 بج']].map(function(x,i){
+   return '<button class="chip'+(i===0?' on':'')+'" data-oside="'+x[0]+'" onclick="tradeSelSide(\'o\',this,\''+x[0]+'\')">'+x[1]+'</button>'}).join('')
+  +'</div><div id="trOw"></div>'
+  +'<div class="shead" style="padding:0;margin-top:12px"><b>📥 در برابر می‌گیری</b></div>'
+  +'<div class="chips" style="margin:0 0 8px">'
+  +[['coins','🪙 سکه'],['title','🏷 لقب'],['frame','🖼 قاب'],['badge','🎖 بج']].map(function(x,i){
+   return '<button class="chip'+(i===0?' on':'')+'" data-rside="'+x[0]+'" onclick="tradeSelSide(\'r\',this,\''+x[0]+'\')">'+x[1]+'</button>'}).join('')
+  +'</div><div id="trRw"></div>'
+  +'<button class="btn primary wide" style="margin-top:16px" onclick="tradeSubmit()">✈️ ارسال درخواست تجارت</button>';
+  openSheet(h);
+  window._TRINV=d.inventory||{};
+  tradeSelSide('o',document.querySelector('[data-oside=coins]'),'coins');
+  tradeSelSide('r',document.querySelector('[data-rside=coins]'),'coins');
+ }).catch(function(e){toast(e.message,'err')});
+}
+function tradeSelTo(el,id){document.querySelectorAll('[data-tid]').forEach(function(c){c.classList.remove('on')});
+ el.classList.add('on');TRSEL.to=id;SND.tap()}
+function tradeSelSide(side,el,type){
+ document.querySelectorAll('[data-'+(side==='o'?'o':'r')+'side]').forEach(function(c){c.classList.remove('on')});
+ el.classList.add('on');TRSEL[side].type=type;SND.tap();
+ var inv=window._TRINV||{};
+ var w=$(side==='o'?'trOw':'trRw');if(!w)return;
+ if(type==='coins'){
+  w.innerHTML='<input class="input" type="number" id="tr'+side+'" placeholder="مقدار سکه..." value="'+(TRSEL[side].amount||100)+'">';
+ }else{
+  var list=inv[({title:'titles',frame:'frames',badge:'badges'})[type]]||[];
+  if(!list.length){w.innerHTML='<div class="empty" style="padding:10px;font-size:10px">چیزی از این نوع نداری</div>';TRSEL[side].key='';return}
+  var h='<div class="chips" style="margin:0">'+list.map(function(x){
+   return '<button class="chip" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\');TRSEL.'+side+'.key=\''+esc(x.key)+'\'">'+esc(x.name)+'</button>'}).join('')+'</div>';
+  w.innerHTML=h;TRSEL[side].key=list[0].key;
+  var first=w.querySelector('.chip');if(first)first.classList.add('on');
+ }
+}
+async function tradeSubmit(){
+ var to=TRSEL.to||parseInt(($('trId')||{}).value||0,10);
+ if(!to){toast('همسایه‌ی تجارت را انتخاب کن','err');return}
+ TRSEL.o.amount=parseInt(($('tro')||{}).value||TRSEL.o.amount||0,10);
+ TRSEL.r.amount=parseInt(($('trr')||{}).value||TRSEL.r.amount||0,10);
+ try{
+  var d=await api('/api/miniapp/trade/create',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({to:to,offer:TRSEL.o,request:TRSEL.r})});
+  toast(d.message,'ok');closeSheet();await refresh(true);renderTrade();
+ }catch(e){toast(e.message,'err')}
+}
+async function tradeAction(id,action){try{haptic('medium');
+ var d=await api('/api/miniapp/trade/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,action:action})});
+ toast(d.message,'ok');if(action==='accept'){confetti();SND.win()}await refresh(true);renderTrade()}catch(e){toast(e.message,'err')}}
+
+/* ================= 🏆 TOURNAMENTS (مسابقات) ================= */
+async function renderTournament(){
+ var el=$('pg-tournament');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/tournament');
+  var items=d.items||[];
+  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
+  +'<div style="font-size:30px">🏆</div><div style="flex:1"><h1 class="h1" style="margin:0">مسابقات ApexRival</h1>'
+  +'<p class="sub">'+fa(items.length)+' مسابقه‌ی باز — ساخت توسط ادمین/ناظر</p></div>'
+  +(d.can_create?'<button class="btn primary" onclick="tournamentCreateSheet()">➕</button>':'')+'</div></div>';
+  if(!items.length)h+='<div class="empty"><span class="ei">🏆</span>فعلاً مسابقه‌ای باز نیست — به‌زودی!</div>';
+  else{
+   h+='<div class="list">';
+   items.forEach(function(t){
+    var pct=Math.round(t.players.length*100/t.max_players);
+    h+='<div class="row" style="align-items:flex-start"><div class="medal">🏆</div>'
+    +'<div class="grow"><b>#'+fa(t.id)+' · '+esc(t.title)+'</b>'
+    +'<small>سازنده: '+esc(t.host_name)+' · 🪙 جایزه '+faK(t.prize)+'</small>'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-top:7px"><span style="font-size:8.5px;color:var(--muted)">👥 '+fa(t.players.length)+'/'+fa(t.max_players)+'</span>'
+    +'<div class="bar" style="flex:1;height:6px"><i style="width:'+Math.max(4,pct)+'%"></i></div></div></div>'
+    +(t.joined?'<span class="tag ok">عضو هستی</span>'
+    :'<button class="btn primary" '+(t.status!=='open'?'disabled':'')+' onclick="tournamentJoin('+t.id+')">➕ پیوستن</button>')
+    +'</div>';
+   });
+   h+='</div>';
+   var joined=items.filter(function(t){return t.joined})[0];
+   if(joined){
+    h+='<div class="shead" style="margin-top:16px"><b>👥 بازیکنان مسابقه‌ی #'+fa(joined.id)+'</b></div><div class="chips">';
+    joined.players.forEach(function(p){h+='<button class="chip" onclick="profileView('+p.id+')">'+esc(p.name)+'</button>'});
+    h+='</div>';
+   }
+  }
+  el.innerHTML=h;
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderTournament()">تلاش دوباره</button></div>'}
+}
+function tournamentCreateSheet(){
+ openSheet('<h3>🏆 ساخت مسابقه</h3>'
+ +'<input class="input" id="tmT" maxlength="60" placeholder="عنوان مسابقه...">'
+ +'<div class="grid g2" style="margin-top:10px">'
+ +'<div><small style="color:var(--muted);font-size:9px">جایزه (سکه)</small><input class="input" id="tmP" type="number" value="500"></div>'
+ +'<div><small style="color:var(--muted);font-size:9px">حداکثر بازیکن</small><input class="input" id="tmM" type="number" value="16"></div></div>'
+ +'<button class="btn primary wide" style="margin-top:14px" onclick="tournamentCreate()">🏆 ایجاد مسابقه</button>');
+}
+async function tournamentCreate(){try{haptic('medium');
+ var d=await api('/api/miniapp/tournament/create',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({title:($('tmT')||{}).value||'',prize:parseInt(($('tmP')||{}).value||500,10),max_players:parseInt(($('tmM')||{}).value||16,10)})});
+ toast(d.message,'ok');confetti();closeSheet();renderTournament()}catch(e){toast(e.message,'err')}}
+async function tournamentJoin(id){try{haptic('medium');
+ var d=await api('/api/miniapp/tournament/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})});
+ toast(d.message,'ok');await refresh(true);renderTournament()}catch(e){toast(e.message,'err')}}
+
+/* ================= 🌐 SOCIAL WALL (وال اجتماعی) ================= */
+async function renderWall(){
+ var el=$('pg-wall');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/wall');
+  var items=d.items||[];
+  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
+  +'<div style="font-size:30px">🌐</div><div style="flex:1"><h1 class="h1" style="margin:0">Social Wall</h1>'
+  +'<p class="sub">آخرین فعالیت‌های جامعه‌ی ApexRival — زنده</p></div>'
+  +'<span class="tag cy">LIVE</span></div></div>';
+  if(!items.length)h+='<div class="empty"><span class="ei">🕸</span>هنوز فعالیتی ثبت نشده — اولین باش!</div>';
+  else{
+   h+='<div class="wfeed">';
+   items.forEach(function(x){
+    h+='<div class="wf"><div class="lvl '+esc(x.level||'info')+'"></div>'
+    +(x.actor?avaHtml({id:x.actor,name:x.actor_name},'xs'):'<div class="medal" style="width:32px;height:32px;font-size:13px">🤖</div>')
+    +'<div class="grow"><b>'+esc(x.actor_name)+'</b><small>'+esc(x.message)+'</small></div>'
+    +'<time>'+timeAgo(x.ts)+'</time></div>';
+   });
+   h+='</div>';
+  }
+  el.innerHTML=h;
+  startPoll('wall',function(){if(PAGE==='wall')renderWallSilent()},15000);
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderWall()">تلاش دوباره</button></div>'}
+}
+async function renderWallSilent(){try{
+ var d=await api('/api/miniapp/wall');
+ var items=d.items||[];var el=$('pg-wall');if(!el||PAGE!=='wall')return;
+ var h='<div class="wfeed">';
+ items.forEach(function(x){
+  h+='<div class="wf"><div class="lvl '+esc(x.level||'info')+'"></div>'
+  +(x.actor?avaHtml({id:x.actor,name:x.actor_name},'xs'):'<div class="medal" style="width:32px;height:32px;font-size:13px">🤖</div>')
+  +'<div class="grow"><b>'+esc(x.actor_name)+'</b><small>'+esc(x.message)+'</small></div>'
+  +'<time>'+timeAgo(x.ts)+'</time></div>'});
+ h+='</div>';
+ var box=el.querySelector('.wfeed');if(box)box.outerHTML=h;
+}catch(e){}}
+
+/* ================= 🌐 SEASON (فصل و رویداد) ================= */
+async function renderSeason(){
+ var el=$('pg-season');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/season');
+  var h='<div class="gcard hero"><div class="in seasonhero"><span class="cal">🏆</span>'
+  +'<h1 class="h1">🌐 فصل و رویداد</h1>'
+  +'<p class="sub">مسابقه‌ی فصلی قهرمانان'+(d.season_id?' — فصل '+esc(d.season_id):'')+'</p>'
+  +'<div class="grid g4" style="margin-top:12px">'
+  +st('روز مانده','ss_d',d.days_left)+st('XP فصل تو','ss_x',d.season_xp)
+  +st('رتبه‌ی تو','ss_r',d.season_rank?('#'+d.season_rank):'—')+st('رویداد فعال','ss_e',(d.events||[]).length)+'</div></div></div>';
+  if((d.events||[]).length){
+   h+='<div class="shead" style="margin-top:16px"><b>📢 رویدادهای فعال</b><small>EVENTS</small></div><div class="list">';
+   d.events.forEach(function(ev){
+    h+='<div class="row"><div class="medal">📢</div><div class="grow"><b>'+esc(ev.title)+'</b><small>'+esc(ev.type)+'</small></div></div>';
+   });
+   h+='</div>';
+  }else h+='<div class="card" style="margin-top:16px;text-align:center;color:var(--muted);font-size:11px">فعلاً رویدادی فعال نیست 🌙</div>';
+  h+='<div class="shead" style="margin-top:16px"><b>🏅 رتبه‌بندی فصل</b><small>TOP 10</small></div><div class="list">';
+  (d.leaderboard||[]).forEach(function(x){
+   var isMe=D.user&&Number(x.uid)===Number(D.user.id);
+   h+='<div class="row'+(isMe?' me':'')+'" onclick="profileView('+x.uid+')" style="cursor:pointer">'
+   +'<div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
+   +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+(isMe?' <span class="tag cy">تو</span>':'')+'</b><small>⭐ '+faK(x.xp)+' · 🏆 '+faK(x.wins)+'</small></div></div>';
+  });
+  if(!(d.leaderboard||[]).length)h+='<div class="empty"><span class="ei">🌱</span>هنوز کسی در فصل فعالیتی نداشته</div>';
+  h+='</div>';
+  el.innerHTML=h;
+  countUp($('ss_d'),d.days_left);countUp($('ss_x'),d.season_xp);
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderSeason()">تلاش دوباره</button></div>'}
+}
+
+/* ================= 📋 RECAP (ریکاپ هفتگی شخصی) ================= */
+async function renderRecap(){
+ var el=$('pg-recap');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/recap');
+  var h='<div class="gcard hero"><div class="in"><h1 class="h1">📋 ریکاپ هفتگی من</h1>'
+  +'<p class="sub">خلاصه‌ی عملکردت — از دفتر XP زنده‌ی ربات</p>'
+  +'<div class="grid g4" style="margin-top:12px">'
+  +st('XP این هفته','rc_x',d.week_xp)+st('رتبه‌ی هفته','rc_r',d.week_rank?('#'+d.week_rank):'—')
+  +st('فعالیت','rc_a',d.activity_count)+st('استریک','rc_s',d.streak)+'</div></div></div>';
+  h+='<div class="grid g4" style="margin-top:14px">'
+  +st('بازی','rc_g',d.games)+st('برد','rc_w',d.wins)+st('دوئل','rc_d',d.duels)+st('مینی‌گیم','rc_m',d.mini_games)+'</div>';
+  if((d.top||[]).length){
+   h+='<div class="shead" style="margin-top:16px"><b>🏆 قهرمانان هفته</b><small>TOP 5</small></div><div class="list">';
+   d.top.forEach(function(x){
+    h+='<div class="row"><div class="medal'+(x.rank<4?' m'+x.rank:'')+'">'+(x.rank===1?'🥇':x.rank===2?'🥈':x.rank===3?'🥉':fa(x.rank))+'</div>'
+    +avaHtml({id:x.uid,name:x.name},'sm')+'<div class="grow"><b>'+esc(x.name)+'</b><small>⭐ '+faK(x.xp)+' XP</small></div></div>';
+   });
+   h+='</div>';
+  }
+  el.innerHTML=h;
+  countUp($('rc_x'),d.week_xp);countUp($('rc_a'),d.activity_count);
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderRecap()">تلاش دوباره</button></div>'}
+}
+
+/* ================= ⚙️ SETTINGS (تنظیمات شخصی) ================= */
+async function renderSettings(){
+ var el=$('pg-settings');el.innerHTML='<div class="sk tall"></div><div class="sk row-sk"></div>';
+ try{
+  var d=await api('/api/miniapp/settings');
+  window._SET=d;
+  var h='<div class="gcard hero"><div class="in" style="display:flex;align-items:center;gap:12px">'
+  +'<div style="font-size:30px">⚙️</div><div style="flex:1"><h1 class="h1" style="margin:0">تنظیمات</h1>'
+  +'<p class="sub">همه‌ی تنظیمات دقیقاً روی حساب ربات ذخیره می‌شوند</p></div></div></div>';
+  /* ظاهر اپ */
+  h+='<div class="card" style="margin-top:14px"><div class="shead" style="padding:0"><b>🎨 ظاهر مینی‌اپ</b><small>UI</small></div>'
+  +'<div class="themegrid">'+THEMES.map(function(t){
+   return '<div class="themecard'+(UI.theme===t.id?' on':'')+'" onclick="uiSet(\'theme\',\''+t.id+'\');renderSettings()">'
+   +'<div class="swb" style="background:linear-gradient(135deg,'+t.c[0]+','+t.c[1]+' 55%,'+t.c[2]+')"></div>'
+   +'<small>'+t.name+'</small></div>'}).join('')+'</div>'
+  +'<div class="srow"><div class="ic">🌓</div><div class="grow"><b>حالت نمایش</b><small>تاریک یا روشن</small></div>'
+  +'<div class="chips" style="margin:0">'+[['dark','تاریک'],['light','روشن']].map(function(x){
+   return '<button class="chip'+(UI.mode===x[0]?' on':'')+'" onclick="uiSet(\'mode\',\''+x[0]+'\');renderSettings()">'+x[1]+'</button>'}).join('')+'</div></div>'
+  +'<div class="srow"><div class="ic">🔠</div><div class="grow"><b>اندازه‌ی متن</b><small>راحت چشم‌ات</small></div>'
+  +'<div class="chips" style="margin:0">'+[['s','کوچک'],['m','متوسط'],['l','بزرگ']].map(function(x){
+   return '<button class="chip'+(UI.fs===x[0]?' on':'')+'" onclick="uiSet(\'fs\',\''+x[0]+'\');renderSettings()">'+x[1]+'</button>'}).join('')+'</div></div>'
+  +'<div class="srow"><div class="ic">🌊</div><div class="grow"><b>انیمیشن</b><small>حرکت‌های نرم</small></div>'
+  +'<button class="sw'+(UI.motion==='on'?' on':'')+'" onclick="uiSet(\'motion\',UI.motion===\'on\'?\'off\':\'on\');renderSettings()"></button></div>'
+  +'<div class="srow"><div class="ic">🔊</div><div class="grow"><b>افکت صوتی</b><small>صدای دکمه‌ها و برد</small></div>'
+  +'<button class="sw'+(SND.on?' on':'')+'" onclick="SND.toggle();renderSettings()"></button></div>'
+  +'</div>';
+  /* اعلان‌ها */
+  h+='<div class="card" style="margin-top:14px"><div class="shead" style="padding:0"><b>🔔 اعلان‌ها</b><small>ربات → تو</small></div>'
+  +setRow('level_up','🎉','Level Up','وقتی سطح می‌گیری خبرت کن',d.notifications)
+  +setRow('achievement','🏅','دستاوردها','افتتاح دستاورد جدید',d.notifications)
+  +setRow('private_invite','🎮','دعوت مسابقه','دعوت دوئل و مسابقه خصوصی',d.notifications)
+  +setRow('friend_req','👥','درخواست دوستی','پیام درخواست‌های جدید',d.notifications)
+  +'</div>';
+  /* حریم خصوصی */
+  h+='<div class="card" style="margin-top:14px"><div class="shead" style="padding:0"><b>🔒 حریم خصوصی</b><small>چه کسی چه چیزی ببیند</small></div>'
+  +setRow('show_stats','📊','نمایش آمار','آمار بازی‌ات برای بقیه',d.privacy,'priv.')
+  +setRow('show_friends','👥','نمایش دوستان','لیست دوستانت',d.privacy,'priv.')
+  +setRow('show_achievements','🎖','نمایش دستاوردها','تالار افتخاراتت',d.privacy,'priv.')
+  +setRow('allow_challenges','⚔️','اجازه چالش','بقیه بتوانند چالشت کنند',d.privacy,'priv.')
+  +'</div>';
+  /* وضعیت‌ها */
+  h+='<div class="card" style="margin-top:14px"><div class="shead" style="padding:0"><b>👤 وضعیت من</b><small>STATUS</small></div>'
+  +'<div class="srow"><div class="ic">🔇</div><div class="grow"><b>تگ‌شدن در گروه</b><small>ربات در گروه‌ها تگت کند</small></div>'
+  +'<button class="sw'+(d.mute?' on':'')+'" onclick="settingSet(\'mute\','+(!d.mute)+')"></button></div>'
+  +'<div class="srow"><div class="ic">🌙</div><div class="grow"><b>موقتاً نیستم (BRB)</b><small>ماه کنار اسمت می‌افتد</small></div>'
+  +'<button class="sw'+(d.brb?' on':'')+'" onclick="settingSet(\'brb\','+(!d.brb)+')"></button></div>'
+  +'<div class="srow"><div class="ic">🖥</div><div class="grow"><b>حالت نمایش ربات</b><small>قالب منوهای خود ربات</small></div>'
+  +'<div class="chips" style="margin:0">'+[['auto','خودکار'],['mobile','موبایل'],['desktop','دسکتاپ']].map(function(x){
+   return '<button class="chip'+(d.display_mode===x[0]?' on':'')+'" onclick="settingSet(\'display_mode\',\''+x[0]+'\')">'+x[1]+'</button>'}).join('')+'</div></div>'
+  +'<div class="srow"><div class="ic">🎂</div><div class="grow"><b>تاریخ تولد</b><small>'+(d.birthday?esc(d.birthday)+' — هر سال ۲۰۰ سکه + ۱۰۰ XP':'تنظیم نشده')+'</small></div>'
+  +'<button class="btn" onclick="birthdaySheet()">'+(d.birthday?'ویرایش':'تنظیم')+'</button></div>'
+  +'</div>';
+  el.innerHTML=h;
+ }catch(e){el.innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'<br><br><button class="btn primary" onclick="renderSettings()">تلاش دوباره</button></div>'}
+}
+function setRow(key,ic,title,desc,obj,prefix){
+ var on=bool(obj,key);
+ return '<div class="srow"><div class="ic">'+ic+'</div><div class="grow"><b>'+title+'</b><small>'+desc+'</small></div>'
+ +'<button class="sw'+(on?' on':'')+'" onclick="settingSet(\''+(prefix||'notif.')+key+'\','+(!on)+')"></button></div>';
+}
+function bool(obj,key){return !!(obj||{})[key]}
+async function settingSet(key,val){try{haptic('medium');
+ var d=await api('/api/miniapp/settings/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,value:val})});
+ SND.tap();await refresh(true);renderSettings()}catch(e){toast(e.message,'err')}}
+function birthdaySheet(){
+ openSheet('<h3>🎂 تاریخ تولد</h3>'
+ +'<p class="sub" style="margin-bottom:10px">در روز تولدت هر سال ۲۰۰ سکه + ۱۰۰ XP هدیه می‌گیری!</p>'
+ +'<input class="input" id="bdIn" placeholder="YYYY-MM-DD (مثلاً 2000-05-15)" value="'+esc((window._SET||{}).birthday||'')+'">'
+ +'<button class="btn primary wide" style="margin-top:12px" onclick="birthdaySave()">🎂 ذخیره</button>');
+}
+async function birthdaySave(){try{
+ var d=await api('/api/miniapp/birthday',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({birthday:($('bdIn')||{}).value||''})});
+ toast(d.message,'ok');confetti();closeSheet();renderSettings()}catch(e){toast(e.message,'err')}}
+
+/* ================= 🎉 PARTY HUB (پارتی‌هاب) ================= */
+var PTAB=0;
+async function renderParty(){
+ var tabs=[['wyr','🤔','می‌کردی؟'],['nhie','🙈','هرگز نشده'],['likely','🎯','به‌احتمال زیاد'],['riddle','🧩','معمای ایموجی'],['fun','✨','سرگرمی']];
+ var h='<div class="gcard hero"><div class="in"><h1 class="h1">🎉 پارتی‌هاب</h1>'
+ +'<p class="sub">بازی‌های گروهی ربات — محتوای تازه از همان بانک، داخل اپ</p></div></div>';
+ h+='<div class="chips" style="margin-top:14px">'+tabs.map(function(t,i){
+  return '<button class="chip'+(PTAB===i?' on':'')+'" onclick="PTAB='+i+';renderParty()">'+t[1]+' '+t[2]+'</button>'}).join('')+'</div>';
+ h+='<div id="partyBox"><div class="sk tall"></div></div>';
+ $('pg-party').innerHTML=h;
+ partyLoad();
+}
+function partyLoad(){
+ var kinds=['wyr','nhie','likely','riddle','fun'];
+ api('/api/miniapp/party',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kinds[PTAB]})})
+ .then(function(d){partyRender(d)}).catch(function(e){
+  $('partyBox').innerHTML='<div class="empty"><span class="ei">📡</span>'+esc(e.message)+'</div>'});
+}
+function partyRender(d){
+ var box=$('partyBox');if(!box)return;var h='';
+ if(d.kind==='wyr'){
+  var v=d.votes||{},tot=Math.max(1,(v.a||0)+(v.b||0));
+  h='<div class="card"><div style="text-align:center;margin-bottom:6px"><span class="tag cy">🗳 رأی‌گیری سراسری</span></div>'
+  +'<div class="wyr"><div class="wcard a" onclick="wyrVote(\'a\')"><b>'+esc(d.left)+'</b><span class="pct">'+fa(Math.round((v.a||0)*100/tot))+'٪</span><small style="color:var(--muted);font-size:8.5px">'+fa(v.a||0)+' رأی</small></div>'
+  +'<div class="vs">یا</div>'
+  +'<div class="wcard b" onclick="wyrVote(\'b\')"><b>'+esc(d.right)+'</b><span class="pct">'+fa(Math.round((v.b||0)*100/tot))+'٪</span><small style="color:var(--muted);font-size:8.5px">'+fa(v.b||0)+' رأی</small></div></div>'
+  +'<div style="text-align:center"><button class="btn" onclick="partyLoad()">🔄 سوال بعدی</button></div></div>';
+  window._WYRQ=d.question;
+ }else if(d.kind==='nhie'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">🙈 هرگز نشده</span>'
+  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">«من هرگز '+esc(d.prompt)+'»</b></div>'
+  +'<p class="sub" style="margin-top:10px">هر کی این کار را کرده، اعتراف کنه! 😈</p>'
+  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn" style="flex:1" onclick="partyLoad()">🔄 جمله بعدی</button>'
+  +'<button class="btn primary" style="flex:1" onclick="shareText(\'🙈 هرگز نشده! «من هرگز '+esc(d.prompt)+'» — تو کردی؟ 😈\')">✈️ اشتراک در گروه</button></div></div></div>';
+ }else if(d.kind==='likely'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">🎯 به‌احتمال زیاد</span>'
+  +'<div class="partybox"><b style="font-size:14px;line-height:2.2">'+esc(d.question)+'</b></div>'
+  +'<p class="sub" style="margin-top:10px">به نظرت کدام دوستت این کار را می‌کند؟</p>'
+  +'<div style="display:flex;gap:8px;margin-top:12px"><button class="btn" style="flex:1" onclick="partyLoad()">🔄 سوال بعدی</button>'
+  +'<button class="btn primary" style="flex:1" onclick="shareText(\'🎯 به‌احتمال زیاد، کی؟ '+esc(d.question)+' 👀\')">✈️ اشتراک در گروه</button></div></div></div>';
+ }else if(d.kind==='riddle'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">🧩 معمای ایموجی</span>'
+  +'<div class="riddle">'+esc(d.emoji)+'</div>';
+  (d.options||[]).forEach(function(o,i){
+   h+='<button class="btn ropt'+(i===0?' primary':'')+'" onclick="riddleAns(this,\''+esc(d.answer)+'\',\''+esc(o)+'\')">'+esc(o)+'</button>'});
+  h+='<button class="btn wide" style="margin-top:10px" onclick="partyLoad()">🔄 معمای بعدی</button></div>';
+  window._RIDDLE={answer:d.answer};
+ }else if(d.kind==='tip'){
+  h='<div class="card"><div style="text-align:center"><span class="tag">💡 نکته‌ی روز</span>'
+  +'<div class="partybox"><b style="font-size:12px;line-height:2.2">'+esc(d.text||'')+'</b></div>'
+  +'<button class="btn wide" style="margin-top:12px" onclick="partyLoad()">🔄 نکته‌ی بعدی</button></div></div>';
+ }
+ box.innerHTML=h;
+}
+async function wyrVote(ch){try{haptic('medium');
+ var d=await api('/api/miniapp/party/wyr',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({question:window._WYRQ||'',choice:ch})});
+ SND.ok();toast(d.message,'ok');
+ var box=$('partyBox');if(box){var cards=box.querySelectorAll('.wcard');
+  if(cards[0]&&cards[1]){cards[0].querySelector('.pct').textContent=fa(d.pa)+'٪';cards[1].querySelector('.pct').textContent=fa(d.pb)+'٪';
+   cards[ch==='a'?0:1].classList.add('pick')}}
+}catch(e){toast(e.message,'err')}}
+function riddleAns(btn,answer,opt){
+ var ok=opt===answer;
+ if(ok){btn.style.borderColor='var(--green)';btn.style.background='#31e98118';SND.win();confetti();toast('درست! 🎉'+(window._RIDDLE&&window._RIDDLE.answer?' جواب: '+esc(answer):''),'ok')}
+ else{btn.style.borderColor='var(--red)';btn.style.opacity=.5;SND.lose();toast('نه! جواب درست: '+esc(answer),'err')}
+}
+function personaSheet(){
+ openSheet('<h3>🎭 کارت شخصیت</h3><div id="pBox"><div class="sk tall"></div></div>');
+ api('/api/miniapp/persona',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})})
+ .then(function(d){
+  var p=d.persona||{};
+  var h='<div class="persona"><div class="ph"><div class="medal" style="font-size:22px">🎭</div>'
+  +'<div><b>'+esc(d.you||'تو')+'</b><small style="display:block;color:var(--muted);font-size:9px">در این دنیا در واقع یک '+esc(p.name)+' است!</small></div></div>'
+  +'<div class="pv"><span>🧬 شخصیت</span><b>'+esc(p.trait||'')+'</b></div>'
+  +'<div class="pv"><span>⚡ قدرت ویژه</span><b>'+esc(p.power||'')+'</b></div>'
+  +'<div class="pv"><span>💔 نقطه‌ضعف</span><b>'+esc(p.weak||'')+'</b></div>'
+  +'<div class="pv"><span>❤️ جان</span><b>'+fa(p.hp||0)+' / ⚔️ قدرت '+fa(p.pwr||0)+'</b></div></div>'
+  +'<button class="btn primary wide" style="margin-top:12px" onclick="personaSheet()">🎲 شخصیت جدید (+۲ XP)</button>';
+  $('pBox').innerHTML=h;SND.whoosh();
+ }).catch(function(e){$('pBox').innerHTML='<div class="empty">'+esc(e.message)+'</div>'});
+}
+
+/* ================= 🎁 GIFT / ❤️ HEART / 🔥 STREAK / 🏅 SHOWCASE ================= */
+function giftSheet(fid){
+ var om=D.omega||{};
+ var h='<h3>🎁 هدیه‌ی سکه</h3>';
+ if(om.gifts_left===0)h+='<div class="empty" style="padding:16px"><span class="ei">🎁</span>سهمیه‌ی امروزت پر شده — فردا دوباره!</div>';
+ else{
+  h+='<p class="sub" style="margin-bottom:10px">روزانه یک بار — بین ۱ تا ۵۰ سکه به دوستت هدیه بده.</p>';
+  if(fid)h+='<input type="hidden" id="gfT" value="'+fid+'">';
+  else{
+   h+='<div class="chips" style="margin:0 0 10px">'+(D.friends||[]).slice(0,8).map(function(f,i){
+    return '<button class="chip'+(i===0?' on':'')+'" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\');document.getElementById(\'gfT\').value='+f.id+'">'+esc(f.name)+'</button>'}).join('')+'</div>'
+   +'<input class="input" id="gfT2" type="number" placeholder="یا آیدی عددی...">';
+  }
+  h+='<div class="chips" style="margin:10px 0">'+[5,10,20,50].map(function(v,i){
+   return '<button class="chip'+(i===0?' on':'')+'" data-ga="'+v+'" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\')">'+fa(v)+' 🪙</button>'}).join('')+'</div>'
+  +'<button class="btn primary wide glow" onclick="giftSend()">🎁 هدیه بده</button>';
+ }
+ openSheet(h);
+}
+async function giftSend(){
+ var tid=parseInt(($('gfT')||{}).value||($('gfT2')||{}).value||0,10);
+ var amt=5;var sel=document.querySelector('[data-ga].on');if(sel)amt=parseInt(sel.getAttribute('data-ga'),10);
+ if(!tid){toast('گیرنده را انتخاب کن','err');return}
+ try{haptic('medium');
+  var d=await api('/api/miniapp/gift',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:tid,amount:amt})});
+  toast(d.message,'ok');confetti();SND.coin();closeSheet();await refresh(true);
+ }catch(e){toast(e.message,'err')}}
+function heartSheet(fid){
+ var om=D.omega||{};
+ var h='<h3>❤️ قلب محبت</h3>';
+ if(om.hearts_left===0)h+='<div class="empty" style="padding:16px"><span class="ei">💘</span>سهمیه‌ی ۶ قلب امروزت پر شد!</div>';
+ else{
+  h+='<p class="sub" style="margin-bottom:10px">هر قلب +۳ سکه به طرف مقابل — '+fa(om.hearts_left)+' قلب باقی‌مانده‌ی امروز.</p>';
+  if(fid)h+='<input type="hidden" id="htT" value="'+fid+'">';
+  else{
+   h+='<div class="chips" style="margin:0 0 10px">'+(D.friends||[]).slice(0,8).map(function(f,i){
+    return '<button class="chip'+(i===0?' on':'')+'" onclick="this.parentNode.querySelectorAll(\'.chip\').forEach(function(c){c.classList.remove(\'on\')});this.classList.add(\'on\');document.getElementById(\'htT\').value='+f.id+'">'+esc(f.name)+'</button>'}).join('')+'</div>'
+   +'<input class="input" id="htT2" type="number" placeholder="یا آیدی عددی...">';
+  }
+  h+='<button class="btn primary wide glow" onclick="heartSend()">❤️ قلب بفرست</button>';
+ }
+ openSheet(h);
+}
+async function heartSend(){
+ var tid=parseInt(($('htT')||{}).value||($('htT2')||{}).value||0,10);
+ if(!tid){toast('گیرنده را انتخاب کن','err');return}
+ try{haptic('medium');
+  var d=await api('/api/miniapp/heart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:tid})});
+  toast(d.message,'ok');SND.ok();closeSheet();await refresh(true);heartSheet();
+ }catch(e){toast(e.message,'err')}}
+function loginstreakSheet(){
+ openSheet('<div id="lsBox"><div class="sk tall"></div></div>');
+ api('/api/miniapp/loginstreak').then(function(d){
+  var h='<h3>🔥 پاداش استریک لاگین</h3>'
+  +'<div class="card" style="text-align:center;margin-bottom:12px"><div style="font-size:34px">🔥</div>'
+  +'<b style="font-size:16px">'+fa(d.streak)+' روز پیاپی</b>'
+  +'<p class="sub" style="margin-top:6px">هر روز بیا و استریکت را نگه دار — پاداش‌ها صعودی می‌شوند!</p></div>';
+  if(d.reward){
+   h+='<div class="card" style="border-color:#ffc85744;text-align:center;margin-bottom:12px">'
+   +'<small style="color:var(--muted);font-size:9px">پاداش فعلی تو (استریک '+fa(d.reward.streak)+'+)</small>'
+   +'<div style="margin-top:8px;font-size:12px;font-weight:800">🪙 '+fa(d.reward.coins)+' سکه · ⭐ '+fa(d.reward.xp)+' XP'
+   +(d.reward.item?' · 🎒 آیتم: '+esc(d.reward.item):'')+(d.reward.title?' · 🏷 عنوان ویژه':'')+'</div></div>';
+   h+=(d.claimed_today?'<button class="btn wide" disabled>✅ امروز گرفته‌ای — فردا دوباره!</button>'
+   :'<button class="btn primary wide glow" onclick="loginstreakClaim()">🔥 دریافت پاداش امروز</button>');
+  }else h+='<div class="empty" style="padding:14px">هنوز پاداشی آماده نیست — استریکت را ادامه بده!</div>';
+  h+='<div class="shead" style="margin-top:16px"><b>escalating rewards</b><small>جدول پاداش‌ها</small></div><div class="list">';
+  (d.table||[]).forEach(function(r){
+   var cur=d.streak>=r.streak;
+   h+='<div class="row'+(cur?'':'" style="opacity:.55')+'"><div class="medal">'+(cur?'✅':'🔒')+'</div>'
+   +'<div class="grow"><b>'+fa(r.streak)+' روز پیاپی</b>'
+   +'<small>🪙 '+fa(r.coins)+' · ⭐ '+fa(r.xp)+(r.item?' · 🎒 '+esc(r.item):'')+(r.title?' · 🏆 '+esc(r.title):'')+'</small></div></div>';
+  });
+  h+='</div>';
+  $('lsBox').innerHTML=h;
+ }).catch(function(e){$('lsBox').innerHTML='<div class="empty">'+esc(e.message)+'</div>'});
+}
+async function loginstreakClaim(){try{haptic('medium');
+ var d=await api('/api/miniapp/loginstreak/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+ toast(d.message,'ok');confetti();SND.win();await refresh(true);loginstreakSheet()}catch(e){toast(e.message,'err')}}
+function showcaseSheet(){
+ var a=(D.achievements||[]).filter(function(x){return x.owned});
+ var sc=(D.omega||{}).showcase||[];
+ var h='<h3>🏅 شوکیس دستاوردها</h3>'
+ +'<p class="sub" style="margin-bottom:12px">۳ دستاورد برجسته‌ات را روی پروفایلت نمایش بده — ربات هم همین‌ها را نشان می‌دهد.</p>';
+ if(!a.length){h+='<div class="empty"><span class="ei">🏅</span>هنوز دستاوردی نداری!</div>'}
+ else{
+  h+='<div class="list">';
+  a.forEach(function(x){
+   var inS=sc.indexOf(x.key)>-1;
+   h+='<div class="row"><div class="medal">'+x.ico+'</div>'
+   +'<div class="grow"><b>'+esc(x.name)+'</b><small>'+esc(x.desc||'')+'</small></div>'
+   +(inS?'<button class="btn red" onclick="showcaseAction(\'remove\',\''+esc(x.key)+'\')">✕ حذف</button>'
+   :'<button class="btn green" '+(sc.length>=3?'disabled':'')+' onclick="showcaseAction(\'add\',\''+esc(x.key)+'\')">⭐ افزودن</button>')
+   +'</div>';
+  });
+  h+='</div>';
+ }
+ openSheet(h);
+}
+async function showcaseAction(action,key){try{haptic('medium');
+ var d=await api('/api/miniapp/showcase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,key:key})});
+ toast(d.message,'ok');await refresh(true);showcaseSheet();renderMe()}catch(e){toast(e.message,'err')}}
+function themeSheet(){
+ var h='<h3>🎨 تم ظاهری</h3><div class="themegrid">'+THEMES.map(function(t){
+  return '<div class="themecard'+(UI.theme===t.id?' on':'')+'" onclick="uiSet(\'theme\',\''+t.id+'\');themeSheet()">'
+  +'<div class="swb" style="background:linear-gradient(135deg,'+t.c[0]+','+t.c[1]+' 55%,'+t.c[2]+')"></div>'
+  +'<small>'+t.name+'</small></div>'}).join('')+'</div>'
+ +'<div class="srow"><div class="ic">🌓</div><div class="grow"><b>روشن / تاریک</b><small>حالت روشن کامل اپ</small></div>'
+ +'<button class="sw'+(UI.mode==='light'?' on':'')+'" onclick="uiSet(\'mode\',UI.mode===\'light\'?\'dark\':\'light\');themeSheet()"></button></div>';
+ openSheet(h);
+}
+
+/* ================= 👋 ONBOARDING (اولین اجرا) ================= */
+var OB_STEPS=[
+ ['🎮','همه‌چیز همین‌جاست','تمام بازی‌ها، پاداش‌ها، آمار و حتی پنل مدیریت ربات داخل همین مینی‌اپ اجرا می‌شود — دیگر لازم نیست به چت ربات برگردی.'],
+ ['🔎','پالت فرمان','دکمه‌ی 🔎 بالای صفحه (یا Ctrl+K) را بزن: هر صفحه، بازی یا اقدامی را با چند حرف پیدا و مستقیم اجرا کن.'],
+ ['🔥','پاداش‌های هر روز','پاداش روزانه، پاداش استریک لاگین، مأموریت‌ها و Milestone ها را هر روز از صفحه‌ی مأموریت بردار — سکه و XP واقعی ربات!'],
+ ['🎨','تم ظاهری','۵ تم رنگی، حالت روشن/تاریک، اندازه‌ی متن و افکت صوتی — همه از تنظیمات قابل تغییر است.'],
+ ['🚀','آماده‌ای قهرمان؟','Play Hub منتظرته: لابی بساز، دوئل بده، در آرنا ELO بجنگ و افسانه شو!']];
+var OBI=0;
+function obStart(){OBI=0;obShow();$('ob').classList.add('on');SND.whoosh()}
+function obShow(){
+ var s=OB_STEPS[OBI];
+ $('obIc').textContent=s[0];$('obT').textContent=s[1];$('obP').textContent=s[2];
+ $('obNext').textContent=OBI===OB_STEPS.length-1?'شروع بازی ⚡':'بعدی ›';
+ $('obDots').innerHTML=OB_STEPS.map(function(_,i){return '<i'+(i===OBI?' class="on"':'')+'></i>'}).join('');
+}
+function obNext(){haptic('medium');SND.tap();
+ if(OBI<OB_STEPS.length-1){OBI++;obShow()}else obSkip()}
+function obSkip(){$('ob').classList.remove('on');
+ try{localStorage.setItem('apex_ob','1')}catch(e){}}
+function cmdkInit(){
+ try{
+  var inp=$('cmdkIn');
+  inp.addEventListener('input',function(){cmdkRender(inp.value)});
+  inp.addEventListener('keydown',function(e){
+   if(e.key==='Enter'){var s=$('cmdkList').querySelector('.sel');if(s)cmdkRun(CMDS[0].fn)}
+   else if(e.key==='ArrowDown'){e.preventDefault();cmdkNav(1)}
+   else if(e.key==='ArrowUp'){e.preventDefault();cmdkNav(-1)}
+   else if(e.key==='Escape'){cmdkClose()}
+  });
+  $('cmdk').addEventListener('click',function(e){if(e.target===this)cmdkClose()});
+  document.addEventListener('keydown',function(e){
+   if((e.ctrlKey||e.metaKey)&&(e.key==='k'||e.key==='K')){e.preventDefault();
+    if($('cmdk').classList.contains('on'))cmdkClose();else cmdkOpen()}
+   if(e.key==='/'&&!/input|textarea/i.test((document.activeElement||{}).tagName||'')){e.preventDefault();cmdkOpen()}
+  });
+ }catch(e){}
+}
+
 /* ================= REFRESH + BOOT ================= */
 async function refresh(silent){
  try{
@@ -33218,7 +35248,7 @@ function handleStartParam(){
 }
 (async function boot(){
  try{if(tg&&tg.ready)tg.ready();if(tg&&tg.expand)tg.expand()}catch(e){}
- buildShell();
+ uiLoad();uiApply();buildShell();cmdkInit();
  try{
   var cached=sessionStorage.getItem('apexmini');
   if(cached){D=JSON.parse(cached);READY=true;renderAll();$('splash').classList.add('off')}
@@ -33226,6 +35256,7 @@ function handleStartParam(){
  if(!document.querySelector('.page.on'))show('home');
  await refresh(true);
  handleStartParam();
+ try{if(!localStorage.getItem('apex_ob'))setTimeout(obStart,1100)}catch(e){}
 })();
 </script>
 </body>
@@ -33609,6 +35640,133 @@ def start_health_server() -> None:
                     status = code2
                     return self._json(d, code2)
 
+                # ---------- مسیرهای اومگا (۴.۰) — GET ----------
+                if path == "/api/miniapp/history":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_history_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/milestones":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_milestones_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/rivals":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_rivals_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/trade":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_trade_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/tournament":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_tournament_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/hof":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_hof_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/wall":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_wall_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/settings":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_settings_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/season":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_season_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/live":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_live_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/recap":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_recap_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/loginstreak":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_loginstreak_view(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/admin/punishments":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_admin_punishments(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/admin/csv":
+                    uid = self._auth()
+                    if not uid:
+                        status = 401
+                        return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
+                    d, code = _mini_admin_csv(uid)
+                    status = code
+                    return self._json(d, code)
+
                 if path == "/api/miniapp/stats":
                     uid = self._auth()
                     if not uid:
@@ -33793,6 +35951,121 @@ def start_health_server() -> None:
                         return self._json({"ok": True, "message": f"📝 بازخوردت رسید! شماره پیگیری: #{fmt_num(entry.get('id', 0))}"})
                     status = 500
                     return self._json({"ok": False, "error": "خطا در ثبت بازخورد — کمی بعد دوباره."}, 500)
+
+                # ---------- مسیرهای اومگا (۴.۰) — POST ----------
+                if path == "/api/miniapp/gift":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_gift(uid, data.get("target", 0), data.get("amount", 5))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/heart":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_heart(uid, data.get("target", 0))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/trade/create":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_trade_create(uid, data.get("to", 0),
+                                                 data.get("offer", {}), data.get("request", {}))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/trade/action":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_trade_action(uid, data.get("id", 0), str(data.get("action", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/tournament/create":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_tournament_create(uid, data.get("title", ""),
+                                                      data.get("prize", 500), data.get("max_players", 16))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/tournament/join":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_tournament_join(uid, data.get("id", 0))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/milestones/claim":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_milestones_claim(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/rivals/action":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_rival_action(uid, str(data.get("action", "")), data.get("target", 0))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/settings/set":
+                    d, code = _mini_settings_set(uid, str(data.get("key", "")), data.get("value"))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/birthday":
+                    d, code = _mini_birthday_set(uid, str(data.get("birthday", "")))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/persona":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_persona(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/party":
+                    d, code = _mini_party(str(data.get("kind", "")), uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/party/wyr":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_wyr_vote(uid, data.get("question", ""), data.get("choice", ""))
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/loginstreak/claim":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_loginstreak_claim(uid)
+                    status = code
+                    return self._json(d, code)
+
+                if path == "/api/miniapp/showcase":
+                    if self._banned_guard(uid):
+                        status = 403
+                        return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
+                    d, code = _mini_showcase_action(uid, str(data.get("action", "")),
+                                                    data.get("key", ""))
+                    status = code
+                    return self._json(d, code)
 
                 if path == "/api/miniapp/admin/action":
                     if int(uid) != int(ADMIN_ID):
