@@ -21993,6 +21993,43 @@ def mini_game_record_play(uid: int, game: str, won: bool) -> None:
         pass
 
 
+def _mg_record_lite(uid, game, won):
+    """ثبت آمار مینی‌بازی بدون پاداش خودکار — پاداش دقیق هر بازی جداگانه پرداخت می‌شود (۶.۰)."""
+    try:
+        user = get_user(int(uid))
+        user["mini_games_played"] = int(user.get("mini_games_played", 0)) + 1
+        if won:
+            user["mini_games_won"] = int(user.get("mini_games_won", 0)) + 1
+        stats = user.get("mini_games_stats", {})
+        if not isinstance(stats, dict):
+            stats = {}
+            user["mini_games_stats"] = stats
+        stats[game] = int(stats.get(game, 0)) + 1
+        w2 = user.get("mg_stats2")
+        if not isinstance(w2, dict):
+            w2 = {}
+            user["mg_stats2"] = w2
+        g2 = w2.get(str(game))
+        if not isinstance(g2, dict):
+            g2 = {"p": 0, "w": 0}
+            w2[str(game)] = g2
+        g2["p"] = int(g2.get("p", 0)) + 1
+        if won:
+            g2["w"] = int(g2.get("w", 0)) + 1
+    except Exception:
+        pass
+
+
+def _mg_hist(uid, mode, result, xp, coins, players=1):
+    """ثبت بازی مینی‌اپ در تاریخچه‌ی کاربر — تا اینجا بازی‌های مینی‌اپ در تاریخچه نمی‌آمدند."""
+    try:
+        game_history_add(int(uid), {"mode": str(mode), "result": str(result),
+                                    "xp": int(xp), "coins": int(coins),
+                                    "players": int(players), "chat_id": 0})
+    except Exception:
+        pass
+
+
 async def mg_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """روتر کالبک‌های Mini-Games — تایتان (۸.۰): ۹ بازی کامل."""
     query = update.callback_query
@@ -28721,6 +28758,59 @@ def _mg_view(uid):
             ln_free = str(u.get("ln_free_day", "")) != today_key()
         except Exception:
             ln_free = False
+        w2 = u.get("mg_stats2", {}) if isinstance(u.get("mg_stats2"), dict) else {}
+
+        def _pw(key):
+            g = w2.get(key) or {}
+            return {"played": int(g.get("p", 0)), "won": int(g.get("w", 0))}
+
+        mg_meta = [
+            ("trivia", "🧠", "Trivia زنجیره‌ای", "تا وقتی درست جواب می‌دهی ادامه دارد", "زنجیره", "streak"),
+            ("word", "📝", "بازی کلمات", "حروف به‌هم‌ریخته را مرتب کن", "بهترین کمبو", "combo"),
+            ("number", "🔢", "حدس عدد", "۳ سطح — ۱ تا ۱۰۰۰", "فرصت باقی‌مانده", "left"),
+            ("memory", "🃏", "حافظه", "دنباله را به خاطر بسپار — لِوِل‌بندی", "لِوِل", "level"),
+            ("reaction", "⚡", "سرعت واکنش", "میلیمترثانیه‌ات را بسنج", "رکورد ms", "ms"),
+            ("ttt", "✖️", "دوز با AI", "۳ سطح — حتی غیرقابل‌برد!", "برد سشن", "wins"),
+            ("mine", "⛏", "مین‌یاب", "شرطی — ۳ سطح ریسک", "ضریب ×۱۰۰", "mult"),
+            ("quiz", "🧮", "کوییز ریاضی", "زنجیره‌ی ۵ سوالی روزانه", "—", "none"),
+            ("luck", "🍀", "گردونه شانس", "هر ۲۰ ساعت — تا ۵۰+۱۰ سکه", "بهترین", "coins"),
+            ("ln", "🎰", "Lucky Number", "کازینو — جکپات ×۲۵ + دبل", "جکپات", "count"),
+            ("t2048", "🧩", "۲۰۴۸", "ادغام کاشی‌ها + Undo — سوایپ کن!", "امتیاز", "score"),
+            ("mole", "🔨", "موش‌کوبی", "۳۰ ثانیه + موش طلایی و بمبی", "ضربه", "hits"),
+            ("rps", "✊", "سنگ‌کاغذقیچی", "هوش مارکوف + آمار تمام‌عمر", "برد مسابقه", "count"),
+        ]
+        games = []
+        records = []
+        try:
+            luck_best_val = int(v21_store()["luck_best"].get(user_key(uid), 0) or 0)
+        except Exception:
+            luck_best_val = 0
+        for key, icon, name, desc, rlabel, rkind in mg_meta:
+            st2 = _pw(key)
+            games.append({"key": key, "icon": icon, "name": name, "desc": desc, **st2})
+            val = int(best.get(key, 0) or 0)
+            if rkind == "ms":
+                val = int(best.get("reaction_ms", 0) or 0)
+            if key == "luck":
+                val = luck_best_val
+            elif key == "ln":
+                _lst = u.get("ln_stats") if isinstance(u.get("ln_stats"), dict) else {}
+                val = int(_lst.get("jackpots", 0) or 0)
+            elif key == "rps":
+                _rst = u.get("rps_stats") if isinstance(u.get("rps_stats"), dict) else {}
+                val = int(_rst.get("mw", 0) or 0)
+            if rkind == "ms":
+                disp = f"{val}ms" if val else "—"
+            elif rkind == "mult":
+                disp = f"×{val / 100:.1f}" if val else "—"
+            elif val:
+                disp = str(val)
+            else:
+                disp = "—"
+            if rkind != "none":
+                records.append({"key": key, "icon": icon, "name": name,
+                                "label": rlabel, "value": disp,
+                                "has": bool(val)})
         return {
             "ok": True,
             "played": int(u.get("mini_games_played", 0) or 0),
@@ -28728,40 +28818,53 @@ def _mg_view(uid):
             "best": {k: int(v) for k, v in best.items()},
             "stats": {k: int(v) for k, v in stats.items()},
             "cooldowns": {"luck": luck_cd, "quiz_done": quiz_done, "ln_free": ln_free},
-            "games": [
-                {"key": "trivia", "icon": "🧠", "name": "Trivia زنجیره‌ای", "desc": "تا وقتی درست جواب می‌دهی ادامه دارد"},
-                {"key": "word", "icon": "📝", "name": "بازی کلمات", "desc": "حروف به‌هم‌ریخته را مرتب کن"},
-                {"key": "number", "icon": "🔢", "name": "حدس عدد", "desc": "۷ فرصت، گزینه‌های تطبیقی"},
-                {"key": "memory", "icon": "🃏", "name": "حافظه", "desc": "دنباله را به خاطر بسپار"},
-                {"key": "reaction", "icon": "⚡", "name": "سرعت واکنش", "desc": "میلیمترثانیه‌ات را بسنج"},
-                {"key": "ttt", "icon": "✖️", "name": "دوز با AI", "desc": "برد: +۲۰ سکه"},
-                {"key": "mine", "icon": "⛏", "name": "مین‌یاب", "desc": "شرطی — ضریب ریسک"},
-                {"key": "quiz", "icon": "🧮", "name": "کوییز ریاضی", "desc": "۶۰ ثانیه — +۸ XP"},
-                {"key": "luck", "icon": "🍀", "name": "گردونه شانس", "desc": "هر ۲۰ ساعت — تا ۵۰ سکه"},
-                {"key": "ln", "icon": "🎰", "name": "Lucky Number", "desc": "کازینو — جکپات ×۲۵"},
-                {"key": "t2048", "icon": "🧩", "name": "۲۰۴۸", "desc": "ادغام کاشی‌ها تا ۲۰۴۸ — سوایپ کن!"},
-                {"key": "mole", "icon": "🔨", "name": "موش‌کوبی", "desc": "۳۰ ثانیه شکار — واکنش خالص"},
-                {"key": "rps", "icon": "✊", "name": "سنگ‌کاغذقیچی", "desc": "بهترین از سه — با هوش ربات"},
-            ],
+            "games": games,
+            "records": records,
         }
     except Exception as exc:
         _mlog("error", f"_mg_view failed: {exc!r}")
         return {"ok": False, "error": "خطا در بارگذاری مرکز بازی‌ها."}
 
 
-# ---------------- 🧠 Trivia زنجیره‌ای ----------------
+# ---------------- 🧠 Trivia زنجیره‌ای (۶.۰ — تایمر + سطح + سرعت) ----------------
+def _mini_trivia_pick(used):
+    """انتخاب سوال بدون تکرارِ همین زنجیره — بانک دست‌نخورده."""
+    try:
+        pool = [q for q in TRIVIA_QUESTIONS if q["q"] not in used]
+        if not pool:
+            pool = TRIVIA_QUESTIONS
+        q = random.choice(pool)
+        options = list(q["options"])
+        random.shuffle(options)
+        return {"question": q["q"], "answer": q["a"], "options": options}
+    except Exception:
+        return mini_game_trivia_get()
+
+
+def _mini_trivia_limit(streak):
+    return 25 - min(10, max(0, streak))
+
+
+def _mini_trivia_diff(streak):
+    return "آسان" if streak < 3 else ("متوسط" if streak < 6 else "سخت")
+
+
 def _mini_trivia_get(uid):
     try:
-        trivia = mini_game_trivia_get()
-        if not trivia:
-            return {"ok": False, "error": "سوالی موجود نیست."}, 500
         st = DATA.setdefault("_mg_trivia", {}).get(str(uid)) or {}
         if not st.get("q"):
-            st = {"streak": 0, "q": trivia}
+            st = {"streak": 0, "q": _mini_trivia_pick(set()), "used": [], "ts": time.time()}
             DATA.setdefault("_mg_trivia", {})[str(uid)] = st
-        q = st["q"]
-        return {"ok": True, "question": q["question"], "options": q["options"],
-                "streak": int(st.get("streak", 0))}, 200
+        else:
+            # (🔒 ضدتقلب) رفرش صفحه تایمرِ سوال فعلی را ریست نمی‌کند
+            st["ts"] = st.get("ts") or time.time()
+        streak = int(st.get("streak", 0))
+        u = get_user(int(uid))
+        inv = u.get("coins", 0) or 0
+        return {"ok": True, "question": st["q"]["question"], "options": st["q"]["options"],
+                "streak": streak, "time_limit": _mini_trivia_limit(streak),
+                "diff": _mini_trivia_diff(streak),
+                "best": _mg_best(int(uid), "trivia"), "coins": int(inv)}, 200
     except Exception as exc:
         _mlog("error", f"trivia_get failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
@@ -28773,48 +28876,143 @@ def _mini_trivia_answer(uid, ans):
         if not st:
             return _mini_trivia_get(uid)
         trivia = st["q"]
-        if str(ans) == str(trivia["answer"]):
-            st["streak"] = int(st.get("streak", 0)) + 1
+        streak0 = int(st.get("streak", 0))
+        elapsed = time.time() - float(st.get("ts", 0) or 0)
+        limit = _mini_trivia_limit(streak0)
+        if str(ans) == str(trivia["answer"]) and elapsed <= limit + 2:
+            st["streak"] = streak0 + 1
             streak = int(st["streak"])
-            add_xp(int(uid), 4 + min(streak, 10))
+            speed = 3 if elapsed <= 8 else 0
+            add_xp(int(uid), 4 + min(streak, 10) + speed)
             add_coins(int(uid), 3 + min(streak, 8))
             bonus = 0
             if streak % 5 == 0:
                 add_coins(int(uid), 25)
                 bonus = 25
-            st["q"] = mini_game_trivia_get()
-            nxt = st["q"]
+            used = st.get("used")
+            if not isinstance(used, list):
+                used = []
+                st["used"] = used
+            if trivia["question"] not in used:
+                used.append(trivia["question"])
+            if len(used) > 40:
+                del used[:len(used) - 40]
+            st["q"] = _mini_trivia_pick(set(used))
+            st["ts"] = time.time()
+            st["fifty_used"] = False
+            st["fifty_drop"] = []
             save_data()
             return {"ok": True, "correct": True, "streak": streak, "bonus": bonus,
-                    "question": nxt["question"], "options": nxt["options"],
-                    "message": f"درست! زنجیره: {streak}"}, 200
-        streak = int(st.get("streak", 0))
-        mini_game_record_play(int(uid), "trivia", streak >= 3)
-        is_rec = _mg_set_best(int(uid), "trivia", streak)
+                    "speed": speed, "time_limit": _mini_trivia_limit(streak),
+                    "diff": _mini_trivia_diff(streak),
+                    "question": st["q"]["question"], "options": st["q"]["options"],
+                    "message": (f"درست! زنجیره: {streak}" + (" ⚡سرعت +۳" if speed else ""))}, 200
+        # نادرست یا دیر جواب دادی — پایان زنجیره
+        timeout = str(ans) == str(trivia["answer"])
+        rec = _mg_set_best(int(uid), "trivia", streak0)
+        _mg_record_lite(int(uid), "trivia", streak0 >= 3)
         DATA.get("_mg_trivia", {}).pop(str(uid), None)
-        add_xp(int(uid), 2 + streak * 2)
+        add_xp(int(uid), 2 + streak0 * 2)
+        _mg_hist(int(uid), "تریویا", "برد" if streak0 >= 3 else "پایان", 2 + streak0 * 2, 0)
         save_data(force=True)
-        return {"ok": True, "correct": False, "streak": streak, "record": is_rec,
+        return {"ok": True, "correct": False, "streak": streak0, "record": rec,
+                "timeout": bool(timeout),
                 "answer": str(trivia["answer"]),
-                "message": f"نادرست! جواب: {trivia['answer']} — زنجیره‌ات {streak} بود"}, 200
+                "message": (("دیر جواب دادی!" if timeout else "نادرست!") +
+                            f" جواب: {trivia['answer']} — زنجیره‌ات {streak0} بود")}, 200
     except Exception as exc:
         _mlog("error", f"trivia_answer failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-# ---------------- 📝 بازی کلمات ----------------
-def _mini_word_get(uid):
+def _mini_trivia_power(uid, kind):
+    """پاورآپ تریویا — ۵۰/۵۰ (۵ سکه) یا ریرول سوال (۳ سکه)."""
     try:
-        wd = mini_game_wordgame_get()
-        if not wd:
-            return {"ok": False, "error": "خطا در ساخت بازی."}, 500
-        original = str(wd["original"])
-        others = [w for w in WORD_GAME_WORDS if w != original]
-        opts = [original] + random.sample(others, min(3, len(others)))
-        random.shuffle(opts)
-        st = {"answer": original, "options": opts, "scrambled": wd["scrambled"], "hint": wd["hint"]}
-        DATA.setdefault("_mg_word", {})[str(uid)] = st
-        return {"ok": True, "scrambled": st["scrambled"], "hint": st["hint"], "options": opts}, 200
+        st = DATA.get("_mg_trivia", {}).get(str(uid))
+        if not st or not st.get("q"):
+            return {"ok": False, "error": "بازی فعالی نداری."}, 400
+        if kind == "fifty":
+            if st.get("fifty_used"):
+                return {"ok": False, "error": "برای این سوال قبلاً ۵۰/۵۰ گرفتی!"}, 400
+            if not spend_coins(int(uid), 5):
+                return {"ok": False, "error": "۵ سکه لازم داری!"}, 400
+            q = st["q"]
+            wrong = [o for o in q["options"] if str(o) != str(q["answer"])]
+            random.shuffle(wrong)
+            drop = wrong[:2] if len(wrong) >= 2 else wrong[:1]
+            st["fifty_used"] = True
+            st["fifty_drop"] = [str(x) for x in drop]
+            save_data(force=True)
+            return {"ok": True, "drop": st["fifty_drop"],
+                    "message": "دو گزینه‌ی غلط حذف شد!"}, 200
+        if kind == "reroll":
+            if not spend_coins(int(uid), 3):
+                return {"ok": False, "error": "۳ سکه لازم داری!"}, 400
+            used = set(st.get("used") or [])
+            used.add(st["q"]["question"])
+            st["q"] = _mini_trivia_pick(used)
+            st["fifty_used"] = False
+            st["fifty_drop"] = []
+            st["ts"] = time.time()
+            save_data(force=True)
+            streak = int(st.get("streak", 0))
+            return {"ok": True, "question": st["q"]["question"], "options": st["q"]["options"],
+                    "time_limit": _mini_trivia_limit(streak),
+                    "diff": _mini_trivia_diff(streak),
+                    "message": "سوال عوض شد!"}, 200
+        return {"ok": False, "error": "نوع نامعتبر."}, 400
+    except Exception as exc:
+        _mlog("error", f"trivia_power failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+# ---------------- 📝 بازی کلمات (۶.۰ — سختی + تایمر + کمبو) ----------------
+WORD_DIFFS = {
+    "easy":   {"name": "آسان",  "time": 30, "hint": "full",  "xp": 9,  "coins": 4},
+    "normal": {"name": "متوسط", "time": 20, "hint": "first", "xp": 15, "coins": 8},
+    "hard":   {"name": "سخت",  "time": 12, "hint": "len",   "xp": 22, "coins": 13},
+}
+
+
+def _mini_word_round(st):
+    """ساخت راند جدید کلمه بر اساس سختی انتخابی — بانک دست‌نخورده."""
+    wd = mini_game_wordgame_get()
+    if not wd:
+        return None
+    original = str(wd["original"])
+    others = [w for w in WORD_GAME_WORDS if w != original]
+    opts = [original] + random.sample(others, min(3, len(others)))
+    random.shuffle(opts)
+    cfg = WORD_DIFFS.get(str(st.get("diff", "normal")), WORD_DIFFS["normal"])
+    hint = original[0] + "..." + original[-1] if len(original) > 2 else original
+    if cfg["hint"] == "first":
+        hint = original[0] + " " + "•" * (len(original) - 1)
+    elif cfg["hint"] == "len":
+        hint = f"{len(original)} حرفی — اولین حرف: {original[0]}"
+    st["answer"] = original
+    st["options"] = opts
+    st["scrambled"] = wd["scrambled"]
+    st["hint"] = hint
+    st["ts"] = time.time()
+    return st
+
+
+def _mini_word_get(uid, diff="normal"):
+    try:
+        diff = str(diff or "normal")
+        if diff not in WORD_DIFFS:
+            diff = "normal"
+        st = DATA.get("_mg_word", {}).get(str(uid))
+        if not isinstance(st, dict):
+            st = {"diff": diff, "combo": 0, "rounds": 0}
+            DATA.setdefault("_mg_word", {})[str(uid)] = st
+        if not st.get("answer"):
+            _mini_word_round(st)
+        cfg = WORD_DIFFS.get(str(st.get("diff", "normal")), WORD_DIFFS["normal"])
+        return {"ok": True, "scrambled": st.get("scrambled", ""), "hint": st.get("hint", ""),
+                "options": st.get("options", []), "diff": cfg["name"], "diff_key": str(st.get("diff", "normal")),
+                "time": cfg["time"], "combo": int(st.get("combo", 0)),
+                "best": _mg_best(int(uid), "wordgame")}, 200
     except Exception as exc:
         _mlog("error", f"word_get failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
@@ -28822,39 +29020,93 @@ def _mini_word_get(uid):
 
 def _mini_word_answer(uid, ans):
     try:
-        st = DATA.get("_mg_word", {}).pop(str(uid), None)
-        if not st:
+        st = DATA.get("_mg_word", {}).get(str(uid))
+        if not isinstance(st, dict) or not st.get("answer"):
             return _mini_word_get(uid)
-        correct = str(ans) == str(st["answer"])
+        cfg = WORD_DIFFS.get(str(st.get("diff", "normal")), WORD_DIFFS["normal"])
+        elapsed = time.time() - float(st.get("ts", 0) or 0)
+        correct = str(ans) == str(st["answer"]) and elapsed <= cfg["time"] + 2
+        answer = str(st["answer"])
         if correct:
-            mini_game_record_play(int(uid), "wordgame", True)
-            _mg_set_best(int(uid), "wordgame", 1)
-            add_xp(int(uid), 15)
-            add_coins(int(uid), 8)
-        else:
-            mini_game_record_play(int(uid), "wordgame", False)
-            add_xp(int(uid), 5)
+            st["combo"] = int(st.get("combo", 0)) + 1
+            st["rounds"] = int(st.get("rounds", 0)) + 1
+            combo = int(st["combo"])
+            xp = cfg["xp"] + min(combo, 6)
+            coins = cfg["coins"] + min(combo // 2, 4)
+            add_xp(int(uid), xp)
+            add_coins(int(uid), coins)
+            _mg_record_lite(int(uid), "wordgame", True)
+            _mg_set_best(int(uid), "wordgame", combo)
+            if combo % 5 == 0:
+                add_coins(int(uid), 10)
+                coins += 10
+            _mini_word_round(st)
+            save_data(force=True)
+            nxt, code = _mini_word_get(uid)
+            nxt["correct"] = True
+            nxt["answer"] = answer
+            nxt["reward"] = {"xp": xp, "coins": coins}
+            nxt["message"] = f"درست! کمبو {combo} — +{xp} XP +{coins} سکه"
+            return nxt, code
+        # نادرست یا وقت تمام
+        timeout = str(ans) == answer
+        combo = int(st.get("combo", 0))
+        st["combo"] = 0
+        _mg_record_lite(int(uid), "wordgame", False)
+        add_xp(int(uid), 3)
+        if combo >= 3:
+            _mg_hist(int(uid), "کلمات", "پایان", 3, 0)
+        _mini_word_round(st)
         save_data(force=True)
         nxt, code = _mini_word_get(uid)
-        nxt["correct"] = correct
-        nxt["answer"] = str(st["answer"])
-        nxt["message"] = ("درست! +" if correct else "نادرست! کلمه: ") + (str(st["answer"]) if not correct else "۱۵ XP +۸ سکه")
+        nxt["correct"] = False
+        nxt["answer"] = answer
+        nxt["timeout"] = bool(timeout)
+        nxt["message"] = ("وقت تمام شد!" if timeout else "نادرست!") + f" کلمه: {answer} — کمبو ریست شد"
         return nxt, code
     except Exception as exc:
         _mlog("error", f"word_answer failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-# ---------------- 🔢 حدس عدد ----------------
-def _mini_number_get(uid):
+# ---------------- 🔢 حدس عدد (۶.۰ — سه سطح سختی) ----------------
+NUMBER_DIFFS = {
+    "easy":   {"name": "آسان",  "max": 100,  "tries": 7,  "mult": 1.0},
+    "normal": {"name": "متوسط", "max": 500,  "tries": 9,  "mult": 1.6},
+    "hard":   {"name": "سخت",  "max": 1000, "tries": 10, "mult": 2.2},
+}
+
+
+def _mini_number_get(uid, diff="easy"):
     try:
-        game = mini_game_numberguess_new()
-        game["last_guess"] = 50
-        game["span"] = 40
+        diff = str(diff or "easy")
+        if diff not in NUMBER_DIFFS:
+            diff = "easy"
+        # (🔒 ضدتقلب) اگر بازی نیمه‌کاره داری، با GET جدید عوض نمی‌شود
+        game = DATA.get("_mg_number", {}).get(str(uid))
+        if isinstance(game, dict) and not game.get("finished") and int(game.get("attempts", 0)) > 0:
+            cfg = NUMBER_DIFFS.get(str(game.get("diff", "easy")), NUMBER_DIFFS["easy"])
+            return {"ok": True, "attempts_left": int(game["max_attempts"]) - int(game["attempts"]),
+                    "max_attempts": int(game["max_attempts"]),
+                    "options": _mg_number_options(int(game.get("last_guess", 50)), int(game.get("span", 40))),
+                    "diff": cfg["name"], "diff_key": str(game.get("diff", "easy")),
+                    "max_num": int(cfg["max"]),
+                    "low": int(game.get("low", 1)), "high": int(game.get("high", cfg["max"])),
+                    "best": _mg_best(int(uid), "numberguess"),
+                    "message": f"بازی نیمه‌کاره‌ات ادامه پیدا می‌کند — عددی بین ۱ تا {cfg['max']}"}, 200
+        cfg = NUMBER_DIFFS[diff]
+        game = {"target": random.randint(1, cfg["max"]), "attempts": 0,
+                "max_attempts": cfg["tries"], "finished": False, "won": False,
+                "diff": diff, "last_guess": max(10, cfg["max"] // 2), "span": max(5, cfg["max"] // 5),
+                "low": 1, "high": cfg["max"]}
         DATA.setdefault("_mg_number", {})[str(uid)] = game
-        opts = _mg_number_options(50, 40)
+        opts = _mg_number_options(game["last_guess"], game["span"])
         return {"ok": True, "attempts_left": int(game["max_attempts"]),
-                "options": opts, "message": "عددی بین ۱ تا ۱۰۰ انتخاب شده!"}, 200
+                "max_attempts": int(game["max_attempts"]),
+                "options": opts, "diff": cfg["name"], "diff_key": diff,
+                "max_num": int(cfg["max"]), "low": 1, "high": int(cfg["max"]),
+                "best": _mg_best(int(uid), "numberguess"),
+                "message": f"عددی بین ۱ تا {cfg['max']} انتخاب شده — {cfg['tries']} فرصت داری!"}, 200
     except Exception as exc:
         _mlog("error", f"number_get failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
@@ -28865,6 +29117,7 @@ def _mini_number_guess(uid, guess):
         game = DATA.get("_mg_number", {}).get(str(uid))
         if not game or game.get("finished"):
             return _mini_number_get(uid)
+        cfg = NUMBER_DIFFS.get(str(game.get("diff", "easy")), NUMBER_DIFFS["easy"])
         try:
             guess = int(guess)
         except Exception:
@@ -28872,58 +29125,97 @@ def _mini_number_guess(uid, guess):
         game["attempts"] = int(game.get("attempts", 0)) + 1
         target = int(game["target"])
         remaining = int(game["max_attempts"]) - int(game["attempts"])
+        # به‌روزرسانی بازه‌ی معلوم برای گیج‌ عدد
+        game["low"] = max(int(game.get("low", 1)), guess + 1 if guess < target else 1)
+        game["high"] = min(int(game.get("high", cfg["max"])), guess - 1 if guess > target else cfg["max"])
         if guess == target:
             game["finished"] = True
             game["won"] = True
-            mini_game_record_play(int(uid), "numberguess", True)
-            _mg_set_best(int(uid), "numberguess", 1)
-            add_xp(int(uid), 5 + remaining * 2)
-            add_coins(int(uid), 4 + remaining * 2)
+            mult = float(cfg["mult"])
+            xp = int((5 + remaining * 2) * mult)
+            coins = int((4 + remaining * 2) * mult)
+            add_xp(int(uid), xp)
+            add_coins(int(uid), coins)
+            _mg_record_lite(int(uid), "numberguess", True)
+            rec = _mg_set_best(int(uid), "numberguess", remaining + 1)
+            _mg_hist(int(uid), "حدس عدد", "برد", xp, coins)
             save_data(force=True)
-            nxt, code = _mini_number_get(uid)
-            nxt["won"] = True
-            nxt["target"] = target
-            nxt["message"] = f"آفرین! عدد {target} بود — {4 + remaining * 2} سکه گرفتی"
-            return nxt, code
+            DATA.get("_mg_number", {}).pop(str(uid), None)
+            return {"ok": True, "won": True, "target": target, "record": rec,
+                    "diff": cfg["name"], "attempts_used": int(game["attempts"]),
+                    "reward": {"xp": xp, "coins": coins},
+                    "best": _mg_best(int(uid), "numberguess"),
+                    "message": f"آفرین! عدد {target} بود — +{coins} سکه (سطح {cfg['name']})"}, 200
         hint = "بزرگ‌تر" if guess < target else "کوچک‌تر"
         if remaining <= 0:
             game["finished"] = True
             game["won"] = False
-            mini_game_record_play(int(uid), "numberguess", False)
+            _mg_record_lite(int(uid), "numberguess", False)
             add_xp(int(uid), 5)
+            _mg_hist(int(uid), "حدس عدد", "باخت", 5, 0)
             save_data(force=True)
+            DATA.get("_mg_number", {}).pop(str(uid), None)
             return {"ok": True, "won": False, "lost": True, "target": target,
+                    "diff": cfg["name"],
                     "message": f"تمام شد! عدد {target} بود"}, 200
         span = max(5, int(game.get("span", 40)) // 2)
         game["span"] = span
         game["last_guess"] = int(guess)
         center = int(guess) + (span if int(guess) < target else -span)
+        center = max(1, min(int(cfg["max"]), center))
         opts = _mg_number_options(center, span)
         save_data()
         return {"ok": True, "hint": hint, "last_guess": int(guess),
-                "attempts_left": remaining, "options": opts}, 200
+                "attempts_left": remaining, "options": opts,
+                "diff": cfg["name"], "max_num": int(cfg["max"]),
+                "low": int(game.get("low", 1)), "high": int(game.get("high", cfg["max"]))}, 200
     except Exception as exc:
         _mlog("error", f"number_guess failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-# ---------------- 🃏 حافظه ----------------
+# ---------------- 🃏 حافظه (۶.۰ — لِوِل پیش‌رونده + جان) ----------------
+def _mini_memory_round(st):
+    """ساخت راند جدید — طول دنباله با لِوِل رشد می‌کند (۵ تا ۹ رقم)."""
+    level = int(st.get("level", 1))
+    length = min(9, 4 + level)
+    seq = [random.randint(1, 9) for _ in range(length)]
+    correct = " ".join(str(x) for x in seq)
+    options = {correct}
+    tries = 0
+    while len(options) < 4 and tries < 80:
+        tries += 1
+        shuffled = list(seq)
+        random.shuffle(shuffled)
+        options.add(" ".join(str(x) for x in shuffled))
+    # (🛠 رفع باگ) اگر همه‌ی ارقام یکی باشند، ۴ جایگشت متمایز ممکن نیست — جهش کنترل‌شده
+    while len(options) < 4:
+        mutated = list(seq)
+        pos = random.randrange(len(mutated))
+        mutated[pos] = random.randint(1, 9)
+        random.shuffle(mutated)
+        options.add(" ".join(str(x) for x in mutated))
+    options = list(options)
+    random.shuffle(options)
+    st["seq"] = seq
+    st["correct"] = correct
+    st["options"] = options
+    st["ts"] = time.time()
+    return st
+
+
 def _mini_memory_get(uid):
     try:
-        game = mini_game_memory_new()
-        seq = list(game["sequence"])
-        correct = " ".join(str(x) for x in seq)
-        options = {correct}
-        while len(options) < 4:
-            shuffled = list(seq)
-            random.shuffle(shuffled)
-            options.add(" ".join(str(x) for x in shuffled))
-        options = list(options)
-        random.shuffle(options)
-        st = {"seq": seq, "correct": correct, "options": options}
-        DATA.setdefault("_mg_memory", {})[str(uid)] = st
-        return {"ok": True, "sequence": " ".join(str(x) for x in seq),
-                "options": options, "display_time": 3}, 200
+        st = DATA.get("_mg_memory", {}).get(str(uid))
+        if not isinstance(st, dict):
+            st = {"level": 1, "lives": 3, "total_xp": 0, "total_coins": 0}
+            _mini_memory_round(st)
+            DATA.setdefault("_mg_memory", {})[str(uid)] = st
+        display = max(1.6, 3.4 - int(st.get("level", 1)) * 0.2)
+        return {"ok": True, "sequence": " ".join(str(x) for x in st.get("seq", [])),
+                "options": st.get("options", []), "display_time": round(display, 1),
+                "level": int(st.get("level", 1)), "lives": int(st.get("lives", 3)),
+                "best": _mg_best(int(uid), "memory")}, 200
     except Exception as exc:
         _mlog("error", f"memory_get failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
@@ -28931,64 +29223,117 @@ def _mini_memory_get(uid):
 
 def _mini_memory_answer(uid, idx):
     try:
-        st = DATA.get("_mg_memory", {}).pop(str(uid), None)
-        if not st:
+        st = DATA.get("_mg_memory", {}).get(str(uid))
+        if not isinstance(st, dict):
             return _mini_memory_get(uid)
         try:
             idx = int(idx)
         except Exception:
             idx = -1
-        if idx < 0 or idx >= len(st["options"]):
+        opts = st.get("options", [])
+        if idx < 0 or idx >= len(opts):
             return {"ok": False, "error": "گزینه نامعتبر."}, 400
-        correct = st["options"][idx] == st["correct"]
+        correct = opts[idx] == st.get("correct")
+        level = int(st.get("level", 1))
         if correct:
-            mini_game_record_play(int(uid), "memory", True)
-            _mg_set_best(int(uid), "memory", 1)
-            add_xp(int(uid), 15)
-            add_coins(int(uid), 8)
-        else:
-            mini_game_record_play(int(uid), "memory", False)
-            add_xp(int(uid), 5)
+            xp = 8 + level * 3
+            coins = 5 + level * 2
+            add_xp(int(uid), xp)
+            add_coins(int(uid), coins)
+            _mg_record_lite(int(uid), "memory", True)
+            st["total_xp"] = int(st.get("total_xp", 0)) + xp
+            st["total_coins"] = int(st.get("total_coins", 0)) + coins
+            st["level"] = level + 1
+            rec = _mg_set_best(int(uid), "memory", level)
+            _mini_memory_round(st)
+            save_data(force=True)
+            nxt, code = _mini_memory_get(uid)
+            nxt["correct"] = True
+            nxt["reward"] = {"xp": xp, "coins": coins}
+            nxt["record"] = rec
+            nxt["message"] = f"درست! لِوِل {level} گذشتی — +{xp} XP +{coins} سکه"
+            return nxt, code
+        # نادرست — یک جان کم می‌شود
+        st["lives"] = int(st.get("lives", 3)) - 1
+        _mg_record_lite(int(uid), "memory", False)
+        add_xp(int(uid), 3)
+        if st["lives"] <= 0:
+            total_xp = int(st.get("total_xp", 0)) + 3
+            total_coins = int(st.get("total_coins", 0))
+            reached = max(1, level - 1) if level > 1 else 1
+            _mg_hist(int(uid), "حافظه", "پایان", total_xp, total_coins)
+            DATA.get("_mg_memory", {}).pop(str(uid), None)
+            save_data(force=True)
+            return {"ok": True, "correct": False, "ended": True, "level": level,
+                    "correct_seq": str(st.get("correct", "")),
+                    "total": {"xp": total_xp, "coins": total_coins, "level": reached},
+                    "best": _mg_best(int(uid), "memory"),
+                    "message": f"جان‌ها تمام شد! تا لِوِل {level} رفتی"}, 200
+        _mini_memory_round(st)
         save_data(force=True)
         nxt, code = _mini_memory_get(uid)
-        nxt["correct"] = correct
-        nxt["correct_seq"] = str(st["correct"])
-        nxt["message"] = "درست! +۱۵ XP +۸ سکه" if correct else f"نادرست! دنباله درست: {st['correct']}"
+        nxt["correct"] = False
+        nxt["correct_seq"] = str(st.get("correct", ""))
+        nxt["message"] = f"نادرست! {st['lives']} جان داری — دنباله درست: {st.get('correct', '')}"
         return nxt, code
     except Exception as exc:
         _mlog("error", f"memory_answer failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-# ---------------- ⚡ واکنش ----------------
+# ---------------- ⚡ واکنش (۶.۰ — ضدتقلب + رتبه‌بندی) ----------------
+def _mini_reaction_rating(ms):
+    if ms < 250:
+        return "غیرانسانی! 👾"
+    if ms < 350:
+        return "برق‌آسا ⚡"
+    if ms < 450:
+        return "تندپاسخ 🔥"
+    if ms < 600:
+        return "خوب 👍"
+    if ms < 900:
+        return "معمولی 🙂"
+    return "آرام و قرار 😴"
+
+
 def _mini_reaction_arm(uid):
     try:
-        game = mini_game_reaction_new()
+        game = mini_game_reaction_new() or {}
+        # (🔒 ضدتقلب ۶.۰) زمان سبزشدن به کلاینت لو نمی‌رود؛
+        # کلاینت تاخیر تصادفی خودش را می‌سازد و rt را می‌فرستد
         game["go_at_ms"] = int(now_ms() + random.randint(2200, 6000))
+        game["armed_at"] = time.time()
         DATA.setdefault("_temp_reaction", {})[str(uid)] = game
         save_data()
-        return {"ok": True, "go_at_ms": int(game["go_at_ms"])}, 200
+        return {"ok": True, "best": _mg_best(int(uid), "reaction_ms")}, 200
     except Exception as exc:
         _mlog("error", f"reaction_arm failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-def _mini_reaction_hit(uid, tap_ms):
+def _mini_reaction_hit(uid, rt_ms):
     try:
         game = DATA.get("_temp_reaction", {}).pop(str(uid), None)
-        if not game or not game.get("go_at_ms"):
-            mini_game_record_play(int(uid), "reaction", False)
-            return {"ok": True, "early": True, "message": "زود زدی! دکمه هنوز سبز نشده بود."}, 200
+        if not game or not game.get("armed_at"):
+            return {"ok": True, "early": True,
+                    "message": "زود زدی! دکمه هنوز سبز نشده بود."}, 200
+        armed = float(game.get("armed_at", 0) or 0)
+        total_ms = (time.time() - armed) * 1000.0
         try:
-            tap = int(tap_ms)
+            rt = int(rt_ms)
         except Exception:
-            tap = int(now_ms())
-        go = int(game.get("go_at_ms"))
-        ms = tap - go
-        if ms < 0:
-            ms = max(50, int(now_ms()) - go)
-        ms = max(50, min(ms, 10000))
-        mini_game_record_play(int(uid), "reaction", True)
+            rt = -1
+        # (🔒 ضدتقلب) واکنش انسانی زیر ۱۲۰ms نیست؛
+        # و کل زمان سپری‌شده از تاخیر+واکنش کمتر نمی‌شود
+        if rt < 0:
+            rt = max(120, int(total_ms - 2200))
+        if rt < 120:
+            rt = max(120, min(int(total_ms - 2200), 10000))
+        if rt > total_ms:
+            rt = max(120, int(total_ms))
+        ms = max(120, min(rt, 10000))
+        won = ms < 900
+        _mg_record_lite(int(uid), "reaction", won)
         prev = _mg_best(int(uid), "reaction_ms")
         is_rec = False
         if prev <= 0 or ms < prev:
@@ -29003,24 +29348,91 @@ def _mini_reaction_hit(uid, tap_ms):
             xp, coins = 6, 3
         add_xp(int(uid), xp)
         add_coins(int(uid), coins)
+        if won:
+            _mg_hist(int(uid), "واکنش", "برد", xp, coins)
         save_data(force=True)
         return {"ok": True, "ms": ms, "record": is_rec, "xp": xp, "coins": coins,
-                "message": f"واکنش: {ms}ms — +{coins} سکه"}, 200
+                "rating": _mini_reaction_rating(ms),
+                "best": _mg_best(int(uid), "reaction_ms"),
+                "message": f"واکنش: {ms}ms — {_mini_reaction_rating(ms)}"}, 200
     except Exception as exc:
         _mlog("error", f"reaction_hit failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-# ---------------- ✖️ دوز با AI ----------------
+# ---------------- ✖️ دوز با AI (۶.۰ — سه سطح + مینیمکس) ----------------
+TTT_DIFF_LABELS = {"easy": "آسان", "normal": "متوسط", "hard": "غیرقابل‌برد"}
+
+
+def _ttt_minimax(b, player, depth=0):
+    """مینیمکس کامل — در سطح «غیرقابل‌برد» حداکثر مساوی می‌گیری!"""
+    w = _ttt_winner(b)
+    if w == 2:
+        return 10 - depth
+    if w == 1:
+        return depth - 10
+    if all(v != 0 for v in b):
+        return 0
+    best = -100 if player == 2 else 100
+    for i in range(9):
+        if b[i] == 0:
+            b[i] = player
+            s = _ttt_minimax(b, 2 if player == 1 else 1, depth + 1)
+            b[i] = 0
+            if player == 2:
+                best = max(best, s)
+            else:
+                best = min(best, s)
+    return best
+
+
+def _ttt_win_line(b):
+    """مختصات خط برنده — برای درخشش سه خانه در UI."""
+    for a, c, d in TTT_WINS:
+        if b[a] and b[a] == b[c] == b[d]:
+            return [a, c, d]
+    return []
+
+
+def _ttt_ai_move_smart(b, diff):
+    if diff == "hard":
+        best_s, best_m = -100, -1
+        for i in range(9):
+            if b[i] == 0:
+                b[i] = 2
+                s = _ttt_minimax(b, 1)
+                b[i] = 0
+                if s > best_s:
+                    best_s, best_m = s, i
+        return best_m
+    if diff == "easy":
+        if random.random() < 0.25:
+            return _ttt_ai_move(b)
+        empty = [i for i, v in enumerate(b) if v == 0]
+        return random.choice(empty) if empty else -1
+    return _ttt_ai_move(b)
+
+
 def _mini_ttt_view(st):
-    return {"board": list(st["board"]), "over": bool(st.get("over")), "wins": int(st.get("wins", 0))}
+    line = _ttt_win_line(st["board"]) if st.get("over") else []
+    s = st.get("sess", {}) or {}
+    return {"board": list(st["board"]), "over": bool(st.get("over")),
+            "wins": int(st.get("wins", 0)),
+            "diff": str(st.get("diff", "normal")),
+            "diff_label": TTT_DIFF_LABELS.get(str(st.get("diff", "normal")), "متوسط"),
+            "win_line": line,
+            "sess": {"w": int(s.get("w", 0)), "d": int(s.get("d", 0)), "l": int(s.get("l", 0))}}
 
 
-def _mini_ttt_get(uid):
+def _mini_ttt_get(uid, diff="normal"):
     try:
-        st = {"board": [0] * 9, "over": False, "wins": 0}
+        diff = str(diff or "normal")
+        if diff not in TTT_DIFF_LABELS:
+            diff = "normal"
+        st = {"board": [0] * 9, "over": False, "wins": 0, "diff": diff, "sess": {"w": 0, "d": 0, "l": 0}}
         DATA.setdefault("_mg_ttt", {})[str(uid)] = st
-        return {"ok": True, **_mini_ttt_view(st), "message": "تو ❌ ، من ⭕ — برد هر بازی +۲۰ سکه"}, 200
+        return {"ok": True, **_mini_ttt_view(st),
+                "message": "تو ❌ ، من ⭕ — برد +۲۰ سکه · مساوی +۴ XP"}, 200
     except Exception as exc:
         _mlog("error", f"ttt_get failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
@@ -29038,34 +29450,53 @@ def _mini_ttt_move(uid, cell):
         b = st["board"]
         if cell < 0 or cell > 8 or b[cell] != 0:
             return {"ok": False, "error": "این خانه پر است!"}, 400
+        sess = st.get("sess")
+        if not isinstance(sess, dict):
+            sess = {"w": 0, "d": 0, "l": 0}
+            st["sess"] = sess
+        diff = str(st.get("diff", "normal"))
         b[cell] = 1
         if _ttt_winner(b) == 1:
             st["over"] = True
             st["wins"] = int(st.get("wins", 0)) + 1
-            mini_game_record_play(int(uid), "ttt", True)
+            sess["w"] = int(sess.get("w", 0)) + 1
+            hard_bonus = 10 if diff == "hard" else (5 if diff == "normal" else 0)
+            xp, coins = 20 + hard_bonus, 20 + hard_bonus
+            _mg_record_lite(int(uid), "ttt", True)
             _mg_set_best(int(uid), "ttt", int(st.get("wins", 1)))
-            add_xp(int(uid), 20)
-            add_coins(int(uid), 20)
+            add_xp(int(uid), xp)
+            add_coins(int(uid), coins)
+            _mg_hist(int(uid), "دوز", "برد", xp, coins)
             save_data(force=True)
-            return {"ok": True, **_mini_ttt_view(st), "won": True, "message": "بردی! +۲۰ سکه"}, 200
+            return {"ok": True, **_mini_ttt_view(st), "won": True,
+                    "reward": {"xp": xp, "coins": coins},
+                    "message": f"بردی! +{coins} سکه" + (f" (پاداش سطح {TTT_DIFF_LABELS[diff]})" if hard_bonus else "")}, 200
         if all(v != 0 for v in b):
             st["over"] = True
-            mini_game_record_play(int(uid), "ttt", False)
-            save_data()
-            return {"ok": True, **_mini_ttt_view(st), "draw": True, "message": "مساوی!"}, 200
-        ai = _ttt_ai_move(b)
+            sess["d"] = int(sess.get("d", 0)) + 1
+            _mg_record_lite(int(uid), "ttt", False)
+            add_xp(int(uid), 4)
+            save_data(force=True)
+            return {"ok": True, **_mini_ttt_view(st), "draw": True, "reward": {"xp": 4, "coins": 0},
+                    "message": "مساوی! +۴ XP"}, 200
+        ai = _ttt_ai_move_smart(b, diff)
         if ai >= 0:
             b[ai] = 2
         if _ttt_winner(b) == 2:
             st["over"] = True
-            mini_game_record_play(int(uid), "ttt", False)
-            save_data()
+            sess["l"] = int(sess.get("l", 0)) + 1
+            _mg_record_lite(int(uid), "ttt", False)
+            add_xp(int(uid), 2)
+            save_data(force=True)
             return {"ok": True, **_mini_ttt_view(st), "lost": True, "message": "باختی! دفعه بعد..."}, 200
         if all(v != 0 for v in b):
             st["over"] = True
-            mini_game_record_play(int(uid), "ttt", False)
-            save_data()
-            return {"ok": True, **_mini_ttt_view(st), "draw": True, "message": "مساوی!"}, 200
+            sess["d"] = int(sess.get("d", 0)) + 1
+            _mg_record_lite(int(uid), "ttt", False)
+            add_xp(int(uid), 4)
+            save_data(force=True)
+            return {"ok": True, **_mini_ttt_view(st), "draw": True, "reward": {"xp": 4, "coins": 0},
+                    "message": "مساوی! +۴ XP"}, 200
         save_data()
         return {"ok": True, **_mini_ttt_view(st), "message": "نوبت تو"}, 200
     except Exception as exc:
@@ -29073,13 +29504,42 @@ def _mini_ttt_move(uid, cell):
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-# ---------------- ⛏ مین‌یاب ----------------
+# ---------------- ⛏ مین‌یاب (۶.۰ — سه سطح ریسک) ----------------
+MINE_CONFIGS = {
+    "classic": {"name": "کلاسیک", "icon": "🟢", "size": 12, "cols": 4, "bombs": 3, "fee": 20},
+    "medium":  {"name": "متوسط", "icon": "🟡", "size": 20, "cols": 5, "bombs": 5, "fee": 50},
+    "hard":    {"name": "خطرناک", "icon": "🔴", "size": 30, "cols": 6, "bombs": 8, "fee": 100},
+}
+
+
+def _mine_cfg(st):
+    return MINE_CONFIGS.get(str(st.get("cfg_key", "classic")), MINE_CONFIGS["classic"])
+
+
+def _mine_mult_cfg(cfg, revealed):
+    """ضریب منصفانه‌ی احتمال — دقیقاً مثل نسخه‌ی کلاسیک ولی پارامتریک."""
+    size, bombs = int(cfg["size"]), int(cfg["bombs"])
+    safe = size - bombs
+    if revealed <= 0:
+        return 1.0
+    if revealed > safe:
+        revealed = safe
+    mult = 1.0
+    for i in range(revealed):
+        mult *= (size - i) / (safe - i)
+    return mult
+
+
 def _mini_mine_view(st, uid):
-    mult = _mine_mult(len(st["revealed"]))
+    cfg = _mine_cfg(st)
+    mult = _mine_mult_cfg(cfg, len(st["revealed"]))
     return {"cells": st["revealed"], "over": bool(st.get("over")),
             "pot": int(st["fee"] * mult), "mult": round(float(mult), 2),
             "bombs": (list(st["bombs"]) if st.get("over") else []),
-            "fee": int(MINE_FEE), "bombs_count": int(MINE_BOMBS),
+            "fee": int(st["fee"]), "bombs_count": int(cfg["bombs"]),
+            "size": int(cfg["size"]), "cols": int(cfg["cols"]),
+            "cfg_name": str(cfg["name"]), "cfg_icon": str(cfg["icon"]),
+            "safe_left": int(cfg["size"] - cfg["bombs"] - len(st["revealed"])),
             "coins": int(get_user(int(uid)).get("coins", 0) or 0)}
 
 
@@ -29088,23 +29548,35 @@ def _mini_mine_get(uid):
         st = DATA.get("_mg_mine", {}).get(str(uid))
         if st and not st.get("over"):
             return {"ok": True, **_mini_mine_view(st, uid)}, 200
-        return {"ok": True, "new": True, "coins": int(get_user(int(uid)).get("coins", 0) or 0),
-                "fee": int(MINE_FEE), "bombs_count": int(MINE_BOMBS),
-                "message": f"ورودی {MINE_FEE} سکه — مین: {MINE_BOMBS} از {MINE_SIZE}"}, 200
+        u = get_user(int(uid))
+        return {"ok": True, "new": True, "coins": int(u.get("coins", 0) or 0),
+                "configs": [{"key": k, "name": v["name"], "icon": v["icon"],
+                             "size": v["size"], "cols": v["cols"], "bombs": v["bombs"],
+                             "fee": v["fee"],
+                             "max_mult": round(_mine_mult_cfg(v, v["size"] - v["bombs"]), 1)}
+                            for k, v in MINE_CONFIGS.items()],
+                "best": _mg_best(int(uid), "mine"),
+                "message": "سطح ریسک را انتخاب کن"}, 200
     except Exception as exc:
         _mlog("error", f"mine_get failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-def _mini_mine_start(uid):
+def _mini_mine_start(uid, diff="classic"):
     try:
-        if not spend_coins(int(uid), MINE_FEE):
-            return {"ok": False, "error": f"ورودی مین‌یاب {MINE_FEE} سکه است — کافی نداری!"}, 400
-        bombs = random.sample(range(MINE_SIZE), MINE_BOMBS)
-        st = {"bombs": bombs, "revealed": [], "over": False, "fee": MINE_FEE}
+        diff = str(diff or "classic")
+        if diff not in MINE_CONFIGS:
+            diff = "classic"
+        cfg = MINE_CONFIGS[diff]
+        fee = int(cfg["fee"])
+        if not spend_coins(int(uid), fee):
+            return {"ok": False, "error": f"ورودی سطح {cfg['name']} {fee} سکه است — کافی نداری!"}, 400
+        bombs = random.sample(range(int(cfg["size"])), int(cfg["bombs"]))
+        st = {"bombs": bombs, "revealed": [], "over": False, "fee": fee, "cfg_key": diff}
         DATA.setdefault("_mg_mine", {})[str(uid)] = st
         save_data(force=True)
-        return {"ok": True, **_mini_mine_view(st, uid), "message": f"ورودی پرداخت شد ({MINE_FEE} سکه)"}, 200
+        return {"ok": True, **_mini_mine_view(st, uid),
+                "message": f"ورودی پرداخت شد ({fee} سکه — {cfg['name']})"}, 200
     except Exception as exc:
         _mlog("error", f"mine_start failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
@@ -29115,27 +29587,31 @@ def _mini_mine_open(uid, cell):
         st = DATA.get("_mg_mine", {}).get(str(uid))
         if not st or st.get("over"):
             return {"ok": False, "error": "بازی فعالی نداری — از اول شروع کن."}, 400
+        cfg = _mine_cfg(st)
         try:
             cell = int(cell)
         except Exception:
             return {"ok": False, "error": "خانه نامعتبر."}, 400
-        if cell in st["revealed"] or cell < 0 or cell >= MINE_SIZE:
+        if cell in st["revealed"] or cell < 0 or cell >= int(cfg["size"]):
             return {"ok": False, "error": "این خانه قبلاً باز شده!"}, 400
         if cell in st["bombs"]:
             st["over"] = True
-            mini_game_record_play(int(uid), "mine", False)
+            _mg_record_lite(int(uid), "mine", False)
+            _mg_hist(int(uid), "مین‌یاب", "باخت", 0, -int(st["fee"]))
             save_data(force=True)
             return {"ok": True, **_mini_mine_view(st, uid), "boom": True,
                     "message": "بووم! به مین خوردی — گنج سوخت!"}, 200
         st["revealed"].append(cell)
-        mini_game_record_play(int(uid), "mine", True)
-        if len(st["revealed"]) >= MINE_SIZE - MINE_BOMBS:
+        if len(st["revealed"]) >= int(cfg["size"]) - int(cfg["bombs"]):
             st["over"] = True
-            pot = int(st["fee"] * _mine_mult(len(st["revealed"])))
+            pot = int(st["fee"] * _mine_mult_cfg(cfg, len(st["revealed"])))
             add_coins(int(uid), pot)
-            _mg_set_best(int(uid), "mine", int(_mine_mult(len(st["revealed"])) * 100))
+            mult100 = int(_mine_mult_cfg(cfg, len(st["revealed"])) * 100)
+            _mg_set_best(int(uid), "mine", mult100)
+            _mg_record_lite(int(uid), "mine", True)
+            _mg_hist(int(uid), "مین‌یاب", "برد", 0, pot - int(st["fee"]))
             save_data(force=True)
-            return {"ok": True, **_mini_mine_view(st, uid), "won": True,
+            return {"ok": True, **_mini_mine_view(st, uid), "won": True, "cashed": pot,
                     "message": f"همه‌ی خانه‌های امن! +{pot} سکه!"}, 200
         save_data()
         return {"ok": True, **_mini_mine_view(st, uid), "message": "امن! گنج بزرگ‌تر شد..."}, 200
@@ -29149,38 +29625,65 @@ def _mini_mine_cash(uid):
         st = DATA.get("_mg_mine", {}).get(str(uid))
         if not st or st.get("over"):
             return {"ok": False, "error": "بازی فعالی نداری."}, 400
+        cfg = _mine_cfg(st)
+        if not st["revealed"]:
+            return {"ok": False, "error": "اول حداقل یک خانه باز کن!"}, 400
         st["over"] = True
-        pot = int(st["fee"] * _mine_mult(len(st["revealed"])))
+        pot = int(st["fee"] * _mine_mult_cfg(cfg, len(st["revealed"])))
         add_coins(int(uid), pot)
-        _mg_set_best(int(uid), "mine", int(_mine_mult(len(st["revealed"])) * 100))
+        mult100 = int(_mine_mult_cfg(cfg, len(st["revealed"])) * 100)
+        _mg_set_best(int(uid), "mine", mult100)
+        won = pot > int(st["fee"])
+        _mg_record_lite(int(uid), "mine", won)
+        _mg_hist(int(uid), "مین‌یاب", "برد" if won else "پایان", 0, pot - int(st["fee"]))
         save_data(force=True)
         return {"ok": True, **_mini_mine_view(st, uid), "cashed": pot,
-                "message": f"برداشت! +{pot} سکه"}, 200
+                "message": f"برداشت! +{pot} سکه" + (f" (سود {pot - int(st['fee'])})" if won else "")}, 200
     except Exception as exc:
         _mlog("error", f"mine_cash failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-# ---------------- 🧮 کوییز ریاضی ----------------
+# ---------------- 🧮 کوییز ریاضی (۶.۰ — زنجیره‌ی ۵ سوالی صعودی) ----------------
+QUIZ_CHAIN = 5
+QUIZ_TIME = 25
+
+
+def _mini_quiz_question(step):
+    """سوال مرحله‌ی step (۱..۵) — هر مرحله کمی سخت‌تر."""
+    ranges = [(2, 9), (2, 12), (3, 20), (3, 30), (5, 40)]
+    lo, hi = ranges[max(0, min(QUIZ_CHAIN - 1, step - 1))]
+    a, b = random.randint(lo, hi), random.randint(lo, hi)
+    op = random.choice(["+", "-", "×"])
+    if op == "+":
+        answer = a + b
+    elif op == "-":
+        a, b = max(a, b), min(a, b)
+        answer = a - b
+    else:
+        if step <= 2:
+            a, b = min(a, 12), min(b, 9)
+        answer = a * b
+    return {"a": a, "b": b, "op": op, "answer": answer, "step": step}
+
+
 def _mini_quiz_get(uid):
     try:
         st21 = v21_store()
-        quota = st21["quiz_day"].get(day_key(), {})
+        quota = st21["quiz_day"].setdefault(day_key(), {})
         if quota.get(user_key(uid)):
             return {"ok": False, "error": "سهمیه‌ی کوییز امروزت پر شده! فردا دوباره 📅"}, 429
-        a, b = random.randint(2, 12), random.randint(2, 12)
-        op = random.choice(["+", "-", "×"])
-        if op == "+":
-            answer = a + b
-        elif op == "-":
-            a, b = max(a, b), min(a, b)
-            answer = a - b
-        else:
-            answer = a * b
-        DATA.setdefault("_mini_quiz", {})[str(uid)] = {"a": a, "b": b, "op": op,
-                                                       "answer": answer, "ts": time.time()}
+        # (🛠 رفع باگ) سهمیه هنگام گرفتن سوال پر می‌شود — دیگر ریرول سوال ممکن نیست
+        quota[user_key(uid)] = True
+        st21["stats"]["quizzes"] = int(st21["stats"].get("quizzes", 0)) + 1
+        q = _mini_quiz_question(1)
+        DATA.setdefault("_mini_quiz", {})[str(uid)] = {"q": q, "step": 1,
+                                                      "correct": 0, "total_xp": 0,
+                                                      "ts": time.time()}
         save_data()
-        return {"ok": True, "q": f"{a} {op} {b} = ?", "timeout": 60, "reward_xp": 8}, 200
+        return {"ok": True, "q": f"{q['a']} {q['op']} {q['b']} = ?", "step": 1,
+                "chain": QUIZ_CHAIN, "timeout": QUIZ_TIME, "correct": 0,
+                "message": "زنجیره‌ی ۵ سوالی — هر سوال سخت‌تر از قبل!"}, 200
     except Exception as exc:
         _mlog("error", f"quiz_get failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
@@ -29188,36 +29691,92 @@ def _mini_quiz_get(uid):
 
 def _mini_quiz_answer(uid, ans):
     try:
-        q = DATA.get("_mini_quiz", {}).pop(str(uid), None)
-        if not q:
+        st = DATA.get("_mini_quiz", {}).pop(str(uid), None)
+        if not st or not st.get("q"):
             return {"ok": False, "error": "کوییز فعالی نداری — اول سوال بگیر."}, 400
-        if time.time() - float(q.get("ts", 0)) > 60:
-            return {"ok": False, "error": "وقت تمام شد! ۶۰ ثانیه گذشت."}, 400
-        st21 = v21_store()
-        quota = st21["quiz_day"].setdefault(day_key(), {})
-        quota[user_key(uid)] = True
-        st21["stats"]["quizzes"] = int(st21["stats"].get("quizzes", 0)) + 1
+        q = st["q"]
+        step = int(st.get("step", 1))
+        if time.time() - float(q.get("ts", 0) or st.get("ts", 0)) > QUIZ_TIME + 3:
+            _mg_hist(int(uid), "کوییز", "پایان", int(st.get("total_xp", 0)), 0)
+            save_data(force=True)
+            return {"ok": True, "correct": False, "timeout": True, "answer": int(q["answer"]),
+                    "step": step, "correct_count": int(st.get("correct", 0)),
+                    "message": f"وقت تمام شد! جواب: {q['answer']}"}, 200
         try:
             val = int(str(ans).strip().replace("٬", "").replace(",", ""))
         except Exception:
+            val = None
+        if val is not None and val == int(q["answer"]):
+            elapsed = time.time() - float(q.get("ts", 0) or st.get("ts", 0))
+            speed = 2 if elapsed <= 10 else 0
+            xp = 4 + step * 2 + speed
+            add_xp(int(uid), xp)
+            st["correct"] = int(st.get("correct", 0)) + 1
+            st["total_xp"] = int(st.get("total_xp", 0)) + xp
+            if step >= QUIZ_CHAIN:
+                add_coins(int(uid), 10)
+                add_xp(int(uid), 5)
+                award_achievement(int(uid), "v21_quiz_whiz")
+                _mg_record_lite(int(uid), "quiz", True)
+                _mg_hist(int(uid), "کوییز", "برد", int(st["total_xp"]) + 5, 10)
+                save_data(force=True)
+                return {"ok": True, "correct": True, "finished": True,
+                        "answer": int(q["answer"]), "step": step,
+                        "correct_count": int(st["correct"]),
+                        "reward": {"xp": int(st["total_xp"]) + 5, "coins": 10},
+                        "message": f"زنجیره‌ی کامل! {st['correct']} از {QUIZ_CHAIN} — +۱۰ سکه 🎉"}, 200
+            nxt = _mini_quiz_question(step + 1)
+            nxt["ts"] = time.time()
+            st["q"] = nxt
+            st["step"] = step + 1
+            DATA.setdefault("_mini_quiz", {})[str(uid)] = st
             save_data()
-            return {"ok": True, "correct": False, "answer": int(q["answer"]),
-                    "message": "نه! جواب عددی نبود."}, 200
-        if val == int(q["answer"]):
-            add_xp(int(uid), 8)
-            award_achievement(int(uid), "v21_quiz_whiz")
-            save_data(force=True)
             return {"ok": True, "correct": True, "answer": int(q["answer"]),
-                    "message": "درست! +۸ XP"}, 200
+                    "step": step + 1, "chain": QUIZ_CHAIN,
+                    "correct_count": int(st["correct"]),
+                    "q": f"{nxt['a']} {nxt['op']} {nxt['b']} = ?",
+                    "timeout": QUIZ_TIME,
+                    "message": f"درست! +{xp} XP — سوال {step + 1} از {QUIZ_CHAIN}"}, 200
+        # نادرست — زنجیره تمام
+        _mg_record_lite(int(uid), "quiz", int(st.get("correct", 0)) >= 3)
+        _mg_hist(int(uid), "کوییز", "پایان", int(st.get("total_xp", 0)), 0)
         save_data(force=True)
-        return {"ok": True, "correct": False, "answer": int(q["answer"]),
-                "message": "نه! دوباره فکر کن..."}, 200
+        return {"ok": True, "correct": False, "ended": True, "answer": int(q["answer"]),
+                "step": step, "correct_count": int(st.get("correct", 0)),
+                "total_xp": int(st.get("total_xp", 0)),
+                "message": f"نه! جواب {q['answer']} بود — {st.get('correct', 0)} سوال درست زدی"}, 200
     except Exception as exc:
         _mlog("error", f"quiz_answer failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-# ---------------- 🍀 گردونه شانس ----------------
+# ---------------- 🍀 گردونه شانس (۶.۰ — استریک روزانه + نمای وضعیت) ----------------
+LUCK_SEGMENTS = [
+    {"tier": 4, "coins": 50, "label": "جایزه‌ی بزرگ", "chance": 5},
+    {"tier": 3, "coins": 20, "label": "شانس خوب", "chance": 20},
+    {"tier": 2, "coins": 10, "label": "نه بد نه خوب", "chance": 35},
+    {"tier": 1, "coins": 5, "label": "کمی شانس", "chance": 40},
+]
+
+
+def _mini_luck_view(uid):
+    """نمای گردونه — فقط وضعیت؛ چرخش واقعی با POST انجام می‌شود."""
+    try:
+        st = v21_store()
+        last = float(st["luck"].get(user_key(uid), 0) or 0)
+        cd = max(0, int(LUCK_COOLDOWN - (time.time() - last)))
+        ready = cd <= 0
+        best = int(st["luck_best"].get(user_key(uid), 0) or 0)
+        streak = int(st.get("luck_streak", {}).get(user_key(uid), 0) or 0)
+        # اگر آخرین چرخش دیروز بوده، استریک حفظ می‌شود — الان فقط نمایش می‌دهیم
+        return {"ok": True, "ready": ready, "cooldown": cd,
+                "best": best, "streak": streak,
+                "segments": LUCK_SEGMENTS}, 200
+    except Exception as exc:
+        _mlog("error", f"luck_view failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
 def _mini_luck_spin(uid):
     try:
         st = v21_store()
@@ -29228,6 +29787,15 @@ def _mini_luck_spin(uid):
         st["luck"][user_key(uid)] = time.time()
         st["stats"]["luck_spins"] = int(st["stats"].get("luck_spins", 0)) + 1
         award_achievement(uid, "v21_lucky_star")
+        # استریک روزانه — روزهای پشت‌سرهم چرخیدن = پاداش بیشتر (تا +۱۰)
+        lstr = st.setdefault("luck_streak", {}) if isinstance(st.get("luck_streak"), dict) else {}
+        prev_last = last
+        if 0 < (time.time() - prev_last) < 48 * 3600:
+            lstr[user_key(uid)] = int(lstr.get(user_key(uid), 0) or 0) + 1
+        else:
+            lstr[user_key(uid)] = 1
+        streak = int(lstr.get(user_key(uid), 1))
+        streak_bonus = min(10, max(0, (streak - 1) * 2))
         roll = random.random()
         if roll < 0.05:
             coins, label, tier = 50, "جایزه‌ی بزرگ!", 4
@@ -29240,10 +29808,13 @@ def _mini_luck_spin(uid):
         best = int(st["luck_best"].get(user_key(uid), 0) or 0)
         if coins > best:
             st["luck_best"][user_key(uid)] = coins
-        add_coins(uid, coins)
+        add_coins(uid, coins + streak_bonus)
         save_data(force=True)
         return {"ok": True, "coins": coins, "label": label, "tier": tier,
-                "best": max(best, coins), "message": f"{label} — +{coins} سکه"}, 200
+                "streak": streak, "streak_bonus": streak_bonus,
+                "best": max(best, coins),
+                "message": f"{label} — +{coins} سکه" +
+                           (f" (+{streak_bonus} پاداش استریک {streak} روزه 🔥)" if streak_bonus else "")}, 200
     except Exception as exc:
         _mlog("error", f"luck_spin failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
@@ -29276,9 +29847,16 @@ def _mini_ln_bet(uid, number, bet):
             if res.get("reason") == "no_coins":
                 return {"ok": False, "error": "سکه کافی نداری!"}, 400
             return {"ok": False, "error": "عدد باید بین ۱ تا ۱۰۰ باشد."}, 400
+        u = get_user(int(uid))
+        if int(res.get("ret", 0)) > 0:
+            # فرصت دبل‌یا‌هیچ — ۹۰ ثانیه اعتبار
+            u["ln_double"] = {"ret": int(res["ret"]), "times": 0, "ts": time.time()}
+        else:
+            u["ln_double"] = None
         save_data(force=True)
         return {"ok": True, "winning": int(res["winning"]), "diff": int(res["diff"]),
                 "bet": int(res["bet"]), "ret": int(res["ret"]),
+                "can_double": int(res.get("ret", 0)) > 0,
                 "coins": int(get_user(int(uid)).get("coins", 0) or 0),
                 "message": (f"جکپات! عدد {res['winning']} — ×۲۵!" if res["diff"] == 0 else
                             (f"برد! عدد {res['winning']} — {res['ret']} سکه" if res["ret"] > 0 else
@@ -29298,6 +29876,52 @@ def _mini_ln_free(uid):
                 "message": f"چرخ رایگان: +{res['prize']} سکه (استریک {res['streak']})"}, 200
     except Exception as exc:
         _mlog("error", f"ln_free failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_ln_double(uid):
+    """دبل‌یا‌هیچ — سود آخرین برد را روی شانس ۵۰/۵۰ دوبرابر کن (تا ۳ بار)."""
+    try:
+        u = get_user(int(uid))
+        pend = u.get("ln_double")
+        if not isinstance(pend, dict) or not pend.get("ret"):
+            return {"ok": False, "error": "بردی برای دبل‌کردن نداری!"}, 400
+        if time.time() - float(pend.get("ts", 0) or 0) > 90:
+            u["ln_double"] = None
+            save_data()
+            return {"ok": False, "error": "فرصت دبل تمام شد!"}, 400
+        times = int(pend.get("times", 0))
+        if times >= LN_DOUBLE_MAX:
+            u["ln_double"] = None
+            save_data()
+            return {"ok": False, "error": f"حداکثر {LN_DOUBLE_MAX} بار می‌توانی دبل کنی!"}, 400
+        ret = int(pend["ret"])
+        if int(u.get("coins", 0) or 0) < ret:
+            u["ln_double"] = None
+            save_data()
+            return {"ok": False, "error": "برای دبل، سود بردت باید در حساب باشد!"}, 400
+        u["ln_double"] = None
+        if random.random() < 0.5:
+            add_coins(int(uid), ret)
+            new_ret = ret * 2
+            u["ln_double"] = {"ret": new_ret, "times": times + 1, "ts": time.time()}
+            ln_st = u.get("ln_stats") if isinstance(u.get("ln_stats"), dict) else {}
+            ln_st["net"] = int(ln_st.get("net", 0)) + ret
+            _mg_hist(int(uid), "کازینو", "دبل", 0, ret)
+            save_data(force=True)
+            return {"ok": True, "won": True, "ret": new_ret, "times": times + 1,
+                    "coins": int(get_user(int(uid)).get("coins", 0) or 0),
+                    "message": f"دبل شد! +{ret} — حالا {new_ret} سکه روی میز است 🎲"}, 200
+        spend_coins(int(uid), ret)
+        ln_st = u.get("ln_stats") if isinstance(u.get("ln_stats"), dict) else {}
+        ln_st["net"] = int(ln_st.get("net", 0)) - ret
+        _mg_hist(int(uid), "کازینو", "دبل‌باخت", 0, -ret)
+        save_data(force=True)
+        return {"ok": True, "won": False, "ret": 0,
+                "coins": int(get_user(int(uid)).get("coins", 0) or 0),
+                "message": f"هیچ! {ret} سکه بردت سوخت 😬"}, 200
+    except Exception as exc:
+        _mlog("error", f"ln_double failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
@@ -29336,12 +29960,18 @@ def _t2048_empty_cells(board: list) -> list:
     return [(r, c) for r in range(_T2048_SIZE) for c in range(_T2048_SIZE) if board[r][c] == 0]
 
 
+_t2048_last_spawn = None
+
+
 def _t2048_spawn(board: list) -> bool:
+    global _t2048_last_spawn
     empty = _t2048_empty_cells(board)
     if not empty:
+        _t2048_last_spawn = None
         return False
     r, c = random.choice(empty)
     board[r][c] = 2 if random.random() < 0.9 else 4
+    _t2048_last_spawn = [r, c, board[r][c]]
     return True
 
 
@@ -29426,13 +30056,16 @@ def _t2048_dead(board: list) -> bool:
 def _mini_2048_get(uid):
     """شروع بازی ۲۰۴۸ — صفحه‌ی تازه + بهترین رکورد."""
     try:
-        st = {"board": _t2048_new_board(), "score": 0, "moves": 0, "won": False, "over": False, "ts": time.time()}
+        st = {"board": _t2048_new_board(), "score": 0, "moves": 0, "won": False, "over": False,
+              "ts": time.time(), "undo_used": False, "prev": None}
         DATA.setdefault("_mg_2048", {})[str(uid)] = st
         u = get_user(int(uid))
         best = u.get("mg_best", {}) if isinstance(u.get("mg_best", {}), dict) else {}
         save_data()
         return {"ok": True, "board": st["board"], "score": 0, "moves": 0,
                 "best": int(best.get("t2048", 0) or 0), "goal": _T2048_GOAL,
+                "undo_left": 1,
+                "best_tile": max((v for row in st["board"] for v in row), default=0),
                 "message": "۲۰۴۸ — کاشی‌های هم‌ارزش را ادغام کن!"}, 200
     except Exception as exc:
         _mlog("error", f"2048_get failed: {exc!r}")
@@ -29443,20 +30076,43 @@ def _mini_2048_move(uid, direction):
     """حرکت در ۲۰۴۸ — منطق کامل سمت سرور؛ پاداش در پایان بازی."""
     try:
         direction = str(direction or "").strip().lower()
-        if direction not in ("up", "down", "left", "right"):
-            return {"ok": False, "error": "جهت نامعتبر."}, 400
         st = DATA.get("_mg_2048", {}).get(str(uid))
         if not isinstance(st, dict) or st.get("over"):
             return _mini_2048_get(uid)
+        # 🔄 Undo — یک بار در هر بازی
+        if direction == "undo":
+            if st.get("undo_used"):
+                return {"ok": False, "error": "Undo را قبلاً استفاده کردی!"}, 400
+            prev = st.get("prev")
+            if not isinstance(prev, dict):
+                return {"ok": False, "error": "چیزی برای برگشتن نیست!"}, 400
+            st["board"] = [row[:] for row in prev["board"]]
+            st["score"] = int(prev["score"])
+            st["moves"] = int(prev["moves"])
+            st["undo_used"] = True
+            save_data(force=True)
+            return {"ok": True, "board": st["board"], "score": int(st["score"]),
+                    "moves": int(st["moves"]), "moved": True, "undid": True,
+                    "over": False, "won": bool(st.get("won")), "undo_left": 0,
+                    "best_tile": max((v for row in st["board"] for v in row), default=0),
+                    "best": _mg_best(int(uid), "t2048"),
+                    "message": "برگشتی عقب! یک فرصت بود"}, 200
+        if direction not in ("up", "down", "left", "right"):
+            return {"ok": False, "error": "جهت نامعتبر."}, 400
         board, gained, moved, merges = _t2048_dirs(st["board"], direction)
         if not moved:
             return {"ok": True, "board": st["board"], "score": int(st.get("score", 0)),
                     "moves": int(st.get("moves", 0)), "moved": False,
-                    "over": bool(st.get("over")), "won": bool(st.get("won"))}, 200
+                    "over": bool(st.get("over")), "won": bool(st.get("won")),
+                    "undo_left": 0 if st.get("undo_used") else 1,
+                    "best_tile": max((v for row in st["board"] for v in row), default=0)}, 200
+        st["prev"] = {"board": [row[:] for row in st["board"]], "score": int(st.get("score", 0)),
+                      "moves": int(st.get("moves", 0))}
         st["board"] = board
         st["score"] = int(st.get("score", 0)) + int(gained)
         st["moves"] = int(st.get("moves", 0)) + 1
-        _t2048_spawn(board)
+        spawn = _t2048_spawn(board)
+        spawn_at = _t2048_last_spawn if spawn else None
         won = bool(st.get("won")) or any(v >= _T2048_GOAL for row in board for v in row)
         st["won"] = won
         dead = _t2048_dead(board)
@@ -29475,16 +30131,21 @@ def _mini_2048_move(uid, direction):
                 coins += 20
             add_xp(int(uid), xp)
             add_coins(int(uid), coins)
+            best_tile = max((v for row in board for v in row), default=0)
             DATA.get("_mg_2048", {}).pop(str(uid), None)
             save_data(force=True)
             return {"ok": True, "board": board, "score": score, "moves": int(st["moves"]),
                     "moved": True, "over": True, "won": won, "record": rec,
                     "merges": merges, "reward": {"xp": xp, "coins": coins},
+                    "best_tile": best_tile,
                     "best": int(best.get("t2048", 0) or 0),
                     "message": f"بازی تمام شد — امتیاز {score}"}, 200
         save_data()
         return {"ok": True, "board": board, "score": int(st["score"]), "moves": int(st["moves"]),
                 "moved": True, "over": False, "won": won, "merges": merges,
+                "spawn": spawn_at,
+                "undo_left": 0 if st.get("undo_used") else 1,
+                "best_tile": max((v for row in board for v in row), default=0),
                 "best": int(best.get("t2048", 0) or 0)}, 200
     except Exception as exc:
         _mlog("error", f"2048_move failed: {exc!r}")
@@ -29512,8 +30173,9 @@ def _mini_mole_start(uid):
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-def _mini_mole_hit(uid, rt_ms, missed=False):
-    """ثبت ضربه (یا خط) — ضدتقلب: حداکثر ۷ ضربه در ثانیه و پنجره‌ی ۳۵ ثانیه."""
+def _mini_mole_hit(uid, rt_ms=0, missed=False, kind="normal"):
+    """ثبت ضربه (یا خط) — ضدتقلب: حداکثر ۷ ضربه در ثانیه و پنجره‌ی ۳۵ ثانیه.
+    kind: normal | gold (موش طلایی = ۲ ضربه) | bomb (موش بمبی = ریست زنجیره)"""
     try:
         st = DATA.get("_mg_mole", {}).get(str(uid))
         if not isinstance(st, dict) or st.get("done"):
@@ -29523,23 +30185,39 @@ def _mini_mole_hit(uid, rt_ms, missed=False):
             st["done"] = True
             save_data()
             return {"ok": False, "error": "زمان تمام شده."}, 400
-        if not missed:
-            rts = st.setdefault("rts", [])
-            now = time.time()
-            # ضدتقلب: حداکثر ۷ ضربه در هر ثانیه
-            recent = [t for t in rts if now - t < 1.0]
-            if len(recent) >= 7:
-                return {"ok": True, "counted": False}, 200
-            rts.append(now)
-            st["hits"] = int(st.get("hits", 0)) + 1
-            st["streak"] = int(st.get("streak", 0)) + 1
-            st["best_streak"] = max(int(st.get("best_streak", 0)), int(st["streak"]))
-        else:
+        if missed:
             st["misses"] = int(st.get("misses", 0)) + 1
             st["streak"] = 0
+            save_data()
+            return {"ok": True, "counted": False, "missed": True,
+                    "hits": int(st.get("hits", 0)),
+                    "streak": int(st.get("streak", 0)),
+                    "time_left": max(0, _MOLE_DURATION - int(elapsed))}, 200
+        kind = str(kind or "normal")
+        rts = st.setdefault("rts", [])
+        now = time.time()
+        # ضدتقلب: حداکثر ۷ ضربه در هر ثانیه (طلایی ۲ تا حساب می‌شود)
+        recent = [t for t in rts if now - t < 1.0]
+        if len(recent) >= 7:
+            return {"ok": True, "counted": False}, 200
+        rts.append(now)
+        if kind == "bomb":
+            # 💣 موش بمبی — نزن! زنجیره ریست و یک خطا
+            st["misses"] = int(st.get("misses", 0)) + 1
+            st["streak"] = 0
+            save_data()
+            return {"ok": True, "counted": True, "bomb": True,
+                    "hits": int(st.get("hits", 0)),
+                    "streak": 0,
+                    "time_left": max(0, _MOLE_DURATION - int(elapsed))}, 200
+        inc = 2 if kind == "gold" else 1
+        st["hits"] = int(st.get("hits", 0)) + inc
+        st["gold"] = int(st.get("gold", 0)) + (1 if kind == "gold" else 0)
+        st["streak"] = int(st.get("streak", 0)) + inc
+        st["best_streak"] = max(int(st.get("best_streak", 0)), int(st["streak"]))
         save_data()
-        return {"ok": True, "counted": True, "hits": int(st["hits"]),
-                "streak": int(st["streak"]),
+        return {"ok": True, "counted": True, "gold": kind == "gold",
+                "hits": int(st["hits"]), "streak": int(st["streak"]),
                 "time_left": max(0, _MOLE_DURATION - int(elapsed))}, 200
     except Exception as exc:
         _mlog("error", f"mole_hit failed: {exc!r}")
@@ -29554,20 +30232,25 @@ def _mini_mole_finish(uid):
             return {"ok": False, "error": "دور فعالی نیست."}, 400
         hits = int(st.get("hits", 0))
         streak = int(st.get("best_streak", 0))
-        mini_game_record_play(int(uid), "mole", hits >= 15)
+        gold = int(st.get("gold", 0))
+        misses = int(st.get("misses", 0))
+        accuracy = round(hits / max(1, hits + misses), 2)
+        _mg_record_lite(int(uid), "mole", hits >= 15)
         rec = _mg_set_best(int(uid), "mole", hits)
-        xp = min(50, 3 + hits)
-        coins = min(35, 1 + hits // 2 + (5 if streak >= 10 else 0))
+        xp = min(55, 3 + hits + gold * 2)
+        coins = min(40, 1 + hits // 2 + gold + (5 if streak >= 10 else 0))
         add_xp(int(uid), xp)
         add_coins(int(uid), coins)
+        _mg_hist(int(uid), "موش‌کوبی", "برد" if hits >= 15 else "پایان", xp, coins)
         u = get_user(int(uid))
         best = u.get("mg_best", {}) if isinstance(u.get("mg_best", {}), dict) else {}
         save_data(force=True)
-        return {"ok": True, "hits": hits, "misses": int(st.get("misses", 0)),
+        return {"ok": True, "hits": hits, "misses": misses, "gold": gold,
+                "accuracy": accuracy,
                 "best_streak": streak, "record": rec,
                 "reward": {"xp": xp, "coins": coins},
                 "best": int(best.get("mole", 0) or 0),
-                "message": f"{hits} ضربه ثبت شد!"}, 200
+                "message": f"{hits} ضربه ثبت شد!" + (f" ({gold} موش طلایی ⭐)" if gold else "")}, 200
     except Exception as exc:
         _mlog("error", f"mole_finish failed: {exc!r}")
         return {"ok": False, "error": "خطای داخلی"}, 500
@@ -29577,12 +30260,25 @@ def _mini_mole_finish(uid):
 _RPS_MINI = {"r": ("✊", "سنگ"), "p": ("✋", "کاغذ"), "s": ("✌️", "قیچی")}
 
 
+def _mini_rps_stats(uid):
+    u = get_user(int(uid))
+    st = u.get("rps_stats")
+    if not isinstance(st, dict):
+        st = {"w": 0, "l": 0, "d": 0, "mw": 0, "ml": 0, "ms": 0}
+        u["rps_stats"] = st
+    return st
+
+
 def _mini_rps_get(uid):
     """شروع مسابقه‌ی سنگ‌کاغذقیچی — بهترین از سه."""
     try:
-        st = {"me": 0, "bot": 0, "round": 1, "history": []}
+        st = {"me": 0, "bot": 0, "round": 1, "history": [], "trans": {}}
         DATA.setdefault("_mg_rps2", {})[str(uid)] = st
+        s = _mini_rps_stats(uid)
         return {"ok": True, "me": 0, "bot": 0, "round": 1, "history": [],
+                "lifetime": {"w": int(s.get("w", 0)), "l": int(s.get("l", 0)),
+                             "d": int(s.get("d", 0)), "mw": int(s.get("mw", 0)),
+                             "ms": int(s.get("ms", 0))},
                 "message": "بهترین از سه — شانس قبضه کن!"}, 200
     except Exception as exc:
         _mlog("error", f"rps_get failed: {exc!r}")
@@ -29599,12 +30295,23 @@ def _mini_rps_pick(uid, pick):
         if not isinstance(st, dict) or st.get("done"):
             return _mini_rps_get(uid)
         hist = [h[0] for h in st.get("history", []) if isinstance(h, (list, tuple)) and len(h) > 0]
-        # هوش کوچک: ۴۰٪ ضدِ پرتکرارِ حریف، ۶۰٪ تصادفی
-        if hist and len(hist) >= 2 and random.random() < 0.4:
+        # 🧠 هوش مارکوف (۶.۰): الگوی بعدیِ بازیکن را از گذارها پیش‌بینی کن و خنثی کن
+        trans = st.get("trans") if isinstance(st.get("trans"), dict) else {}
+        bot = None
+        if len(hist) >= 2:
+            last = hist[-1]
+            row = trans.get(last)
+            if isinstance(row, dict) and sum(row.values()) >= 3:
+                pred = max(row, key=row.get)  # محتمل‌ترین انتخاب بعدی بازیکن
+                beats = {"r": "p", "p": "s", "s": "r"}
+                confidence = row[pred] / max(1, sum(row.values()))
+                if confidence >= 0.4 and random.random() < min(0.75, 0.35 + confidence * 0.5):
+                    bot = beats.get(pred)
+        if bot is None and hist and len(hist) >= 2 and random.random() < 0.4:
             common = max(set(hist), key=hist.count)
             beats = {"r": "p", "p": "s", "s": "r"}
             bot = beats.get(common, random.choice(list(_RPS_MINI)))
-        else:
+        if bot is None:
             bot = random.choice(list(_RPS_MINI))
         beats_map = {"r": "s", "p": "r", "s": "p"}
         if pick == bot:
@@ -29619,18 +30326,35 @@ def _mini_rps_pick(uid, pick):
             st["bot"] = int(st.get("bot", 0)) + 1
             msg = "این راند مال ربات!"
         st.setdefault("history", []).append([pick, bot, result])
+        # آموزش زنجیره‌ی مارکوف — بعد از «قبلی» چه انتخابی می‌کند
+        if len(st.get("history", [])) >= 2:
+            prev_pick = st["history"][-2][0]
+            trow = st.setdefault("trans", {}).setdefault(prev_pick, {})
+            trow[pick] = int(trow.get(pick, 0)) + 1
         st["round"] = int(st.get("round", 1)) + 1
+        s = _mini_rps_stats(uid)
+        _rk = "w" if result == "win" else ("l" if result == "lose" else "d")
+        s[_rk] = int(s.get(_rk, 0)) + 1
         finished = False
         won_match = None
+        bonus_coins = 0
         if int(st["me"]) >= 2 or int(st["bot"]) >= 2:
             finished = True
             won_match = int(st["me"]) >= 2
             st["done"] = True
-            mini_game_record_play(int(uid), "rps", bool(won_match))
             if won_match:
+                s["mw"] = int(s.get("mw", 0)) + 1
+                s["ms"] = int(s.get("ms", 0)) + 1
+                # پاداش استریک مسابقه — هر برد پشت‌سرهم +۲ سکه تا +۱۰
+                bonus_coins = min(10, max(0, (int(s.get("ms", 1)) - 1) * 2))
+                _mg_record_lite(int(uid), "rps", True)
                 add_xp(int(uid), 10)
-                add_coins(int(uid), 8)
+                add_coins(int(uid), 8 + bonus_coins)
+                _mg_hist(int(uid), "سنگ‌کاغذ", "برد", 10, 8 + bonus_coins)
             else:
+                s["ml"] = int(s.get("ml", 0)) + 1
+                s["ms"] = 0
+                _mg_record_lite(int(uid), "rps", False)
                 add_xp(int(uid), 3)
             DATA.get("_mg_rps2", {}).pop(str(uid), None)
         save_data(force=True)
@@ -29638,10 +30362,15 @@ def _mini_rps_pick(uid, pick):
                "pick_label": _RPS_MINI[pick][1], "bot_label": _RPS_MINI[bot][1],
                "result": result, "me": int(st["me"]), "bot_score": int(st["bot"]),
                "round": int(st["round"]), "finished": finished,
-               "history": st.get("history", [])[-6:], "message": msg}
+               "history": st.get("history", [])[-6:], "message": msg,
+               "lifetime": {"w": int(s.get("w", 0)), "l": int(s.get("l", 0)),
+                            "d": int(s.get("d", 0)), "mw": int(s.get("mw", 0)),
+                            "ms": int(s.get("ms", 0))}}
         if finished:
             out["won_match"] = bool(won_match)
-            out["reward"] = {"xp": 10 if won_match else 3, "coins": 8 if won_match else 0}
+            out["reward"] = {"xp": 10 if won_match else 3,
+                             "coins": (8 + bonus_coins) if won_match else 0}
+            out["streak_bonus"] = bonus_coins
         return out, 200
     except Exception as exc:
         _mlog("error", f"rps_pick failed: {exc!r}")
@@ -29691,6 +30420,7 @@ def _mini_sv_session_view(session):
         "question": q, "mode": mode, "mode_name": MODE_LABELS.get(mode, mode),
         "event": ev, "items": {"heal": int(items.get("heal", 0)), "shield": int(items.get("shield", 0))},
         "reward": {"xp": int((5 + day) * mult), "coins": int((3 + day // 2) * mult)},
+        "log": (session.get("log") or [])[-15:],
     }
 
 
@@ -29722,6 +30452,18 @@ def _mini_survival_answer(uid, accepted):
                     "message": "جان‌هایت تمام شد!"}, 200
         add_xp(int(uid), int(result.get("xp", 0)))
         add_coins(int(uid), int(result.get("coins", 0)))
+        # 🧭 لاگ مسیر — نقشه‌ی سفر در UI از این ساخته می‌شود
+        try:
+            lg = session.setdefault("log", [])
+            if not isinstance(lg, list):
+                lg = []
+                session["log"] = lg
+            lg.append({"day": int(session.get("day", 1)), "ok": bool(accepted),
+                       "ev": str(result.get("event") or ""), "gained": True})
+            if len(lg) > 40:
+                del lg[:len(lg) - 40]
+        except Exception:
+            pass
         milestone = 0
         ev = result.get("event")
         if not ev:
@@ -29862,12 +30604,29 @@ def _mini_sv_finish(uid, session):
         bump_mission_progress(int(uid), "games", 1)
         award_achievement_v11(int(uid), "v11_first_survival")
         log_user_activity(int(uid), "survival_end", f"day={day} pts={points} diff={diff} src=miniapp")
+        # 📜 تاریخچه‌ی ۵ اجرای اخیر
+        try:
+            sh = user.setdefault("sv_history", [])
+            if not isinstance(sh, list):
+                sh = []
+                user["sv_history"] = sh
+            sh.insert(0, {"ts": now_ts(), "diff": diff, "day": day, "points": points,
+                          "streak": best, "events": events,
+                          "xp": int(session.get("total_xp", 0)),
+                          "coins": int(session.get("total_coins", 0)) + bonus_coins})
+            if len(sh) > 5:
+                del sh[5:]
+        except Exception:
+            pass
+        _mg_hist(int(uid), "بقا", "برد" if is_rec else "پایان",
+                 int(session.get("total_xp", 0)), int(session.get("total_coins", 0)) + bonus_coins)
         save_data(force=True)
         return {"diff": diff, "diff_name": diff_cfg["name"], "diff_icon": diff_cfg["icon"],
                 "day": day, "streak": streak, "best_streak": best, "events": events,
                 "total_xp": int(session.get("total_xp", 0)),
                 "total_coins": int(session.get("total_coins", 0)) + bonus_coins,
-                "points": points, "bonus_coins": bonus_coins, "record": is_rec}
+                "points": points, "bonus_coins": bonus_coins, "record": is_rec,
+                "log": (session.get("log") or [])[-15:]}
     except Exception as exc:
         _mlog("error", f"sv_finish failed: {exc!r}")
         return {}
@@ -30362,9 +31121,17 @@ def _mini_duel_view(duel, code, uid):
                                 "ts": float(duel.get("q_ts", 0) or 0),
                                 "timeout": 120}
             view["answering"] = int(uid) == current
+        # 🗣 نمایش جواب راند قبل — قبلاً حریف هرگز جوابت را نمی‌دید
+        if duel.get("answer_text") and float(duel.get("answer_ts", 0) or 0) > 0:
+            a_uid = int(duel.get("answer_uid", 0) or 0)
+            view["last_answer"] = {"uid": a_uid, "name": name_of(a_uid),
+                                   "text": str(duel["answer_text"])[:300],
+                                   "mode": str(duel.get("current_mode", "")),
+                                   "mode_label": str(MODE_LABELS.get(duel.get("current_mode", ""), ""))}
         if state == "done":
             sa, sb = int(duel.get("score_a", 0)), int(duel.get("score_b", 0))
             view["winner"] = a if sa > sb else (b if sb > sa else 0)
+            view["rematch_with"] = b if int(uid) == a else a
         view["modes"] = [{"key": k, "label": l} for k, l in MODE_ORDER[:8]]
         return view
     except Exception as exc:
@@ -30559,6 +31326,19 @@ def _mini_arena_view(uid):
         }
         if match:
             view["match"] = _mini_arena_match_view(match, uid)
+        # 📜 تاریخچه‌ی نبردهای اخیر من
+        hist = []
+        for h in (DATA.get("_arena_hist") or [])[-100:]:
+            if isinstance(h, dict) and uid in (int(h.get("p1", 0)), int(h.get("p2", 0))):
+                opp = int(h.get("p2", 0)) if int(h.get("p1", 0)) == uid else int(h.get("p1", 0))
+                hist.append({"ts": int(h.get("ts", 0)), "opp": name_of(opp),
+                             "opp_elo": int(h.get("elo2" if int(h.get("p1", 0)) == uid else "elo1", 0) or 0),
+                             "score": ([int(h.get("s1", 0)), int(h.get("s2", 0))]
+                                       if int(h.get("p1", 0)) == uid
+                                       else [int(h.get("s2", 0)), int(h.get("s1", 0))]),
+                             "won": int(h.get("winner", 0)) == uid,
+                             "elo_delta": int(h.get("d1", 0) if int(h.get("p1", 0)) == uid else h.get("d2", 0))})
+        view["recent"] = hist[-5:][::-1]
         return view, 200
     except Exception as exc:
         _mlog("error", f"arena_view failed: {exc!r}")
@@ -30582,11 +31362,29 @@ def _mini_arena_match_view(match, uid):
             "target": int(match.get("target", MM_TARGET_SCORE)),
         }
         q = match.get("q")
+        # ⏱ تایم‌اوت نوبت — اگر ۶۰ ثانیه جواب ندادی، نوبت خودکار به حریف می‌رود
+        if my_turn and q and match.get("q_ts"):
+            left = 60 - int(time.time() - float(match.get("q_ts", 0) or 0))
+            if left <= 0 and not match.get("timeout_passed"):
+                p1x, p2x = int(match.get("p1", 0)), int(match.get("p2", 0))
+                match["turn"] = p2x if int(uid) == p1x else p1x
+                match["q"] = None
+                match["timeout_passed"] = True
+                save_data()
+                my_turn = False
+                view["timeout"] = True
+            else:
+                view["turn_left"] = max(0, left)
         if my_turn and not q:
             q = ranked_question_get(match)
             match["q"] = q
+            match["q_ts"] = time.time()
+            match["timeout_passed"] = False
         if my_turn and q:
             view["question"] = {"text": str(q.get("q", "")), "options": list(q.get("options", []))}
+            if not match.get("q_ts"):
+                match["q_ts"] = time.time()
+            view["turn_left"] = max(0, 60 - int(time.time() - float(match.get("q_ts", 0) or 0)))
         return view
     except Exception as exc:
         _mlog("error", f"arena_match_view failed: {exc!r}")
@@ -30617,8 +31415,21 @@ def _mini_arena_join(uid):
         return {"ok": False, "error": "خطای داخلی"}, 500
 
 
-def _mini_arena_leave(uid):
+def _mini_arena_leave(uid, resign=False):
+    """خروج از صف — یا با resign=True تسلیمِ نبردِ فعال (حریف برنده می‌شود)."""
     try:
+        uid = int(uid)
+        if resign:
+            match = ranked_active_for(uid)
+            if match:
+                p1, p2 = int(match.get("p1", 0)), int(match.get("p2", 0))
+                winner = p2 if uid == p1 else p1
+                fin = _mini_arena_finish(match, winner)
+                fin["resigned"] = True
+                fin["resigner"] = name_of(uid)
+                return {"ok": True, "resigned": True, "finish": fin,
+                        "message": "تسلیم شدی — حریف برنده شد"}, 200
+            return {"ok": False, "error": "نبرد فعالی نداری."}, 400
         matchmaking_leave(int(uid))
         save_data()
         return {"ok": True, "message": "از صف خارج شدی."}, 200
@@ -30658,6 +31469,8 @@ def _mini_arena_answer(uid, idx):
                         "finished": True, "finish": fin,
                         "message": f"درست! {my} امتیاز — نبرد را بردی! 🏆"}, 200
             match["q"] = ranked_question_get(match)
+            match["q_ts"] = time.time()
+            match["timeout_passed"] = False
             save_data(force=True)
             return {"ok": True, "correct": True, "correct_text": correct,
                     "view": _mini_arena_view(uid)[0],
@@ -30704,6 +31517,21 @@ def _mini_arena_finish(match, winner):
         t_l_after = mm_tier_floor(int(get_user(int(loser)).get("elo_rating", 1000)))
         if t_l_after < t_l_before:
             demote = t_l_after
+        # 📜 تاریخچه‌ی نبرد — برای صفحه‌ی آرنا
+        try:
+            ah = DATA.setdefault("_arena_hist", [])
+            if not isinstance(ah, list):
+                ah = []
+                DATA["_arena_hist"] = ah
+            ah.append({"p1": p1, "p2": p2,
+                       "s1": int(match.get("score1", 0)), "s2": int(match.get("score2", 0)),
+                       "elo1": int(get_user(p1).get("elo_rating", 1000)),
+                       "elo2": int(get_user(p2).get("elo_rating", 1000)),
+                       "winner": int(winner), "ts": int(time.time())})
+            if len(ah) > 100:
+                del ah[:len(ah) - 100]
+        except Exception:
+            pass
         save_data(force=True)
         return {"winner": int(winner), "loser": int(loser),
                 "winner_name": name_of(int(winner)), "loser_name": name_of(int(loser)),
@@ -30758,7 +31586,12 @@ def _mini_love2_state(uid, code):
                 "other_done": bool(entry.get(f"{'b' if side == 'a' else 'a'}_done")),
                 "current_idx": len(my_ans), "questions": questions,
                 "total": len(questions)}
-        if entry.get("a_done") and entry.get("b_done"):
+        if entry.get("result"):
+            # نتیجه‌ی از قبل محاسبه‌شده — دیگر یک‌بارمصرف نیست
+            res = dict(entry["result"])
+            res["persisted"] = True
+            view["result"] = res
+        elif entry.get("a_done") and entry.get("b_done"):
             view["result"] = _mini_love2_compute(entry)
         return view, 200
     except Exception as exc:
@@ -30807,26 +31640,45 @@ def _mini_love2_compute(entry):
         a_ans, b_ans = entry.get("a_answers", {}), entry.get("b_answers", {})
         matches = 0
         rows = []
+
+        def _stems(txt):
+            ws = re.findall(r"[\w\u0600-\u06FF]+", txt.lower())
+            out = set()
+            for w in ws:
+                out.add(w)
+                if len(w) >= 4:
+                    out.add(w[:4])  # ریشه‌ی کلمه — «خوشحال» و «خوشحالی» هم‌سو حساب می‌شوند
+            return out
+
         for i, (_, q) in enumerate(LOVE2_QUESTIONS):
             ta, tb = str(a_ans.get(str(i), "")), str(b_ans.get(str(i), ""))
             match = False
             if ta.strip() and tb.strip():
-                wa = set(re.findall(r"[\w\u0600-\u06FF]+", ta.lower()))
-                wb = set(re.findall(r"[\w\u0600-\u06FF]+", tb.lower()))
+                wa, wb = _stems(ta), _stems(tb)
                 match = bool(wa & wb)
             if match:
                 matches += 1
             rows.append({"q": q, "a": ta[:120] or "—", "b": tb[:120] or "—", "match": match})
         score = min(98, 50 + matches * 12)
-        # پاکسازی پس از نمایش (مطابق ربات)
-        v24_store()["love2"].pop(str(entry.get("code", "")) or "", None)
-        for k in list(v24_store()["love2"].keys()):
-            if v24_store()["love2"][k] is entry:
-                v24_store()["love2"].pop(k, None)
-                break
+        # 💝 پاداش تکمیل برای هر دو نفر
+        try:
+            add_xp(a, 15, name_of(a))
+            add_xp(b, 15, name_of(b))
+            add_coins(a, 8)
+            add_coins(b, 8)
+            push_notification(a, "💌", "عشق‌سنج کامل شد! +۱۵ XP +۸ سکه — نتیجه را در مینی‌اپ ببین")
+            push_notification(b, "💌", "عشق‌سنج کامل شد! +۱۵ XP +۸ سکه — نتیجه را در مینی‌اپ ببین")
+            _mg_hist(a, "عشق‌سنج", "برد", 15, 8, 2)
+            _mg_hist(b, "عشک‌سنج" if False else "عشق‌سنج", "برد", 15, 8, 2)
+        except Exception:
+            pass
+        # (🛠 رفع باگ) نتیجه ماندگار می‌شود — بستن صفحه دیگر نتیجه را نمی‌سوزاند
+        entry["result"] = {"score": score, "matches": matches,
+                           "total": len(LOVE2_QUESTIONS),
+                           "a_name": name_of(a), "b_name": name_of(b), "rows": rows}
+        entry["done_at"] = now_ts()
         save_data(force=True)
-        return {"score": score, "matches": matches, "total": len(LOVE2_QUESTIONS),
-                "a_name": name_of(a), "b_name": name_of(b), "rows": rows}
+        return dict(entry["result"])
     except Exception as exc:
         _mlog("error", f"love2_compute failed: {exc!r}")
         return {"score": 50, "matches": 0, "total": len(LOVE2_QUESTIONS), "rows": []}
@@ -31502,7 +32354,7 @@ def _mini_hof_view(uid):
 def _mini_history_view(uid):
     try:
         u = get_user(int(uid))
-        hist = [h for h in (u.get("game_history") or []) if isinstance(h, dict)][:20]
+        hist = [h for h in (u.get("game_history") or []) if isinstance(h, dict)][:60]
         items = [{"ts": int(h.get("ts", 0) or 0), "mode": str(h.get("mode", "")),
                   "result": str(h.get("result", "")), "xp": int(h.get("xp", 0)),
                   "coins": int(h.get("coins", 0)), "players": int(h.get("players", 0)),
@@ -31898,7 +32750,7 @@ def _mini_recap_view(uid):
 def _mini_admin_punishments(admin_uid):
     """مجازات‌های در جریان — مطابق /apexpunishments."""
     try:
-        if int(admin_uid) != int(ADMIN_ID):
+        if not _mini_v5_admin_ok(admin_uid):
             return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
         rows = []
         for pid, p in ((v24_store().get("punish", {}) or {}).items()):
@@ -31919,21 +32771,28 @@ def _mini_admin_punishments(admin_uid):
 
 
 def _mini_admin_csv(admin_uid):
-    """خروجی CSV کاربران — فقط ادمین."""
+    """خروجی CSV کاربران — ادمین (شامل مالک و ادمین‌های منصوب)."""
     try:
-        if int(admin_uid) != int(ADMIN_ID):
+        if not _mini_v5_admin_ok(admin_uid):
             return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
-        rows = ["id,name,xp,level,coins,games,wins,losses,banned,verified,created_at"]
+        # (۶.۰) ستون‌های غنی‌شده — ELO، دوئل، VIP، مینی‌بازی، آخرین فعالیت
+        rows = ["id,name,username,xp,level,coins,games,wins,losses,duels,elo,mini_games,mini_wins,vip,banned,ban_reason,verified,created_at,last_active"]
         for k, u in DATA.get("users", {}).items():
             if not isinstance(u, dict):
                 continue
             name = str(u.get("name", "")).replace(",", " ").replace("\n", " ")
+            uname = str(u.get("username", "") or "").replace(",", " ")
+            vip_flag = "yes" if int(u.get("vip_until", 0) or 0) > now_ts() else "no"
             rows.append(",".join(str(x) for x in (
-                k, name, int(u.get("xp", 0) or 0), int(u.get("level", 1) or 1),
+                k, name, uname, int(u.get("xp", 0) or 0), int(u.get("level", 1) or 1),
                 int(u.get("coins", 0) or 0), int(u.get("games", 0) or 0),
                 int(u.get("wins", 0) or 0), int(u.get("losses", 0) or 0),
-                bool(u.get("banned", False)), bool(u.get("verified", False)),
-                int(u.get("created_at", 0) or 0))))
+                int(u.get("duels", 0) or 0), int(u.get("elo_rating", 1000) or 1000),
+                int(u.get("mini_games_played", 0) or 0), int(u.get("mini_games_won", 0) or 0),
+                vip_flag, bool(u.get("banned", False)),
+                str(u.get("ban_reason", "") or "").replace(",", " ")[:50],
+                bool(u.get("verified", False)),
+                int(u.get("created_at", 0) or 0), int(u.get("last_active", 0) or 0))))
         return {"ok": True, "csv": "\n".join(rows), "count": len(rows) - 1}, 200
     except Exception as exc:
         _mlog("error", f"admin_csv failed: {exc!r}")
@@ -32068,6 +32927,11 @@ def _mini_v5_users(q="", page=0, limit=30, filter_mode="all"):
     """مدیریت کاربران — جستجو + فیلتر VIP/بن/تأیید + صفحه‌بندی."""
     q = str(q or "").strip().lower()
     rows = []
+    # (🛠 رفع باگ) مجموعه‌ی verified یک‌بار ساخته می‌شود — قبلاً به‌ازای هر کاربر لیست بازسازی می‌شد (O(n²))
+    try:
+        verified_set = {int(x) for x in DATA.get("verified_users", []) if str(x).lstrip("-").isdigit()}
+    except Exception:
+        verified_set = set()
     for uid, u in DATA.get("users", {}).items():
         if not isinstance(u, dict):
             continue
@@ -32075,24 +32939,25 @@ def _mini_v5_users(q="", page=0, limit=30, filter_mode="all"):
         username = str(u.get("username", ""))
         if q and q not in str(uid).lower() and q not in name.lower() and q not in username.lower():
             continue
-        is_vip = False
+        # (🛠 رفع باگ) متغیر محلی is_vip تابع سراسری را سایه می‌انداخت
+        vip_flag = False
         try:
-            is_vip = bool(is_vip(int(uid)))
+            vip_flag = int(u.get("vip_until", 0) or 0) > now_ts()
         except Exception:
-            is_vip = int(u.get("vip_until", 0) or 0) > now_ts()
-        if filter_mode == "vip" and not is_vip:
+            vip_flag = False
+        if filter_mode == "vip" and not vip_flag:
             continue
         if filter_mode == "banned" and not bool(u.get("banned", False)):
             continue
-        if filter_mode == "verified" and int(uid) not in [int(x) for x in DATA.get("verified_users", []) if str(x).lstrip("-").isdigit()]:
+        if filter_mode == "verified" and int(uid) not in verified_set:
             continue
         rows.append({
             "id": int(uid), "name": name or "بازیکن", "username": username,
             "level": int(u.get("level", 1) or 1), "xp": int(u.get("xp", 0) or 0),
             "coins": int(u.get("coins", 0) or 0), "games": int(u.get("games", 0) or 0),
             "wins": int(u.get("wins", 0) or 0), "banned": bool(u.get("banned", False)),
-            "vip": is_vip,
-            "verified": int(uid) in [int(x) for x in DATA.get("verified_users", []) if str(x).lstrip("-").isdigit()],
+            "vip": vip_flag,
+            "verified": int(uid) in verified_set,
             "last_active": int(u.get("last_active", 0) or 0),
         })
     rows.sort(key=lambda x: (x["xp"], x["games"]), reverse=True)
@@ -32626,6 +33491,12 @@ def _mini_admin_v5_view(uid, section, params):
             return {"ok": True, "section": "games", "items": _mini_admin_games()}, 200
         if section == "analytics":
             return _mini_v5_analytics(), 200
+        if section == "analytics2":
+            return _mini_v5_analytics2()
+        if section == "leaderboards":
+            return _mini_v5_leaderboards()
+        if section == "user_econ":
+            return _mini_v5_user_econ(int(params.get("uid", 0) or 0))
         if section == "bank":
             return _mini_v5_bank(), 200
         if section == "bank_view":
@@ -32662,9 +33533,22 @@ def _mini_admin_v5_view(uid, section, params):
         if section == "export_logs":
             return _mini_v5_export_logs(), 200
         if section == "logs":
+            # (۶.۰) صفحه‌بندی + فیلتر متن + فیلتر بازیگر — سمت سرور
+            level = str(params.get("level", "all") or "all")
+            actor_q = str(params.get("actor", "") or "").strip()
+            text_q = str(params.get("q", "") or "").strip()
+            page_n = max(0, int(params.get("page", 0) or 0))
+            page_sz = 40
+            raw = _mini_admin_logs(level, 400)
+            if actor_q:
+                raw = [x for x in raw if actor_q in str(x.get("actor", "")) or actor_q in str(x.get("actor_name", ""))]
+            if text_q:
+                raw = [x for x in raw if text_q in str(x.get("action", "")) or text_q in str(x.get("details", ""))]
+            total = len(raw)
             return {"ok": True, "section": "logs",
-                    "items": _mini_admin_logs(str(params.get("level", "all") or "all"),
-                                              int(params.get("limit", 80) or 80))}, 200
+                    "items": raw[page_n * page_sz:(page_n + 1) * page_sz],
+                    "page": page_n, "pages": max(1, (total + page_sz - 1) // page_sz),
+                    "total": total}, 200
         if section == "settings":
             return _mini_admin_settings(), 200
         if section == "maint":
@@ -32722,19 +33606,56 @@ def _mini_admin_v5_action(uid, action, data):
             u = get_user(target)
             if not u:
                 return {"ok": False, "error": "کاربر پیدا نشد."}, 404
-            u["banned"] = not bool(u.get("banned", False))
+            if bool(u.get("banned", False)):
+                u["banned"] = False
+                u.pop("ban_reason", None)
+                u.pop("ban_until", None)
+                msg = "کاربر رفع مسدودی شد ✅"
+            else:
+                reason = str(data.get("reason", "") or "").strip()[:200] or "نقض قوانین"
+                days = int(data.get("days", 0) or 0)
+                u["banned"] = True
+                u["ban_reason"] = reason
+                u["banned_at"] = now_ts()
+                u["banned_by"] = int(uid)
+                if days > 0:
+                    u["ban_until"] = now_ts() + days * 86400
+                    msg = f"کاربر برای {days} روز مسدود شد 🔒 (دلیل: {reason[:40]})"
+                else:
+                    u.pop("ban_until", None)
+                    msg = f"کاربر برای همیشه مسدود شد 🔒 (دلیل: {reason[:40]})"
+                # تاریخچه‌ی بن برای شیت کاربر
+                try:
+                    bl = u.setdefault("ban_history", [])
+                    if isinstance(bl, list):
+                        bl.insert(0, {"ts": now_ts(), "by": int(uid), "reason": reason, "days": days})
+                        if len(bl) > 10:
+                            del bl[10:]
+                except Exception:
+                    pass
+                try:
+                    push_notification(target, "system", "🚫 حساب مسدود شد", f"دلیل: {reason}")
+                except Exception:
+                    pass
             save_data(force=True)
-            audit("admin_ban_toggle", int(uid), target, str(u["banned"]))
-            return {"ok": True, "message": "وضعیت مسدودی تغییر کرد."}, 200
+            audit("admin_ban_toggle", int(uid), target, str(u.get("banned", False)))
+            return {"ok": True, "message": msg}, 200
         if action == "verify_toggle":
             try:
                 verified = DATA.setdefault("verified_users", [])
-                if target in [int(x) for x in verified if str(x).lstrip("-").isdigit()]:
-                    DATA["verified_users"] = [int(x) for x in verified
-                                              if str(x).lstrip("-").isdigit() and int(x) != target]
+                vlist = [int(x) for x in verified if str(x).lstrip("-").isdigit()]
+                tu = get_user(target) or {}
+                # (🛠 رفع باگ) هر دو فروشگاه هم‌زمان نوشته می‌شوند — قبلاً فقط یکی آپدیت می‌شد
+                if target in vlist:
+                    DATA["verified_users"] = [x for x in vlist if x != target]
+                    tu.pop("verified", None)
+                    tu.pop("verified_by", None)
                     msg = "تأیید لغو شد."
                 else:
-                    DATA["verified_users"].append(int(target))
+                    DATA["verified_users"] = vlist + [int(target)]
+                    tu["verified"] = True
+                    tu["verified_by"] = int(uid)
+                    tu["verified_at"] = now_ts()
                     msg = "کاربر تأیید شد ✅"
                 save_data(force=True)
                 audit("admin_verify", int(uid), target, msg)
@@ -32745,7 +33666,12 @@ def _mini_admin_v5_action(uid, action, data):
             u = get_user(target)
             if not u:
                 return {"ok": False, "error": "کاربر پیدا نشد."}, 404
+            # (🛠 رفع باگ) هر دو فروشگاه میوت هم‌زمان آپدیت می‌شوند
             u["mute"] = not bool(u.get("mute", False))
+            try:
+                v19_prefs(target)["mute"] = bool(u["mute"])
+            except Exception:
+                pass
             save_data(force=True)
             audit("admin_mute_toggle", int(uid), target, str(u["mute"]))
             return {"ok": True, "message": "وضعیت میوت تغییر کرد."}, 200
@@ -32908,13 +33834,10 @@ def _mini_admin_v5_action(uid, action, data):
                     continue
                 try:
                     if kind == "coins":
-                        u["coins"] = int(u.get("coins", 0) or 0) + amount
+                        # (🛠 رفع باگ) از add_coins رسمی — شامل لاگ اقتصاد و آنالیتیکس
+                        add_coins(int(k), amount, str(u.get("name", "")))
                     else:
-                        u["xp"] = int(u.get("xp", 0) or 0) + amount
-                        try:
-                            u["level"] = int(level_for_xp(u["xp"]))
-                        except Exception:
-                            pass
+                        add_xp(int(k), amount, str(u.get("name", "")))
                     n += 1
                 except Exception:
                     pass
@@ -33193,9 +34116,11 @@ def _mini_v5_season_admin():
     players = 0
     top = []
     days_left = 0
+    # (🛠 رفع باگ) قبلاً days_left همیشه صفر بود — از زمان پایان واقعی فصل محاسبه می‌شود
     try:
         s = DATA.get("seasons", {}).get(sid, {})
         if isinstance(s, dict):
+            days_left = max(0, int((float(s.get("end", 0) or 0) - now_ts()) / 86400) + 1)
             lb = s.get("leaderboard", {})
             players = len(lb) if isinstance(lb, dict) else 0
             for uid, xp in sorted(lb.items(), key=lambda kv: -int(kv[1] or 0))[:10]:
@@ -33241,6 +34166,135 @@ def _mini_v5_user_history(uid):
         pass
     return {"ok": True, "section": "user_history", "history": hist,
             "achievements": achs, "modes": modes}
+
+
+def _mini_v5_analytics2():
+    """آنالیتیکس ۲.۰ — DAU/WAU/MAU + بازگشت کاربران + توزیع مود + جریان اقتصاد."""
+    try:
+        daily = DATA.get("analytics_daily", {}) if isinstance(DATA.get("analytics_daily"), dict) else {}
+        today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        def _uids(day_key):
+            a = daily.get(day_key, {}) if isinstance(daily.get(day_key), dict) else {}
+            lst = a.get("_active_uids", [])
+            try:
+                return {int(x) for x in lst if str(x).lstrip("-").isdigit()}
+            except Exception:
+                return set()
+
+        # DAU / WAU / MAU
+        dau = len(_uids(today_key))
+        week_uids, month_uids = set(), set()
+        for i in range(7):
+            week_uids |= _uids((datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d"))
+        for i in range(30):
+            month_uids |= _uids((datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d"))
+        # بازگشت (retention): چه سهمی از کاربران دیروز امروز هم آمده‌اند
+        y_key = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        yset = _uids(y_key)
+        retained = len(yset & _uids(today_key)) if yset else 0
+        retention = round(retained / len(yset) * 100, 1) if yset else 0
+        # کاربر جدید vs بازگشته (۷ روز اخیر)
+        new_week = 0
+        for i in range(7):
+            k = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+            a = daily.get(k, {}) if isinstance(daily.get(k), dict) else {}
+            new_week += int(a.get("new_users", 0) or 0)
+        # توزیع مود بازی (از آمار کاربران)
+        mode_dist = {}
+        for u in DATA.get("users", {}).values():
+            if not isinstance(u, dict):
+                continue
+            st = u.get("stats", {}) if isinstance(u.get("stats"), dict) else {}
+            for m in ("truth", "dare", "flirty", "speed", "vote", "roulette"):
+                v = int(st.get(m, 0) or 0)
+                if v:
+                    mode_dist[m] = mode_dist.get(m, 0) + v
+            mg = u.get("mini_games_played", 0) or 0
+            if mg:
+                mode_dist["mini"] = mode_dist.get("mini", 0) + int(mg)
+        mode_rows = sorted(({"mode": k, "count": v} for k, v in mode_dist.items()),
+                           key=lambda x: -x["count"])[:10]
+        # جریان اقتصاد (۲۰۰ تراکنش اخیر)
+        flows = {}
+        for e in (DATA.get("economy_log", []) or [])[:200]:
+            if not isinstance(e, dict):
+                continue
+            reason = str(e.get("reason", "") or "?")[:40]
+            amt = int(e.get("amount", 0) or 0)
+            etype = str(e.get("type", ""))
+            key = f"{etype}:{reason}"
+            f = flows.setdefault(key, {"type": etype, "reason": reason, "total": 0, "count": 0})
+            f["total"] += amt
+            f["count"] += 1
+        flow_rows = sorted(flows.values(), key=lambda x: -abs(x["total"]))[:12]
+        return {"ok": True, "section": "analytics2",
+                "dau": dau, "wau": len(week_uids), "mau": len(month_uids),
+                "stickiness": round(dau * 100 / max(1, len(month_uids)), 1),
+                "retention_1d": retention, "retained": retained, "yesterday_active": len(yset),
+                "new_week": new_week, "returning_week": max(0, len(week_uids) - new_week),
+                "mode_dist": mode_rows, "economy_flows": flow_rows}, 200
+    except Exception as exc:
+        _mlog("error", f"analytics2 failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_v5_leaderboards():
+    """لیدربوردها — برترین‌ها در ۵ سنجه."""
+    try:
+        users = [(k, u) for k, u in DATA.get("users", {}).items() if isinstance(u, dict)]
+
+        def top_by(field, default=0, n=10):
+            rows = sorted(users, key=lambda kv: -int(kv[1].get(field, default) or 0))[:n]
+            return [{"uid": int(kv[0]), "name": str(kv[1].get("name", "") or kv[0]),
+                     "value": int(kv[1].get(field, default) or 0)} for kv in rows]
+
+        return {"ok": True, "section": "leaderboards",
+                "xp": top_by("xp"), "coins": top_by("coins"),
+                "games": top_by("games"), "wins": top_by("wins"),
+                "elo": top_by("elo_rating", 1000),
+                "mini": top_by("mini_games_played")}, 200
+    except Exception as exc:
+        _mlog("error", f"leaderboards failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
+
+
+def _mini_v5_user_econ(uid_target):
+    """تایم‌لاین اقتصادی کاربر — تراکنش‌ها + بن‌ها + اینونتوری."""
+    try:
+        u = get_user(int(uid_target))
+        txs = []
+        for e in (DATA.get("economy_log", []) or []):
+            if isinstance(e, dict) and int(e.get("uid", 0) or 0) == int(uid_target):
+                txs.append({"ts": int(e.get("ts", 0) or 0), "type": str(e.get("type", "")),
+                            "amount": int(e.get("amount", 0) or 0),
+                            "reason": str(e.get("reason", ""))[:60]})
+            if len(txs) >= 40:
+                break
+        bans = [{"ts": int(b.get("ts", 0) or 0), "by": name_of(int(b.get("by", 0) or 0)),
+                 "reason": str(b.get("reason", ""))[:80], "days": int(b.get("days", 0) or 0)}
+                for b in (u.get("ban_history") or []) if isinstance(b, dict)][:10]
+        inv = [{"key": k, "count": int(v)} for k, v in
+               (u.get("inventory", {}) or {}).items() if int(v) > 0]
+        inv.sort(key=lambda x: -x["count"])
+        punishes = []
+        try:
+            for pid, p in (v24_store().get("punish", {}) or {}).items():
+                if isinstance(p, dict) and int(p.get("uid", 0) or 0) == int(uid_target):
+                    punishes.append({"ts": int(float(p.get("ts", 0) or 0)),
+                                     "text": str(p.get("text", ""))[:60],
+                                     "forgiven": bool(p.get("forgiven"))})
+        except Exception:
+            pass
+        punishes = sorted(punishes, key=lambda x: -x["ts"])[:10]
+        return {"ok": True, "section": "user_econ", "txs": txs, "bans": bans,
+                "inventory": inv, "punishes": punishes,
+                "ban_reason": str(u.get("ban_reason", "") or ""),
+                "ban_until": int(u.get("ban_until", 0) or 0),
+                "net": int((u.get("ln_stats", {}) or {}).get("net", 0) or 0)}, 200
+    except Exception as exc:
+        _mlog("error", f"user_econ failed: {exc!r}")
+        return {"ok": False, "error": "خطای داخلی"}, 500
 
 
 def _mini_v5_analytics_month():
@@ -33589,19 +34643,29 @@ def _mini_v5_ads():
 
 
 def _mini_v5_broadcast_history():
-    """تاریخچه‌ی پیام‌های همگانی."""
+    """تاریخچه‌ی پیام‌های همگانی — با آمار تحویل (۶.۰)."""
     items = []
     try:
         for b in (DATA.get("broadcast_queue", []) or [])[:40]:
             if isinstance(b, dict):
+                targets = b.get("targets", []) or []
+                sent_n = int(b.get("sent", 0) or 0)
                 items.append({"text": str(b.get("text", ""))[:200],
                               "ts": int(b.get("ts", 0) or 0),
-                              "sent": bool(b.get("sent", False))})
+                              "sent": bool(b.get("done", False)),
+                              "queued": True,
+                              "total": len(targets) if isinstance(targets, list) else 0,
+                              "delivered": sent_n,
+                              "pending": True,
+                              "progress": min(100, round(sent_n * 100 / max(1, len(targets) if isinstance(targets, list) else 1)))})
         for b in (DATA.get("broadcast_log", []) or [])[:40]:
             if isinstance(b, dict):
                 items.append({"text": str(b.get("text", ""))[:200],
                               "ts": int(b.get("ts", 0) or 0),
-                              "sent": True})
+                              "sent": True, "queued": False,
+                              "total": int(b.get("total", 0) or 0),
+                              "delivered": int(b.get("total", 0) or b.get("sent", 0) or 0),
+                              "pending": False, "progress": 100})
         items.sort(key=lambda x: -x["ts"])
     except Exception:
         pass
@@ -33982,6 +35046,30 @@ def _mini_admin_v5_action7(uid, action, data):
         return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
     action = str(action or "")
     try:
+        if action == "bc_cancel":
+            # (۶.۰) لغو پیام در صف — قبل از ارسال کامل
+            try:
+                idx = int(data.get("idx", -1))
+            except Exception:
+                idx = -1
+            try:
+                ts = float(data.get("ts", 0) or 0)
+            except Exception:
+                ts = 0.0
+            queue = DATA.get("broadcast_queue", [])
+            removed = False
+            for i, b in enumerate(queue):
+                if not isinstance(b, dict):
+                    continue
+                if (idx >= 0 and i == idx) or (ts and abs(float(b.get("ts", 0) or 0) - ts) < 1):
+                    if not b.get("done"):
+                        queue.pop(i)
+                        removed = True
+                    break
+            save_data(force=True)
+            audit("admin_bc_cancel", int(uid), None, f"removed={removed}")
+            return {"ok": removed,
+                    "message": "پیام همگانی از صف حذف شد 🗑" if removed else "پیدا نشد یا ارسال تمام شده."}, 200
         if action == "broadcast_targeted":
             """پیام همگانی با هدف‌گیری — همان صف ارسال ربات با فیلتر گیرنده."""
             text = str(data.get("text", ""))[:900].strip()
@@ -34114,6 +35202,9 @@ def _mini_admin_v5_view8(uid, section, params):
     section = str(section or "")
     try:
         if section == "bank_search":
+            # (🔒 رفع آسیب‌پذیری) محتوای بانک سوال فقط برای ادمین — قبلاً برای هر کاربر باز بود
+            if not _mini_v5_admin_ok(uid):
+                return {"ok": False, "error": "دسترسی مدیر لازم است."}, 403
             return _mini_v5_bank_search((params or {}).get("term", ""), (params or {}).get("bank", ""))
         if section == "lb_around":
             return _mini_v5_leaderboard_around(uid, str((params or {}).get("scope", "global") or "global"))
@@ -35707,6 +36798,117 @@ body[data-theme="sakura"] .brand small{color:#ffd0e0}
 .fancyStat small{color:var(--muted);font-size:8.6px;font-weight:700}
 .fancyStat .fsGlow{position:absolute;inset:auto -30% -70% auto;width:90%;height:120%;border-radius:50%;
   filter:blur(22px);opacity:.14;pointer-events:none}
+
+/* ═══════════ Game Engine 6.0 — UI Kit ═══════════ */
+.diffbar{display:flex;gap:6px;margin-bottom:12px}
+.diffbar .chip{flex:1;justify-content:center;padding:9px 6px;font-size:11px;font-weight:800}
+.diffbar .chip.on{box-shadow:0 0 0 1.5px var(--c1),0 6px 18px -8px var(--c1)}
+.gmeta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.gmeta .tag{font-size:9.5px}
+.gtimer{display:flex;justify-content:center;margin:4px 0 10px}
+.comboPill{display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#ff9e4f33,#ffc85722);
+ border:1px solid #ffc85755;color:var(--gold);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:900;
+ animation:countPop .35s var(--spring)}
+.rangeGauge{margin:10px 2px}
+.rangeGauge .rgTrack{position:relative;height:10px;border-radius:6px;background:var(--panel3);
+ border:1px solid var(--line);overflow:visible}
+.rangeGauge .rgFill{position:absolute;top:0;bottom:0;border-radius:6px;
+ background:linear-gradient(90deg,var(--c1),var(--c3));opacity:.85;transition:all .5s var(--spring)}
+.rangeGauge .rgPin{position:absolute;top:-5px;width:3px;height:20px;border-radius:2px;background:var(--gold);
+ box-shadow:0 0 10px var(--gold);transition:all .4s var(--spring)}
+.rangeGauge .rgLbl{display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-top:5px;font-weight:700}
+.livesRow{display:flex;gap:5px;justify-content:center;margin:6px 0}
+.livesRow span{font-size:17px;transition:all .3s}
+.livesRow span.off{filter:grayscale(1);opacity:.28;transform:scale(.82)}
+.levelBadge{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);
+ border:1px solid var(--line2);border-radius:14px;padding:5px 14px;font-size:12px;font-weight:900}
+.levelBadge b{color:var(--c3);font-size:15px}
+.chainDots{display:flex;gap:6px;justify-content:center;margin:10px 0}
+.chainDots i{width:11px;height:11px;border-radius:50%;background:var(--panel3);border:1px solid var(--line2);
+ transition:all .3s var(--spring)}
+.chainDots i.done{background:var(--green);border-color:var(--green);box-shadow:0 0 8px #31e98166}
+.chainDots i.cur{background:var(--gold);border-color:var(--gold);transform:scale(1.35);animation:hotpulse 1.2s infinite}
+.ttt .win{background:radial-gradient(circle at 50% 50%,#31e98133,transparent 70%)!important;
+ border-color:var(--green)!important;box-shadow:0 0 16px #31e98155!important;animation:optRight .5s}
+.sessChips{display:flex;gap:6px;justify-content:center;margin:8px 0}
+.sessChips .tag{font-size:10px;padding:5px 12px}
+.recGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.recCell{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 6px;
+ text-align:center;position:relative;overflow:hidden;transition:all .25s var(--spring)}
+.recCell:active{transform:scale(.95)}
+.recCell.has{border-color:var(--line2)}
+.recCell.has::before{content:'';position:absolute;inset:0 auto 0 0;width:3px;
+ background:linear-gradient(180deg,var(--c1),var(--c3))}
+.recCell .rcIc{font-size:19px}
+.recCell b{display:block;font-size:13.5px;font-weight:900;margin-top:3px;color:var(--txt)}
+.recCell small{color:var(--muted);font-size:8.5px;font-weight:700}
+.recCell .rcVal{font-size:11px;font-weight:900;color:var(--gold);margin-top:2px}
+.tileStat{display:flex;gap:4px;justify-content:center;margin-top:4px;font-size:8.5px;color:var(--muted);font-weight:700}
+.tileStat b{color:var(--green)}
+.molehud .mh.gold{color:var(--gold);text-shadow:0 0 10px #ffc85766}
+.mhole .memoji.gold{font-size:34px;filter:drop-shadow(0 0 8px #ffc857cc)}
+.mhole .memoji.bomb{filter:drop-shadow(0 0 8px #ff5268cc)}
+.goldFlash{animation:optRight .4s}
+.lnReel{display:flex;justify-content:center;gap:3px;margin:8px 0;direction:ltr}
+.lnReel span{display:inline-flex;align-items:center;justify-content:center;width:34px;height:46px;
+ background:var(--panel2);border:1px solid var(--line2);border-radius:10px;font-size:22px;font-weight:900;
+ color:var(--txt);font-family:inherit}
+.lnReel span.roll{animation:funSpin .12s linear infinite}
+.lnReel span.landed{color:var(--gold);border-color:var(--gold);box-shadow:0 0 14px #ffc85744;animation:countPop .4s var(--spring)}
+.dblBox{margin-top:10px;border:1px dashed var(--gold);border-radius:16px;padding:12px;text-align:center;
+ background:#ffc8570d;animation:hotpulse 2s infinite}
+.dblBox b{color:var(--gold)}
+.undoBar{display:flex;gap:8px;justify-content:center;margin-top:8px}
+.undoBar .btn{flex:0 0 auto}
+.svJourney{display:flex;gap:3px;overflow-x:auto;padding:8px 2px;margin:10px 0;scrollbar-width:none}
+.svJourney::-webkit-scrollbar{display:none}
+.svJourney .svStep{flex:0 0 30px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+ font-size:13px;font-weight:900;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+.svJourney .svStep.ok{background:#31e9811c;border-color:#31e98155;color:var(--green)}
+.svJourney .svStep.no{background:#ff526814;border-color:#ff526844;color:var(--red)}
+.svJourney .svStep.ev{background:#15d8ff14;border-color:#15d8ff44;color:var(--cyan)}
+.svJourney .svStep.cur{outline:2px solid var(--c1);transform:scale(1.08)}
+.arenaClock{display:flex;align-items:center;gap:10px;justify-content:center;margin:8px 0}
+.arenaClock b{font-size:20px;font-weight:900;color:var(--gold);min-width:44px;text-align:center}
+.arenaClock b.hot{color:var(--red);animation:hotpulse .8s infinite}
+.lastAnsCard{border:1px solid var(--line2);border-radius:16px;padding:12px;margin:10px 0;
+ background:var(--panel);position:relative;overflow:hidden}
+.lastAnsCard::before{content:'🗣';position:absolute;top:8px;left:10px;opacity:.5;font-size:13px}
+.lastAnsCard .laHead{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-left:4px}
+.lastAnsCard .laHead b{font-size:12px}
+.lastAnsCard .laTxt{font-size:12px;line-height:1.9;color:var(--txt);background:var(--panel2);
+ border-radius:12px;padding:10px 12px;max-height:120px;overflow:auto}
+.recentList .rlRow{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;
+ background:var(--panel);border:1px solid var(--line);margin-bottom:6px}
+.recentList .rlRow .rlScore{margin-right:auto;font-weight:900;font-size:12px}
+.pwrBtns{display:flex;gap:8px;margin:10px 0}
+.pwrBtns .btn{flex:1;font-size:11px}
+.rewardFly{position:fixed;z-index:9999;pointer-events:none;font-size:22px;font-weight:900;
+ text-shadow:0 2px 12px #000;transition:all 1s cubic-bezier(.22,1,.36,1)}
+.rateBadge{display:inline-block;border-radius:20px;padding:6px 16px;font-size:13px;font-weight:900;
+ border:1px solid var(--line2);background:var(--panel2);margin-top:8px;animation:countPop .45s var(--spring)}
+/* (🛠 رفع باگ) کلاس‌هایی که استفاده شده بودند ولی CSS نداشتند */
+.rowline{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed var(--line)}
+.rowline:last-child{border-bottom:0}
+.chipv{display:inline-flex;align-items:center;gap:4px;background:linear-gradient(135deg,var(--c1),var(--c3));
+ color:#fff;border-radius:8px;padding:2px 8px;font-size:8.5px;font-weight:900;animation:countPop .4s var(--spring)}
+.lbtarget{color:var(--gold);font-weight:900}
+/* پیشرفت ارتقای لیگ */
+.promoBar{margin-top:10px}
+.promoBar .pbLbl{display:flex;justify-content:space-between;font-size:9.5px;font-weight:800;margin-bottom:4px}
+.promoBar .pbLbl b{color:var(--green)}
+/* دکمه بازگشت به بالا */
+#totop{position:fixed;bottom:calc(var(--nav-h) + 66px);left:14px;z-index:60;width:40px;height:40px;
+ border-radius:14px;background:var(--panel);border:1px solid var(--line2);backdrop-filter:var(--glass);
+ display:flex;align-items:center;justify-content:center;font-size:16px;opacity:0;pointer-events:none;
+ transform:translateY(10px);transition:all .3s var(--spring)}
+#totop.show{opacity:1;pointer-events:auto;transform:none}
+/* شمارش زنده بزرگ */
+.liveCount{display:flex;justify-content:center;gap:10px;margin:10px 0}
+.liveCount .lcBox{background:var(--panel2);border:1px solid var(--line2);border-radius:14px;
+ padding:8px 14px;text-align:center;min-width:56px}
+.liveCount .lcBox b{display:block;font-size:18px;font-weight:900;color:var(--gold)}
+.liveCount .lcBox small{font-size:8.5px;color:var(--muted);font-weight:700}
 </style>
 </head>
 <body>
@@ -35772,6 +36974,23 @@ body[data-theme="sakura"] .brand small{color:#ffd0e0}
      دوباره رندر می‌شود و ورودی‌های در حال تایپ هرگز پاک نمی‌شوند
      (باگ «پاک شدن جواب لابی هر ثانیه»).
    ════════════════════════════════════════════════════════════════ */
+/* (۶.۰) دکمه‌ی بازگشت به بالا — CSS آماده بود ولی المان نداشت */
+function totopInit(){
+ try{
+  if($('totop'))return;
+  var b=document.createElement('button');
+  b.id='totop';b.textContent='↑';b.setAttribute('aria-label','بازگشت به بالا');
+  b.onclick=function(){try{document.querySelector('.main').scrollTo({top:0,behavior:'smooth'})}catch(e){window.scrollTo({top:0,behavior:'smooth'})}};
+  document.body.appendChild(b);
+  var main=document.querySelector('.main')||window;
+  var onScroll=function(){
+   var y=(main===window)?window.scrollY:(main.scrollTop||0);
+   b.classList.toggle('show',y>420);
+  };
+  if(main===window)window.addEventListener('scroll',onScroll,{passive:true});
+  else main.addEventListener('scroll',onScroll,{passive:true});
+ }catch(e){}
+}
 
 const tg=window.Telegram&&window.Telegram.WebApp;
 const $=id=>document.getElementById(id);
@@ -36723,20 +37942,20 @@ PAGES.board=null;
    همه‌ی بازی‌ها ضد-رقابت (توکن نسل) و ضد-پاک‌شدن ورودی هستند.
    ════════════════════════════════════════════════════════════════ */
 var GAMEMETA={
- trivia:['🧠','Trivia زنجیره‌ای','هر جواب درست = ادامه؛ اولین غلط = پایان!'],
- word:['📝','بازی کلمات','حروف به‌هم‌ریخته را مرتب کن'],
- number:['🔢','حدس عدد','۷ فرصت — بعد هر حدس بازه باریک‌تر'],
- memory:['🃏','حافظه','دنباله را به خاطر بسپار'],
- reaction:['⚡','سرعت واکنش','دکمه سبز شد، بزن!'],
- ttt:['✖️','دوز با AI','تو ❌ — برد +۲۰ سکه'],
- mine:['⛏','مین‌یاب','ورودی ۲۰ سکه — ضریب ریسک'],
- quiz:['🧮','کوییز ریاضی','۶۰ ثانیه — +۸ XP'],
- luck:['🍀','گردونه شانس','هر ۲۰ ساعت — تا ۵۰ سکه'],
- ln:['🎰','Lucky Number','کازینو — جکپات ×۲۵'],
+ trivia:['🧠','Trivia زنجیره‌ای','تایمر + سطح‌بندی + پاداش سرعت!'],
+ word:['📝','بازی کلمات','۳ سطح سختی + کمبو + تایمر'],
+ number:['🔢','حدس عدد','۳ سطح — تا ۱۰۰۰ + گیج بازه'],
+ memory:['🃏','حافظه','لِوِل‌بندی + جان — تا ۹ رقم'],
+ reaction:['⚡','سرعت واکنش','رتبه‌بندی + رکورد واقعی'],
+ ttt:['✖️','دوز با AI','۳ سطح — حتی غیرقابل‌برد!'],
+ mine:['⛏','مین‌یاب','۳ سطح ریسک — تا ×۲۲۰'],
+ quiz:['🧮','کوییز ریاضی','زنجیره‌ی ۵ سوالی روزانه'],
+ luck:['🍀','گردونه شانس','هر ۲۰ ساعت + استریک روزانه'],
+ ln:['🎰','Lucky Number','جکپات ×۲۵ + دبل‌یا‌هیچ!'],
  love2:['💌','عشق‌سنج دو نفره','۴ سوال مخفیانه — نتیجه در انتها'],
- t2048:['🧩','۲۰۴۸','کاشی‌های هم‌ارزش را ادغام کن — تا ۲۰۴۸!'],
- mole:['🔨','موش‌کوبی','۳۰ ثانیه شکار خالص — واکنشت را بسنج'],
- rps:['✊','سنگ‌کاغذقیچی','بهترین از سه مقابل هوش ربات']};
+ t2048:['🧩','۲۰۴۸','Undo + کیبورد + بهترین کاشی'],
+ mole:['🔨','موش‌کوبی','موش طلایی ⭐ و بمبی 💣'],
+ rps:['✊','سنگ‌کاغذقیچی','هوش مارکوف + آمار تمام‌عمر']};
 
 /* ورود به بازی — بدون تداخل با رندر هاب (فیکس باگ «بازی‌ها بالا نمی‌آیند») */
 function gameView(key){
@@ -36790,13 +38009,25 @@ async function renderGames(){
   +'<h1 class="h1 grad" style="margin:0">گیم‌زون</h1><p class="sub">'+fa(d.played)+' بازی · '+fa(d.won)+' برد — همه‌ی بازی‌ها داخل اپ اجرا می‌شوند</p></div></div></div>';
   h+='<div class="grid g4" style="margin-bottom:12px">'
   +st('بازی کل','gg_p',d.played)+st('برد','gg_w',d.won)+st('رکورد Trivia','gg_t',d.best.trivia||0)+st('بهترین واکنش','gg_r',(d.best.reaction_ms||0)?fa(d.best.reaction_ms)+'ms':'—')+'</div>';
+  h+='<div class="section"><div class="shead"><b>🏆 رکوردهای من</b><small>'+fa((d.records||[]).filter(function(r){return r.has}).length)+' فعال</small></div><div class="recGrid">';
+  (d.records||[]).forEach(function(r){
+   h+='<div class="recCell'+(r.has?' has':'')+'" onclick="gameView(\''+r.key+'\')">'
+   +'<div class="rcIc">'+r.icon+'</div><b>'+esc(r.name)+'</b><small>'+esc(r.label)+'</small>'
+   +'<div class="rcVal">'+esc(r.value)+'</div></div>';
+  });
+  h+='</div></div>';
   h+='<div class="section"><div class="shead"><b>🎮 بازی‌ها</b><small>'+fa(d.games.length)+' عنوان</small></div><div class="tiles">';
   d.games.forEach(function(x){
    var lock='';
-   if(x.key==='luck'&&d.cooldowns.luck>0)lock='<small style="color:var(--gold)">⏳ '+fa(Math.ceil(d.cooldowns.luck/3600))+' ساعت دیگر</small>';
-   if(x.key==='quiz'&&d.cooldowns.quiz_done)lock='<small style="color:var(--muted)">✅ امروز انجام شد</small>';
-   if(x.key==='ln'&&d.cooldowns.ln_free)lock='<small style="color:var(--green)">🎁 چرخ رایگان آماده</small>';
-   h+=navTile(x.icon,x.name,x.desc,'gameView(\''+x.key+'\')')+(lock?'<div style="grid-column:span 1;text-align:center;margin-top:-6px">'+lock+'</div>':'');
+   if(x.key==='luck'&&d.cooldowns.luck>0)lock='⏳ '+fa(Math.ceil(d.cooldowns.luck/3600))+'س';
+   if(x.key==='quiz'&&d.cooldowns.quiz_done)lock='✅ امروز انجام شد';
+   if(x.key==='ln'&&d.cooldowns.ln_free)lock='🎁 چرخ رایگان';
+   var played=x.played||0,won=x.won||0;
+   h+='<div style="display:flex;flex-direction:column;gap:3px">'
+   +navTile(x.icon,x.name,x.desc,'gameView(\''+x.key+'\')')
+   +(lock?'<span class="tag" style="text-align:center;justify-content:center;font-size:8.5px;width:100%">'+lock+'</span>':'')
+   +(played?'<div class="tileStat">'+fa(played)+' بازی · <b>'+fa(won)+' برد</b></div>':'')
+   +'</div>';
   });
   h+='</div></div>';
   h+='<div class="card" style="margin-top:12px;text-align:center;color:var(--muted);font-size:10px">💡 پاداش‌ها مستقیماً روی حساب واقعی ربات اعمال می‌شوند — XP و سکه‌ها همان‌جا ثبت می‌شوند.</div>';
@@ -36809,58 +38040,108 @@ async function renderGames(){
  }
 }
 
-/* ---------- 🧠 Trivia زنجیره‌ای ---------- */
+/* ---------- 🧠 Trivia زنجیره‌ای (۶.۰ — تایمر + سختی + پاورآپ) ---------- */
+var TRV={timer:null,fifty:[],diff:'',best:0};
 async function triviaStart(){
  var g=renderGen();
  try{
   var d=await api('/api/miniapp/game/trivia');
   if(isStale(g))return;
-  triviaRender(d.question,d.options,d.streak||0);
+  TRV.best=d.best||0;TRV.diff=d.diff||'آسان';
+  triviaRender(d.question,d.options,d.streak||0,d.time_limit||25,d.diff||'آسان');
  }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
-function triviaRender(q,opts,streak){
+function triviaRender(q,opts,streak,limit,diff){
  var el=$('pg-games');
- var h=gmHead('🧠','Trivia زنجیره‌ای','هر جواب درست = ادامه؛ اولین غلط = پایان!','games');
- h+='<div class="streakbar"><span class="flame">🔥</span><b>زنجیره: '+fa(streak)+'</b><span class="tag cy">هر ۵ تایی +۲۵ سکه</span></div>';
+ var h=gmHead('🧠','Trivia زنجیره‌ای','تایمر + سطح‌بندی + پاداش سرعت ⚡','games');
+ h+='<div class="streakbar"><span class="flame">🔥</span><b>زنجیره: '+fa(streak)+'</b>'
+ +'<span class="tag '+(diff==='سخت'?'':diff==='متوسط'?'cy':'ok')+'" style="font-size:9px">'+esc(diff||'آسان')+'</span>'
+ +(TRV.best?'<span class="tag gold" style="font-size:9px">🏆 '+fa(TRV.best)+'</span>':'')
+ +'<span class="tag cy" style="font-size:9px">هر ۵ تایی +۲۵</span></div>';
+ h+='<div class="gtimer">'+timerRing(limit||25,'trvT',64)+'</div>';
  h+='<div class="qcard"><span class="qtag">❓ سوال</span><div class="qtext">'+esc(q)+'</div></div>';
  var letters=['🅰','🅱','🅲','🅳'];
  opts.forEach(function(o,i){
   h+='<button class="opt" id="opt'+i+'" onclick="triviaAns('+i+')"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
  });
+ h+='<div class="pwrBtns">'
+ +'<button class="btn sm" id="trvFifty" onclick="triviaFifty()">✂️ ۵۰/۵۰ <small>(۵🪙)</small></button>'
+ +'<button class="btn sm" id="trvReroll" onclick="triviaReroll()">🎲 سوال جدید <small>(۳🪙)</small></button></div>';
  h+='<button class="btn wide" style="margin-top:12px" onclick="gameExit()">🔚 پایان و ثبت رکورد</button>';
  el.innerHTML=h;
+ TRV.fifty=[];
+ startTimer('trvT',limit||25,function(){
+  toast('⏱ وقت تمام شد!','warn');
+  triviaAns(-1);
+ });
+}
+function triviaApplyFifty(drop){
+ (drop||[]).forEach(function(txt){
+  var opts=[].slice.call(document.querySelectorAll('#pg-games .opt'));
+  opts.forEach(function(x){
+   if(x.innerText.replace(/^[🅰🅱🅲🅳]\s*/,'')===String(txt)){x.style.display='none'}
+  });
+ });
+ var f=$('trvFifty');if(f)f.disabled=true;
+}
+async function triviaFifty(){
+ var f=$('trvFifty');if(f)f.disabled=true;
+ try{
+  var d=await api('/api/miniapp/game/trivia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({power:'fifty'})});
+  if(!d.ok){toast(d.error,'err');if(f)f.disabled=false;return}
+  haptic('ok');SND.swoosh();triviaApplyFifty(d.drop);
+ }catch(e){toast(e.message,'err');if(f)f.disabled=false}
+}
+async function triviaReroll(){
+ var r=$('trvReroll');if(r)r.disabled=true;
+ try{
+  var d=await api('/api/miniapp/game/trivia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({power:'reroll'})});
+  if(!d.ok){toast(d.error,'err');if(r)r.disabled=false;return}
+  haptic('ok');SND.whoosh();
+  triviaRender(d.question,d.options,TRV.lastStreak||0,d.time_limit,d.diff);
+ }catch(e){toast(e.message,'err');if(r)r.disabled=false}
 }
 async function triviaAns(i){
- var b=$('opt'+i);if(!b||b.disabled)return;
+ var b=(i>=0)?$('opt'+i):null;if(b&&b.disabled)return;
+ stopTimer('trvT');
  var opts=[].slice.call(document.querySelectorAll('#pg-games .opt'));
  opts.forEach(function(x){x.disabled=true});
+ var answer=i>=0?b.innerText.replace(/^[🅰🅱🅲🅳]\s*/,''):'__timeout__';
  try{
-  var d=await api('/api/miniapp/game/trivia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:b.innerText.replace(/^[🅰🅱🅲🅳]\s*/,'')})});
+  var d=await api('/api/miniapp/game/trivia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:answer})});
   haptic(d.correct?'ok':'error');
   if(d.correct){
-   b.classList.add('right');toast(d.message+(d.bonus?' +۲۵ سکه 🎉':''),'ok');
-   setTimeout(function(){triviaRender(d.question,d.options,d.streak)},650);
+   b.classList.add('right');
+   toast(d.message+(d.speed?' ⚡':'')+(d.bonus?' +۲۵ سکه 🎉':''),'ok');
+   if(d.bonus)rewardFly(0,25);
+   TRV.lastStreak=d.streak;
+   setTimeout(function(){triviaRender(d.question,d.options,d.streak,d.time_limit,d.diff)},650);
   }else{
    opts.forEach(function(x,i2){if(x.innerText.replace(/^[🅰🅱🅲🅳]\s*/,'')===String(d.answer))x.classList.add('right')});
-   b.classList.add('wrong');
+   if(b)b.classList.add('wrong');
    setTimeout(function(){
     var el=$('pg-games');
     el.innerHTML=gmHead('🧠','پایان زنجیره','زنجیره‌ات '+fa(d.streak)+' بود','games')
     +'<div class="bigres"><span class="bico">🔥</span><span class="bt">زنجیره‌ی '+fa(d.streak)+' تایی</span>'
-    +'<div class="bs">جواب درست: '+esc(d.answer)+(d.record?' · 🏆 رکورد جدید!':'')+'</div></div>'
-    +triviaEndCard(d.streak,d.record)
+    +'<div class="bs">'+(d.timeout?'⏱ دیر جواب دادی!':'جواب درست:')+' '+esc(d.answer)+(d.record?' · 🏆 رکورد جدید!':'')+'</div>'
+    +'<div class="bs">+'+fa(2+d.streak*2)+' XP پایان بازی</div></div>'
+    +gameSummaryCard('Trivia',{xp:2+d.streak*2,coins:0,extra:fa(d.streak),extraLabel:'زنجیره',
+     share:'🧠 زنجیره‌ی '+fa(d.streak)+' تایی در Trivia ساختم! تو می‌تونی از من جلو بزنی؟ 🎮'})
     +'<button class="btn primary wide" onclick="triviaStart()">🔄 دوباره</button>'
     +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+    rewardFly(0,2+d.streak*2);
    },900);
   }
  }catch(e){toast(e.message,'err');opts.forEach(function(x){x.disabled=false})}
 }
 
-/* ---------- 📝 بازی کلمات ---------- */
-async function wordStart(){
+/* ---------- 📝 بازی کلمات (۶.۰ — سختی + کمبو + تایمر) ---------- */
+var WORD={diff:'normal',timer:null};
+async function wordStart(diff){
  var g=renderGen();
+ if(diff)WORD.diff=diff;
  try{
-  var d=await api('/api/miniapp/game/word');
+  var d=await api('/api/miniapp/game/word?diff='+WORD.diff);
   if(isStale(g))return;
   wordRender(d);
  }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
@@ -36868,15 +38149,24 @@ async function wordStart(){
 function wordRender(d){
  var el=$('pg-games');
  var letters=['🅰','🅱','🅲','🅳'];
- var h=gmHead('📝','بازی کلمات','این حروف به‌هم‌ریخته را مرتب کن','games');
+ var h=gmHead('📝','بازی کلمات','۳ سطح سختی + کمبو + تایمر','games');
+ h+=diffChips(WORD.diff||d.diff_key||'normal','wordStart',['easy','🌱 آسان'],['normal','🎯 متوسط'],['hard','🔥 سخت']);
  if(d.message)h+='<div class="card" style="margin-bottom:12px;text-align:center;font-size:11px;color:'+(d.correct?'var(--green)':'var(--red)')+'">'+esc(d.message)+'</div>';
+ h+='<div class="gmeta" style="justify-content:center">'
+ +'<span class="comboPill" style="'+(d.combo?'':'display:none')+'" id="wCombo">🔥 کمبو '+fa(d.combo||0)+'</span>'
+ +(d.best?'<span class="tag gold">🏆 بهترین کمبو: '+fa(d.best)+'</span>':'')
+ +'<span class="tag cy">'+esc(d.diff||'متوسط')+' · '+fa(d.time||20)+' ثانیه</span></div>';
  h+='<div class="qcard"><span class="qtag">🔀 به‌هم‌ریخته</span><div class="qtext" style="text-align:center;letter-spacing:4px;font-size:17px">'+esc(d.scrambled)+'</div>'
- +'<div style="text-align:center;margin-top:10px" class="sub">💡 راهنما: <b>'+esc(d.hint)+'</b></div></div>';
+ +'<div style="text-align:center;margin-top:10px" class="sub">💡 راهنما: <b>'+esc(d.hint)+'</b></div>'
+ +'<div class="bar" style="margin-top:10px"><i id="wBar" style="width:100%"></i></div></div>';
  d.options.forEach(function(o,i){
   h+='<button class="opt" onclick="wordAns(\''+esc(o)+'\',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
  });
  h+='<button class="btn wide" style="margin-top:10px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  el.innerHTML=h;
+ var bar=$('wBar');
+ if(bar){bar.style.transition='width '+(d.time||20)+'s linear';
+  setTimeout(function(){try{bar.style.width='0%'}catch(e){}},60)}
 }
 async function wordAns(o,btn){
  if(btn.disabled)return;
@@ -36884,32 +38174,56 @@ async function wordAns(o,btn){
   var d=await api('/api/miniapp/game/word',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:o})});
   haptic(d.correct?'ok':'error');
   btn.classList.add(d.correct?'right':'wrong');
+  if(d.correct&&d.reward){rewardFly(d.reward.xp,d.reward.coins)}
   if(!d.correct){[].forEach.call(document.querySelectorAll('#pg-games .opt'),function(x){if(x.innerText.replace(/^[🅰🅱🅲🅳]\s*/,'')===d.answer)x.classList.add('right')})}
   setTimeout(function(){wordRender(d)},800);
  }catch(e){toast(e.message,'err')}
 }
 
-/* ---------- 🔢 حدس عدد ---------- */
-async function numberStart(){
+/* ---------- 🔢 حدس عدد (۶.۰ — ۳ سطح + گیج بازه) ---------- */
+var NUM={diff:'easy'};
+async function numberStart(diff){
  var g=renderGen();
+ if(diff)NUM.diff=diff;
  try{
-  var d=await api('/api/miniapp/game/number');
+  var d=await api('/api/miniapp/game/number?diff='+NUM.diff);
   if(isStale(g))return;
   numberRender(d);
  }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
 function numberRender(d){
  var el=$('pg-games');
- var h=gmHead('🔢','حدس عدد','عددی بین ۱ تا ۱۰۰ — ۷ فرصت داری','games');
  if(d.won||d.lost){
-  h+='<div class="bigres"><span class="bico">'+(d.won?'🎉':'😞')+'</span><span class="bt">'+esc(d.message||'')+'</span></div>'
-  +'<button class="btn primary wide" onclick="numberStart()">🔄 بازی جدید</button>'
+  var h=gmHead('🔢','حدس عدد',(d.diff||'آسان')+' — نتیجه','games')
+  +'<div class="bigres"><span class="bico">'+(d.won?'🎉':'😞')+'</span><span class="bt">'+esc(d.message||'')+'</span></div>';
+  if(d.won&&d.reward){
+   h+=gameSummaryCard('حدس عدد ('+(d.diff||'آسان')+')',{xp:d.reward.xp,coins:d.reward.coins,
+    extra:fa(d.attempts_used||0),extraLabel:'حدس',
+    share:'🔢 عدد مخفی را با '+fa(d.attempts_used||0)+' حدس پیدا کردم! (سطح '+(d.diff||'آسان')+') 🎯'});
+   }
+  h+='<button class="btn primary wide" onclick="numberStart()">🔄 بازی جدید</button>'
   +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
-  el.innerHTML=h;return;
+  el.innerHTML=h;
+  if(d.won){confetti();rewardFly(d.reward?d.reward.xp:0,d.reward?d.reward.coins:0);SND.win()}
+  return;
  }
+ var maxN=d.max_num||100;
+ var lo=d.low||1,hi=d.high||maxN;
+ var pct=function(v){return Math.max(0,Math.min(100,Math.round((v-1)/(maxN-1)*100)))};
+ var h=gmHead('🔢','حدس عدد','۳ سطح — گزینه‌ها با هر حدس هوشمندتر می‌شوند','games');
+ h+=diffChips(d.diff_key||'easy','numberStart',['easy','🌱 تا ۱۰۰'],['normal','🎯 تا ۵۰۰'],['hard','🔥 تا ۱۰۰۰']);
  if(d.message&&!d.hint)h+='<div class="card" style="margin-bottom:10px;text-align:center;font-size:11px">'+esc(d.message)+'</div>';
  if(d.hint)h+='<div class="card" style="margin-bottom:10px;text-align:center">🎯 حدس: <b>'+fa(d.last_guess||0)+'</b> — <b style="color:var(--gold)">'+esc(d.hint)+'!</b></div>';
- h+='<div class="card" style="text-align:center">🤔 فرصت‌های باقی‌مانده: <b style="color:var(--gold)">'+fa(d.attempts_left)+'</b></div>';
+ /* گیج بازه — احتمال جا‌ شدن عدد را نشان می‌دهد */
+ h+='<div class="rangeGauge"><div class="rgTrack">'
+ +'<div class="rgFill" id="rgFill" style="right:'+pct(hi)+'%;left:'+pct(lo)+'%"></div>'
+ +'<div class="rgPin" id="rgPin" style="right:calc('+pct(d.last_guess||((lo+hi)/2))+'% - 1px)"></div></div>'
+ +'<div class="rgLbl"><span>۱</span><span>بازه‌ی باقی‌مانده: '+fa(hi-lo+1)+' عدد</span><span>'+fa(maxN)+'</span></div></div>';
+ var hearts='';var used=(d.max_attempts||7)-(d.attempts_left||7);
+ for(var i=0;i<(d.max_attempts||7);i++)hearts+='<span class="'+(i<used?'off':'')+'">💚</span>';
+ h+='<div class="livesRow">'+hearts+'</div>';
+ h+='<div class="card" style="text-align:center;margin-bottom:10px">🤔 فرصت‌ها: <b style="color:var(--gold)">'+fa(d.attempts_left)+'</b>'
+ +(d.best>1?' · 🏆 رکورد: با '+fa(d.best)+' فرصت اضافه':'')+'</div>';
  h+='<div class="numpad">';
  d.options.forEach(function(v){
   h+='<button onclick="numberGuess('+v+',this)">'+fa(v)+'</button>';
@@ -36923,12 +38237,12 @@ async function numberGuess(v,btn){
  try{
   var d=await api('/api/miniapp/game/number',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guess:v})});
   haptic(d.won?'ok':'light');
-  if(d.won){btn.classList.add('right');confetti()}
+  if(d.won){btn.classList.add('right')}
   setTimeout(function(){numberRender(d)},d.won?800:250);
  }catch(e){toast(e.message,'err');btn.disabled=false}
 }
 
-/* ---------- 🃏 حافظه ---------- */
+/* ---------- 🃏 حافظه (۶.۰ — لِوِل + جان) ---------- */
 async function memoryStart(){
  var g=renderGen();
  try{
@@ -36937,10 +38251,32 @@ async function memoryStart(){
   memoryRender(d);
  }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
+function memoryHUD(d){
+ var hearts='';
+ for(var i=0;i<3;i++)hearts+='<span class="'+(i<(3-(d.lives||3))?'off':'')+'">❤️</span>';
+ return '<div class="gmeta" style="justify-content:center">'
+ +'<span class="levelBadge">لِوِل <b>'+fa(d.level||1)+'</b></span>'
+ +'<span class="livesRow" style="margin:0">'+hearts+'</span>'
+ +(d.best?'<span class="tag gold">🏆 لِوِل '+fa(d.best)+'</span>':'')+'</div>';
+}
 function memoryRender(d){
  var el=$('pg-games');
+ if(d.ended){
+  el.innerHTML=gmHead('🃏','پایان حافظه','تا لِوِل '+fa(d.level||1)+' رفتی','games')
+  +'<div class="bigres"><span class="bico">🧠</span><span class="bt">تا لِوِل '+fa((d.total&&d.total.level)||d.level||1)+' رسیدی</span>'
+  +'<div class="bs">جمع کل: +'+fa((d.total&&d.total.xp)||0)+' XP و +'+fa((d.total&&d.total.coins)||0)+' سکه</div>'
+  +'<div class="bs">دنباله درست: '+esc(d.correct_seq||'')+'</div></div>'
+  +gameSummaryCard('حافظه',{xp:(d.total&&d.total.xp)||0,coins:(d.total&&d.total.coins)||0,
+   extra:'لِوِل '+fa((d.total&&d.total.level)||1),extraLabel:'رسیدن به',
+   share:'🃏 در بازی حافظه تا لِوِل '+fa((d.total&&d.total.level)||1)+' رسیدم! حافظه‌ات چطوره؟ 🧠'})
+  +'<button class="btn primary wide" onclick="memoryStart()">🔄 از اول</button>'
+  +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+  SND[d.level>=4?'win':'ok']();
+  return;
+ }
  var seq=d.sequence.split(' ');
- var h=gmHead('🃏','حافظه','دنباله را به خاطر بسپار','games');
+ var h=gmHead('🃏','حافظه','هر لِوِل یک رقم بیشتر — تا ۹ رقم!','games');
+ h+=memoryHUD(d);
  h+='<div class="card" style="text-align:center;padding:22px">'
  +'<div class="sub" style="margin-bottom:10px">این دنباله را حفظ کن ('+fa(d.display_time)+' ثانیه):</div>'
  +'<div class="seqdots" id="seqShow">'+seq.map(function(x,i){return '<span style="animation-delay:'+(i*0.22)+'s">'+fa(x)+'</span>'}).join('')+'</div>'
@@ -36953,7 +38289,6 @@ function memoryRender(d){
  });
  h+='<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button></div>';
  el.innerHTML=h;
- /* شمارش معکوس نمایش */
  var bar=$('memBar');
  if(bar){bar.style.transition='width '+fa(d.display_time)+'s linear';
   setTimeout(function(){try{bar.style.width='0%'}catch(e){}},60)}
@@ -36970,59 +38305,71 @@ async function memoryAns(idx,btn){
   var d=await api('/api/miniapp/game/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idx:idx})});
   haptic(d.correct?'ok':'error');
   btn.classList.add(d.correct?'right':'wrong');
-  if(d.correct)confetti();
+  if(d.correct){confetti();if(d.reward)rewardFly(d.reward.xp,d.reward.coins);toast('لِوِل '+fa(d.level-1)+' ✅ +'+fa(d.reward.xp)+' XP','ok')}
   setTimeout(function(){memoryRender(d)},900);
  }catch(e){toast(e.message,'err');btn.disabled=false}
 }
 
-/* ---------- ⚡ سرعت واکنش ---------- */
+/* ---------- ⚡ سرعت واکنش (۶.۰ — رتبه + تاریخچه سشن) ---------- */
+var RXN={greenAt:0,best:0,tries:[]};
 async function reactionStart(){
  var el=$('pg-games');
+ var histHtml=(RXN.tries.length?
+  '<div class="card" style="margin-top:10px"><div class="sub" style="margin-bottom:6px">📜 تلاش‌های این نشست:</div><div class="chips" style="margin:0">'
+  +RXN.tries.map(function(t){return '<span class="tag" style="font-size:10px">'+fa(t)+'ms</span>'}).join('')+'</div></div>':'');
  var h=gmHead('⚡','سرعت واکنش','وقتی سبز شد، فوراً بزن!','games')
  +'<div class="rxn" id="rxnBox" onclick="reactionTap()">آماده‌ای؟</div>'
- +'<div class="card" style="text-align:center;font-size:10px;color:var(--muted)">🏆 رکوردت: <b style="color:var(--gold)">'+fa((D.user&&D.user.best_reaction)||0)+'ms</b> — هرچه سریع‌تر، پاداش بیشتر</div>'
+ +'<div id="rxnOut"></div>'
+ +'<div class="card" style="text-align:center;font-size:10px;color:var(--muted)">🏆 رکوردت: <b style="color:var(--gold)" id="rxnBest">—</b> — هرچه سریع‌تر، پاداش بیشتر</div>'
+ +histHtml
  +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  el.innerHTML=h;
  var g=renderGen();
  try{
   var d=await api('/api/miniapp/game/reaction/start');
   if(isStale(g))return;
+  RXN.best=d.best||0;
+  var bb=$('rxnBest');if(bb)bb.textContent=RXN.best?fa(RXN.best)+'ms':'—';
   var box=$('rxnBox');if(!box)return;
   box.classList.add('armed');box.textContent='صبر کن...';
-  RXGOAT=d.go_at_ms;
-  var wait=d.go_at_ms-Date.now();
+  var wait=2200+Math.floor(Math.random()*3800);   /* تاخیر تصادفی سمت کلاینت */
   setTimeout(function(){
-   var b2=$('rxnBox');if(!b2||PAGE!=='games')return;
+   var b2=$('rxnBox');if(!b2||PAGE!=='games'||b2.dataset.done)return;
    b2.classList.remove('armed');b2.classList.add('go');
    b2.textContent='الان بزن! ⚡';SND.pop();haptic('medium');
-  },Math.max(120,wait));
+   RXN.greenAt=Date.now();
+  },wait);
  }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
-var RXGOAT=0;
 async function reactionTap(){
  var box=$('rxnBox');if(!box||box.dataset.done)return;
  box.dataset.done='1';
- var tapped=Date.now();
- var wasGo=box.classList.contains('go');
- box.className='rxn';
+ var wasGo=box.classList.contains('go')&&RXN.greenAt;
+ if(!wasGo){
+  /* زود زدی — بدون هیت سرور، دوباره مسلح شو */
+  box.className='rxn';box.style.background='#ff9e4f22';box.textContent='زود زدی! ⏱';
+  haptic('warn');toast('زود زدی! صبر کن سبز شود','warn');
+  setTimeout(function(){reactionStart()},1200);
+  return;
+ }
+ var rt=Date.now()-RXN.greenAt;
+ box.className='rxn';box.style.background='#31e98118';box.textContent=fa(rt)+'ms';
  try{
-  var d=await api('/api/miniapp/game/reaction/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tap:tapped})});
-  haptic(d.early?'warn':'ok');
-  if(d.early){
-   box.style.background='#ff9e4f22';box.textContent='زود زدی! ⏱';
-   toast(d.message,'warn');
-   setTimeout(function(){reactionStart()},1200);
-  }else{
-   box.style.background='#31e98118';box.textContent=fa(d.ms)+'ms';
-   if(d.record)confetti(true);
-   var el=$('pg-games');
-   el.insertAdjacentHTML('beforeend',
-    '<div class="bigres" style="margin-top:12px"><span class="bico">'+(d.record?'🏆':'⚡')+'</span>'
-    +'<span class="bt">'+fa(d.ms)+' میلی‌ثانیه</span>'
-    +'<div class="bs">+'+fa(d.xp)+' XP · +'+fa(d.coins)+' سکه'+(d.record?' · 🏆 رکورد جدید!':'')+'</div></div>'
-    +'<button class="btn primary wide" onclick="reactionStart()">🔄 دوباره</button>');
-   SND.win();
-  }
+  var d=await api('/api/miniapp/game/reaction/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rt:rt})});
+  haptic('ok');
+  RXN.tries.push(d.ms);if(RXN.tries.length>8)RXN.tries.shift();
+  if(d.record)confetti(true);
+  if(d.ms<RXN.best||!RXN.best)RXN.best=d.ms;
+  var out=$('rxnOut');
+  if(out)out.innerHTML='<div class="bigres" style="margin-top:12px"><span class="bico">'+(d.record?'🏆':'⚡')+'</span>'
+   +'<span class="bt">'+fa(d.ms)+' میلی‌ثانیه</span>'
+   +'<div class="rateBadge">'+esc(d.rating||'')+'</div>'
+   +'<div class="bs">+'+fa(d.xp)+' XP · +'+fa(d.coins)+' سکه'+(d.record?' · 🏆 رکورد جدید!':'')+'</div></div>'
+   +gameSummaryCard('سرعت واکنش',{xp:d.xp,coins:d.coins,extra:fa(d.ms)+'ms',extraLabel:'واکنش',
+    share:'⚡ واکنش من: '+fa(d.ms)+' میلی‌ثانیه ('+(d.rating||'')+') — از من سریع‌تری؟'})
+   +'<button class="btn primary wide" onclick="reactionStart()">🔄 دوباره</button>';
+  rewardFly(d.xp,d.coins);
+  SND.win();
  }catch(e){toast(e.message,'err')}
 }
 
@@ -37030,31 +38377,43 @@ async function reactionTap(){
    TITAN GAME ENGINE — بخش ۲: دوز / مین‌یاب / کوییز / گردونه / کازینو / ابزار
    ════════════════════════════════════════════════════════════════ */
 
-/* ---------- ✖️ دوز با AI ---------- */
-async function tttStart(){
+/* ---------- ✖️ دوز با AI (۶.۰ — ۳ سطح + خط برد) ---------- */
+var TTT={diff:'normal'};
+async function tttStart(diff){
  var g=renderGen();
+ if(diff)TTT.diff=diff;
  try{
-  var d=await api('/api/miniapp/game/ttt');
+  var d=await api('/api/miniapp/game/ttt?diff='+TTT.diff);
   if(isStale(g))return;
   tttRender(d);
  }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
 function tttRender(d){
  var el=$('pg-games');
- var h=gmHead('✖️','دوز با AI','تو ❌ — من ⭕ · برد +۲۰ سکه','games')
- +'<div class="card" style="display:flex;align-items:center;justify-content:space-between">'
- +'<span style="font-size:11px">🏆 بردهای این نشست: <b style="color:var(--gold)">'+fa(d.wins||0)+'</b></span>'
+ var s=d.sess||{w:0,d:0,l:0};
+ var h=gmHead('✖️','دوز با AI','۳ سطح — در «غیرقابل‌برد» حداکثر مساوی می‌گیری!','games');
+ h+=diffChips(d.diff||'normal','tttStart',['easy','🌱 آسان'],['normal','🎯 متوسط'],['hard','💀 غیرقابل‌برد']);
+ h+='<div class="card" style="display:flex;align-items:center;justify-content:space-between">'
+ +'<span style="font-size:11px">🏆 بردهای سشن: <b style="color:var(--gold)">'+fa(d.wins||0)+'</b></span>'
  +'<span class="tag cy" id="tttStat">'+(d.over?'پایان':'نوبت تو')+'</span></div>'
+ +'<div class="sessChips">'
+ +'<span class="tag ok">✕ برد '+fa(s.w)+'</span>'
+ +'<span class="tag">🤝 مساوی '+fa(s.d)+'</span>'
+ +'<span class="tag bad">◯ باخت '+fa(s.l)+'</span></div>'
  +'<div class="ttt" id="tttBoard">';
+ var winLine=d.win_line||[];
  for(var i=0;i<9;i++){
   var v=d.board[i];
-  h+='<button data-cell="'+i+'" class="'+(v===1?'x':v===2?'o':'')+'" onclick="tttMove('+i+',this)">'+(v===1?'✕':v===2?'◯':'')+'</button>';
+  var cls=(v===1?'x':v===2?'o':'')+(winLine.indexOf(i)>=0?' win':'');
+  h+='<button data-cell="'+i+'" class="'+cls+'" onclick="tttMove('+i+',this)">'+(v===1?'✕':v===2?'◯':'')+'</button>';
  }
  h+='</div>';
  if(d.over){
   h+='<div class="bigres"><span class="bico">'+(d.won==='me'?'🏆':d.won==='ai'?'🤖':'🤝')+'</span>'
-  +'<span class="bt">'+(d.won==='me'?'بردی! +۲۰ سکه +۲۰ XP':d.won==='ai'?'این دست با AI بود!':'مساوی!')+'</span></div>'
-  +(d.won==='me'?tttWinCard():'');
+  +'<span class="bt">'+(d.won==='me'?'بردی! +'+fa((d.reward&&d.reward.coins)||20)+' سکه':d.won==='ai'?'این دست با AI بود!':'مساوی! +۴ XP')+'</span></div>'
+  +(d.won==='me'?gameSummaryCard('دوز ('+(d.diff_label||'متوسط')+')',{xp:(d.reward&&d.reward.xp)||20,coins:(d.reward&&d.reward.coins)||20,
+   extra:(d.diff_label||''),extraLabel:'سطح حریف',
+   share:'✖️ AI دوز را در سطح '+(d.diff_label||'متوسط')+' شکست دادم! 💪'}):'');
  }
  h+='<button class="btn primary wide" onclick="tttStart()">🔄 صفحه‌ی جدید</button>'
  +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
@@ -37066,18 +38425,18 @@ async function tttMove(cell,btn){
  try{
   var d=await api('/api/miniapp/game/ttt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cell:cell})});
   if(d.won==='me')haptic('ok');else if(d.won==='ai')haptic('error');
-  if(d.won==='me'){confetti();SND.win()}
+  if(d.won==='me'){confetti();SND.win();if(d.reward)rewardFly(d.reward.xp,d.reward.coins)}
   setTimeout(function(){tttRender(d)},(d.won?750:420));
  }catch(e){toast(e.message,'err');btn.textContent='';btn.classList.remove('x')}
 }
 
-/* ---------- ⛏ مین‌یاب ---------- */
-async function mineStart(){
+/* ---------- ⛏ مین‌یاب (۶.۰ — ۳ سطح) ---------- */
+async function mineStart(diff){
  var g=renderGen();
  try{
-  var d=await api('/api/miniapp/game/mine/start');
+  var d=await api('/api/miniapp/game/mine/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({diff:diff||'classic'})});
   if(isStale(g))return;
-  if(!d.ok){toast(d.error,'err');return}
+  if(!d.ok){toast(d.error,'err');mineGet();return}
   mineRender(d);
  }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
@@ -37092,22 +38451,33 @@ async function mineGet(){
 }
 function mineIntro(d){
  var el=$('pg-games');
- el.innerHTML=gmHead('⛏','مین‌یاب','ورودی '+fa(d.fee)+' سکه — همه‌ی خانه‌های امن = بیشترین ضریب','games')
- +'<div class="bigres"><span class="bico">⛏</span><span class="bt">'+fa(d.bombs_count)+' مین در '+fa(25)+' خانه</span>'
+ var h=gmHead('⛏','مین‌یاب','سطح ریسک را انتخاب کن — ضریب واقعیِ احتمال','games');
+ h+='<div class="bigres"><span class="bico">⛏</span><span class="bt">۳ سطح ریسک</span>'
  +'<div class="bs">هر خانه‌ی امن ضریب را بالا می‌برد — هر لحظه می‌توانی برداشت کنی!</div>'
- +'<div class="bs">🪙 موجودی: '+faK(d.coins)+'</div></div>'
- +'<button class="btn primary wide glow" onclick="mineStart()">⛏ شروع ('+fa(d.fee)+' سکه)</button>'
- +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+ +'<div class="bs">🪙 موجودی: '+faK(d.coins)+' · 🏆 بهترین ضریب: '+(d.best?'×'+fa(Math.round(d.best)/100):'—')+'</div></div>';
+ h+='<div class="grid g3" style="margin-top:12px">';
+ (d.configs||[]).forEach(function(c){
+  h+='<button class="recCell has" style="padding:14px 8px" onclick="mineStart(\''+c.key+'\')">'
+  +'<div class="rcIc">'+c.icon+'</div><b>'+esc(c.name)+'</b>'
+  +'<small>'+fa(c.bombs)+' مین / '+fa(c.size)+' خانه</small>'
+  +'<div class="rcVal">ورودی '+fa(c.fee)+' 🪙</div>'
+  +'<small style="color:var(--green)">تا ×'+fa(c.max_mult)+'</small></button>';
+ });
+ h+='</div>';
+ h+='<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+ el.innerHTML=h;
 }
 function mineRender(d){
  var el=$('pg-games');
  var opened={};(d.cells||[]).forEach(function(c){opened[c]=1});
- var h=gmHead('⛏','مین‌یاب',d.over?'بازی تمام شد':'ضریب ×'+fa(d.mult)+' — گنج: '+fa(d.pot)+' سکه','games')
+ var size=d.size||12,cols=d.cols||4;
+ var h=gmHead('⛏','مین‌یاب',(d.cfg_name||'')+' — '+fa(d.bombs_count)+' مین از '+fa(size)+' خانه','games')
  +'<div class="card" style="display:flex;justify-content:space-between;align-items:center">'
  +'<span style="font-size:11px">💰 گنج فعلی: <b style="color:var(--gold)">'+fa(d.pot)+' 🪙</b></span>'
- +'<span class="tag cy">×'+fa(d.mult)+'</span></div>'
- +'<div class="minegrid" style="grid-template-columns:repeat(5,1fr)">';
- for(var i=0;i<25;i++){
+ +'<span class="tag cy">×'+fa(d.mult)+'</span>'
+ +'<span class="tag" style="font-size:9px">🛡 '+fa(d.safe_left||0)+' امن مانده</span></div>'
+ +'<div class="minegrid" style="grid-template-columns:repeat('+cols+',1fr)">';
+ for(var i=0;i<size;i++){
   var open=opened[i],bomb=(d.bombs||[]).indexOf(i)>=0;
   h+='<button data-cell="'+i+'" class="'+(open?'revealed gem':(bomb&&d.over?'boom':''))+'" onclick="mineOpen('+i+',this)">'
   +(open?'💎':(bomb&&d.over?'💣':''))+'</button>';
@@ -37116,8 +38486,10 @@ function mineRender(d){
  if(d.over){
   h+='<div class="bigres"><span class="bico">'+(d.won?'🏆':d.boom?'💥':'📦')+'</span>'
   +'<span class="bt">'+esc(d.message||'')+'</span></div>'
-  +(d.won||d.cashed?mineWinCard(d.pot,d.mult):'')
-  +'<button class="btn primary wide" onclick="mineStart()">⛏ بازی جدید</button>';
+  +(d.won||d.cashed?gameSummaryCard('مین‌یاب ('+(d.cfg_name||'')+')',{xp:0,coins:d.cashed||d.pot,
+   extra:'×'+fa(d.mult),extraLabel:'ضریب',
+   share:'⛏ در مین‌یاب با ضریب ×'+fa(d.mult)+' برداشت کردم — '+fa(d.cashed||d.pot)+' سکه! 💎'}):'')
+  +'<button class="btn primary wide" onclick="mineGet()">⛏ بازی جدید</button>';
  }else{
   h+='<button class="btn gold wide glow" onclick="mineCash()">💰 برداشت '+fa(d.pot)+' سکه</button>';
  }
@@ -37142,7 +38514,7 @@ async function mineCash(){
   var d=await api('/api/miniapp/game/mine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cash:1})});
   if(!d.ok){toast(d.error,'err');return}
   haptic('ok');confetti();SND.coin();
-  toast(d.message,'ok');
+  rewardFly(0,d.cashed||d.pot);
   mineRender(d);
  }catch(e){toast(e.message,'err')}
 }
@@ -37158,7 +38530,12 @@ async function quizStart(){
 }
 function quizRender(d){
  var el=$('pg-games');
- var h=gmHead('🧮','کوییز ریاضی','۶۰ ثانیه فرصت — جواب درست +۸ XP','games')
+ var chain=d.chain||5,step=d.step||1;
+ var dots='';for(var i=1;i<=chain;i++)dots+='<i class="'+(i<step?'done':i===step?'cur':'')+'"></i>';
+ var h=gmHead('🧮','کوییز ریاضی','زنجیره‌ی روزانه — هر سوال سخت‌تر!','games')
+ +'<div class="chainDots">'+dots+'</div>'
+ +'<div class="gmeta" style="justify-content:center"><span class="tag cy">سوال '+fa(step)+' از '+fa(chain)+'</span>'
+ +(d.correct_count!=null?'<span class="tag ok">✅ '+fa(d.correct_count)+' درست</span>':'')+'</div>'
  +'<div class="qcard"><span class="qtag">✏️ حساب کن</span>'
  +'<div class="qtext" style="text-align:center;font-size:30px;font-weight:900;letter-spacing:3px" dir="ltr">'+esc(d.q)+'</div>'
  +'<div style="display:flex;justify-content:center;margin-top:12px">'+timerRing(d.timeout,'qzT')+'</div></div>'
@@ -37181,17 +38558,26 @@ async function quizAns(){
   var d=await api('/api/miniapp/game/quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:v})});
   haptic(d.correct?'ok':'error');
   var el=$('pg-games');
-  if(d.correct){confetti();SND.win()}else SND.lose();
-  el.innerHTML=gmHead('🧮','نتیجه کوییز',d.correct?'درست بود!':'نادرست بود','games')
-  +'<div class="bigres"><span class="bico">'+(d.correct?'🎉':'🤔')+'</span>'
+  if(d.correct&&!d.finished){
+   /* سوال بعدی زنجیره */
+   toast(d.message,'ok');SND.ok();
+   quizRender(d);return;
+  }
+  if(d.finished){confetti();SND.win();rewardFly(d.reward?d.reward.xp:0,d.reward?d.reward.coins:0)}
+  else SND.lose();
+  el.innerHTML=gmHead('🧮','نتیجه کوییز',d.finished?'زنجیره کامل!':(d.timeout?'وقت تمام شد':d.correct?'درست بود!':'نادرست بود'),'games')
+  +'<div class="bigres"><span class="bico">'+(d.finished?'🏅':d.correct?'🎉':'🤔')+'</span>'
   +'<span class="bt" dir="ltr" style="font-size:26px">'+esc(d.answer)+'</span>'
-  +'<div class="bs">'+esc(d.message)+'</div></div>'
-  +quizEndCard(d.correct,d.answer)
+  +'<div class="bs">'+esc(d.message)+'</div>'
+  +(d.correct_count!=null?'<div class="bs">✅ '+fa(d.correct_count)+' از '+fa(5)+' درست</div>':'')+'</div>'
+  +(d.finished?gameSummaryCard('کوییز ریاضی',{xp:(d.reward&&d.reward.xp)||0,coins:(d.reward&&d.reward.coins)||0,
+   extra:fa(d.correct_count)+'/'+fa(5),extraLabel:'زنجیره',
+   share:'🧮 زنجیره‌ی کامل کوییز ریاضی را بردیم — '+fa(d.correct_count)+' از ۵! 🎉'}):'')
   +'<button class="btn wide" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  }catch(e){toast(e.message,'err')}
 }
 
-/* ---------- 🍀 گردونه شانس ---------- */
+/* ---------- 🍀 گردونه شانس (۶.۰ — استریک روزانه + قطعه‌های برچسب‌دار) ---------- */
 async function luckStart(){
  var g=renderGen();
  try{
@@ -37203,24 +38589,28 @@ async function luckStart(){
 }
 function luckRender(d){
  var el=$('pg-games');
- var segs=['#8b93ad','#31e981','#15d8ff','#ffc857'];
- var h=gmHead('🍀','گردونه شانس','هر ۲۰ ساعت یک چرخش رایگان','games');
- if(d.cooldown>0){
-  var hrs=Math.ceil(d.cooldown/3600);
+ var h=gmHead('🍀','گردونه شانس','هر ۲۰ ساعت + پاداش استریک روزانه 🔥','games');
+ if(!d.ready){
+  var hrs=Math.ceil((d.cooldown||0)/3600);
   h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">گردونه خسته است!</span>'
   +'<div class="bs">حدود '+fa(hrs)+' ساعت دیگر برمی‌گردد</div>'
   +'<div class="bs">🏆 بهترین جایزه‌ات: '+fa(d.best||0)+' سکه</div></div>'
   +'<button class="btn wide" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
   el.innerHTML=h;return;
  }
+ var segs=[['#ffc857','۵۰'],['#15d8ff','۲۰'],['#31e981','۱۰'],['#8b93ad','۵'],['#15d8ff','۲۰'],['#31e981','۱۰']];
  h+='<div class="wheelwrap"><span class="pin">🔻</span><div class="wheel" id="wheel">';
  for(var i=0;i<6;i++){
-  h+='<div class="seg" style="background:conic-gradient(from '+(-i*60)+'deg,'+segs[i%4]+' 0deg 60deg,transparent 60deg)"></div>';
+  h+='<div class="seg" style="background:conic-gradient(from '+(-i*60)+'deg,'+segs[i][0]+' 0deg 60deg,transparent 60deg)">'
+  +'<span class="wn" style="position:absolute;top:7px;left:50%;transform:translateX(-50%) rotate('+(i*60+30)+'deg);font-size:13px;font-weight:900;color:#04050c">'+segs[i][1]+'</span></div>';
  }
  h+='</div></div>';
+ h+='<div class="gmeta" style="justify-content:center;margin-top:8px">'
+ +(d.streak?'<span class="comboPill">🔥 استریک '+fa(d.streak)+' روزه — تا +'+fa(Math.min(10,(d.streak-1)*2))+' اضافه</span>':'')
+ +'<span class="tag gold">🏆 رکورد: '+fa(d.best||0)+' سکه</span></div>';
  h+='<div style="text-align:center" id="luckRes"><div class="sub">برای چرخیدن دکمه‌ی زیر را بزن</div></div>';
  h+='<button class="btn primary wide glow" style="margin-top:14px" id="luckBtn" onclick="luckSpin()">🎡 چرخش!</button>';
- h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted)">🏆 جایزه‌ها: ۵٪ → ۵۰ سکه · ۲۰٪ → ۲۰ · ۳۵٪ → ۱۰ · ۴۰٪ → ۵</div>';
+ h+='<div class="card" style="text-align:center;font-size:10px;color:var(--muted)">🏆 ۵٪ → ۵۰ سکه · ۲۰٪ → ۲۰ · ۳۵٪ → ۱۰ · ۴۰٪ → ۵</div>';
  h+='<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  el.innerHTML=h;
 }
@@ -37234,9 +38624,11 @@ async function luckSpin(){
   var targetDeg=1440+(d.tier*60)+30;
   if(w)w.style.transform='rotate('+targetDeg+'deg)';
   setTimeout(function(){
-   haptic('ok');confetti();
+   haptic('ok');confetti();rewardFly(0,d.coins+(d.streak_bonus||0));
    var res=$('luckRes');
-   if(res)res.innerHTML='<div style="font-size:19px;font-weight:900;color:var(--gold)">+'+fa(d.coins)+' سکه 🎉</div><div class="sub">'+esc(d.label)+' · رکورد: '+fa(d.best)+'</div>';
+   if(res)res.innerHTML='<div style="font-size:19px;font-weight:900;color:var(--gold)">+'+fa(d.coins)+' سکه 🎉</div>'
+   +'<div class="sub">'+esc(d.label)+' · رکورد: '+fa(d.best)
+   +(d.streak_bonus?' · <b style="color:var(--gold)">+'+fa(d.streak_bonus)+' استریک '+fa(d.streak)+' روزه 🔥</b>':'')+'</div>';
    if(btn)btn.disabled=false;
   },3500);
  }catch(e){toast(e.message,'err');if(btn)btn.disabled=false}
@@ -37270,7 +38662,7 @@ async function lnStart(){
    h+='<button class="chip'+(i===1?' on':'')+'" onclick="lnBet('+b+',this)">'+fa(b)+' 🪙</button>';
   });
   h+='</div></div>';
-  h+='<button class="btn primary wide glow" onclick="lnBetGo()">🎰 بچرخان!</button>';
+  h+='<button class="btn primary wide glow" id="lnGo" onclick="lnBetGo()">🎰 بچرخان!</button>';
   h+='<div class="card" style="text-align:center;font-size:9.5px;color:var(--muted)">پرداخت: '+esc(d.paytable)+'</div>';
   h+='<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
   if(!setPageHTML('games',h,g))return;
@@ -37293,17 +38685,66 @@ async function lnFree(){
 async function lnBetGo(){
  var n=parseInt(($('lnNum')||{}).value||'0',10);
  if(!n||n<1||n>100){toast('عدد بین ۱ تا ۱۰۰','err');return}
+ var go=$('lnGo');if(go)go.disabled=true;
+ var el=$('pg-games');
+ /* رولت سه‌رقمی — اعداد می‌چرخند */
+ el.insertAdjacentHTML('beforeend','<div id="lnReelWrap" style="text-align:center;margin:14px 0">'
+  +'<div class="lnReel" id="lnReel"><span class="roll">7</span><span class="roll">4</span><span class="roll">1</span></div></div>');
+ var reelCells=[].slice.call(document.querySelectorAll('#lnReel span'));
+ var spinT=setInterval(function(){
+  reelCells.forEach(function(c){c.textContent=fa(Math.floor(Math.random()*10))});
+ },90);
+ SND.spin();
  try{
   var d=await api('/api/miniapp/game/ln',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:n,bet:LNBET})});
-  haptic(d.ret>0?'ok':'warn');
+  /* نمایش عدد برنده رقم‌به‌رقم */
+  var digits=String(d.winning).split('').map(fa);
+  digits.forEach(function(dg,i){
+   setTimeout(function(){
+    if(reelCells[i]){reelCells[i].classList.remove('roll');reelCells[i].classList.add('landed');reelCells[i].textContent=dg;SND.tick()}
+   },600+i*350);
+  });
+  setTimeout(function(){
+   clearInterval(spinT);
+   haptic(d.ret>0?'ok':'warn');
+   if(d.diff===0)confetti(true);else if(d.ret>0)confetti();
+   SND[d.ret>0?'win':'lose']();
+   if(d.ret>0)rewardFly(0,d.ret);
+   el.innerHTML=gmHead('🎰','نتیجه قرعه',d.diff===0?'💥 جکپات ×۲۵!':'فاصله: '+fa(d.diff),'games')
+   +'<div class="bigres"><span class="bico">'+(d.diff===0?'💎':d.ret>0?'🎉':'🍂')+'</span>'
+   +'<span class="bt" style="font-size:34px" dir="ltr">'+fa(d.winning)+'</span>'
+   +'<div class="bs">'+esc(d.message)+'</div>'
+   +'<div class="bs">موجودی: '+faK(d.coins)+' سکه</div></div>'
+   +(d.can_double?'<div class="dblBox"><b>🎲 دبل‌یا‌هیچ!</b><div class="sub" style="margin:6px 0">سودت ('+fa(d.ret)+' سکه) روی میز است — ۵۰٪ دوبرابر، ۵۰٪ هیچ!<br>۹۰ ثانیه فرصت داری</div>'
+    +'<button class="btn gold sm" onclick="lnDouble()">🎲 دبل کن!</button> '
+    +'<button class="btn sm" onclick="lnStart()">💰 برمی‌دارم</button></div>':'')
+   +'<button class="btn primary wide" onclick="lnStart()">🔄 دوباره</button>'
+   +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+  },600+digits.length*350+400);
+ }catch(e){clearInterval(spinT);toast(e.message,'err');lnStart()}
+}
+async function lnDouble(){
+ try{
+  var d=await api('/api/miniapp/game/ln',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({double:1})});
+  haptic(d.won?'ok':'error');
   var el=$('pg-games');
-  el.innerHTML=gmHead('🎰','نتیجه قرعه',d.diff===0?'💥 جکپات ×۲۵!':'فاصله: '+fa(d.diff),'games')
-  +'<div class="bigres"><span class="bico">'+(d.diff===0?'💎':d.ret>0?'🎉':'🍂')+'</span>'
-  +'<span class="bt" style="font-size:34px" dir="ltr">'+fa(d.winning)+'</span>'
-  +'<div class="bs">'+esc(d.message)+'</div>'
-  +'<div class="bs">موجودی: '+faK(d.coins)+' سکه</div></div>'
-  +'<button class="btn primary wide" onclick="lnStart()">🔄 دوباره</button>'
-  +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+  if(d.won){
+   confetti(true);rewardFly(0,d.ret);SND.win();
+   el.innerHTML=gmHead('🎰','دبل‌یا‌هیچ','🎲🎲 دوبرابر شد!','games')
+   +'<div class="bigres"><span class="bico">🔥</span><span class="bt">'+fa(d.ret)+' سکه روی میز!</span>'
+   +'<div class="bs">'+esc(d.message)+'</div>'
+   +(d.times<3?'<div class="dblBox"><b>بازم دبل کنی؟</b> ('+fa(d.times)+' از ۳)<br><br>'
+    +'<button class="btn gold sm" onclick="lnDouble()">🎲 دبل!</button> '
+    +'<button class="btn sm" onclick="lnStart()">💰 برداشت</button></div>':'')
+   +'<button class="btn primary wide" style="margin-top:10px" onclick="lnStart()">🔄 شرط جدید</button>';
+  }else{
+   SND.lose();
+   el.innerHTML=gmHead('🎰','دبل‌یا‌هیچ','😬 هیچ!','games')
+   +'<div class="bigres"><span class="bico">💨</span><span class="bt">سودت سوخت!</span>'
+   +'<div class="bs">'+esc(d.message)+'</div></div>'
+   +'<button class="btn primary wide" onclick="lnStart()">🔄 دوباره</button>';
+  }
+  el.insertAdjacentHTML('beforeend','<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>');
  }catch(e){toast(e.message,'err')}
 }
 
@@ -37320,22 +38761,28 @@ async function t2048Start(){
 }
 function t2048Render(d){
  var el=$('pg-games');
- var h=gmHead('🧩','۲۰۴۸','کاشی‌های هم‌ارزش را ادغام کن — سوایپ یا دکمه','games');
+ var bestTile=d.best_tile||0;
+ var h=gmHead('🧩','۲۰۴۸','سوایپ، دکمه یا کیبورد — با Undo!','games');
  h+='<div class="molehud" style="margin-bottom:10px">'
  +'<div class="mh"><small>امتیاز</small><b id="g2s">'+fa(d.score||0)+'</b></div>'
  +'<div class="mh"><small>حرکت</small><b id="g2m">'+fa(d.moves||0)+'</b></div>'
+ +'<div class="mh"><small>بهترین کاشی</small><b style="color:var(--c3)">'+(bestTile?fa(bestTile):'—')+'</b></div>'
  +'<div class="mh"><small>رکورد</small><b style="color:var(--gold)">'+fa(d.best||0)+'</b></div></div>';
  if(d.over){
   h+='<div class="bigres"><span class="bico">'+(d.won?'👑':'🏁')+'</span>'
   +'<span class="bt">'+(d.won?'۲۰۴۸ ساختی! افسانه‌ای':'دیگر حرکتی نیست')+'</span>'
   +'<div class="bs">امتیاز نهایی: '+fa(d.score||0)+(d.record?' · 🎉 رکورد جدید!':'')+'</div>'
+  +'<div class="bs">بهترین کاشی: '+fa(bestTile||0)+'</div>'
   +(d.reward?'<div class="bs">🎁 +'+fa(d.reward.xp)+' XP و +'+fa(d.reward.coins)+' سکه</div>':'')+'</div>'
+  +gameSummaryCard('۲۰۴۸',{xp:(d.reward&&d.reward.xp)||0,coins:(d.reward&&d.reward.coins)||0,
+   extra:fa(bestTile||0),extraLabel:'بهترین کاشی',
+   share:'🧩 در ۲۰۴۸ امتیازم شد '+fa(d.score||0)+' و کاشی '+fa(bestTile||0)+' ساختم! 🎮'})
   +'<button class="btn primary wide glow" onclick="t2048Start()">🔄 بازی جدید</button>'
   +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
-  el.innerHTML=h;confetti(d.won);SND[d.won?'win':'lose']();return;
+  el.innerHTML=h;confetti(d.won);SND[d.won?'win':'lose']();rewardFly((d.reward&&d.reward.xp)||0,(d.reward&&d.reward.coins)||0);return;
  }
  var merges={};(d.merges||[]).forEach(function(m){merges[m[0]+'_'+m[1]]=1});
- var spawnCells=(d.last_spawn||[]);
+ var spawnCells=(d.spawn||d.last_spawn||[]);
  h+='<div class="g2048" id="g2048">';
  for(var r=0;r<4;r++)for(var c=0;c<4;c++){
   var v=d.board[r][c];
@@ -37345,13 +38792,25 @@ function t2048Render(d){
   h+='<div class="'+cls+'">'+(v?fa(v):'')+'</div>';
  }
  h+='</div>';
+ h+='<div class="undoBar">'
+ +'<button class="btn sm'+((d.undo_left||0)>0?'':' disabled')+'" id="g2undo" onclick="t2048Move(\'undo\')" '+((d.undo_left||0)>0?'':'disabled')+'>↩️ Undo (۱ بار)</button></div>';
  h+='<div class="g2048dirs">'
  +'<span></span><button onclick="t2048Move(\'up\')">▲</button><span></span>'
  +'<button onclick="t2048Move(\'left\')">◀</button><button onclick="t2048Move(\'down\')">▼</button><button onclick="t2048Move(\'right\')">▶</button></div>';
- h+='<div class="sub" style="text-align:center;margin-top:10px">💡 با کشیدن انگشت روی صفحه هم می‌توانی حرکت کنی</div>';
+ h+='<div class="sub" style="text-align:center;margin-top:10px">💡 سوایپ، دکمه‌ها یا کلیدهای جهت‌دار کیبورد</div>';
  h+='<button class="btn wide" style="margin-top:10px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
  el.innerHTML=h;
  t2048BindSwipe();
+ t2048BindKeys();
+}
+var T2048KEYS=false;
+function t2048BindKeys(){
+ if(T2048KEYS)return;T2048KEYS=true;
+ document.addEventListener('keydown',function(e){
+  if(PAGE!=='games'||GAMEKEY!=='t2048')return;
+  var m={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right'};
+  if(m[e.key]){e.preventDefault();t2048Move(m[e.key])}
+ });
 }
 function t2048BindSwipe(){
  var grid=$('g2048');if(!grid)return;
@@ -37367,10 +38826,12 @@ function t2048BindSwipe(){
 async function t2048Move(dir){
  if(T2048.busy)return;T2048.busy=true;
  setTimeout(function(){T2048.busy=false},120);
- haptic('light');
+ haptic(dir==='undo'?'medium':'light');
  try{
   var d=await api('/api/miniapp/game/2048',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({move:dir})});
-  if(d.moved){SND.pop();var s=$('g2s');if(s&&d.score!=null)s.textContent=fa(d.score);var m=$('g2m');if(m&&d.moves!=null)m.textContent=fa(d.moves)}
+  if(!d.ok){toast(d.error||'نشد','warn');return}
+  if(d.undid){SND.swoosh();toast('↩️ برگشتی عقب!','ok')}
+  else if(d.moved){SND.pop();var s=$('g2s');if(s&&d.score!=null)s.textContent=fa(d.score);var m=$('g2m');if(m&&d.moves!=null)m.textContent=fa(d.moves)}
   t2048Render(d);
  }catch(e){toast(e.message,'err')}
 }
@@ -37388,21 +38849,22 @@ async function moleStart(){
   h+='<div class="molehud">'
   +'<div class="mh" id="mTime"><small>زمان</small><b>۳۰</b></div>'
   +'<div class="mh" id="mHits"><small>ضربه</small><b>۰</b></div>'
+  +'<div class="mh gold" id="mGold"><small>طلایی ⭐</small><b>۰</b></div>'
   +'<div class="mh" id="mStk"><small>زنجیره</small><b>۰</b></div>'
   +'<div class="mh"><small>رکورد</small><b style="color:var(--gold)">'+fa(d.best||0)+'</b></div></div>';
   h+='<div class="molegrid">';
   for(var i=0;i<9;i++)h+='<div class="mhole" id="mhole'+i+'" onclick="moleTap('+i+')"><div class="dirt"></div><span class="memoji">🐹</span></div>';
   h+='</div>';
-  h+='<div class="sub" style="text-align:center;margin-top:12px" id="mHint">آماده‌ای؟ موش‌ها هر لحظه بیرون می‌آیند…</div>';
+  h+='<div class="sub" style="text-align:center;margin-top:12px" id="mHint">⭐ موش طلایی = ۲ برابر · 💣 موش بمبی را نزن! · فرار موش زنجیره را ریست می‌کند</div>';
   h+='<button class="btn wide" style="margin-top:10px" onclick="moleStop(true)">🏁 پایان زودهنگام</button>';
   el.innerHTML=h;
   moleLoop();moleTimer();
  }catch(e){if(!isStale(g)){toast(e.message,'err');gameExit()}}
 }
 function moleTimer(){
- var left=30;
+ var left=30;MOLE.left=30;
  MOLE.tmr=setInterval(function(){
-  left--;
+  left--;MOLE.left=left;
   var t=$('mTime');
   if(t){t.querySelector('b').textContent=fa(left);
    if(left<=5){t.classList.add('hot');SND.tick()}}
@@ -37411,32 +38873,68 @@ function moleTimer(){
 }
 function moleLoop(){
  if(!MOLE.run)return;
- var delay=520+Math.random()*560;               /* هر بار سریع‌تر */
+ /* (۶.۰) شتاب واقعی — با گذشت زمان موش‌ها سریع‌تر بیرون می‌آیند */
+ var elapsed=30-(MOLE.left!=null?MOLE.left:30);
+ var speedUp=Math.min(0.45,elapsed*0.014);        /* تا ۴۵٪ سریع‌تر */
+ var delay=(520+Math.random()*560)*(1-speedUp);
  var idx=Math.floor(Math.random()*9);
- var life=780+Math.random()*520;
+ var life=(780+Math.random()*520)*(1-speedUp*0.7);
+ /* (۶.۰) نوع موش: ۱۲٪ طلایی ⭐ (۲برابر) — ۱۰٪ بمبی 💣 (نزن!) */
+ var roll=Math.random();
+ var kind=roll<0.12?'gold':roll<0.22?'bomb':'normal';
  setTimeout(function(){
   if(!MOLE.run)return;
   var hole=$('mhole'+idx);
   if(hole&&!hole.classList.contains('up')){
+   var emoji=hole.querySelector('.memoji');
+   if(emoji){
+    emoji.classList.remove('gold','bomb');
+    if(kind==='gold')emoji.classList.add('gold');
+    if(kind==='bomb')emoji.classList.add('bomb');
+    emoji.textContent=kind==='gold'?'⭐':kind==='bomb'?'💣':'🐹';
+   }
+   hole.dataset.kind=kind;
    hole.classList.add('up');SND.pop();
+   if(kind==='gold')toast('⭐ موش طلایی! ۲ برابر — بزنش!','ok');
    setTimeout(function(){
-    if(hole)hole.classList.remove('up');
+    if(hole&&hole.classList.contains('up')){
+     hole.classList.remove('up');
+     /* فرار موش = یک خطا (زنجیره ریست) */
+     if(MOLE.run&&hole.dataset.kind!=='bomb')moleMiss();
+    }
    },life);
   }
   moleLoop();
  },delay);
 }
+async function moleMiss(){
+ try{
+  var d=await api('/api/miniapp/game/mole/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({missed:true})});
+  if(d.ok&&d.missed){
+   var st=$('mStk');if(st)st.querySelector('b').textContent=fa(d.streak||0);
+  }
+ }catch(e){}
+}
 async function moleTap(i){
  var hole=$('mhole'+i);
- if(!hole||!hole.classList.contains('up')||!MOLE.run)return;
+ if(!MOLE.run)return;
+ if(!hole||!hole.classList.contains('up')){
+  /* ضربه به خانه‌ی خالی = خطا */
+  haptic('warn');moleMiss();return;
+ }
+ var kind=hole.dataset.kind||'normal';
  hole.classList.remove('up');hole.classList.add('bonk');
  setTimeout(function(){if(hole)hole.classList.remove('bonk')},320);
- haptic('medium');SND.coin();
+ haptic('medium');
+ if(kind==='bomb'){SND.lose();toast('💣 موش بمبی! زنجیره ریست شد','err')}
+ else{SND.coin();if(kind==='gold')confetti()}
  try{
-  var d=await api('/api/miniapp/game/mole/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  var d=await api('/api/miniapp/game/mole/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kind})});
   if(d.counted){
    var hh=$('mHits');if(hh)hh.querySelector('b').textContent=fa(d.hits);
    var st=$('mStk');if(st)st.querySelector('b').textContent=fa(d.streak);
+   var gd=$('mGold');if(gd&&d.gold){var gv=parseInt(String(gd.querySelector('b').textContent).replace(/[^0-9]/g,''),10)||0;gd.querySelector('b').textContent=fa(gv+1)}
+   if(d.gold)toast('⭐ موش طلایی — ۲ ضربه! +۲ زنجیره','ok');
   }
  }catch(e){}
 }
@@ -37472,19 +38970,32 @@ async function rpsStart(){
 }
 function rpsRender(d){
  var el=$('pg-games');
- var h=gmHead('✊','سنگ‌کاغذقیچی','بهترین از سه — مقابل هوش ربات','games');
+ var lt=d.lifetime||{};
+ var h=gmHead('✊','سنگ‌کاغذقیچی','هوش مارکوف — الگویت را می‌خواند!','games');
  h+='<div class="molehud" style="margin-bottom:6px">'
  +'<div class="mh" style="border-color:#7c5cff55"><small>تو</small><b style="color:var(--c1)">'+fa(d.me||0)+'</b></div>'
  +'<div class="mh"><small>راند</small><b>'+fa(Math.min(d.round||1,3))+'/۳</b></div>'
  +'<div class="mh"><small>ربات</small><b style="color:var(--pink)">'+fa(d.bot_score||0)+'</b></div></div>';
+ /* آمار تمام‌عمر + استریک مسابقه */
+ h+='<div class="sessChips">'
+ +'<span class="tag ok">🏆 مسابقه: '+fa(lt.mw||0)+'</span>'
+ +'<span class="tag bad">🤖 باخت: '+fa(lt.ml||0)+'</span>'
+ +'<span class="tag">🤝 راند مساوی: '+fa(lt.d||0)+'</span>'
+ +((lt.ms||0)>1?'<span class="comboPill">🔥 استریک '+fa(lt.ms)+' مسابقه</span>':'')+'</div>';
  if(d.finished){
   var won=d.won_match;
   h+='<div class="bigres"><span class="bico">'+(won?'🏆':'🤖')+'</span>'
   +'<span class="bt">'+(won?'قهرمان شدی!':'ربات برد')+'</span>'
-  +(d.reward?'<div class="bs">🎁 +'+fa(d.reward.xp)+' XP'+(d.reward.coins?(' و +'+fa(d.reward.coins)+' سکه'):'')+'</div>':'')+'</div>'
+  +(d.reward?'<div class="bs">🎁 +'+fa(d.reward.xp)+' XP'+(d.reward.coins?(' و +'+fa(d.reward.coins)+' سکه'):'')+'</div>':'')
+  +(d.streak_bonus?'<div class="bs">🔥 پاداش استریک: +'+fa(d.streak_bonus)+' سکه</div>':'')+'</div>'
+  +gameSummaryCard('سنگ‌کاغذقیچی',{xp:(d.reward&&d.reward.xp)||0,coins:(d.reward&&d.reward.coins)||0,
+   extra:fa((d.lifetime&&d.lifetime.ms)||0),extraLabel:'استریک مسابقه',
+   share:'✊ ربات سنگ‌کاغذقیچی را شکست دادم! استریک '+fa((d.lifetime&&d.lifetime.ms)||0)+' مسابقه 🔥'})
   +'<button class="btn primary wide glow" onclick="rpsStart()">🔄 مسابقه‌ی جدید</button>'
   +'<button class="btn wide" style="margin-top:8px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
-  el.innerHTML=h;SND[won?'win':'lose']();if(won)confetti();return;
+  el.innerHTML=h;SND[won?'win':'lose']();
+  if(won){confetti();rewardFly(d.reward?d.reward.xp:0,d.reward?d.reward.coins:0)}
+  return;
  }
  var myLast=null,botLast=null;
  if(d.history&&d.history.length){var hh=d.history[d.history.length-1];myLast=hh[0];botLast=hh[1]}
@@ -37943,7 +39454,14 @@ function duelRender(du){
   +'<div class="sub" style="margin:10px 0">این کد را برای حریفت بفرست تا وارد شود</div>'
   +'<div style="display:flex;gap:8px"><button class="btn primary sm" style="flex:1" onclick="copyText(\''+du.code+'\')">📋 کپی کد</button>'
   +'<button class="btn sm" style="flex:1" onclick="shareDuel('+du.code+')">✈️ دعوت</button></div></div>';
- }else if(du.state==='topic'){
+ }
+ if(du.last_answer){
+  /* 🗣 جواب راند قبل — حالا هر دو طرف می‌بینند چه گفتید */
+  h+='<div class="lastAnsCard"><div class="laHead">'+avaHtml({id:du.last_answer.uid,name:du.last_answer.name},'xs')
+  +'<b>'+esc(du.last_answer.name)+'</b><span class="tag cy" style="font-size:8.5px">'+esc(du.last_answer.mode_label||'')+'</span></div>'
+  +'<div class="laTxt">'+esc(du.last_answer.text)+'</div></div>';
+ }
+ if(du.state==='topic'){
   if(du.my_turn){
    h+='<div class="qcard"><span class="qtag">🎤 نوبت تو — موضوع را انتخاب کن</span></div><div class="gtabs">';
    du.modes.forEach(function(m){h+=(typeof dtabCard==='function'?dtabCard(m):'<button class="gtab" onclick="duelAction(\'topic\',\''+m.key+'\')">'+m.label+'</button>')});
@@ -37966,14 +39484,26 @@ function duelRender(du){
  }else if(du.state==='done'){
   var winner=du.winner;
   window.DUEL_LAST=du;
+  var rematchId=(du.rematch_with&&du.rematch_with!==me)?du.rematch_with:0;
   h+='<div class="bigres"><span class="bico">'+(winner===me?'🏆':'🏁')+'</span><span class="bt">'+(winner===me?'قهرمان دوئل شدی! +۱۰ XP +۵ سکه':(winner===0?'مساوی!':'حریف برنده شد'))+'</span></div>'
-  +'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary glow" style="flex:2" onclick="DUELCODE=0;DUSIG=\'\';renderDuelPage()">⚔️ دوئل جدید</button>'
-  +'<button class="btn" style="flex:1" onclick="duelShareCard(DUEL_LAST||{})">📤 کارت</button></div>';
+  +'<div style="display:flex;gap:8px;margin-top:10px">'
+  +'<button class="btn primary glow" style="flex:2" onclick="DUELCODE=0;DUSIG=\'\';renderDuelPage()">⚔️ دوئل جدید</button>'
+  +'<button class="btn" style="flex:1" onclick="duelShareCard(DUEL_LAST||{})">📤 کارت</button></div>'
+  +(rematchId?'<button class="btn gold wide" style="margin-top:8px" onclick="duelRematch('+rematchId+')">🔥 انتقام! دوئل با '+esc(du.b&&du.b.id===rematchId?du.b.name:(du.a&&du.a.name||'حریف'))+'</button>':'');
  }
  el.innerHTML=h;
 }
 function shareDuel(code){
  shareText('⚔️ من در دوئل ApexRival منتظرتم! کد دوئل: '+code+'\nمینی‌اپ ربات را باز کن و با این کد وارد شو 🤺');
+}
+async function duelRematch(uid){
+ try{
+  var d=await api('/api/miniapp/duel/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(!d.ok){toast(d.error,'err');return}
+  DUELCODE=d.code;DUSIG='';
+  toast('⚔️ دوئل انتقام ساخته شد — کد را بفرست!','ok');
+  duelWatch();
+ }catch(e){toast(e.message,'err')}
 }
 async function duelAction(kind,extra){
  var body={code:DUELCODE};
@@ -38004,7 +39534,36 @@ async function duelAnswer(){
  }catch(e){toast(e.message,'err')}
 }
 
-/* ================= 🏆 ARENA (رنک‌دار) ================= */
+/* ================= 🏆 ARENA (رنک‌دار ۶.۰) ================= */
+var ARENACLOCK=null;
+function arenaRecentHtml(recent){
+ if(!recent||!recent.length)return '';
+ var rows='';
+ (recent||[]).forEach(function(r){
+  rows+='<div class="rlRow"><span>'+(r.won?'🏆':'💔')+'</span>'
+  +'<b style="font-size:12px">'+esc(r.opp||'?')+'</b>'
+  +'<small style="color:var(--muted)">ELO '+fa(r.opp_elo||0)+'</small>'
+  +'<span class="rlScore" dir="ltr">'+fa(r.score[0])+'-'+fa(r.score[1])+'</span></div>';
+ });
+ return '<div class="section" style="margin-top:14px"><div class="shead"><b>📜 نبردهای اخیر</b></div>'
+ +'<div class="recentList">'+rows+'</div></div>';
+}
+async function arenaResign(){
+ askConfirm('🏳️ تسلیم می‌شوی؟','حریف برنده اعلام می‌شود و ELO ات کم می‌شود.',function(){
+  api('/api/miniapp/arena/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resign:1})})
+  .then(function(d){
+   if(d.resigned&&d.finish){
+    var fin=d.finish;
+    var el=$('pg-arena');
+    el.innerHTML='<div class="bigres"><span class="bico">🏳️</span><span class="bt">تسلیم شدی</span>'
+    +'<div class="bs">'+esc(fin.winner_name||'حریف')+' برنده شد</div>'
+    +'<div class="bs">ELO جدید: '+fa(fin.new_elo||0)+'</div></div>'
+    +'<button class="btn primary wide" onclick="renderArenaPage()">🔄 صف جدید</button>';
+    SND.lose();
+   }else{toast(d.message||d.error||'نشد','warn');renderArenaPage()}
+  }).catch(function(e){toast(e.message,'err')});
+ });
+}
 async function renderArenaPage(){
  var g=renderGen();
  var el=$('pg-arena');
@@ -38026,14 +39585,21 @@ async function renderArenaPage(){
    +'<div class="vs">'+fa(d.target)+' امتیازی</div>'
    +'<div class="side">'+avaHtml({id:m.opp.id,name:m.opp.name},'sm')+'<b>'+esc(m.opp.name)+'</b><div class="sc">'+fa(m.opp.score)+'</div></div></div>';
    if(m.my_turn&&m.question){
+    /* ⏱ ساعت نوبت — ۶۰ ثانیه؛ تمام شود نوبت خودکار به حریف می‌رود */
+    var tl=(m.turn_left!=null)?m.turn_left:60;
+    h+='<div class="arenaClock">'+timerRing(Math.max(1,tl),'arnT',54)
+    +'<b id="arnTb" class="'+(tl<=10?'hot':'')+'">'+fa(Math.max(0,tl))+'</b></div>';
     h+='<div class="qcard"><span class="qtag">❓ نوبت تو — جواب درست = ادامه نوبت</span>'
     +'<div class="qtext">'+esc(m.question.text)+'</div></div>';
     var letters=['🅰','🅱','🅲','🅳'];
     m.question.options.forEach(function(o,i){
      h+='<button class="opt" onclick="arenaAns('+i+',this)"><span class="ol">'+letters[i]+'</span><span style="flex:1">'+esc(o)+'</span></button>';
     });
+    h+='<button class="btn red sm" style="margin-top:10px" onclick="arenaResign()">🏳️ تسلیم می‌شوم</button>';
    }else{
-    h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">حریف دارد جواب می‌دهد...</span><div class="bs">'+esc(m.opp.name)+' · ELO '+fa(m.opp.elo)+'</div></div>';
+    h+='<div class="bigres"><span class="bico">⏳</span><span class="bt">حریف دارد جواب می‌دهد...</span><div class="bs">'+esc(m.opp.name)+' · ELO '+fa(m.opp.elo)+'</div>'
+    +(m.timeout?'<div class="bs" style="color:var(--red)">⏱ وقتت تمام شد — نوبت به حریف رفت</div>':'')+'</div>'
+    +'<button class="btn red sm" style="margin-top:8px" onclick="arenaResign()">🏳️ تسلیم می‌شوم</button>';
    }
   }else if(d.in_queue){
    h+='<div class="bigres"><span class="bico">🎯</span><span class="bt">در صف جستجوی حریف...</span>'
@@ -38044,13 +39610,31 @@ async function renderArenaPage(){
    +'<div class="bs">با حریفی هم‌سطح خودت روبه‌رو شو — برنده ELO و جایزه می‌گیرد</div></div>'
    +'<button class="btn primary wide glow" onclick="arenaJoin()">🎯 پیدا کردن حریف</button>';
   }
+  /* 📜 نبردهای اخیر — همیشه پایین صفحه */
+  h+=arenaRecentHtml(d.recent);
   if(!setPageHTML('arena',h,g))return;
+  /* ⏱ تیک ساعت نوبت */
+  var tb=$('arnTb');
+  if(tb){
+   clearInterval(ARENACLOCK);
+   var left=parseInt(String(tb.textContent).replace(/[^0-9]/g,''),10)||60;
+   ARENACLOCK=setInterval(function(){
+    left--;
+    var b=$('arnTb');
+    if(!b){clearInterval(ARENACLOCK);return}
+    b.textContent=fa(Math.max(0,left));
+    if(left<=10)b.classList.add('hot');
+    if(left<=3&&left>0)SND.tick();
+    if(left<=0)clearInterval(ARENACLOCK);
+   },1000);
+  }
   if(d.active||d.in_queue){
    startPoll('arena',function(){
-    if(PAGE!=='arena'){stopPoll('arena');return}
+    if(PAGE!=='arena'){stopPoll('arena');clearInterval(ARENACLOCK);return}
+    clearInterval(ARENACLOCK);
     renderArenaPage();
    },2500);
-  }
+  }else{clearInterval(ARENACLOCK)}
  }catch(e){if(!isStale(g))el.innerHTML='<div class="empty"><span class="ei">🎯</span>'+esc(e.message)+'</div>'}
 }
 async function arenaJoin(){
@@ -38132,9 +39716,11 @@ async function love2Flow(){
   var d=await api('/api/miniapp/love2/state?code='+LOVE2CODE);
   var h=gmHead('💌','عشک‌سنج با '+esc(d.other.name),'۴ سوال مخفیانه — جواب‌ها فقط در نهایت مقایسه می‌شوند','games');
   if(d.result){
+   stopPoll('love2');
    h+='<div style="text-align:center"><div class="lovebar"><i style="width:'+d.result.score+'%"></i></div>'
    +'<div style="font-size:23px;font-weight:900;color:var(--pink)">💘 '+fa(d.result.score)+'٪</div>'
-   +'<div class="sub">هم‌سویی: '+fa(d.result.matches)+' از '+fa(d.result.total)+' سوال</div></div>';
+   +'<div class="sub">هم‌سویی: '+fa(d.result.matches)+' از '+fa(d.result.total)+' سوال'
+   +(d.result.persisted?' · 💾 نتیجه ذخیره شد':'')+'</div></div>';
    d.result.rows.forEach(function(r){
     h+='<div class="card" style="margin-top:10px"><b style="font-size:10.5px">'+esc(r.q)+'</b>'
     +'<div style="display:flex;gap:8px;margin-top:8px;font-size:10px">'
@@ -38142,11 +39728,14 @@ async function love2Flow(){
     +'<div style="flex:1;padding:8px;border-radius:10px;background:#15d8ff12;border:1px solid #15d8ff3a">💙 '+esc(r.b)+'</div></div>'
     +(r.match?'<div style="text-align:center;color:var(--green);font-size:10px;margin-top:5px">✅ هم‌سو</div>':'')+'</div>';
    });
-   h+='<button class="btn primary wide" style="margin-top:12px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
+   h+=gameSummaryCard('عشق‌سنج',{xp:15,coins:8,extra:fa(d.result.score)+'٪',extraLabel:'هم‌صدایی',
+    share:'💘 نتیجه‌ی عشق‌سنج ما: '+fa(d.result.score)+'٪ هم‌صدایی! ('+fa(d.result.matches)+' از '+fa(d.result.total)+' هم‌سو)'})
+   +'<button class="btn primary wide" style="margin-top:12px" onclick="gameExit()">🕹 مرکز بازی‌ها</button>';
   }else if(d.my_done){
    h+='<div class="bigres"><span class="bico">🤝</span><span class="bt">جواب‌هایت ثبت شد!</span>'
-   +'<div class="bs">منتظر '+esc(d.other.name)+' هستیم... '+(d.other_done?'✅ تمام کرد':'⏳ هنوز در جواب دادن است')+'</div></div>'
-   +'<button class="btn wide" onclick="love2Flow()">🔄 وضعیت را تازه کن</button>';
+   +'<div class="bs">منتظر '+esc(d.other.name)+' هستیم... '+(d.other_done?'✅ تمام کرد':'⏳ هنوز در جواب دادن است')+'</div>'
+   +'<div class="sub" style="text-align:center">🔄 هر ۳ ثانیه خودکار بررسی می‌شود...</div></div>'
+   +'<button class="btn wide" onclick="love2Flow()">🔄 بررسی دستی</button>';
   }else{
    var qi=d.current_idx;
    h+='<div class="qcard"><span class="qtag">سوال '+fa(qi+1)+' از '+fa(d.total)+' (مخفیانه)</span>'
@@ -38155,7 +39744,14 @@ async function love2Flow(){
    +'<button class="btn primary wide glow" style="margin-top:10px" onclick="love2Ans()">✍️ ثبت جواب مخفی</button>';
   }
   el.innerHTML=h;
- }catch(e){el.innerHTML=gmHead('💌','عشک‌سنج','خطا','games')+'<div class="empty"><span class="ei">💌</span>'+esc(e.message)+'</div>'}
+  /* 🔄 پولینگ خودکار — وقتی منتظر طرف مقابل هستیم */
+  if(!d.result&&(d.my_done||!d.my_done)){
+   startPoll('love2',function(){
+    if(PAGE!=='games'||GAMEKEY!=='love2'){stopPoll('love2');return}
+    love2Flow();
+   },3000);
+  }
+ }catch(e){stopPoll('love2');el.innerHTML=gmHead('💌','عشک‌سنج','خطا','games')+'<div class="empty"><span class="ei">💌</span>'+esc(e.message)+'</div>'}
 }
 async function love2Ans(){
  var t=($('lvAns')||{}).value||'';
@@ -38168,7 +39764,34 @@ async function love2Ans(){
  }catch(e){toast(e.message,'err')}
 }
 
-/* ================= 🔥 SURVIVAL (بقای تایتان) ================= */
+/* ================= 🔥 SURVIVAL (بقای تایتان ۶.۰ — نقشه‌ی سفر) ================= */
+function svJourney(session){
+ var log=session.log||[];
+ var day=session.day||1;
+ var steps='';
+ for(var i=1;i<=Math.max(day,1);i++){
+  var entry=null;
+  for(var j=0;j<log.length;j++){if(log[j].day===i){entry=log[j];break}}
+  var cls=entry?(entry.ok?'ok':'no'):'';
+  var ic=entry?(entry.ok?'✓':'✗'):(i===day?'🎯':fa(i));
+  if(entry&&entry.ev)cls+=' ev';
+  steps+='<div class="svStep '+cls+(i===day?' cur':'')+'">'+ic+'</div>';
+ }
+ return '<div class="svJourney">'+steps+'</div>';
+}
+function svEventCard(ev,session){
+ var evs={
+  medic:['🩺','چادر درمانگر','یک جان بازیابی شد'],
+  shop:['🛒','فروشنده‌ی دوره‌گرد','خرید معجون (۳۰س) یا سپر (۲۵س)'],
+  storm:['☄️','طوفان!','پاداش همه‌چیز ×۲'],
+  gift:['🎁','جعبه‌ی مرموز','معجون یا سپر رایگان'],
+  ambush:['🧛','کمین!','رد کنی یک جان کم می‌شود — بپذیر و رد شو'],
+  treasure:['💰','گنج مدفون!','سکه‌های رایگان — شانس آوردی!']
+ };
+ var e=evs[ev]||['❓','رویداد',ev||''];
+ return '<div class="lastAnsCard"><div class="laHead"><span style="font-size:20px">'+e[0]+'</span><b>'+e[1]+'</b></div>'
+ +'<div style="font-size:11px;color:var(--muted)">'+e[2]+'</div></div>';
+}
 async function renderSurvival(){
  var g=renderGen();
  var el=$('pg-survival');
@@ -38204,10 +39827,12 @@ function svCard(s){
  +'<span class="qtag">'+s.diff_icon+' '+esc(s.diff_name)+' — روز '+fa(s.day)+'</span>'
  +svHearts(s)+'</div>';
  if(s.storm)h+='<div style="margin-top:8px;color:var(--orange);font-size:10.5px;font-weight:800">☄️ طوفان فعال — سوال سخت‌تر، پاداش دوبرابر!</div>';
+ /* 🗺 نقشه‌ی سفر — روزهای گذشته و جایگاه فعلی */
+ h+='<div style="margin-top:10px"><div class="sub" style="margin-bottom:2px">🗺 مسیر ماجراجویی:</div>'+svJourney(s)+'</div>';
  h+='<div class="sub" style="margin-top:8px">🔥 زنجیره: '+fa(s.streak)+' · 🎲 رویدادها: '+fa(s.events_survived)+' · 🪙 این ماجراجویی: '+fa(s.total_coins)+'</div>';
  h+='<div class="sub">پاداش این روز: ⭐+'+fa(s.reward.xp)+' 🪙+'+fa(s.reward.coins)+'</div>';
  if(s.event){
-  var evs={medic:['🩺','چادر درمانگر — یک جان پس می‌گیری!'],shop:['🛒','فروشنده سیار — آیتم بخر'],storm:['☄️','طوفان شنی — پاداش دوبرابر'],gift:['🎁','جعبه رهاشده — بازش کن؟'],ambush:['🧛','کمین شبانه — یک جان می‌ری!']};
+  var evs={medic:['🩺','چادر درمانگر — یک جان پس می‌گیری!'],shop:['🛒','فروشنده سیار — آیتم بخر'],storm:['☄️','طوفان شنی — پاداش دوبرابر'],gift:['🎁','جعبه رهاشده — بازش کن؟'],ambush:['🧛','کمین شبانه — یک جان می‌ری!'],treasure:['💰','گنج مدفون! سکه‌های رایگان پیدا کردی!']};
   var ev=evs[s.event]||['❓','رویداد'];
   h+='<div style="margin-top:12px;padding:14px;border:1px dashed var(--line2);border-radius:14px;text-align:center">'
   +'<div style="font-size:30px;margin-bottom:6px">'+ev[0]+'</div><b>'+ev[1]+'</b>';
@@ -39028,7 +40653,27 @@ async function renderSeason(){
   +'<p class="sub">مسابقه‌ی فصلی قهرمانان'+(d.season_id?' — فصل '+esc(d.season_id):'')+'</p>'
   +'<div class="grid g4" style="margin-top:12px">'
   +st('روز مانده','ss_d',d.days_left)+st('XP فصل تو','ss_x',d.season_xp)
-  +st('رتبه‌ی تو','ss_r',d.season_rank?('#'+d.season_rank):'—')+st('رویداد فعال','ss_e',(d.events||[]).length)+'</div></div></div>';
+  +st('رتبه‌ی تو','ss_r',d.season_rank?('#'+d.season_rank):'—')+st('رویداد فعال','ss_e',(d.events||[]).length)+'</div>';
+  /* (۶.۰) شمارش معکوس زنده تا پایان فصل */
+  if(d.days_left>0){
+   var endTs=(Date.now()/1000)+d.days_left*86400;
+   h+='<div class="card" style="margin-top:10px"><div class="sub" style="text-align:center;margin-bottom:8px">⏳ تا پایان فصل</div>'
+   +'<div class="liveCount" id="ssCd"></div></div>';
+   setTimeout(function(){
+    try{
+     var el=$('ssCd');if(!el)return;
+     var tick=function(){
+      var left=Math.max(0,endTs-Date.now()/1000);
+      var dd=Math.floor(left/86400),hh=Math.floor(left%86400/3600),mm=Math.floor(left%3600/60);
+      el.innerHTML='<div class="lcBox"><b>'+fa(dd)+'</b><small>روز</small></div>'
+      +'<div class="lcBox"><b>'+fa(hh)+'</b><small>ساعت</small></div>'
+      +'<div class="lcBox"><b>'+fa(mm)+'</b><small>دقیقه</small></div>';
+     };
+     tick();setInterval(tick,30000);
+    }catch(e){}
+   },50);
+  }
+  h+='</div></div>';
   if((d.events||[]).length){
    h+='<div class="shead" style="margin-top:16px"><b>📢 رویدادهای فعال</b><small>EVENTS</small></div><div class="list">';
    d.events.forEach(function(ev){
@@ -39489,11 +41134,11 @@ async function fbSend(){try{
    ════════════════════════════════════════════════════════════════ */
 var ACAT=[
  {id:'community',ic:'🫂',t:'جامعه',secs:['home','users','groups','perms']},
- {id:'content',ic:'🎮',t:'بازی و محتوا',secs:['games','analytics','bank','ach','feedback','qreports']},
+ {id:'content',ic:'🎮',t:'بازی و محتوا',secs:['games','analytics','analytics2','leaderboards','bank','ach','feedback','qreports']},
  {id:'monitor',ic:'📡',t:'مانیتور زنده',secs:['duels','lobbies','trades','tournaments','season_admin']},
- {id:'economy',ic:'💰',t:'اقتصاد',secs:['econ','rewards','broadcast','giftall']},
+ {id:'economy',ic:'💰',t:'اقتصاد',secs:['econ','rewards','broadcast','bc_history','giftall','ads']},
  {id:'security',ic:'🛡',t:'امنیت',secs:['syscfg','bankguard','doctor','vitals','elo','integrity']},
- {id:'system',ic:'🧰',t:'سیستم',secs:['backups','export','logs','settings','maint','maintsch']},
+ {id:'system',ic:'🧰',t:'سیستم',secs:['backups','export','logs','settings','maint','maintsch','reset','about_system']},
  {id:'commander',ic:'⚡',t:'فرمانده',secs:['quick','clean','pulse','gpanels','punish']}
 ];
 var ASEC={
@@ -39503,6 +41148,8 @@ var ASEC={
  perms:['🛡','دسترسی‌ها','ادمین و ناظر'],
  games:['🎮','بازی‌های فعال','مانیتور زنده'],
  analytics:['📊','آنالیتیکس','ساعتی، ۷روزه، محتوای برتر'],
+ analytics2:['🧲','آنالیتیکس ۲.۰','DAU/WAU/MAU + رتکشن + جریان اقتصاد'],
+ leaderboards:['🏆','لیدربوردها','برترین‌ها در ۶ سنجه'],
  bank:['🏦','بانک سوالات','۲۱ بانک — نمایش کامل'],
  ach:['🏆','دستاوردها','سفارشی، اهدای، خاموش/روشن'],
  feedback:['📨','بازخوردها','خواندن و رسیدگی'],
@@ -39584,6 +41231,8 @@ async function adminPage(kind){
   else if(kind==='perms')h=admPerms(d);
   else if(kind==='games')h=admGames(d);
   else if(kind==='analytics')h=admAnalytics(d);
+  else if(kind==='analytics2')h=admAnalytics2(d);
+  else if(kind==='leaderboards')h=admLeaderboards(d);
   else if(kind==='bank')h=admBank(d);
   else if(kind==='ach')h=admAch(d);
   else if(kind==='feedback')h=admFeedback(d);
@@ -39748,7 +41397,7 @@ async function userSheet(id){
   +'<button class="btn gold sm" onclick="admAction(\'add_coins\',{target:'+u.id+',value:1000})">+۱۰۰۰ 🪙</button>'
   +'<button class="btn primary sm" onclick="admAction(\'add_xp\',{target:'+u.id+',value:500})">+۵۰۰ XP</button>'
   +'<button class="btn red sm" onclick="admAction(\'sub_coins\',{target:'+u.id+',value:100})">−۱۰۰ 🪙</button>'
-  +'<button class="btn '+(u.banned?'green':'red')+' sm" onclick="admAction(\'ban_toggle\',{target:'+u.id+'})">'+(u.banned?'رفع بن':'بن کردن')+'</button></div>'
+  +'<button class="btn '+(u.banned?'green':'red')+' sm" onclick="'+(u.banned?'admAction(\'ban_toggle\',{target:'+u.id+'},\'users\')':'banPromptSheet('+u.id+')')+'">'+(u.banned?'رفع بن':'بن کردن')+'</button></div>'
   +'<div class="adm-tools" style="margin-top:8px">'
   +'<button class="btn '+(u.verified?'':'green')+' sm" onclick="admAction(\'verify_toggle\',{target:'+u.id+'})">'+(u.verified?'لغو تأیید ✖':'تأیید هویت ✅')+'</button>'
   +'<button class="btn sm" onclick="admAction(\'mute_toggle\',{target:'+u.id+'})">🔇 میوت روشن/خاموش</button></div>';
@@ -40428,7 +42077,27 @@ function renderVip(){
   var days=u.vip_days||0;
   h+='<div class="card" style="text-align:center;border-color:#ffc85755;background:linear-gradient(150deg,#1a1508,#0c0a16)">'
   +'<div style="font-size:34px">👑</div><b style="color:var(--gold)">VIP فعال است</b>'
-  +'<div class="sub" style="margin-top:4px">'+fa(days)+' روز مانده — لذت می‌بری!</div></div>';
+  +'<div class="sub" style="margin-top:4px">'+fa(days)+' روز مانده — لذت می‌بری!</div>';
+  /* (۶.۰) شمارش معکوس زنده تا پایان VIP */
+  if(u.vip_until){
+   var vu=Number(u.vip_until);
+   h+='<div class="liveCount" id="vipCd"></div>';
+   setTimeout(function(){
+    try{
+     var el=$('vipCd');if(!el)return;
+     var tick=function(){
+      var left=Math.max(0,vu-Date.now()/1000);
+      var dd=Math.floor(left/86400),hh=Math.floor(left%86400/3600),mm=Math.floor(left%3600/60),ss2=Math.floor(left%60);
+      el.innerHTML='<div class="lcBox"><b>'+fa(dd)+'</b><small>روز</small></div>'
+      +'<div class="lcBox"><b>'+fa(hh)+'</b><small>ساعت</small></div>'
+      +'<div class="lcBox"><b>'+fa(mm)+'</b><small>دقیقه</small></div>'
+      +'<div class="lcBox"><b>'+fa(ss2)+'</b><small>ثانیه</small></div>';
+     };
+     tick();setInterval(tick,1000);
+    }catch(e){}
+   },50);
+  }
+  h+='</div>';
  }else{
   h+='<div class="card" style="text-align:center">'
   +'<div style="font-size:34px">🪙</div><b>فعلاً عضویت عادی</b>'
@@ -40617,10 +42286,12 @@ function cmdList(){
   return (c[2]+' '+c[3]).toLowerCase().indexOf(q)>-1});
  var h='<div class="list">';
  if(!list.length)h+='<div class="empty"><span class="ei">🔍</span>دستوری پیدا نشد.</div>';
- list.forEach(function(c){
-  h+='<div class="row"><div class="medal">'+c[0]+'</div>'
-  +'<div class="grow"><b dir="ltr" style="text-align:right">'+esc(c[2])+'</b><small>'+esc(c[3])+'</small></div></div>';
- });
+  list.forEach(function(c){
+   h+='<div class="row"><div class="medal">'+c[0]+'</div>'
+   +'<div class="grow"><b dir="ltr" style="text-align:right">'+esc(c[2])+'</b><small>'+esc(c[3])+'</small></div>'
+   /* (۶.۰) کپی یک‌کلیکی دستور */
+   +'<button class="btn xs" onclick="copyText(\''+esc(String(c[2]).split(' ')[0])+'\')" title="کپی">📋</button></div>';
+  });
  h+='</div>';
  h+='<div class="card" style="margin-top:12px;text-align:center;font-size:10px;color:var(--muted);line-height:2">💡 همه‌ی این‌ها داخل همین مینی‌اپ هم هستند — از پالت جستجو (🔎 بالای صفحه) سریع‌تر به آن‌ها برس.</div>';
  box.innerHTML=h;
@@ -41293,7 +42964,7 @@ async function userSheet2(id){
   +'<button class="btn gold sm" onclick="admAction(\'add_coins\',{target:'+u.id+',value:1000})">+۱۰۰۰ 🪙</button>'
   +'<button class="btn primary sm" onclick="admAction(\'add_xp\',{target:'+u.id+',value:500})">+۵۰۰ XP</button>'
   +'<button class="btn red sm" onclick="admAction(\'sub_coins\',{target:'+u.id+',value:100})">−۱۰۰ 🪙</button>'
-  +'<button class="btn '+(u.banned?'green':'red')+' sm" onclick="admAction(\'ban_toggle\',{target:'+u.id+'})">'+(u.banned?'رفع بن':'بن کردن')+'</button></div>'
+  +'<button class="btn '+(u.banned?'green':'red')+' sm" onclick="'+(u.banned?'admAction(\'ban_toggle\',{target:'+u.id+'},\'users\')':'banPromptSheet('+u.id+')')+'">'+(u.banned?'رفع بن':'بن کردن')+'</button></div>'
   +'<div class="adm-tools" style="margin-top:8px">'
   +'<button class="btn '+(u.verified?'':'green')+' sm" onclick="admAction(\'verify_toggle\',{target:'+u.id+'})">'+(u.verified?'لغو تأیید ✖':'تأیید هویت ✅')+'</button>'
   +'<button class="btn sm" onclick="admAction(\'mute_toggle\',{target:'+u.id+'})">🔇 میوت</button>'
@@ -41436,17 +43107,26 @@ async function admPermAdd2(){
 }
 
 /* ---------- 🧾 لاگ‌ها با جستجو و صفحه‌بندی ---------- */
-var LOGQ='';
+var LOGQ='';var LOGPAGE=0;var LOGACTOR='';
 function admLogs2(d){
  var h='<div class="seg" style="margin:0 0 10px">'+[['all','همه'],['info','Info'],['warn','Warn'],['error','Error']].map(function(l){
-  return '<button class="'+(LOGLV===l[0]?'on':'')+'" onclick="LOGLV=\''+l[0]+'\';stateSave();adminPage(\'logs\')">'+l[1]+'</button>'}).join('')+'</div>';
- h+='<div class="searchbar"><span class="sic">🔍</span><input class="input" id="lgQ" placeholder="جستجو در لاگ‌ها..." value="'+esc(LOGQ)+'" oninput="LOGQ=this.value;logFilter()"></div>';
+  return '<button class="'+(LOGLV===l[0]?'on':'')+'" onclick="LOGLV=\''+l[0]+'\';LOGPAGE=0;stateSave();adminPage(\'logs\')">'+l[1]+'</button>'}).join('')+'</div>';
+ h+='<div class="searchbar"><span class="sic">🔍</span><input class="input" id="lgQ" placeholder="جستجو در لاگ‌ها..." value="'+esc(LOGQ)+'"></div>';
+ h+='<div class="searchbar" style="margin-top:8px"><span class="sic">👤</span><input class="input" id="lgActor" placeholder="فیلتر آیدی بازیگر..." value="'+esc(LOGACTOR||'')+'"></div>';
  h+='<div class="list" id="logList" style="margin-top:10px">';
  h+=logRows(d.items||[]);
  h+='</div>';
+ var pg=d.page||0,pgs=d.pages||1;
+ if(pgs>1){
+  h+='<div class="pager" style="margin-top:12px">'
+  +'<button class="btn sm" '+(pg>0?'':'disabled')+' onclick="LOGPAGE='+(pg-1)+';adminPage(\'logs\')">› قبلی</button>'
+  +'<span>صفحه '+fa(pg+1)+' از '+fa(pgs)+' · '+faK(d.total||0)+' رکورد</span>'
+  +'<button class="btn sm" '+(pg<pgs-1?'':'disabled')+' onclick="LOGPAGE='+(pg+1)+';adminPage(\'logs\')">بعدی ‹</button></div>';
+ }
  setTimeout(function(){
-  var el=$('lgQ');
-  if(el)el.addEventListener('input',debounce(function(){LOGQ=el.value;logFilter()},250));
+  var el=$('lgQ'),ac=$('lgActor');
+  if(el)el.addEventListener('input',debounce(function(){LOGQ=el.value;LOGPAGE=0;adminPage('logs')},450));
+  if(ac)ac.addEventListener('input',debounce(function(){LOGACTOR=ac.value;LOGPAGE=0;adminPage('logs')},450));
  },40);
  return h;
 }
@@ -42928,6 +44608,8 @@ function userSheet2Full(id){
     body.insertAdjacentHTML('beforeend',
      userVipTools(uu)
      +userInvTools(uu)
+     +'<div style="display:flex;gap:8px;margin-top:12px">'
+     +'<button class="btn sm" style="flex:1" onclick="userEconSheet('+uu.id+')">💰 تایم‌لاین اقتصاد</button></div>'
      +'<div class="shead" style="padding:0;margin-top:14px"><b>⬆️ تنظیم سطح مستقیم</b></div>'
      +'<div style="display:flex;gap:8px;margin-top:8px">'
      +'<input class="input" id="lvSet" type="number" placeholder="سطح (۱-۱۰۰)" style="flex:1">'
@@ -42957,33 +44639,164 @@ async function admResetGo(){
  closeSheet();
 }
 
-/* ---------- 📜 تاریخچه همگانی ---------- */
+/* ---------- 📜 تاریخچه همگانی (۶.۰ — آمار تحویل + کنسل) ---------- */
 function admBcHistory(d){
  var h='';
- (d.items||[]).forEach(function(b){
-  h+='<div class="row"><div class="medal">'+(b.sent?'✅':'⏳')+'</div>'
-  +'<div class="grow"><b>'+esc(b.text)+'</b><small>'+(b.sent?'ارسال‌شده':'در صف')+' · '+faDateTime(b.ts)+'</small></div></div>'});
+ (d.items||[]).forEach(function(b,i){
+  var prog=b.progress!=null?b.progress:(b.sent?100:0);
+  h+='<div class="row"><div class="medal">'+(b.sent?'✅':(b.pending?'⏳':'📭'))+'</div>'
+  +'<div class="grow"><b>'+esc(b.text)+'</b>'
+  +'<small>'+(b.sent?'ارسال‌شده':(b.pending?'در صف ارسال':'ثبت‌شده'))+' · '+faDateTime(b.ts)
+  +(b.total?' · '+fa(b.delivered||0)+' از '+fa(b.total)+' نفر ('+fa(prog)+'٪)':'')+'</small>'
+  +(b.pending?'<div class="bar thin" style="margin-top:5px"><i style="width:'+prog+'%"></i></div>':'')
+  +'</div>'
+  +(b.pending?'<button class="btn red xs" onclick="admBcCancel('+i+','+(b.ts||0)+')">🗑</button>':'')
+  +'</div>'});
  if(!h)h='<div class="empty"><span class="ei">📭</span>پیام همگانی‌ای ثبت نشده.</div>';
- return '<div class="list">'+h+'</div>';
+ return '<div class="list">'+h+'</div>'
+ +'<div class="adm-note">💡 پیام‌های در صف هر ۳ دقیقه به‌صورت دسته‌ای ارسال می‌شوند — تا قبل از ارسال کامل می‌توانی کنسل کنی.</div>';
+}
+async function admBcCancel(idx,ts){
+ askConfirm('🗑 حذف از صف؟','این پیام همگانی دیگر ارسال نمی‌شود.',function(){
+  admAction('bc_cancel',{idx:idx,ts:ts},'bc_history');
+ });
+}
+
+/* ---------- 📊 آنالیتیکس ۲.۰ — DAU/WAU/MAU + رتکشن + جریان ---------- */
+function admAnalytics2(d){
+ var stick=d.stickiness||0,ret=d.retention_1d||0;
+ var h='<div class="adm-grid" style="margin-bottom:12px">'
+ +kpi('🔥','فعال امروز (DAU)',faK(d.dau))
+ +kpi('📅','فعال هفته (WAU)',faK(d.wau))
+ +kpi('🗓','فعال ماه (MAU)',faK(d.mau))
+ +kpi('🧲','چسبندگی',fa(stick)+'٪')
+ +kpi('🔄','رتکشن ۱ روزه',fa(ret)+'٪')
+ +kpi('🌱','کاربر جدید هفته',faK(d.new_week))+'</div>';
+ /* نوار DAU در برابر WAU در برابر MAU */
+ var mx=Math.max(1,d.mau||1);
+ h+='<div class="card" style="margin-bottom:12px"><div class="shead" style="padding:0 0 10px"><b>🧭 قیف فعالیت</b></div>'
+ +[['DAU — امروز',d.dau,'var(--c3)'],['WAU — این هفته',d.wau,'var(--c1)'],['MAU — این ماه',d.mau,'var(--pink)']].map(function(r){
+   return '<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:10px;font-weight:800;margin-bottom:3px"><span>'+r[0]+'</span><b style="color:'+r[2]+'">'+fa(r[1]||0)+'</b></div>'
+   +'<div class="bar"><i style="width:'+Math.round((r[1]||0)*100/mx)+'%;background:'+r[2]+'"></i></div></div>'}).join('')
+ +'<div class="sub" style="margin-top:6px">دیروز '+fa(d.yesterday_active||0)+' نفر فعال بودند که '+fa(d.retained||0)+' نفرشان امروز برگشته‌اند.</div></div>';
+ /* توزیع مود بازی */
+ if((d.mode_dist||[]).length){
+  var tmx=d.mode_dist[0].count||1;
+  var modeNames={truth:'حقیقت',dare:'جرئت',flirty:'فلیکرتی',speed:'سرعتی',vote:'رأی‌گیری',roulette:'رولت',mini:'مینی‌بازی‌ها'};
+  h+='<div class="card" style="margin-bottom:12px"><div class="shead" style="padding:0 0 10px"><b>🎮 محبوب‌ترین حالت‌های بازی</b></div>'
+  +d.mode_dist.map(function(m){
+   return '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:10px;font-weight:800;margin-bottom:3px"><span>'+esc(modeNames[m.mode]||m.mode)+'</span><b>'+faK(m.count)+'</b></div>'
+   +'<div class="bar thin"><i style="width:'+Math.round(m.count*100/tmx)+'%"></i></div></div>'}).join('')
+  +'</div>';
+ }
+ /* جریان اقتصاد */
+ if((d.economy_flows||[]).length){
+  h+='<div class="card"><div class="shead" style="padding:0 0 10px"><b>💰 جریان اقتصاد (۲۰۰ تراکنش اخیر)</b></div><div class="list">';
+  d.economy_flows.forEach(function(f){
+   var earn=f.type==='earn';
+   h+='<div class="row"><div class="medal">'+(earn?'🪙':'💸')+'</div><div class="grow"><b>'+esc(f.reason||'—')+'</b>'
+   +'<small>'+fa(f.count)+' تراکنش · '+(earn?'ورودی':'خروجی')+'</small></div>'
+   +'<b style="color:'+(earn?'var(--green)':'var(--red)')+';font-size:12px" dir="ltr">'+(earn?'+':'−')+faK(f.total)+'</b></div>'});
+  h+='</div></div>';
+ }
+ return h;
+}
+
+/* ---------- 🏆 لیدربوردها — برترین‌ها در ۵ سنجه ---------- */
+function admLeaderboards(d){
+ var boards=[['xp','⭐','پر-XP‌ترین‌ها'],['coins','🪙','ثروتمندترین‌ها'],['games','🎮','بازی‌کن‌ترین‌ها'],
+             ['wins','🏆','برنده‌ترین‌ها'],['elo','⚔️','قوی‌ترین ELO'],['mini','🕹','مینی‌بازی‌بازها']];
+ var h='';
+ boards.forEach(function(bd){
+  var rows=d[bd[0]]||[];
+  if(!rows.length)return;
+  h+='<div class="card" style="margin-bottom:12px"><div class="shead" style="padding:0 0 8px"><b>'+bd[1]+' '+bd[2]+'</b></div><div class="list">';
+  rows.forEach(function(r,i){
+   h+='<div class="row tap" onclick="userSheet('+r.uid+')"><div class="medal m'+(i<3?i+1:'')+'">'+(i<3?['🥇','🥈','🥉'][i]:fa(i+1))+'</div>'
+   +'<div class="grow"><b>'+esc(r.name)+'</b><small>ID: '+fa(r.uid)+'</small></div>'
+   +'<b style="color:var(--gold)">'+faK(r.value)+'</b></div>'});
+  h+='</div></div>';
+ });
+ if(!h)h='<div class="empty"><span class="ei">🏆</span>هنوز داده‌ای نیست.</div>';
+ return h;
+}
+
+/* ---------- 💰 تایم‌لاین اقتصادی کاربر (شیت) ---------- */
+async function userEconSheet(id){
+ openSheet('<h3>💰 تایم‌لاین اقتصاد</h3><div class="sk tall"></div>');
+ try{
+  var d=await api('/api/miniapp/admin/v5?section=user_econ&uid='+Number(id));
+  var body=$('sheetBody');if(!body)return;
+  var h='';
+  if(d.ban_reason)h+='<div class="infobanner warn" style="margin-bottom:10px"><span class="ic">🚫</span><span style="flex:1">بن فعلی: '+esc(d.ban_reason)+(d.ban_until?' — تا '+faDateTime(d.ban_until):' — دائم')+'</span></div>';
+  if((d.bans||[]).length){
+   h+='<div class="shead" style="padding:0;margin-bottom:6px"><b>🚫 تاریخچه بن</b></div><div class="list">';
+   d.bans.forEach(function(b){h+='<div class="row"><div class="medal">🚫</div><div class="grow"><b>'+esc(b.reason||'—')+'</b><small>توسط '+esc(b.by||'—')+' · '+(b.days?fa(b.days)+' روز':'دائم')+' · '+faDateTime(b.ts)+'</small></div></div>'});
+   h+='</div>';
+  }
+  if((d.punishes||[]).length){
+   h+='<div class="shead" style="padding:0;margin:12px 0 6px"><b>⚖️ مجازات‌های گروهی</b></div><div class="list">';
+   d.punishes.forEach(function(p){h+='<div class="row"><div class="medal">⚖️</div><div class="grow"><b>'+esc(p.text||'—')+'</b><small>'+faDateTime(p.ts)+(p.forgiven?' · بخشیده شد':'')+'</small></div></div>'});
+   h+='</div>';
+  }
+  if((d.txs||[]).length){
+   h+='<div class="shead" style="padding:0;margin:12px 0 6px"><b>📜 تراکنش‌های اخیر</b></div><div class="list">';
+   d.txs.forEach(function(t){
+    var earn=t.type==='earn';
+    h+='<div class="row"><div class="medal">'+(earn?'🪙':'💸')+'</div><div class="grow"><b>'+esc(t.reason||'—')+'</b><small>'+faDateTime(t.ts)+'</small></div>'
+    +'<b style="color:'+(earn?'var(--green)':'var(--red)')+';font-size:11px" dir="ltr">'+(earn?'+':'−')+fa(t.amount)+'</b></div>'});
+   h+='</div>';
+  }
+  if((d.inventory||[]).length){
+   h+='<div class="shead" style="padding:0;margin:12px 0 6px"><b>🎒 اینونتوری</b></div><div class="chips" style="margin:0">';
+   d.inventory.forEach(function(it){h+='<span class="tag">'+esc(it.key)+' ×'+fa(it.count)+'</span>'});
+   h+='</div>';
+  }
+  if(!h)h='<div class="empty"><span class="ei">💰</span>تراکنشی ثبت نشده.</div>';
+  body.innerHTML='<h3>💰 تایم‌لاین اقتصاد — کاربر '+fa(id)+'</h3>'+h;
+ }catch(e){toast(e.message,'err');closeSheet()}
+}
+
+/* ---------- 🚫 بن با دلیل و مدت (شیت) ---------- */
+function banPromptSheet(id,name){
+ openSheet('<h3>🚫 مسدودسازی کاربر</h3>'
+ +'<p class="sub" style="margin-bottom:10px">'+esc(name||'کاربر')+' — دلیل و مدت بن را مشخص کن:</p>'
+ +'<input class="input" id="bnReason" placeholder="دلیل بن (مثلاً: توهین، اسپم...)" style="margin-bottom:10px">'
+ +'<div class="chips" id="bnDays" style="margin-bottom:12px">'
+ +[[0,'🔒 دائم'],[1,'۱ روز'],[3,'۳ روز'],[7,'۷ روز'],[30,'۳۰ روز']].map(function(x,i){
+   return '<button class="chip'+(i===0?' on':'')+'" data-d="'+x[0]+'" onclick="bnPickDay(this)">'+x[1]+'</button>'}).join('')
+ +'</div>'
+ +'<button class="btn red wide glow" onclick="banGo('+id+')">🚫 مسدود کن</button>');
+}
+var BNDAYS=0;
+function bnPickDay(btn){
+ BNDAYS=Number(btn.dataset.d)||0;
+ [].forEach.call(document.querySelectorAll('#bnDays .chip'),function(x){x.classList.remove('on')});
+ btn.classList.add('on');
+}
+function banGo(id){
+ var r=($('bnReason')||{}).value||'';
+ admAction('ban_toggle',{target:id,reason:r||'نقض قوانین',days:BNDAYS},'users');
+ closeSheet();
 }
 
 /* ════════════════════════════════════════════════════════════════
    🎓 شیت راهنمای هر بازی — قوانین + پاداش‌ها + رکوردها
    ════════════════════════════════════════════════════════════════ */
 var GAME_HELP={
- trivia:{t:'Trivia زنجیره‌ای',rules:['هر پاسخ درست زنجیره را ادامه می‌دهد','هر ۵ پاسخ درست +۲۵ سکه جایزه','اولین پاسخ غلط پایان بازی است','سقف پاداش با طول زنجیره بالا می‌رود'],rw:[['هر پاسخ','+۴ تا +۱۴ XP'],['سکه','+۳ تا +۱۱'],['پایان زنجیره','+۲XP × طول زنجیره']]},
- word:{t:'بازی کلمات',rules:['حروف به‌هم‌ریخته یک کلمه واقعی است','از ۴ گزینه، کلمه درست را انتخاب کن','راهنما دسته‌ی موضوعی را نشان می‌دهد'],rw:[['درست','+۱۵ XP · +۸ سکه'],['نادرست','+۵ XP']]},
- number:{t:'حدس عدد',rules:['عددی بین ۱ تا ۱۰۰ انتخاب شده','۷ فرصت داری','بعد از هر حدس، گزینه‌ها به هدف نزدیک‌تر می‌شوند'],rw:[['برد با فرصت زیاد','+۵XP+×۲ سکه'],['برد','حداقل +۵XP']]},
- memory:{t:'حافظه',rules:['دنباله‌ای از اعداد نمایش داده می‌شود','۳ ثانیه برای حفظ کردن داری','از ۴ گزینه، همان دنباله را انتخاب کن'],rw:[['درست','+۱۵ XP · +۸ سکه'],['نادرست','+۵ XP']]},
- reaction:{t:'سرعت واکنش',rules:['صبر کن تا دکمه سبز شود','همان لحظه بزن!','زود زدن = باخت'],rw:[['زیر ۴۰۰ms','+۲۰ XP · +۱۲ سکه'],['زیر ۸۰۰ms','+۱۲ XP · +۶ سکه'],['بقیه','+۶ XP · +۳ سکه']]},
- ttt:{t:'دوز با AI',rules:['تو ✕ هستی، هوش مصنوعی ⭕','سه‌در-رو بگیر برنده‌ای','صفحه‌ی جدید بدون محدودیت'],rw:[['هر برد','+۲۰ XP · +۲۰ سکه']]},
- mine:{t:'مین‌یاب',rules:['ورودی ۲۰ سکه','۱۲ خانه با ۳ مین','هر خانه امن ضریب را بالا می‌برد','هر لحظه می‌توانی برداشت کنی'],rw:[['برداشت زودهنگام','ضریب ×۱ به بالا'],['همه‌ی خانه‌ها','ضریب حداکثری']]},
- quiz:{t:'کوییز ریاضی',rules:['یک سوال محاسبه‌ای','۶۰ ثانیه فرصت','روزی یک بار'],rw:[['درست','+۸ XP'],['نادرست','رکورد نمی‌شود']]},
- luck:{t:'گردونه شانس',rules:['هر ۲۰ ساعت یک چرخش','۶ قطعه با جوایز متفاوت','۵٪ شانس جایزه‌ی بزرگ'],rw:[['جایزه‌ی بزرگ','+۵۰ سکه'],['شانس خوب','+۲۰'],['معمولی','+۱۰ یا +۵']]},
- ln:{t:'Lucky Number',rules:['عدد ۱ تا ۱۰۰ را انتخاب کن','عدد دقیق = جکپات ×۲۵','هر روز یک چرخ رایگان'],rw:[['دقیق','×۲۵'],['فاصله ≤۲','×۶'],['فاصله ≤۵','×۲'],['فاصله ≤۱۰','×۱.۵']]},
- t2048:{t:'۲۰۴۸',rules:['با سوایپ یا دکمه‌های جهت، کاشی‌ها را بلغزان','دو کاشی هم‌ارزش یکی می‌شوند و امتیاز می‌دهند','هدف: رسیدن به کاشی ۲۰۴۸','وقتی حرکتی نماند بازی تمام است'],rw:[['پایان بازی','XP و سکه بر اساس امتیاز'],['رسیدن به ۲۰۴۸','+۲۵ XP و +۲۰ سکه‌ی اضافه'],['رکورد جدید','ثبت در کارنامه']]},
- mole:{t:'موش‌کوبی',rules:['۳۰ ثانیه فرصت داری','روی موش‌ها به‌محض بیرون آمدن بزن','ضربه‌های پشت‌سرهم زنجیره می‌سازد','زنجیره‌ی ۱۰+ جایزه‌ی اضافه دارد'],rw:[['هر ضربه','+۱ XP'],['پایان دور','+۱ سکه به ازای هر ۲ ضربه'],['زنجیره ۱۰+','+۵ سکه‌ی اضافه']]},
- rps:{t:'سنگ‌کاغذقیچی',rules:['بهترین از سه راند','ربات الگوی تو را یاد می‌گیرد!','مساوی تکرار می‌شود'],rw:[['برد مسابقه','+۱۰ XP · +۸ سکه'],['باخت','+۳ XP']]}
+ trivia:{t:'Trivia زنجیره‌ای',rules:['هر پاسخ درست زنجیره را ادامه می‌دهد','تایمر با سختی کم می‌شود: ۲۵ → ۱۵ ثانیه','پاداش سرعت: زیر ۸ ثانیه +۳ XP اضافه','۵۰/۵۰ (۵ سکه) و ریرول سوال (۳ سکه)','هر ۵ پاسخ درست +۲۵ سکه جایزه'],rw:[['هر پاسخ','+۴ تا +۱۴ XP + سرعت'],['پایان زنجیره','+۲XP × طول زنجیره'],['هر ۵ تایی','+۲۵ سکه']]},
+ word:{t:'بازی کلمات',rules:['۳ سطح سختی: آسان (۳۰ث) / متوسط (۲۰ث) / سخت (۱۲ث)','در سخت فقط طول کلمه را می‌بینی!','کمبو پشت‌سرمن = پاداش صعودی','هر ۵ کمبو +۱۰ سکه'],rw:[['آسان','+۹ XP · +۴ سکه'],['متوسط','+۱۵ XP · +۸ سکه'],['سخت','+۲۲ XP · +۱۳ سکه'],['کمبو','تا +۶ XP و +۴ سکه']]},
+ number:{t:'حدس عدد',rules:['۳ سطح: تا ۱۰۰ / تا ۵۰۰ / تا ۱۰۰۰','گیج بازه‌ی باقی‌مانده را نشان می‌دهد','بازی نیمه‌کاره با خروج حفظ می‌شود','رکورد = برد با کمترین حدس'],rw:[['آسان','×۱ ضریب پاداش'],['متوسط','×۱.۶'],['سخت','×۲.۲']]},
+ memory:{t:'حافظه',rules:['لِوِل‌بندی: هر جواب درست یک رقم اضافه (۵ تا ۹)','۳ جان داری — باخت = یک جان کم','سرعت نمایش با لِوِل کم می‌شود','رکورد = بالاترین لِوِل'],rw:[['هر لِوِل','+۸+لِوِل×۳ XP · +۵+لِوِل×۲ سکه'],['پایان','جمع کل پرداخت می‌شود']]},
+ reaction:{t:'سرعت واکنش',rules:['صبر کن تا سبز شود — همان لحظه بزن','زمان سبزشدن به کلاینت لو نمی‌رود (ضدتقلب)','زیر ۱۲۰ms غیرانسانی حساب می‌شود','رتبه‌بندی: برق‌آسا تا آرام و قرار'],rw:[['زیر ۴۰۰ms','+۲۰ XP · +۱۲ سکه'],['زیر ۸۰۰ms','+۱۲ XP · +۶ سکه'],['بقیه','+۶ XP · +۳ سکه']]},
+ ttt:{t:'دوز با AI',rules:['۳ سطح: آسان / متوسط / غیرقابل‌برد','در «غیرقابل‌برد» AI مینیمکس کامل است — حداکثر مساوی!','خط برنده درخشان می‌شود','مساوی هم +۴ XP دارد'],rw:[['برد آسان','+۲۰ XP · +۲۰ سکه'],['برد متوسط','+۲۵ XP · +۲۵ سکه'],['برد غیرقابل‌برد','+۳۰ XP · +۳۰ سکه']]},
+ mine:{t:'مین‌یاب',rules:['۳ سطح ریسک: کلاسیک ۱۲خانه / متوسط ۲۰ / خطرناک ۳۰','ورودی: ۲۰ / ۵۰ / ۱۰۰ سکه','ضریب واقعیِ احتمال — تا ×۲۲۰','هر لحظه می‌توانی برداشت کنی'],rw:[['کلاسیک','ورودی ۲۰ — تا ×۲۲۰'],['متوسط','ورودی ۵۰'],['خطرناک','ورودی ۱۰۰']]},
+ quiz:{t:'کوییز ریاضی',rules:['زنجیره‌ی ۵ سوالی — هر سوال سخت‌تر','۲۵ ثانیه برای هر سوال','پاداش سرعت: زیر ۱۰ ثانیه +۲ XP','روزی یک زنجیره','سهمیه هنگام گرفتن سوال قفل می‌شود'],rw:[['هر سوال','+۴ تا +۱۵ XP'],['زنجیره کامل','+۱۰ سکه + ۵ XP']]},
+ luck:{t:'گردونه شانس',rules:['هر ۲۰ ساعت یک چرخش رایگان','استریک روزانه: روزهای پشت‌سرهم = تا +۱۰ سکه','قطعه‌ها برچسب دارند — می‌بینی چه برمی‌گردد'],rw:[['جایزه‌ی بزرگ (۵٪)','+۵۰ سکه'],['استریک','تا +۱۰ سکه اضافه']]},
+ ln:{t:'Lucky Number',rules:['عدد ۱ تا ۱۰۰ را انتخاب کن','عدد دقیق = جکپات ×۲۵','دبل‌یا‌هیچ: بعد از برد، سودت را ۵۰/۵۰ دوبرابر کن (تا ۳ بار!)','هر روز یک چرخ رایگان'],rw:[['دقیق','×۲۵'],['فاصله ≤۲','×۶'],['دبل‌یا‌هیچ','سود ×۲ یا هیچ']]},
+ t2048:{t:'۲۰۴۸',rules:['سوایپ، دکمه‌ها یا کلیدهای جهت‌دار کیبورد','Undo: یک بار در هر بازی می‌توانی عقب برگردی!','بهترین کاشی در HUD نمایش داده می‌شود','وقتی حرکتی نماند بازی تمام است'],rw:[['پایان بازی','XP و سکه بر اساس امتیاز'],['رسیدن به ۲۰۴۸','+۲۵ XP و +۲۰ سکه‌ی اضافه']]},
+ mole:{t:'موش‌کوبی',rules:['۳۰ ثانیه — موش‌ها به‌مرور سریع‌تر می‌آیند','⭐ موش طلایی (۱۲٪): ۲ برابر','💣 موش بمبی (۱۰٪): نزن! زنجیره ریست می‌شود','فرار موش یا ضربه به خانه خالی = خطا','دقت نهایی نمایش داده می‌شود'],rw:[['هر ضربه','+۱ XP'],['موش طلایی','۲ ضربه + ۱ سکه'],['زنجیره ۱۰+','+۵ سکه']]},
+ rps:{t:'سنگ‌کاغذقیچی',rules:['بهترین از سه راند','AI مارکوف الگوی بعدیت را پیش‌بینی می‌کند!','آمار تمام‌عمر: برد/باخت/مساوی راند','استریک مسابقه: هر برد پشت‌سرهم +۲ سکه تا +۱۰'],rw:[['برد مسابقه','+۱۰ XP · +۸+استریک سکه'],['باخت','+۳ XP']]}
 };
 function gameHelpSheet(key){
  var g=GAME_HELP[key];
@@ -43024,6 +44837,40 @@ function gameSummaryCard(game,stats){
   h+='<button class="btn primary wide" style="margin-top:8px" onclick="shareText(\''+esc(jsq(stats.share))+'\')">✈️ اشتراک‌گذاری نتیجه</button>';
  }
  return h;
+}
+
+/* ---------- 💰 انیمیشن پاداش — سکه‌ها به بالا پرواز می‌کنند ---------- */
+function rewardFly(xp,coins){
+ try{
+  var n=Math.max(1,Math.min(8,Math.round((coins||0)/4)));
+  var cx=window.innerWidth/2;
+  for(var i=0;i<n;i++){
+   (function(i){
+    setTimeout(function(){
+     var el=document.createElement('div');
+     el.className='rewardFly';el.textContent='🪙';
+     el.style.left=(cx+(Math.random()*120-60))+'px';
+     el.style.top=(window.innerHeight*0.42)+'px';
+     document.body.appendChild(el);
+     requestAnimationFrame(function(){
+      el.style.transform='translateY(-'+(90+Math.random()*120)+'px) scale(1.5)';
+      el.style.opacity='0';
+     });
+     setTimeout(function(){el.remove()},1100);
+    },i*70);
+   })(i);
+  }
+  if(coins>0)SND.coin();
+ }catch(e){}
+}
+/* ---------- 🎯 چیپ سختی — انتخاب سطح بازی ---------- */
+function diffChips(cur,onPick){
+ var defs=Array.prototype.slice.call(arguments,2);
+ var h='<div class="diffbar">';
+ defs.forEach(function(d){
+  h+='<button class="chip'+(d[0]===cur?' on':'')+'" onclick="'+onPick+'(\''+d[0]+'\')">'+d[1]+'</button>';
+ });
+ return h+'</div>';
 }
 
 /* ---------- ⬆️ کارت ارتقای سطح ---------- */
@@ -45030,7 +46877,17 @@ async function renderLeagues(){
   +'<div class="sub" style="margin-top:10px;text-align:center">'
   +(myLg<5?('تا '+LEAGUES[myLg+1].t+': '+fa(Math.max(0,(myLg+1===1?1000:myLg+1===2?1150:myLg+1===3?1300:myLg+1===4?1450:1600)-myElo))+' ELO دیگر'):'خودِ افسانه‌ای!')
   +(myLg>0?' · تا سقوط به '+LEAGUES[myLg-1].t+': '+fa(myElo-(myLg===1?1000:myLg===2?1150:myLg===3?1300:myLg===4?1450:1600))+' ELO امانت':'')
-  +'</div></div>';
+  +'</div>';
+  /* (۶.۰) نوار پیشرفت ارتقا — چقدر تا لیگ بعدی مانده؟ */
+  if(myLg<5){
+   var floors=[900,1000,1150,1300,1450,1600];
+   var cur=floors[myLg],nxt=floors[myLg+1];
+   var pct2=Math.min(100,Math.max(0,Math.round((myElo-cur)*100/Math.max(1,nxt-cur))));
+   h+='<div class="promoBar"><div class="pbLbl"><span>پیشرفت ارتقا به '+LEAGUES[myLg+1].t+'</span><b>'+fa(pct2)+'٪</b></div>'
+   +'<div class="bar" style="height:10px"><i style="width:'+pct2+'%;background:linear-gradient(90deg,var(--green),var(--gold))"></i></div>'
+   +'<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dim);margin-top:3px"><span>'+fa(cur)+'</span><span>'+fa(nxt)+' ELO</span></div></div>';
+  }
+  h+='</div>';
   /* جدول لیگ‌ها */
   h+='<div class="section"><div class="shead"><b>🏆 شش لیگ آرنا</b><small>LEAGUES</small></div>';
   LEAGUES.forEach(function(l,i){
@@ -45877,7 +47734,7 @@ function renderHome(){
    var h='<div class="section"><div class="shead"><b>⏱ زمان‌سنج‌های زنده</b><small>LIVE</small></div><div class="grid g3">'
    +cdCard('🔄','ریست روزانه','cdHome1',Math.floor(midnight.getTime()/1000),'مأموریت‌ها و حراج تازه می‌شوند')
    +cdCard(dd.eligible?'🎁':'✅','پاداش روزانه','cdHome2',Math.floor(midnight.getTime()/1000),dd.eligible?'هنوز نگرفتی — دکمه‌ی دریافت بالاست!':'امروز گرفته‌ای — فردا دوباره')
-   +cdCard('📅','ساعت محلی','cdHome3',0,'زمان تو: '+faTime(Date.now()/1000))
+   +cdCard('🏆','پایان فصل','cdHome3',Math.floor(midnight.getTime()/1000)+((D.season&&D.season.days_left?D.season.days_left:30)-1)*86400,'فصل و رتبه‌بندی قهرمانان')
    +'</div></div>';
    el.insertAdjacentHTML('beforeend',h);
    countdown('cdHome1',Math.floor(midnight.getTime()/1000),function(){toast('روز جدید شد! مأموریت‌ها ریست شدند 🎉','ok');renderHome()});
@@ -46053,6 +47910,7 @@ document.addEventListener('visibilitychange',function(){
  }
  handleStartParam();
  try{if(!localStorage.getItem('apex_ob'))setTimeout(obStart,1100)}catch(e){}
+ try{totopInit()}catch(e){}
 })();
 </script>
 </body>
@@ -46122,9 +47980,24 @@ def start_health_server() -> None:
                 return default
 
         def _banned_guard(self, uid):
-            """کاربر مسدودشده اجازه‌ی عملیات نوشتنی ندارد (مطابق رفتار ربات)."""
+            """کاربر مسدودشده اجازه‌ی عملیات نوشتنی ندارد (مطابق رفتار ربات).
+            بن موقت پس از پایان مدت به‌صورت خودکار رفع می‌شود."""
             try:
-                if DATA.get("users", {}).get(user_key(int(uid)), {}).get("banned", False):
+                u = DATA.get("users", {}).get(user_key(int(uid)), {})
+                if isinstance(u, dict) and bool(u.get("banned", False)):
+                    until = float(u.get("ban_until", 0) or 0)
+                    if until and now_ts() > until:
+                        # (۶.۰) بن موقت تمام شد — رفع خودکار
+                        u["banned"] = False
+                        u.pop("ban_until", None)
+                        u.pop("ban_reason", None)
+                        try:
+                            push_notification(int(uid), "system", "✅ رفع مسدودی",
+                                              "مدت بن موقت تمام شد — خوش آمدی!")
+                        except Exception:
+                            pass
+                        save_data()
+                        return False
                     return True
             except Exception:
                 pass
@@ -46195,7 +48068,7 @@ def start_health_server() -> None:
                         status = 429
                         return self._json({"ok": False, "error": "درخواست‌های زیادی ارسال شده."}, 429)
                     d = _mini_data(uid)
-                    d["admin"] = int(uid) == int(ADMIN_ID)
+                    d["admin"] = (int(uid) == int(ADMIN_ID)) or bool(has_permission(int(uid), "admin"))
                     status = 200
                     return self._json(d)
 
@@ -46240,7 +48113,7 @@ def start_health_server() -> None:
                     if not target or target == int(uid):
                         status = 200
                         d = _mini_data(uid)
-                        d["admin"] = int(uid) == int(ADMIN_ID)
+                        d["admin"] = (int(uid) == int(ADMIN_ID)) or bool(has_permission(int(uid), "admin"))
                         return self._json(d)
                     prof = _mini_public_profile(target, uid)
                     if not prof:
@@ -46338,7 +48211,8 @@ def start_health_server() -> None:
                     if not uid:
                         status = 401
                         return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
-                    d, code = _mini_word_get(uid)
+                    _df = (self._qs().get("diff") or ["normal"])[0]
+                    d, code = _mini_word_get(uid, _df)
                     status = code
                     return self._json(d, code)
 
@@ -46347,7 +48221,8 @@ def start_health_server() -> None:
                     if not uid:
                         status = 401
                         return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
-                    d, code = _mini_number_get(uid)
+                    _df = (self._qs().get("diff") or ["easy"])[0]
+                    d, code = _mini_number_get(uid, _df)
                     status = code
                     return self._json(d, code)
 
@@ -46365,7 +48240,8 @@ def start_health_server() -> None:
                     if not uid:
                         status = 401
                         return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
-                    d, code = _mini_ttt_get(uid)
+                    _df = (self._qs().get("diff") or ["normal"])[0]
+                    d, code = _mini_ttt_get(uid, _df)
                     status = code
                     return self._json(d, code)
 
@@ -46439,7 +48315,8 @@ def start_health_server() -> None:
                     if not uid:
                         status = 401
                         return self._json({"ok": False, "error": "احراز هویت نامعتبر است."}, 401)
-                    d, code = _mini_luck_spin(uid)
+                    # (🛠 رفع باگ) قبلاً GET چرخش را مصرف می‌کرد — فقط بازکردن صفحه جایزه را می‌سوزاند!
+                    d, code = _mini_luck_view(uid)
                     status = code
                     return self._json(d, code)
 
@@ -47034,7 +48911,10 @@ def start_health_server() -> None:
                     if self._banned_guard(uid):
                         status = 403
                         return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
-                    d, code = _mini_trivia_answer(uid, str(data.get("answer", "")))
+                    if data.get("power"):
+                        d, code = _mini_trivia_power(uid, str(data.get("power", "")))
+                    else:
+                        d, code = _mini_trivia_answer(uid, str(data.get("answer", "")))
                     status = code
                     return self._json(d, code)
 
@@ -47083,7 +48963,7 @@ def start_health_server() -> None:
                         status = 403
                         return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
                     if "cell" not in data:
-                        d, code = _mini_ttt_get(uid)
+                        d, code = _mini_ttt_get(uid, str(data.get("diff", "normal") or "normal"))
                     else:
                         d, code = _mini_ttt_move(uid, data.get("cell", -1))
                     status = code
@@ -47093,7 +48973,7 @@ def start_health_server() -> None:
                     if self._banned_guard(uid) or self._maintenance_guard(uid):
                         status = 403
                         return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
-                    d, code = _mini_mine_start(uid)
+                    d, code = _mini_mine_start(uid, str(data.get("diff", "classic") or "classic"))
                     status = code
                     return self._json(d, code)
 
@@ -47139,7 +49019,9 @@ def start_health_server() -> None:
                     if self._banned_guard(uid):
                         status = 403
                         return self._json({"ok": False, "error": "حساب مسدود است."}, 403)
-                    d, code = _mini_mole_hit(uid, data.get("rt", 0), bool(data.get("missed", False)))
+                    d, code = _mini_mole_hit(uid, data.get("rt", 0),
+                                             bool(data.get("missed", False)),
+                                             str(data.get("kind", "normal") or "normal"))
                     status = code
                     return self._json(d, code)
 
@@ -47163,7 +49045,10 @@ def start_health_server() -> None:
                     if self._banned_guard(uid) or self._maintenance_guard(uid):
                         status = 403
                         return self._json({"ok": False, "error": "الان ممکن نیست."}, 403)
-                    d, code = _mini_ln_bet(uid, data.get("number", 1), data.get("bet", 25))
+                    if data.get("double"):
+                        d, code = _mini_ln_double(uid)
+                    else:
+                        d, code = _mini_ln_bet(uid, data.get("number", 1), data.get("bet", 25))
                     status = code
                     return self._json(d, code)
 
@@ -47373,7 +49258,7 @@ def start_health_server() -> None:
                     return self._json(d, code)
 
                 if path == "/api/miniapp/arena/leave":
-                    d, code = _mini_arena_leave(uid)
+                    d, code = _mini_arena_leave(uid, bool(data.get("resign", False)))
                     status = code
                     return self._json(d, code)
 
